@@ -1,0 +1,933 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Recovery Tracker</title>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        /* Fallback styles to ensure page is visible */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #121212;
+            color: #ffffff;
+            margin: 0;
+            padding: 20px;
+        }
+        .app-container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #4caf50;
+            margin: 0;
+        }
+        .tab {
+            display: none;
+        }
+        .tab.active {
+            display: block;
+        }
+        button {
+            padding: 12px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .primary {
+            background: #4caf50;
+            color: white;
+        }
+        .danger {
+            background: #f44336;
+            color: white;
+        }
+        .secondary {
+            background: #ff9800;
+            color: white;
+        }
+        .stat-card {
+            background: #2d2d2d;
+            padding: 16px;
+            margin: 8px;
+            border-radius: 8px;
+            display: inline-block;
+            width: 45%;
+        }
+        .bottom-nav {
+            display: flex;
+            justify-content: space-around;
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: #1e1e1e;
+            padding: 10px;
+            border-top: 1px solid #404040;
+        }
+        .nav-btn {
+            background: none;
+            border: none;
+            color: #b0b0b0;
+            cursor: pointer;
+            padding: 8px;
+        }
+        .nav-btn.active {
+            color: #4caf50;
+        }
+        form {
+            background: #2d2d2d;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0 15px 0;
+            background: #1e1e1e;
+            border: 1px solid #404040;
+            color: white;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        label {
+            display: block;
+            margin-top: 10px;
+            color: #b0b0b0;
+        }
+    </style>
+</head>
+<body>
+    <noscript>
+        <div style="background: #f44336; color: white; padding: 20px; text-align: center;">
+            <h2>JavaScript is required for this app to work properly.</h2>
+            <p>Please enable JavaScript in your browser settings.</p>
+        </div>
+    </noscript>
+    <div class="app-container">
+        <header>
+            <h1>Recovery Tracker</h1>
+            <p class="subtitle">Track your progress, one day at a time</p>
+        </header>
+
+        <main>
+            <!-- Dashboard Tab -->
+            <section id="dashboard-tab" class="tab active">
+                <div class="safety-notice">
+                    <strong>Safety Note:</strong> If you feel unsafe, may overdose, or have severe withdrawal symptoms, call emergency services or a medical professional immediately.
+                </div>
+
+                <p class="main-substance-display" id="dashboard-main-substance">Main Substance: —</p>
+
+                <!-- Substance Selector -->
+                <div class="form-group">
+                    <label for="dashboard-substance">Viewing Stats For:</label>
+                    <select id="dashboard-substance" onchange="switchSubstance(this.value)"></select>
+                </div>
+
+                <div id="substance-compare" class="substance-compare hidden"></div>
+
+                <!-- Quick Actions -->
+                <div class="quick-actions">
+                    <button id="quick-log-btn" class="quick-btn primary" onclick="logOneUse()">
+                        <span class="quick-icon">⚡</span>
+                        <span class="quick-label">Quick Use</span>
+                    </button>
+                    <button class="quick-btn secondary" onclick="openUseLogSession()">
+                        <span>⏱️</span>
+                        <span>Session</span>
+                    </button>
+                    <button class="quick-btn secondary" onclick="logCravingOnly()">
+                        <span>🎯</span>
+                        <span>Craving</span>
+                    </button>
+                    <button class="quick-btn success" onclick="openBuyTrackerModal()">
+                        <span>🛒</span>
+                        <span>Buy</span>
+                    </button>
+                    <button class="quick-btn danger" onclick="undoLastUse()">
+                        <span>↩️</span>
+                        <span>Undo</span>
+                    </button>
+                </div>
+
+                <!-- Do Not Surpass -->
+                <div id="dns-section" class="dns-section hidden">
+                    <h3>Do Not Surpass — Today</h3>
+                    <div class="dns-grid">
+                        <div class="dns-stat">
+                            <span class="dns-label">Today's limit</span>
+                            <span class="dns-value" id="dashboard-dns-limit">--</span>
+                        </div>
+                        <div class="dns-stat">
+                            <span class="dns-label">Used today</span>
+                            <span class="dns-value" id="dashboard-dns-used">--</span>
+                        </div>
+                        <div class="dns-stat">
+                            <span class="dns-label">Remaining</span>
+                            <span class="dns-value" id="dashboard-dns-remaining">--</span>
+                        </div>
+                    </div>
+                    <p class="dns-used-max" id="dashboard-dns-used-max">0 / 0</p>
+                    <div class="progress-bar-container dns-bar-container">
+                        <div class="progress-bar dns-bar" id="dashboard-dns-bar">
+                            <span class="progress-text" id="dashboard-dns-bar-text"></span>
+                        </div>
+                    </div>
+                    <p class="dns-status" id="dashboard-dns-status">—</p>
+                    <p class="dns-weekly" id="dashboard-dns-weekly"></p>
+                    <p class="dns-streak" id="dashboard-dns-streak"></p>
+                    <p class="dns-warning hidden" id="dashboard-dns-warning"></p>
+                    <p class="dns-relapse hidden" id="dashboard-dns-relapse"></p>
+                </div>
+
+                <!-- Progress Bar -->
+                <div class="progress-section">
+                    <h3>Quit/Taper Progress</h3>
+                    <div class="progress-bar-container">
+                        <div class="progress-bar" id="taper-progress">
+                            <span class="progress-text" id="progress-text">0%</span>
+                        </div>
+                    </div>
+                    <p class="progress-label" id="progress-label">No taper goal set</p>
+                </div>
+
+                <!-- Dashboard Stats -->
+                <div class="stats-grid" id="dashboard-main-stats">
+                    <div class="stat-card highlight">
+                        <h3>Today's Total Use</h3>
+                        <p class="stat-value" id="dash-today-total-use">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Today Session Duration</h3>
+                        <p class="stat-value" id="dash-today-session-duration">—</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Time Since Last Use</h3>
+                        <p class="stat-value" id="dash-time-since-last-use">—</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Daily Taper Limit</h3>
+                        <p class="stat-value" id="dash-daily-taper-limit">—</p>
+                    </div>
+                    <div class="stat-card highlight">
+                        <h3>Remaining Today</h3>
+                        <p class="stat-value" id="dash-remaining-taper">—</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Spent Today (Buy)</h3>
+                        <p class="stat-value" id="dash-spent-today-buy">$0.00</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Last Purchase</h3>
+                        <p class="stat-value stat-value-sm" id="dash-last-purchase">—</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Recovery Streak</h3>
+                        <p class="stat-value" id="recovery-streak-current">0 days</p>
+                        <p class="stat-sub" id="recovery-streak-since">—</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Cravings Resisted</h3>
+                        <p class="stat-value" id="cravings-resisted">0</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Use Log Tab -->
+            <section id="use-log-tab" class="tab">
+                <h2>Use Log</h2>
+                <p class="settings-hint">Quick Use = instant log. Session = tracked start/end with duration and rate.</p>
+
+                <form id="use-log-form">
+                    <div class="form-group use-type-toggle">
+                        <label>Entry Type</label>
+                        <div class="type-toggle-btns">
+                            <button type="button" class="type-toggle-btn active" data-type="quick" onclick="setUseLogType('quick')">⚡ Quick Use</button>
+                            <button type="button" class="type-toggle-btn" data-type="session" onclick="setUseLogType('session')">⏱️ Session</button>
+                        </div>
+                        <input type="hidden" id="use-type" value="quick">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="use-substance">Substance</label>
+                        <select id="use-substance" required></select>
+                    </div>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="use-date">Date</label>
+                            <input type="date" id="use-date" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="use-start-time">Start Time</label>
+                            <input type="time" id="use-start-time" required>
+                        </div>
+                        <div class="form-group session-only-field hidden">
+                            <label for="use-end-time">End Time (optional)</label>
+                            <input type="time" id="use-end-time">
+                        </div>
+                    </div>
+                    <p id="use-duration-preview" class="use-duration-preview hidden">Duration: —</p>
+
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="use-amount">Amount</label>
+                            <input type="number" id="use-amount" min="0" step="0.01" value="1" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="use-unit">Unit</label>
+                            <select id="use-unit" required></select>
+                        </div>
+                        <div class="form-group">
+                            <label for="use-count">Count (lines/hits/drinks)</label>
+                            <input type="number" id="use-count" min="0" step="1" placeholder="Optional">
+                        </div>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="use-cost">Cost ($)</label>
+                        <input type="number" id="use-cost" step="0.01" min="0" placeholder="Auto-calculated">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="use-craving-level">Craving Level (1-10)</label>
+                        <input type="range" id="use-craving-level" min="1" max="10" value="5">
+                        <span id="use-craving-level-value">5</span>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="use-trigger">Trigger</label>
+                        <select id="use-trigger">
+                            <option value="">Select (optional)</option>
+                            <option value="Stress">Stress</option>
+                            <option value="Boredom">Boredom</option>
+                            <option value="Social">Social</option>
+                            <option value="Habit">Habit</option>
+                            <option value="After Meal">After Meal</option>
+                            <option value="With Coffee">With Coffee</option>
+                            <option value="With Alcohol">With Alcohol</option>
+                            <option value="Emotional">Emotional</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+
+                    <div class="form-group">
+                        <label for="use-location">Location</label>
+                        <input type="text" id="use-location" placeholder="Where are you?">
+                    </div>
+
+                    <div class="form-group">
+                        <label for="use-notes">Notes</label>
+                        <textarea id="use-notes" rows="2" placeholder="Notes..."></textarea>
+                    </div>
+
+                    <p id="use-taper-preview" class="session-taper-preview hidden"></p>
+                    <button type="submit" class="submit-btn">Save Entry</button>
+                </form>
+
+                <div class="recent-logs">
+                    <h3>Recent Use</h3>
+                    <div id="recent-use-list"></div>
+                </div>
+
+                <div class="use-history-section">
+                    <h3>Use History</h3>
+                    <div id="use-history-table-wrap"></div>
+                </div>
+            </section>
+
+            <!-- Stats Tab -->
+            <section id="stats-tab" class="tab">
+                <h2>Analytics</h2>
+
+                <div class="form-group">
+                    <label for="stats-substance">Substance</label>
+                    <select id="stats-substance" onchange="switchStatsSubstance(this.value)"></select>
+                </div>
+
+                <div id="stats-all-view" class="hidden">
+                    <div class="stats-section">
+                        <h3>By Substance</h3>
+                        <div id="stats-by-substance"></div>
+                    </div>
+                </div>
+
+                <div id="stats-single-view">
+                <div class="stats-section">
+                    <h3>Usage Per Day (Last 7 Days)</h3>
+                    <div id="cigarettes-per-day-chart" class="chart-container"></div>
+                </div>
+
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <h3>Total This Week</h3>
+                        <p class="stat-value" id="total-week">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Total This Month</h3>
+                        <p class="stat-value" id="total-month">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Avg Per Day</h3>
+                        <p class="stat-value" id="avg-per-day">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Longest Time Between</h3>
+                        <p class="stat-value" id="longest-time-between">--</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Total Money Spent</h3>
+                        <p class="stat-value" id="total-spent">$0.00</p>
+                    </div>
+                    <div class="stat-card highlight">
+                        <h3>Estimated Money Saved</h3>
+                        <p class="stat-value" id="estimated-saved">$0.00</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Cost Per Week</h3>
+                        <p class="stat-value" id="cost-per-week">$0.00</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Cost Per Month</h3>
+                        <p class="stat-value" id="cost-per-month">$0.00</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Reduction from Baseline</h3>
+                        <p class="stat-value" id="reduction-baseline">0%</p>
+                    </div>
+                    <div class="stat-card highlight">
+                        <h3>Current Recovery Streak</h3>
+                        <p class="stat-value" id="stats-recovery-current">0 days</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Best Recovery Streak</h3>
+                        <p class="stat-value" id="stats-recovery-best">0 days</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Cravings Logged</h3>
+                        <p class="stat-value" id="stats-cravings-count">0</p>
+                    </div>
+                    <div class="stat-card">
+                        <h3>Taper Progress</h3>
+                        <p class="stat-value" id="stats-taper-progress">—</p>
+                    </div>
+                </div>
+
+                <div class="stats-section">
+                    <h3>Spending (Last 7 Days)</h3>
+                    <div id="spending-per-day-chart" class="chart-container"></div>
+                </div>
+
+                <div class="stats-section">
+                    <h3>Top Triggers</h3>
+                    <div id="trigger-breakdown" class="breakdown-list"></div>
+                </div>
+                </div>
+            </section>
+
+            <!-- Taper Tab -->
+            <section id="taper-tab" class="tab">
+                <h2>Taper Plan</h2>
+
+                <div class="form-group">
+                    <label for="taper-substance">Substance</label>
+                    <select id="taper-substance" required></select>
+                </div>
+
+                <p id="taper-disabled-msg" class="empty-hint hidden">Taper tracking is disabled for this substance. Enable it in Manage Substances.</p>
+
+                <div id="taper-setup" class="taper-setup">
+                    <h3>Set Your Taper Goal</h3>
+                    <form id="taper-form">
+                        <div class="form-group">
+                            <label for="current-avg">Current Average Per Day</label>
+                            <input type="number" id="current-avg" min="1" step="0.5" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="goal-avg">Goal Per Day</label>
+                            <input type="number" id="goal-avg" min="0" step="0.5" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="end-date">Quit/Taper End Date</label>
+                            <input type="date" id="end-date" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="weekly-max">Weekly Max (optional)</label>
+                            <input type="number" id="weekly-max" min="0" step="0.5" placeholder="Auto from daily targets if empty">
+                        </div>
+                        <div class="form-group">
+                            <label for="taper-notes">Taper Notes</label>
+                            <textarea id="taper-notes" rows="2" placeholder="Personal reminders for your taper plan..."></textarea>
+                        </div>
+                        <div class="form-group toggle-row">
+                            <label for="block-quick-log-over-limit">Block quick-log when over daily limit</label>
+                            <input type="checkbox" id="block-quick-log-over-limit">
+                        </div>
+                        <button type="submit" class="submit-btn">Generate Plan</button>
+                    </form>
+                </div>
+
+                <div id="taper-plan" class="taper-plan hidden">
+                    <h3>Your Daily Targets</h3>
+                    <div id="taper-days-list"></div>
+
+                    <div class="taper-plan-settings">
+                        <h4>Plan Settings</h4>
+                        <div class="form-group">
+                            <label for="edit-weekly-max">Weekly Max</label>
+                            <input type="number" id="edit-weekly-max" min="0" step="0.5" onchange="saveTaperPlanSettings()">
+                        </div>
+                        <div class="form-group">
+                            <label for="edit-taper-notes">Taper Notes</label>
+                            <textarea id="edit-taper-notes" rows="2" onchange="saveTaperPlanSettings()" placeholder="Your taper reminders..."></textarea>
+                        </div>
+                        <div class="form-group toggle-row">
+                            <label for="edit-block-quick-log">Block quick-log when over limit</label>
+                            <input type="checkbox" id="edit-block-quick-log" onchange="saveTaperPlanSettings()">
+                        </div>
+                    </div>
+
+                    <button class="secondary-btn" onclick="resetTaper()">Reset Plan</button>
+                </div>
+
+                <div id="today-target" class="today-target hidden">
+                    <h3>Do Not Surpass — Today</h3>
+                    <div class="dns-grid">
+                        <div class="dns-stat">
+                            <span class="dns-label">Today's limit</span>
+                            <span class="dns-value" id="taper-dns-limit">--</span>
+                        </div>
+                        <div class="dns-stat">
+                            <span class="dns-label">Used today</span>
+                            <span class="dns-value" id="taper-dns-used">--</span>
+                        </div>
+                        <div class="dns-stat">
+                            <span class="dns-label">Remaining</span>
+                            <span class="dns-value" id="taper-dns-remaining">--</span>
+                        </div>
+                    </div>
+                    <p class="dns-used-max" id="taper-dns-used-max">0 / 0</p>
+                    <div class="progress-bar-container dns-bar-container">
+                        <div class="progress-bar dns-bar" id="taper-dns-bar">
+                            <span class="progress-text" id="taper-dns-bar-text"></span>
+                        </div>
+                    </div>
+                    <p class="dns-status" id="taper-dns-status">—</p>
+                    <p class="target-value" id="today-target-value">--</p>
+                    <p class="target-status" id="today-target-status">--</p>
+                    <p class="dns-weekly" id="taper-dns-weekly"></p>
+                    <p class="dns-streak" id="taper-dns-streak"></p>
+                    <p class="dns-warning hidden" id="taper-dns-warning"></p>
+                    <p class="dns-relapse hidden" id="taper-dns-relapse"></p>
+                    <div id="taper-notes-display" class="taper-notes-display hidden"></div>
+                </div>
+            </section>
+
+            <!-- Buy Tracker Tab -->
+            <section id="buy-tracker-tab" class="tab">
+                <h2>Buy Tracker</h2>
+                <p class="settings-hint">Track any purchase — substances, supplies, or items you buy.</p>
+
+                <form id="buy-form">
+                    <div class="form-group">
+                        <label for="buy-substance">Item / Substance</label>
+                        <select id="buy-substance" required></select>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="buy-date">Date</label>
+                            <input type="date" id="buy-date" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="buy-time">Time</label>
+                            <input type="time" id="buy-time" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="buy-quantity">Quantity Bought</label>
+                            <input type="number" id="buy-quantity" min="0.01" step="0.01" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="buy-unit">Unit</label>
+                            <select id="buy-unit" required></select>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label for="buy-total-cost">Total Cost ($)</label>
+                            <input type="number" id="buy-total-cost" step="0.01" min="0" required>
+                        </div>
+                        <div class="form-group">
+                            <label>Cost Per Unit</label>
+                            <p id="buy-cost-per-unit-preview" class="buy-preview">—</p>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="buy-store">Store / Location</label>
+                        <input type="text" id="buy-store" placeholder="Where did you buy it?">
+                    </div>
+                    <div class="form-group">
+                        <label for="buy-payment">Payment Method (optional)</label>
+                        <select id="buy-payment">
+                            <option value="">—</option>
+                            <option value="Cash">Cash</option>
+                            <option value="Card">Card</option>
+                            <option value="Apple Pay">Apple Pay</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="buy-notes">Notes</label>
+                        <textarea id="buy-notes" rows="2" placeholder="Purchase notes..."></textarea>
+                    </div>
+                    <button type="submit" class="submit-btn">Save Purchase</button>
+                </form>
+
+                <div class="buy-stats-section">
+                    <h3>Buy Tracker Stats</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card"><h3>Spent Today</h3><p class="stat-value" id="buy-spent-today">$0</p></div>
+                        <div class="stat-card"><h3>Spent This Week</h3><p class="stat-value" id="buy-spent-week">$0</p></div>
+                        <div class="stat-card"><h3>Spent This Month</h3><p class="stat-value" id="buy-spent-month">$0</p></div>
+                        <div class="stat-card"><h3>Purchases This Week</h3><p class="stat-value" id="buy-count-week">0</p></div>
+                        <div class="stat-card"><h3>Purchases This Month</h3><p class="stat-value" id="buy-count-month">0</p></div>
+                        <div class="stat-card"><h3>Avg Cost / Unit</h3><p class="stat-value" id="buy-avg-cost-unit">—</p></div>
+                        <div class="stat-card"><h3>Last Purchase</h3><p class="stat-value stat-value-sm" id="buy-last-date">—</p></div>
+                        <div class="stat-card"><h3>Est. Days Supply</h3><p class="stat-value" id="buy-days-supply">—</p></div>
+                    </div>
+                    <div class="buy-trend-section">
+                        <h4>Spending Trend (Last 7 Days)</h4>
+                        <div id="buy-spending-trend" class="chart-container"></div>
+                    </div>
+                </div>
+
+                <div class="purchase-history">
+                    <h3>Purchase History</h3>
+                    <div id="buy-history-list"></div>
+                </div>
+            </section>
+
+            <!-- Calendar Tab -->
+            <section id="calendar-tab" class="tab">
+                <h2>History</h2>
+
+                <div class="form-group">
+                    <label for="calendar-substance">Taper colors for:</label>
+                    <select id="calendar-substance" onchange="renderCalendar()"></select>
+                </div>
+
+                <div class="calendar-legend">
+                    <span class="legend-item"><span class="legend-dot taper-under"></span> Under target</span>
+                    <span class="legend-item"><span class="legend-dot taper-close"></span> Close to limit</span>
+                    <span class="legend-item"><span class="legend-dot taper-over"></span> Over target</span>
+                </div>
+
+                <div class="calendar-nav">
+                    <button class="nav-arrow" onclick="changeMonth(-1)">‹</button>
+                    <h3 id="calendar-month">January 2024</h3>
+                    <button class="nav-arrow" onclick="changeMonth(1)">›</button>
+                </div>
+
+                <div class="calendar-grid" id="calendar-grid"></div>
+
+                <div class="day-details">
+                    <h3>Selected Day Details</h3>
+                    <div id="day-details-content">
+                        <p style="color: var(--text-secondary); text-align: center;">Select a day to view details</p>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Settings Tab -->
+            <section id="settings-tab" class="tab">
+                <h2>Settings</h2>
+
+                <div class="settings-section">
+                    <h3>Manage Substances</h3>
+                    <p class="settings-hint">Add custom substances, set icons, colors, units, and tracking options.</p>
+                    <button type="button" class="submit-btn" onclick="openSubstanceEditor()">+ Add Substance</button>
+                    <div id="substances-list" class="substances-list"></div>
+                </div>
+
+                <!-- Substance Selector for Settings -->
+                <div class="form-group">
+                    <label for="settings-substance">Configure Settings For:</label>
+                    <select id="settings-substance" onchange="loadSubstanceSettings()"></select>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Privacy Lock</h3>
+                    <p class="settings-hint">Require a PIN to open the app. Data stays on this device only.</p>
+                    <div class="form-group toggle-row">
+                        <label for="privacy-lock-enabled">Enable privacy lock</label>
+                        <input type="checkbox" id="privacy-lock-enabled" onchange="togglePrivacyLockSetting()">
+                    </div>
+                    <div id="privacy-pin-setup" class="hidden">
+                        <div class="form-group">
+                            <label for="privacy-pin-new">Set PIN (4–6 digits)</label>
+                            <input type="password" id="privacy-pin-new" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" placeholder="••••">
+                        </div>
+                        <div class="form-group">
+                            <label for="privacy-pin-confirm">Confirm PIN</label>
+                            <input type="password" id="privacy-pin-confirm" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" placeholder="••••">
+                        </div>
+                        <button type="button" class="submit-btn" onclick="savePrivacyPin()">Save PIN</button>
+                        <button type="button" class="secondary-btn" onclick="changePrivacyPin()" style="margin-top:8px;width:100%;">Change PIN</button>
+                    </div>
+                    <div class="form-group">
+                        <label for="auto-lock-minutes">Auto-lock after (minutes, 0 = manual only)</label>
+                        <input type="number" id="auto-lock-minutes" min="0" max="120" value="5" onchange="savePrivacySettings()">
+                    </div>
+                    <button type="button" class="secondary-btn" onclick="lockAppNow()" style="width:100%;">Lock Now</button>
+                </div>
+
+                <div id="settings-cost-section" class="settings-section">
+                    <h3>Default Cost Settings</h3>
+                    <p class="settings-hint">Used to auto-calculate use cost when not entered manually.</p>
+                    <div class="form-group">
+                        <label for="settings-unit-price">Typical Purchase Price ($)</label>
+                        <input type="number" id="settings-unit-price" step="0.01" min="0" onchange="saveSettings()">
+                    </div>
+                    <div class="form-group">
+                        <label for="settings-units-per-purchase">Units Per Purchase</label>
+                        <input type="number" id="settings-units-per-purchase" min="1" onchange="saveSettings()">
+                    </div>
+                </div>
+
+                <div id="settings-baseline-section" class="settings-section">
+                    <h3>Baseline & Goals</h3>
+                    <div class="form-group">
+                        <label for="baseline-cigs">Baseline Per Day</label>
+                        <input type="number" id="baseline-cigs" min="0" step="0.5" onchange="saveSettings()">
+                    </div>
+                    <div class="form-group">
+                        <label for="quit-goal">Quit Goal Date</label>
+                        <input type="date" id="quit-goal" onchange="saveSettings()">
+                    </div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Preferences</h3>
+                    <div class="form-group toggle-row">
+                        <label for="open-on-main-substance">Always open app on Main Substance</label>
+                        <input type="checkbox" id="open-on-main-substance" checked onchange="saveOpenOnMainSetting()">
+                    </div>
+                    <div class="form-group">
+                        <label for="currency">Currency Symbol</label>
+                        <input type="text" id="currency" maxlength="3" onchange="saveSettings()">
+                    </div>
+                    <div class="form-group">
+                        <label for="reminder-message">Reminder Message</label>
+                        <textarea id="reminder-message" rows="2" onchange="saveSettings()" placeholder="Your personal reminder..."></textarea>
+                    </div>
+                </div>
+
+                <!-- Safety Features -->
+                <div class="settings-section">
+                    <h3>Emergency & Safety</h3>
+                    <div class="safety-warning">
+                        <strong>⚠️ Emergency Contact</strong>
+                        <p>If you experience overdose symptoms or severe withdrawal, call emergency services immediately.</p>
+                        <a href="tel:911" class="emergency-link">📞 Call 911</a>
+                    </div>
+                </div>
+
+                <!-- Support Contacts -->
+                <div class="settings-section">
+                    <h3>Support Contacts</h3>
+                    <form id="contact-form" onsubmit="handleAddContact(event)">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="contact-name">Name</label>
+                                <input type="text" id="contact-name" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="contact-phone">Phone</label>
+                                <input type="tel" id="contact-phone" required>
+                            </div>
+                        </div>
+                        <button type="submit" class="submit-btn">Add Contact</button>
+                    </form>
+                    <div id="support-contacts-list"></div>
+                </div>
+
+                <!-- Reasons for Quitting -->
+                <div class="settings-section">
+                    <h3>Reasons for Quitting</h3>
+                    <form id="reason-form" onsubmit="handleAddReason(event)">
+                        <div class="form-group">
+                            <label for="reason">Add Your Why</label>
+                            <input type="text" id="reason" placeholder="Why do you want to quit?" required>
+                        </div>
+                        <button type="submit" class="submit-btn">Add Reason</button>
+                    </form>
+                    <div id="reasons-list"></div>
+                </div>
+
+                <div class="settings-section">
+                    <h3>Data Management</h3>
+                    <button class="secondary-btn" onclick="exportData()">Export Data</button>
+                    <button class="danger-btn" onclick="clearAllData()">Clear All Data</button>
+                </div>
+            </section>
+        </main>
+
+        <nav class="bottom-nav">
+            <button class="nav-btn active" data-tab="dashboard-tab" onclick="switchTab('dashboard-tab')">
+                <span>📊</span>
+                <span>Dashboard</span>
+            </button>
+            <button class="nav-btn" data-tab="use-log-tab" onclick="switchTab('use-log-tab')">
+                <span>📝</span>
+                <span>Use Log</span>
+            </button>
+            <button class="nav-btn" data-tab="buy-tracker-tab" onclick="switchTab('buy-tracker-tab')">
+                <span>🛒</span>
+                <span>Buy Tracker</span>
+            </button>
+            <button class="nav-btn" data-tab="stats-tab" onclick="switchTab('stats-tab')">
+                <span>📈</span>
+                <span>Stats</span>
+            </button>
+            <button class="nav-btn" data-tab="taper-tab" onclick="switchTab('taper-tab')">
+                <span>📉</span>
+                <span>Taper</span>
+            </button>
+            <button class="nav-btn" data-tab="calendar-tab" onclick="switchTab('calendar-tab')">
+                <span>📅</span>
+                <span>History</span>
+            </button>
+            <button class="nav-btn" data-tab="settings-tab" onclick="switchTab('settings-tab')">
+                <span>⚙️</span>
+                <span>Settings</span>
+            </button>
+        </nav>
+    </div>
+
+    <!-- Craving Modal -->
+    <div id="craving-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2>Log Craving</h2>
+            <form id="craving-form">
+                <div class="form-group">
+                    <label for="craving-substance">Substance</label>
+                    <select id="craving-substance" required></select>
+                </div>
+                <div class="form-group">
+                    <label for="craving-intensity">Intensity (1-10)</label>
+                    <input type="range" id="craving-intensity" min="1" max="10" value="5">
+                    <div class="range-value">
+                        <span>1</span>
+                        <span id="intensity-value">5</span>
+                        <span>10</span>
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="craving-trigger">Trigger</label>
+                    <select id="craving-trigger">
+                        <option value="">Select (optional)</option>
+                        <option value="Stress">Stress</option>
+                        <option value="Boredom">Boredom</option>
+                        <option value="Social">Social</option>
+                        <option value="Habit">Habit</option>
+                        <option value="After Meal">After Meal</option>
+                        <option value="With Coffee">With Coffee</option>
+                        <option value="With Alcohol">With Alcohol</option>
+                        <option value="Emotional">Emotional</option>
+                        <option value="Other">Other</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="craving-helped">What Helped?</label>
+                    <textarea id="craving-helped" rows="2" placeholder="What strategies helped?"></textarea>
+                </div>
+                <div class="form-row">
+                    <button type="button" class="secondary-btn" onclick="closeCravingModal()">Cancel</button>
+                    <button type="submit" class="submit-btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Substance Editor Modal -->
+    <div id="substance-editor-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <h2 id="substance-editor-title">Add Substance</h2>
+            <form id="substance-form">
+                <div class="form-group">
+                    <label for="substance-name">Name</label>
+                    <input type="text" id="substance-name" required placeholder="e.g. Caffeine, Sugar">
+                </div>
+                <div class="form-group">
+                    <label>Icon</label>
+                    <input type="hidden" id="substance-icon" value="📦">
+                    <div id="substance-icon-picker" class="picker-grid"></div>
+                </div>
+                <div class="form-group">
+                    <label>Color</label>
+                    <input type="hidden" id="substance-color" value="#4caf50">
+                    <div id="substance-color-picker" class="picker-grid color-grid"></div>
+                </div>
+                <div class="form-group">
+                    <label for="substance-units">Units (comma-separated)</label>
+                    <input type="text" id="substance-units" placeholder="grams, servings, mg" required>
+                </div>
+                <div class="form-group">
+                    <label for="substance-default-unit">Default unit</label>
+                    <input type="text" id="substance-default-unit" placeholder="grams">
+                </div>
+                <div class="form-group toggle-row">
+                    <label for="substance-cost-tracking">Cost tracking</label>
+                    <input type="checkbox" id="substance-cost-tracking" checked>
+                </div>
+                <div class="form-group toggle-row">
+                    <label for="substance-taper-tracking">Taper tracking</label>
+                    <input type="checkbox" id="substance-taper-tracking" checked>
+                </div>
+                <div class="form-row">
+                    <button type="button" class="secondary-btn" onclick="closeSubstanceEditor()">Cancel</button>
+                    <button type="submit" class="submit-btn">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Privacy Lock Screen -->
+    <div id="privacy-lock-screen" class="privacy-lock-screen hidden" aria-hidden="true">
+        <div class="privacy-lock-panel">
+            <h2>🔒 Recovery Tracker</h2>
+            <p class="privacy-lock-subtitle">Enter your PIN to continue</p>
+            <div class="pin-dots" id="pin-dots" aria-live="polite">
+                <span></span><span></span><span></span><span></span>
+            </div>
+            <p id="pin-error" class="pin-error hidden" role="alert"></p>
+            <input type="password" id="pin-input" class="visually-hidden" inputmode="numeric" maxlength="6" autocomplete="off">
+            <div class="pin-keypad">
+                <button type="button" data-digit="1">1</button>
+                <button type="button" data-digit="2">2</button>
+                <button type="button" data-digit="3">3</button>
+                <button type="button" data-digit="4">4</button>
+                <button type="button" data-digit="5">5</button>
+                <button type="button" data-digit="6">6</button>
+                <button type="button" data-digit="7">7</button>
+                <button type="button" data-digit="8">8</button>
+                <button type="button" data-digit="9">9</button>
+                <button type="button" class="pin-action" data-action="clear">Clear</button>
+                <button type="button" data-digit="0">0</button>
+                <button type="button" class="pin-action" data-action="back">⌫</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js" defer></script>
+</body>
+</html>
