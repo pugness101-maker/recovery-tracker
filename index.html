@@ -115,6 +115,7 @@
         <header>
             <h1>Recovery Tracker</h1>
             <p class="subtitle">Track your progress, one day at a time</p>
+            <p id="dashboard-last-saved" class="last-saved-status">Last Saved: Never</p>
         </header>
 
         <main>
@@ -158,32 +159,53 @@
                     </button>
                 </div>
 
-                <!-- Do Not Surpass -->
+                <!-- Main substance taper progress -->
                 <div id="dns-section" class="dns-section hidden">
-                    <h3>Do Not Surpass — Today</h3>
+                    <h3>Taper Progress <span class="dns-subtitle" id="dashboard-taper-substance-label"></span></h3>
                     <div class="dns-grid">
                         <div class="dns-stat">
-                            <span class="dns-label">Today's limit</span>
-                            <span class="dns-value" id="dashboard-dns-limit">--</span>
+                            <span class="dns-label">Daily Limit</span>
+                            <span class="dns-value" id="dashboard-dns-limit">—</span>
                         </div>
                         <div class="dns-stat">
-                            <span class="dns-label">Used today</span>
-                            <span class="dns-value" id="dashboard-dns-used">--</span>
+                            <span class="dns-label">Used Today</span>
+                            <span class="dns-value" id="dashboard-dns-used">—</span>
                         </div>
                         <div class="dns-stat">
-                            <span class="dns-label">Remaining</span>
-                            <span class="dns-value" id="dashboard-dns-remaining">--</span>
+                            <span class="dns-label">Remaining Today</span>
+                            <span class="dns-value" id="dashboard-dns-remaining">—</span>
+                        </div>
+                        <div class="dns-stat">
+                            <span class="dns-label">Weekly Limit</span>
+                            <span class="dns-value" id="dashboard-weekly-limit">—</span>
+                        </div>
+                        <div class="dns-stat">
+                            <span class="dns-label">Used This Week</span>
+                            <span class="dns-value" id="dashboard-weekly-used">—</span>
+                        </div>
+                        <div class="dns-stat">
+                            <span class="dns-label">Remaining This Week</span>
+                            <span class="dns-value" id="dashboard-weekly-remaining">—</span>
                         </div>
                     </div>
-                    <p class="dns-used-max" id="dashboard-dns-used-max">0 / 0</p>
+                    <p class="dns-used-max" id="dashboard-dns-used-max">0 / 0 daily</p>
                     <div class="progress-bar-container dns-bar-container">
                         <div class="progress-bar dns-bar" id="dashboard-dns-bar">
                             <span class="progress-text" id="dashboard-dns-bar-text"></span>
                         </div>
                     </div>
+                    <p class="taper-progress-label">Daily target</p>
+                    <div class="progress-bar-container dns-bar-container">
+                        <div class="progress-bar dns-bar" id="dashboard-weekly-bar">
+                            <span class="progress-text" id="dashboard-weekly-bar-text"></span>
+                        </div>
+                    </div>
+                    <p class="taper-progress-label">Weekly target</p>
                     <p class="dns-status" id="dashboard-dns-status">—</p>
-                    <p class="dns-weekly" id="dashboard-dns-weekly"></p>
-                    <p class="dns-streak" id="dashboard-dns-streak"></p>
+                    <p class="dns-status" id="dashboard-weekly-status">—</p>
+                    <p class="dns-status" id="dashboard-taper-overall-status">—</p>
+                    <p class="dns-weekly hidden" id="dashboard-dns-weekly"></p>
+                    <p class="dns-streak hidden" id="dashboard-dns-streak"></p>
                     <p class="dns-warning hidden" id="dashboard-dns-warning"></p>
                     <p class="dns-relapse hidden" id="dashboard-dns-relapse"></p>
                 </div>
@@ -220,6 +242,13 @@
                     <div class="stat-card highlight">
                         <h3>Remaining Today</h3>
                         <p class="stat-value" id="dash-remaining-taper">—</p>
+                    </div>
+                    <div class="stat-card supply-card highlight">
+                        <h3>Current Supply</h3>
+                        <p class="stat-value" id="dash-supply-total">—</p>
+                        <p class="stat-sub" id="dash-supply-current-bag">—</p>
+                        <p class="stat-sub" id="dash-supply-last-purchase">—</p>
+                        <p class="stat-sub" id="dash-supply-days-left">—</p>
                     </div>
                     <div class="stat-card">
                         <h3>Spent Today (Buy)</h3>
@@ -277,6 +306,20 @@
                     </div>
                     <p id="use-duration-preview" class="use-duration-preview hidden">Duration: —</p>
 
+                    <div class="form-group">
+                        <label for="use-purchase-link-mode">Use From Purchase / Bag</label>
+                        <select id="use-purchase-link-mode" onchange="updateUsePurchaseLinkUI()">
+                            <option value="auto">Auto-select current supply</option>
+                            <option value="manual">Manual select purchase</option>
+                            <option value="none">No linked purchase</option>
+                        </select>
+                    </div>
+                    <div id="use-purchase-manual-wrap" class="form-group hidden">
+                        <label for="use-purchase-select">Select purchase</label>
+                        <select id="use-purchase-select"></select>
+                    </div>
+                    <p id="use-purchase-preview" class="use-supply-preview hidden">—</p>
+
                     <div class="form-row">
                         <div class="form-group">
                             <label for="use-amount">Amount</label>
@@ -293,44 +336,13 @@
                     </div>
 
                     <div class="form-group">
-                        <label for="use-cost">Cost ($)</label>
-                        <input type="number" id="use-cost" step="0.01" min="0" placeholder="Auto-calculated">
-                    </div>
-
-                    <div class="form-group">
-                        <label for="use-craving-level">Craving Level (1-10)</label>
-                        <input type="range" id="use-craving-level" min="1" max="10" value="5">
-                        <span id="use-craving-level-value">5</span>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="use-trigger">Trigger</label>
-                        <select id="use-trigger">
-                            <option value="">Select (optional)</option>
-                            <option value="Stress">Stress</option>
-                            <option value="Boredom">Boredom</option>
-                            <option value="Social">Social</option>
-                            <option value="Habit">Habit</option>
-                            <option value="After Meal">After Meal</option>
-                            <option value="With Coffee">With Coffee</option>
-                            <option value="With Alcohol">With Alcohol</option>
-                            <option value="Emotional">Emotional</option>
-                            <option value="Other">Other</option>
-                        </select>
-                    </div>
-
-                    <div class="form-group">
-                        <label for="use-location">Location</label>
-                        <input type="text" id="use-location" placeholder="Where are you?">
-                    </div>
-
-                    <div class="form-group">
                         <label for="use-notes">Notes</label>
                         <textarea id="use-notes" rows="2" placeholder="Notes..."></textarea>
                     </div>
 
                     <p id="use-taper-preview" class="session-taper-preview hidden"></p>
-                    <button type="submit" class="submit-btn">Save Entry</button>
+                    <button type="submit" class="submit-btn" id="use-submit-btn">Save Entry</button>
+                    <button type="button" id="cancel-use-edit-btn" class="secondary-btn hidden" onclick="cancelUseEdit()">Cancel Edit</button>
                 </form>
 
                 <div class="recent-logs">
@@ -400,8 +412,8 @@
                         <p class="stat-value" id="cost-per-month">$0.00</p>
                     </div>
                     <div class="stat-card">
-                        <h3>Reduction from Baseline</h3>
-                        <p class="stat-value" id="reduction-baseline">0%</p>
+                        <h3>Reduction from Taper Start</h3>
+                        <p class="stat-value" id="reduction-baseline">—</p>
                     </div>
                     <div class="stat-card highlight">
                         <h3>Current Recovery Streak</h3>
@@ -434,101 +446,203 @@
             </section>
 
             <!-- Taper Tab -->
-            <section id="taper-tab" class="tab">
-                <h2>Taper Plan</h2>
-
-                <div class="form-group">
-                    <label for="taper-substance">Substance</label>
-                    <select id="taper-substance" required></select>
+            <section id="taper-tab" class="tab taper-page">
+                <div class="taper-page-header">
+                    <div class="taper-page-title">
+                        <h2>Taper</h2>
+                        <p class="taper-page-subtitle">Daily & weekly limits at a glance</p>
+                    </div>
+                    <div class="taper-toolbar">
+                        <label for="taper-substance" class="taper-toolbar-label">Substance</label>
+                        <select id="taper-substance" class="taper-toolbar-select" required onchange="onTaperSubstanceChange()"></select>
+                    </div>
                 </div>
 
-                <p id="taper-disabled-msg" class="empty-hint hidden">Taper tracking is disabled for this substance. Enable it in Manage Substances.</p>
+                <p id="taper-disabled-msg" class="taper-empty-state hidden">Taper tracking is disabled for this substance. Enable it in <strong>Settings → Manage Substances</strong>.</p>
 
-                <div id="taper-setup" class="taper-setup">
-                    <h3>Set Your Taper Goal</h3>
-                    <form id="taper-form">
-                        <div class="form-group">
-                            <label for="current-avg">Current Average Per Day</label>
-                            <input type="number" id="current-avg" min="1" step="0.5" required>
+                <div id="taper-dashboard" class="taper-dashboard hidden">
+                    <div id="taper-paused-banner" class="taper-alert taper-alert-warn hidden">
+                        <span>⏸</span> Taper paused — limits are not enforced until you resume.
+                    </div>
+
+                    <!-- KPI strip -->
+                    <div class="taper-kpi-row">
+                        <div class="taper-kpi-tile" id="taper-kpi-daily">
+                            <span class="taper-kpi-label">Today's target</span>
+                            <span class="taper-kpi-value" id="taper-kpi-daily-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile" id="taper-kpi-used">
+                            <span class="taper-kpi-label">Used Today</span>
+                            <span class="taper-kpi-value" id="taper-kpi-used-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-kpi-highlight" id="taper-kpi-remaining">
+                            <span class="taper-kpi-label">Remaining Today</span>
+                            <span class="taper-kpi-value" id="taper-kpi-remaining-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile" id="taper-kpi-status">
+                            <span class="taper-kpi-label">Status</span>
+                            <span class="taper-kpi-value taper-kpi-status-text" id="taper-kpi-status-val">—</span>
+                        </div>
+                    </div>
+
+                    <!-- Plan control strip -->
+                    <div class="taper-plan-strip" id="taper-plan-summary-card">
+                        <div class="taper-plan-strip-main">
+                            <span class="taper-plan-icon" id="taper-plan-icon">📉</span>
+                            <div>
+                                <p id="taper-plan-summary-text" class="taper-plan-strip-title">—</p>
+                                <p id="taper-plan-summary-dates" class="taper-plan-strip-meta">—</p>
+                            </div>
+                        </div>
+                        <div class="taper-plan-strip-progress">
+                            <span class="taper-plan-pct" id="taper-plan-pct-label">Plan progress</span>
+                            <div class="taper-plan-pct-bar"><div class="taper-plan-pct-fill" id="taper-plan-pct-fill"></div></div>
+                        </div>
+                        <div class="taper-plan-actions">
+                            <button type="button" class="taper-chip-btn" onclick="editTaperPlan()">✏️ Edit</button>
+                            <button type="button" class="taper-chip-btn" id="taper-pause-btn" onclick="pauseTaper()">⏸ Pause</button>
+                            <button type="button" class="taper-chip-btn taper-chip-danger" onclick="resetTaper()">Reset</button>
+                        </div>
+                    </div>
+
+                    <div class="taper-dash-grid">
+                        <div class="taper-dash-main">
+                            <!-- Progress -->
+                            <div class="taper-panel" id="taper-progress-card">
+                                <div class="taper-panel-header">
+                                    <h3>Progress Tracking</h3>
+                                </div>
+                                <div class="taper-progress-split">
+                                    <div class="taper-progress-panel">
+                                        <div class="taper-progress-panel-head">
+                                            <span class="taper-panel-badge">Daily</span>
+                                            <span id="taper-today-status" class="taper-status-badge taper-status-under">—</span>
+                                        </div>
+                                        <div class="taper-mini-stats">
+                                            <div class="taper-mini-stat"><span>Target</span><strong id="taper-today-limit">—</strong></div>
+                                            <div class="taper-mini-stat"><span>Used</span><strong id="taper-today-used">—</strong></div>
+                                            <div class="taper-mini-stat"><span>Left</span><strong id="taper-today-remaining">—</strong></div>
+                                            <div class="taper-mini-stat"><span>%</span><strong id="taper-today-pct">—</strong></div>
+                                        </div>
+                                        <div class="progress-bar-container dns-bar-container taper-bar">
+                                            <div class="progress-bar dns-bar" id="taper-today-bar"><span class="progress-text" id="taper-today-bar-text"></span></div>
+                                        </div>
+                                    </div>
+                                    <div class="taper-progress-panel">
+                                        <div class="taper-progress-panel-head">
+                                            <span class="taper-panel-badge">Weekly</span>
+                                            <span id="taper-weekly-status" class="taper-status-badge">—</span>
+                                        </div>
+                                        <div class="taper-mini-stats">
+                                            <div class="taper-mini-stat"><span>Target</span><strong id="taper-weekly-max-val">—</strong></div>
+                                            <div class="taper-mini-stat"><span>Used</span><strong id="taper-weekly-used">—</strong></div>
+                                            <div class="taper-mini-stat"><span>Left</span><strong id="taper-weekly-remaining">—</strong></div>
+                                            <div class="taper-mini-stat"><span>%</span><strong id="taper-weekly-pct">—</strong></div>
+                                        </div>
+                                        <div class="progress-bar-container dns-bar-container taper-bar">
+                                            <div class="progress-bar dns-bar" id="taper-weekly-bar"><span class="progress-text" id="taper-weekly-bar-text"></span></div>
+                                        </div>
+                                    </div>
+                                </div>
+                                <p id="taper-weekly-days-left" class="taper-panel-footer hidden">—</p>
+                            </div>
+
+                            <!-- Weekly plan table -->
+                            <div class="taper-panel" id="taper-weekly-plan-card">
+                                <div class="taper-panel-header">
+                                    <h3>Weekly Plan</h3>
+                                </div>
+                                <div id="taper-weekly-summary" class="taper-kpi-chips"></div>
+                                <div id="taper-weekly-table" class="taper-table-wrap"></div>
+                            </div>
+                        </div>
+
+                        <aside class="taper-dash-side">
+                            <div class="taper-panel" id="taper-reduction-card">
+                                <div class="taper-panel-header">
+                                    <h3>Reduction Targets</h3>
+                                </div>
+                                <div id="taper-reduction-readonly" class="taper-metric-grid"></div>
+                                <h4 class="taper-panel-subtitle">Projected</h4>
+                                <div id="taper-reduction-calculated" class="taper-metric-grid taper-metric-grid-compact"></div>
+                            </div>
+                        </aside>
+                    </div>
+                </div>
+
+                <div id="taper-no-plan" class="taper-empty-dashboard hidden">
+                    <div class="taper-empty-icon">📉</div>
+                    <h3>No taper plan yet</h3>
+                    <p>Set starting and goal averages, pick a reduction style, and track progress week by week.</p>
+                    <button type="button" class="submit-btn" onclick="showTaperSetup()">Create Reduction Plan</button>
+                </div>
+
+                <div id="taper-setup" class="taper-editor-panel hidden">
+                    <div class="taper-editor-header">
+                        <h3 id="taper-setup-title">Create Reduction Plan</h3>
+                        <button type="button" class="taper-chip-btn" onclick="cancelTaperEdit()">← Back to dashboard</button>
+                    </div>
+                    <form id="taper-form" class="taper-form-compact">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="current-avg">Starting Daily Average</label>
+                                <input type="number" id="current-avg" min="0" step="0.1" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="goal-avg">Goal Daily Average</label>
+                                <input type="number" id="goal-avg" min="0" step="0.1" required>
+                            </div>
                         </div>
                         <div class="form-group">
-                            <label for="goal-avg">Goal Per Day</label>
-                            <input type="number" id="goal-avg" min="0" step="0.5" required>
+                            <label for="reduction-type">Reduction Target</label>
+                            <select id="reduction-type" onchange="toggleTaperPlanTypeFields()">
+                                <option value="reduce-amount">Reduce by amount</option>
+                                <option value="reduce-percent">Reduce by percent</option>
+                                <option value="fixed">Fixed daily limit</option>
+                                <option value="step-weekly">Weekly step-down</option>
+                            </select>
+                            <p class="field-hint" id="plan-type-hint">Reduce a set amount each week until you reach your goal.</p>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group" id="reduction-amount-group">
+                                <label for="reduction-amount">Reduction amount (per week)</label>
+                                <input type="number" id="reduction-amount" min="0" step="0.1" placeholder="e.g. 0.5">
+                            </div>
+                            <div class="form-group hidden" id="reduction-percent-group">
+                                <label for="reduction-percent">Reduction percent (per week)</label>
+                                <input type="number" id="reduction-percent" min="0" max="100" step="1" placeholder="e.g. 10">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="end-date">Target end date</label>
+                                <input type="date" id="end-date" required>
+                            </div>
+                            <div class="form-group">
+                                <label for="weekly-max">Weekly Limit</label>
+                                <input type="number" id="weekly-max" min="0" step="0.1" placeholder="Optional">
+                                <p class="field-hint">e.g. 7g per week — auto-calculated if empty.</p>
+                            </div>
                         </div>
                         <div class="form-group">
-                            <label for="end-date">Quit/Taper End Date</label>
-                            <input type="date" id="end-date" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="weekly-max">Weekly Max (optional)</label>
-                            <input type="number" id="weekly-max" min="0" step="0.5" placeholder="Auto from daily targets if empty">
-                        </div>
-                        <div class="form-group">
-                            <label for="taper-notes">Taper Notes</label>
-                            <textarea id="taper-notes" rows="2" placeholder="Personal reminders for your taper plan..."></textarea>
+                            <label for="taper-notes">Plan notes</label>
+                            <textarea id="taper-notes" rows="2" placeholder="Personal reminders..."></textarea>
                         </div>
                         <div class="form-group toggle-row">
-                            <label for="block-quick-log-over-limit">Block quick-log when over daily limit</label>
-                            <input type="checkbox" id="block-quick-log-over-limit">
+                            <label for="do-not-surpass-daily">Do not surpass daily limit</label>
+                            <input type="checkbox" id="do-not-surpass-daily" checked>
                         </div>
-                        <button type="submit" class="submit-btn">Generate Plan</button>
+                        <div class="form-group toggle-row">
+                            <label for="do-not-surpass-weekly">Do not surpass weekly limit</label>
+                            <input type="checkbox" id="do-not-surpass-weekly">
+                        </div>
+                        <div class="taper-form-actions">
+                            <button type="button" class="secondary-btn hidden" id="taper-cancel-edit-btn" onclick="cancelTaperEdit()">Cancel Edit</button>
+                            <button type="submit" class="submit-btn" id="taper-generate-btn">Save Plan</button>
+                        </div>
                     </form>
                 </div>
 
-                <div id="taper-plan" class="taper-plan hidden">
-                    <h3>Your Daily Targets</h3>
-                    <div id="taper-days-list"></div>
-
-                    <div class="taper-plan-settings">
-                        <h4>Plan Settings</h4>
-                        <div class="form-group">
-                            <label for="edit-weekly-max">Weekly Max</label>
-                            <input type="number" id="edit-weekly-max" min="0" step="0.5" onchange="saveTaperPlanSettings()">
-                        </div>
-                        <div class="form-group">
-                            <label for="edit-taper-notes">Taper Notes</label>
-                            <textarea id="edit-taper-notes" rows="2" onchange="saveTaperPlanSettings()" placeholder="Your taper reminders..."></textarea>
-                        </div>
-                        <div class="form-group toggle-row">
-                            <label for="edit-block-quick-log">Block quick-log when over limit</label>
-                            <input type="checkbox" id="edit-block-quick-log" onchange="saveTaperPlanSettings()">
-                        </div>
-                    </div>
-
-                    <button class="secondary-btn" onclick="resetTaper()">Reset Plan</button>
-                </div>
-
-                <div id="today-target" class="today-target hidden">
-                    <h3>Do Not Surpass — Today</h3>
-                    <div class="dns-grid">
-                        <div class="dns-stat">
-                            <span class="dns-label">Today's limit</span>
-                            <span class="dns-value" id="taper-dns-limit">--</span>
-                        </div>
-                        <div class="dns-stat">
-                            <span class="dns-label">Used today</span>
-                            <span class="dns-value" id="taper-dns-used">--</span>
-                        </div>
-                        <div class="dns-stat">
-                            <span class="dns-label">Remaining</span>
-                            <span class="dns-value" id="taper-dns-remaining">--</span>
-                        </div>
-                    </div>
-                    <p class="dns-used-max" id="taper-dns-used-max">0 / 0</p>
-                    <div class="progress-bar-container dns-bar-container">
-                        <div class="progress-bar dns-bar" id="taper-dns-bar">
-                            <span class="progress-text" id="taper-dns-bar-text"></span>
-                        </div>
-                    </div>
-                    <p class="dns-status" id="taper-dns-status">—</p>
-                    <p class="target-value" id="today-target-value">--</p>
-                    <p class="target-status" id="today-target-status">--</p>
-                    <p class="dns-weekly" id="taper-dns-weekly"></p>
-                    <p class="dns-streak" id="taper-dns-streak"></p>
-                    <p class="dns-warning hidden" id="taper-dns-warning"></p>
-                    <p class="dns-relapse hidden" id="taper-dns-relapse"></p>
-                    <div id="taper-notes-display" class="taper-notes-display hidden"></div>
-                </div>
             </section>
 
             <!-- Buy Tracker Tab -->
@@ -589,7 +703,8 @@
                         <label for="buy-notes">Notes</label>
                         <textarea id="buy-notes" rows="2" placeholder="Purchase notes..."></textarea>
                     </div>
-                    <button type="submit" class="submit-btn">Save Purchase</button>
+                    <button type="submit" class="submit-btn" id="buy-submit-btn">Save Purchase</button>
+                    <button type="button" class="secondary-btn hidden" id="cancel-buy-edit-btn" onclick="cancelBuyEdit()">Cancel Edit</button>
                 </form>
 
                 <div class="buy-stats-section">
@@ -629,6 +744,7 @@
                     <span class="legend-item"><span class="legend-dot taper-under"></span> Under target</span>
                     <span class="legend-item"><span class="legend-dot taper-close"></span> Close to limit</span>
                     <span class="legend-item"><span class="legend-dot taper-over"></span> Over target</span>
+                    <span class="legend-item"><span class="legend-dot taper-none"></span> No target</span>
                 </div>
 
                 <div class="calendar-nav">
@@ -658,69 +774,17 @@
                     <div id="substances-list" class="substances-list"></div>
                 </div>
 
-                <!-- Substance Selector for Settings -->
-                <div class="form-group">
-                    <label for="settings-substance">Configure Settings For:</label>
-                    <select id="settings-substance" onchange="loadSubstanceSettings()"></select>
-                </div>
-
                 <div class="settings-section">
-                    <h3>Privacy Lock</h3>
-                    <p class="settings-hint">Require a PIN to open the app. Data stays on this device only.</p>
+                    <h3>Main Substance</h3>
+                    <p class="settings-hint">Set your main substance in <strong>Manage Substances</strong> (⭐ Set as Main). Control startup behavior below.</p>
                     <div class="form-group toggle-row">
-                        <label for="privacy-lock-enabled">Enable privacy lock</label>
-                        <input type="checkbox" id="privacy-lock-enabled" onchange="togglePrivacyLockSetting()">
-                    </div>
-                    <div id="privacy-pin-setup" class="hidden">
-                        <div class="form-group">
-                            <label for="privacy-pin-new">Set PIN (4–6 digits)</label>
-                            <input type="password" id="privacy-pin-new" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" placeholder="••••">
-                        </div>
-                        <div class="form-group">
-                            <label for="privacy-pin-confirm">Confirm PIN</label>
-                            <input type="password" id="privacy-pin-confirm" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="new-password" placeholder="••••">
-                        </div>
-                        <button type="button" class="submit-btn" onclick="savePrivacyPin()">Save PIN</button>
-                        <button type="button" class="secondary-btn" onclick="changePrivacyPin()" style="margin-top:8px;width:100%;">Change PIN</button>
-                    </div>
-                    <div class="form-group">
-                        <label for="auto-lock-minutes">Auto-lock after (minutes, 0 = manual only)</label>
-                        <input type="number" id="auto-lock-minutes" min="0" max="120" value="5" onchange="savePrivacySettings()">
-                    </div>
-                    <button type="button" class="secondary-btn" onclick="lockAppNow()" style="width:100%;">Lock Now</button>
-                </div>
-
-                <div id="settings-cost-section" class="settings-section">
-                    <h3>Default Cost Settings</h3>
-                    <p class="settings-hint">Used to auto-calculate use cost when not entered manually.</p>
-                    <div class="form-group">
-                        <label for="settings-unit-price">Typical Purchase Price ($)</label>
-                        <input type="number" id="settings-unit-price" step="0.01" min="0" onchange="saveSettings()">
-                    </div>
-                    <div class="form-group">
-                        <label for="settings-units-per-purchase">Units Per Purchase</label>
-                        <input type="number" id="settings-units-per-purchase" min="1" onchange="saveSettings()">
-                    </div>
-                </div>
-
-                <div id="settings-baseline-section" class="settings-section">
-                    <h3>Baseline & Goals</h3>
-                    <div class="form-group">
-                        <label for="baseline-cigs">Baseline Per Day</label>
-                        <input type="number" id="baseline-cigs" min="0" step="0.5" onchange="saveSettings()">
-                    </div>
-                    <div class="form-group">
-                        <label for="quit-goal">Quit Goal Date</label>
-                        <input type="date" id="quit-goal" onchange="saveSettings()">
+                        <label for="open-on-main-substance">Always open app on Main Substance</label>
+                        <input type="checkbox" id="open-on-main-substance" checked onchange="saveOpenOnMainSetting()">
                     </div>
                 </div>
 
                 <div class="settings-section">
                     <h3>Preferences</h3>
-                    <div class="form-group toggle-row">
-                        <label for="open-on-main-substance">Always open app on Main Substance</label>
-                        <input type="checkbox" id="open-on-main-substance" checked onchange="saveOpenOnMainSetting()">
-                    </div>
                     <div class="form-group">
                         <label for="currency">Currency Symbol</label>
                         <input type="text" id="currency" maxlength="3" onchange="saveSettings()">
@@ -774,9 +838,16 @@
                 </div>
 
                 <div class="settings-section">
-                    <h3>Data Management</h3>
-                    <button class="secondary-btn" onclick="exportData()">Export Data</button>
-                    <button class="danger-btn" onclick="clearAllData()">Clear All Data</button>
+                    <h3>Backup / Import / Export</h3>
+                    <p id="settings-last-saved" class="last-saved-status">Last Saved: Never</p>
+                    <p class="data-storage-note">Data is stored only in this browser (localStorage). No account or cloud sync.</p>
+                    <input type="file" id="import-json-input" accept=".json,application/json" class="hidden" onchange="handleImportJsonFile(event)">
+                    <div class="data-management-buttons">
+                        <button type="button" class="secondary-btn" onclick="exportJsonBackup()">Export JSON Backup</button>
+                        <button type="button" class="secondary-btn" onclick="triggerImportJsonBackup()">Import JSON Backup</button>
+                        <button type="button" class="secondary-btn" onclick="exportDataCsv()">Export CSV</button>
+                        <button type="button" class="danger-btn" onclick="clearAllData()">Clear All Data</button>
+                    </div>
                 </div>
             </section>
         </main>
@@ -859,10 +930,10 @@
     </div>
 
     <!-- Substance Editor Modal -->
-    <div id="substance-editor-modal" class="modal hidden">
-        <div class="modal-content modal-wide">
+    <div id="substance-modal" class="modal hidden">
+        <div class="modal-content modal-wide substance-modal-content">
             <h2 id="substance-editor-title">Add Substance</h2>
-            <form id="substance-form">
+            <form id="substance-form" novalidate>
                 <div class="form-group">
                     <label for="substance-name">Name</label>
                     <input type="text" id="substance-name" required placeholder="e.g. Caffeine, Sugar">
@@ -879,7 +950,7 @@
                 </div>
                 <div class="form-group">
                     <label for="substance-units">Units (comma-separated)</label>
-                    <input type="text" id="substance-units" placeholder="grams, servings, mg" required>
+                    <input type="text" id="substance-units" placeholder="grams, servings, mg" value="units">
                 </div>
                 <div class="form-group">
                     <label for="substance-default-unit">Default unit</label>
@@ -893,38 +964,11 @@
                     <label for="substance-taper-tracking">Taper tracking</label>
                     <input type="checkbox" id="substance-taper-tracking" checked>
                 </div>
-                <div class="form-row">
-                    <button type="button" class="secondary-btn" onclick="closeSubstanceEditor()">Cancel</button>
-                    <button type="submit" class="submit-btn">Save</button>
+                <div class="modal-actions">
+                    <button type="button" class="secondary-btn" onclick="closeSubstanceModal()">Cancel</button>
+                    <button id="save-substance-btn" type="button" class="submit-btn">Save Substance</button>
                 </div>
             </form>
-        </div>
-    </div>
-
-    <!-- Privacy Lock Screen -->
-    <div id="privacy-lock-screen" class="privacy-lock-screen hidden" aria-hidden="true">
-        <div class="privacy-lock-panel">
-            <h2>🔒 Recovery Tracker</h2>
-            <p class="privacy-lock-subtitle">Enter your PIN to continue</p>
-            <div class="pin-dots" id="pin-dots" aria-live="polite">
-                <span></span><span></span><span></span><span></span>
-            </div>
-            <p id="pin-error" class="pin-error hidden" role="alert"></p>
-            <input type="password" id="pin-input" class="visually-hidden" inputmode="numeric" maxlength="6" autocomplete="off">
-            <div class="pin-keypad">
-                <button type="button" data-digit="1">1</button>
-                <button type="button" data-digit="2">2</button>
-                <button type="button" data-digit="3">3</button>
-                <button type="button" data-digit="4">4</button>
-                <button type="button" data-digit="5">5</button>
-                <button type="button" data-digit="6">6</button>
-                <button type="button" data-digit="7">7</button>
-                <button type="button" data-digit="8">8</button>
-                <button type="button" data-digit="9">9</button>
-                <button type="button" class="pin-action" data-action="clear">Clear</button>
-                <button type="button" data-digit="0">0</button>
-                <button type="button" class="pin-action" data-action="back">⌫</button>
-            </div>
         </div>
     </div>
 

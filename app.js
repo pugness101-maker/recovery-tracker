@@ -1,6 +1,7 @@
 // Recovery Tracker v2 — dynamic substance tracking
 const STORAGE_KEY = 'recovery-tracker-v2';
 const STORAGE_KEY_V1 = 'use-tracker-v1';
+const LAST_SAVED_KEY = 'recovery-tracker-v2-last-saved';
 const DASHBOARD_ALL = 'all';
 
 const SUBSTANCE_ICONS = ['🚬', '💨', '🍺', '🌿', '💊', '☕', '🍬', '💉', '🎯', '⚡', '🧪', '📦', '🔥', '❄️', '💧', '🌸'];
@@ -87,6 +88,8 @@ function getDefaultSubstanceSettings() {
 const SESSION_RATE_HIGH_MULTIPLIER = 1.5;
 const SESSION_SHORT_BREAK_HOURS = 2;
 const SESSION_LONG_BREAK_HOURS = 12;
+const SUPPLY_LOW_REMAINING_PCT = 0.25;
+const INVENTORY_EPS = 0.0001;
 
 const defaultData = {
     substances: getDefaultSubstances(),
@@ -107,14 +110,14 @@ const defaultData = {
         enabled: false,
         pinHash: '',
         autoLockMinutes: 5
-    }
+    },
+    migrations: {}
 };
 
-let isUnlocked = false;
-let pinEntry = '';
-let lastActivityAt = Date.now();
-let autoLockTimer = null;
 let editingSubstanceId = null;
+let editingPurchaseId = null;
+let editingUseId = null;
+let taperEditingPlan = false;
 
 function slugify(name) {
     return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `substance-${Date.now()}`;
@@ -128,16 +131,6 @@ function uniqueSubstanceId(name, excludeId) {
         id = `${base}-${n++}`;
     }
     return id;
-}
-
-function hashPin(pin) {
-    let hash = 0;
-    const str = `ut-${pin}-salt`;
-    for (let i = 0; i < str.length; i++) {
-        hash = ((hash << 5) - hash) + str.charCodeAt(i);
-        hash |= 0;
-    }
-    return String(hash);
 }
 
 function migrateFromV1(v1) {
@@ -214,10 +207,13 @@ function migrateFromV1(v1) {
             substanceId: mapRef(p.substanceId || p.substance),
             date: p.date,
             time: '12:00',
+            quantityBought: qty,
             quantity: qty,
             unit: 'units',
             totalCost: p.packPrice || 0,
             costPerUnit: qty > 0 ? (p.packPrice || 0) / qty : 0,
+            remainingAmount: qty,
+            isDepleted: false,
             store: p.store || '',
             paymentMethod: '',
             notes: p.notes || ''
@@ -243,25 +239,27 @@ function migrateFromV1(v1) {
 }
 
 function loadData() {
-    const v2 = localStorage.getItem(STORAGE_KEY);
-    if (v2) {
-        const data = JSON.parse(v2);
+    const raw = localStorage.getItem(STORAGE_KEY);
+    let data;
+
+    if (raw) {
+        data = JSON.parse(raw);
         if (!data.substances?.length) data.substances = getDefaultSubstances();
         if (!data.privacy) data.privacy = { ...defaultData.privacy };
         if (!data.recoveryStreaks) data.recoveryStreaks = {};
-        normalizeAppData(data);
-        return data;
+    } else {
+        const v1 = localStorage.getItem(STORAGE_KEY_V1);
+        if (v1) {
+            data = migrateFromV1(JSON.parse(v1));
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        } else {
+            data = typeof structuredClone === 'function'
+                ? structuredClone(defaultData)
+                : JSON.parse(JSON.stringify(defaultData));
+        }
     }
 
-    const v1 = localStorage.getItem(STORAGE_KEY_V1);
-    if (v1) {
-        const migrated = migrateFromV1(JSON.parse(v1));
-        normalizeAppData(migrated);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(migrated));
-        return migrated;
-    }
-
-    return JSON.parse(JSON.stringify(defaultData));
+    return normalizeAppData(data);
 }
 
 function normalizeLegacyRefs(data) {
@@ -277,10 +275,17 @@ function normalizeAppData(data) {
     normalizeLegacyRefs(data);
     data.logs = data.logs || [];
     data.purchases = data.purchases || [];
+    data.cravings = data.cravings || [];
 
     data.logs.forEach(log => {
         if (!log.type) log.type = log.endTime ? 'session' : 'quick';
         if (!log.startTime && log.time) log.startTime = log.time;
+        const fallbackTs = log.timestamp || (log.date && (log.startTime || log.time)
+            ? new Date(`${log.date}T${log.startTime || log.time}`).toISOString()
+            : null);
+        if (!log.createdAt) log.createdAt = fallbackTs || new Date().toISOString();
+        if (!log.updatedAt) log.updatedAt = log.createdAt;
+        if (!log.timestamp && fallbackTs) log.timestamp = fallbackTs;
     });
 
     (data.sessions || []).forEach(s => {
@@ -294,12 +299,10 @@ function normalizeAppData(data) {
             amount: s.amount,
             unit: s.unit,
             count: s.count || 0,
-            cost: s.cost || 0,
-            trigger: '',
-            cravingLevel: 0,
-            location: '',
             notes: s.notes || '',
-            timestamp: s.timestamp || new Date().toISOString()
+            timestamp: s.timestamp || new Date().toISOString(),
+            createdAt: s.createdAt || s.timestamp || new Date().toISOString(),
+            updatedAt: s.updatedAt || s.createdAt || s.timestamp || new Date().toISOString()
         });
     });
     delete data.sessions;
@@ -312,10 +315,13 @@ function normalizeAppData(data) {
             substanceId: p.substanceId || p.substance,
             date: p.date,
             time: p.time || '12:00',
+            quantityBought: qty,
             quantity: qty,
             unit: 'units',
             totalCost: p.packPrice || 0,
             costPerUnit: qty > 0 ? (p.packPrice || 0) / qty : 0,
+            remainingAmount: qty,
+            isDepleted: false,
             store: p.store || '',
             paymentMethod: '',
             notes: p.notes || ''
@@ -329,10 +335,37 @@ function normalizeAppData(data) {
         if (!p.costPerUnit && p.quantity > 0) p.costPerUnit = p.totalCost / p.quantity;
     });
 
-    if (data.settings && data.settings.openOnMainSubstance === undefined) {
+    migrateInventoryLinkedV1(data);
+
+    data.purchases.forEach(p => {
+        migratePurchaseInventory(p, data.logs || [], data);
+    });
+
+    ensureAppDataSettings(data);
+    ensureAppDataMigrations(data);
+    normalizeMainSubstances(data);
+    Object.entries(data.taperPlans || {}).forEach(([substanceId, plan]) => {
+        migrateTaperPlan(plan, substanceId);
+    });
+    return data;
+}
+
+function ensureAppDataMigrations(data) {
+    if (!data.migrations) data.migrations = {};
+}
+
+function ensureAppDataSettings(data) {
+    if (!data.settings) {
+        data.settings = JSON.parse(JSON.stringify(defaultData.settings));
+    }
+    if (!data.settings.substanceSettings) {
+        data.settings.substanceSettings = getDefaultSubstanceSettings();
+    }
+    if (data.settings.openOnMainSubstance === undefined) {
         data.settings.openOnMainSubstance = true;
     }
-    normalizeMainSubstances(data);
+    if (!data.settings.currency) data.settings.currency = '$';
+    if (data.settings.reminderMessage === undefined) data.settings.reminderMessage = '';
 }
 
 function normalizeMainSubstances(data) {
@@ -357,11 +390,39 @@ function normalizeMainSubstances(data) {
 
 function saveData(data) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    const savedAt = new Date().toISOString();
+    localStorage.setItem(LAST_SAVED_KEY, savedAt);
+    updateLastSavedDisplay(savedAt);
 }
 
-let appData = loadData();
-let currentCalendarDate = new Date();
-let selectedDate = null;
+function getLastSavedTimestamp() {
+    return localStorage.getItem(LAST_SAVED_KEY);
+}
+
+function formatLastSaved(iso) {
+    if (!iso) return 'Never';
+    const d = new Date(iso);
+    return Number.isNaN(d.getTime()) ? 'Never' : d.toLocaleString();
+}
+
+function updateLastSavedDisplay(iso) {
+    const label = `Last Saved: ${formatLastSaved(iso || getLastSavedTimestamp())}`;
+    ['dashboard-last-saved', 'settings-last-saved'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = label;
+    });
+}
+
+function setText(id, text) {
+    const el = document.getElementById(id);
+    if (el) el.textContent = text;
+}
+
+function setInputValue(id, value) {
+    const el = document.getElementById(id);
+    if (el != null) el.value = value;
+}
+
 function getMainSubstance() {
     return appData.substances.find(s => s.active && s.isMain) || getActiveSubstances()[0] || null;
 }
@@ -390,8 +451,6 @@ function sortSubstancesMainFirst(list) {
     });
 }
 
-let currentSubstanceId = resolveStartupSubstanceId();
-
 document.addEventListener('DOMContentLoaded', () => {
     try {
         initializeApp();
@@ -402,34 +461,57 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initializeApp() {
     setupEventListeners();
-    setupPrivacyLock();
     loadSettings();
     populateAllSubstanceDropdowns();
     syncSubstanceSelectors();
+    syncTaperSubstanceToMain();
     updateDashboard();
     renderRecentUseList();
     renderCalendar();
-    updateTaperProgress();
-    checkTaperTarget();
-    renderTaperPlan();
+    refreshTaperDashboard();
     renderSupportContacts();
     renderReasons();
     renderSubstancesList();
     setupBuyTrackerForm();
     setupUseLogForm();
+    setupSubstanceForm();
     setDefaultUseLogDateTime();
     refreshAllRecoveryStreaks();
     updateQuickActions();
     updateDashboardMainDisplay();
     applyMainSubstanceToForms();
 
-    if (appData.privacy?.enabled) lockApp();
-    else isUnlocked = true;
+    updateLastSavedDisplay();
+}
+
+function refreshAppAfterDataChange() {
+    currentSubstanceId = resolveStartupSubstanceId();
+    loadSettings();
+    populateAllSubstanceDropdowns();
+    syncSubstanceSelectors();
+    applyMainSubstanceToForms();
+    applyMainSubstanceToViewSelectors();
+    updateDashboard();
+    updateDashboardMainDisplay();
+    updateQuickActions();
+    renderRecentUseList();
+    renderUseLogTab();
+    updateStats();
+    renderBuyTrackerTab();
+    renderCalendar();
+    syncTaperSubstanceToMain();
+    refreshTaperDashboard();
+    renderSubstancesList();
+    renderSupportContacts();
+    renderReasons();
+    refreshAllRecoveryStreaks();
 }
 
 // ——— Substance helpers ———
-function getSubstance(id) {
-    return appData.substances.find(s => s.id === id);
+function getSubstance(id, data = appData) {
+    if (!id) return null;
+    const substances = data?.substances || [];
+    return substances.find(s => s.id === id || s.name === id) || null;
 }
 
 function getSubstanceName(id) {
@@ -454,6 +536,8 @@ function setMainSubstance(id) {
     updateDashboardMainDisplay();
     updateDashboard();
     updateQuickActions();
+    syncTaperSubstanceToMain();
+    refreshTaperDashboard();
 }
 
 function applyMainSubstanceToForms() {
@@ -473,7 +557,7 @@ function applyMainSubstanceToViewSelectors() {
     const mainId = getMainSubstanceId();
     if (!mainId) return;
     currentSubstanceId = mainId;
-    ['dashboard-substance', 'stats-substance', 'settings-substance'].forEach(selectId => {
+    ['dashboard-substance', 'stats-substance'].forEach(selectId => {
         const el = document.getElementById(selectId);
         if (el && [...el.options].some(o => o.value === mainId)) el.value = mainId;
     });
@@ -495,8 +579,21 @@ function getTaperSubstances() {
     return sortSubstancesMainFirst(appData.substances.filter(s => s.active && s.taperTrackingEnabled));
 }
 
-function getSubstanceSettings(id) {
-    return appData.settings.substanceSettings[id] || { packPrice: 10, unitsPerPack: 20, baseline: 10, quitGoal: '' };
+function getAveragePurchaseCostPerUnit(substanceId) {
+    const purchases = (appData.purchases || []).filter(p => getPurchaseSubstanceId(p) === substanceId);
+    const withCpu = purchases.filter(p => {
+        const cpu = parseFloat(p.costPerUnit);
+        return Number.isFinite(cpu) && cpu > 0;
+    });
+    if (!withCpu.length) return null;
+    return withCpu.reduce((s, p) => s + parseFloat(p.costPerUnit), 0) / withCpu.length;
+}
+
+function getTaperStartingDailyAverage(substanceId) {
+    const plan = appData.taperPlans?.[substanceId];
+    if (!plan) return null;
+    const val = plan.startingDailyAverage ?? plan.currentAvg;
+    return val != null && val !== '' ? parseFloat(val) : null;
 }
 
 function isAllSubstancesView() {
@@ -533,19 +630,16 @@ function populateAllSubstanceDropdowns() {
     const active = getActiveSubstances();
     const taperSubs = sortSubstancesMainFirst(getTaperSubstances());
     const viewDefault = shouldOpenOnMainSubstance() && mainId ? mainId : currentSubstanceId;
-    const settingsDefault = currentSubstanceId === DASHBOARD_ALL ? (mainId || active[0]?.id) : (mainId && shouldOpenOnMainSubstance() ? mainId : currentSubstanceId);
 
     populateSelect('dashboard-substance', active, { includeAll: true, currentValue: viewDefault });
     populateSelect('craving-substance', getLoggableSubstances(), { currentValue: mainId });
     populateSelect('stats-substance', active, { includeAll: true, currentValue: viewDefault });
-    populateSelect('settings-substance', active, { currentValue: settingsDefault });
     populateSelect('taper-substance', taperSubs, { currentValue: mainId && taperSubs.some(s => s.id === mainId) ? mainId : taperSubs[0]?.id });
     populateSelect('use-substance', getLoggableSubstances(), { currentValue: mainId });
     populateSelect('buy-substance', active, { currentValue: mainId });
     populateSelect('calendar-substance', taperSubs, { currentValue: mainId && taperSubs.some(s => s.id === mainId) ? mainId : taperSubs[0]?.id });
     updateUseUnitDropdown();
     updateBuyUnitDropdown();
-    updateSettingsSectionsVisibility();
 }
 
 function syncSubstanceSelectors() {
@@ -593,14 +687,6 @@ function updateBuyUnitDropdown() {
     if (sub?.defaultUnit) unitSelect.value = sub.defaultUnit;
 }
 
-function updateSettingsSectionsVisibility() {
-    const sub = getSubstance(currentSubstanceId === DASHBOARD_ALL ? document.getElementById('settings-substance')?.value : currentSubstanceId);
-    const costSection = document.getElementById('settings-cost-section');
-    const baselineSection = document.getElementById('settings-baseline-section');
-    if (costSection) costSection.classList.toggle('hidden', !sub?.costTrackingEnabled);
-    if (baselineSection) baselineSection.classList.toggle('hidden', !sub?.taperTrackingEnabled);
-}
-
 function updateQuickActions() {
     const sub = isAllSubstancesView() ? getMainSubstance() : getSubstance(currentSubstanceId);
     const logBtn = document.getElementById('quick-log-btn');
@@ -618,7 +704,6 @@ function switchSubstance(substanceId) {
     updateTaperProgress();
     checkTaperTarget();
     updateQuickActions();
-    recordActivity();
 }
 
 function switchStatsSubstance(substanceId) {
@@ -681,23 +766,25 @@ function renderSubstancesList() {
 
 function openSubstanceEditor(id) {
     editingSubstanceId = id || null;
-    const modal = document.getElementById('substance-editor-modal');
+    const modal = document.getElementById('substance-modal');
     const title = document.getElementById('substance-editor-title');
     const unitsInput = document.getElementById('substance-units');
     const iconPicker = document.getElementById('substance-icon-picker');
     const colorPicker = document.getElementById('substance-color-picker');
+    if (!modal || !title || !unitsInput || !iconPicker || !colorPicker) return;
 
     title.textContent = id ? 'Edit Substance' : 'Add Substance';
     iconPicker.innerHTML = '';
     SUBSTANCE_ICONS.forEach(icon => {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'icon-pick-btn';
+        btn.className = 'icon-pick-btn icon-option';
         btn.textContent = icon;
+        btn.dataset.icon = icon;
         btn.onclick = () => {
-            iconPicker.querySelectorAll('.icon-pick-btn').forEach(b => b.classList.remove('selected'));
+            iconPicker.querySelectorAll('.icon-option').forEach(b => b.classList.remove('selected'));
             btn.classList.add('selected');
-            document.getElementById('substance-icon').value = icon;
+            setInputValue('substance-icon', icon);
         };
         iconPicker.appendChild(btn);
     });
@@ -706,96 +793,247 @@ function openSubstanceEditor(id) {
     SUBSTANCE_COLORS.forEach(color => {
         const btn = document.createElement('button');
         btn.type = 'button';
-        btn.className = 'color-pick-btn';
+        btn.className = 'color-pick-btn color-option';
         btn.style.background = color;
         btn.dataset.color = color;
         btn.onclick = () => {
-            colorPicker.querySelectorAll('.color-pick-btn').forEach(b => b.classList.remove('selected'));
+            colorPicker.querySelectorAll('.color-option').forEach(b => b.classList.remove('selected'));
             btn.classList.add('selected');
-            document.getElementById('substance-color').value = color;
+            setInputValue('substance-color', color);
         };
         colorPicker.appendChild(btn);
     });
 
+    const submitBtn = document.getElementById('save-substance-btn');
+    if (submitBtn) submitBtn.textContent = id ? 'Save Changes' : 'Save Substance';
+
     if (id) {
         const sub = getSubstance(id);
-        document.getElementById('substance-name').value = sub.name;
-        document.getElementById('substance-icon').value = sub.icon;
-        document.getElementById('substance-color').value = sub.color;
-        document.getElementById('substance-default-unit').value = sub.defaultUnit;
+        setInputValue('substance-name', sub.name);
+        setInputValue('substance-icon', sub.icon);
+        setInputValue('substance-color', sub.color);
+        setInputValue('substance-default-unit', sub.defaultUnit);
         unitsInput.value = sub.units.join(', ');
-        document.getElementById('substance-cost-tracking').checked = sub.costTrackingEnabled;
-        document.getElementById('substance-taper-tracking').checked = sub.taperTrackingEnabled;
-        iconPicker.querySelectorAll('.icon-pick-btn').forEach(b => {
-            if (b.textContent === sub.icon) b.classList.add('selected');
+        const costEl = document.getElementById('substance-cost-tracking');
+        const taperEl = document.getElementById('substance-taper-tracking');
+        if (costEl) costEl.checked = sub.costTrackingEnabled;
+        if (taperEl) taperEl.checked = sub.taperTrackingEnabled;
+        iconPicker.querySelectorAll('.icon-option').forEach(b => {
+            if (b.textContent === sub.icon || b.dataset.icon === sub.icon) b.classList.add('selected');
         });
-        colorPicker.querySelectorAll('.color-pick-btn').forEach(b => {
+        colorPicker.querySelectorAll('.color-option').forEach(b => {
             if (b.dataset.color === sub.color) b.classList.add('selected');
         });
     } else {
-        document.getElementById('substance-form').reset();
-        document.getElementById('substance-icon').value = '📦';
-        document.getElementById('substance-color').value = SUBSTANCE_COLORS[0];
-        document.getElementById('substance-cost-tracking').checked = true;
-        document.getElementById('substance-taper-tracking').checked = true;
+        const form = document.getElementById('substance-form');
+        form?.reset();
+        setInputValue('substance-icon', '📦');
+        setInputValue('substance-color', SUBSTANCE_COLORS[0]);
+        const costEl = document.getElementById('substance-cost-tracking');
+        const taperEl = document.getElementById('substance-taper-tracking');
+        if (costEl) costEl.checked = true;
+        if (taperEl) taperEl.checked = true;
         unitsInput.value = 'units';
-        iconPicker.querySelector('.icon-pick-btn')?.classList.add('selected');
-        colorPicker.querySelector('.color-pick-btn')?.classList.add('selected');
+        setInputValue('substance-default-unit', 'units');
+        iconPicker.querySelector('.icon-option')?.classList.add('selected');
+        colorPicker.querySelector('.color-option')?.classList.add('selected');
     }
 
     modal.classList.remove('hidden');
+    document.getElementById('substance-name')?.focus();
 }
 
 function closeSubstanceEditor() {
-    document.getElementById('substance-editor-modal').classList.add('hidden');
+    closeSubstanceModal();
+}
+
+function closeSubstanceModal() {
+    document.getElementById('substance-modal')?.classList.add('hidden');
+    document.getElementById('substance-form')?.reset();
     editingSubstanceId = null;
 }
 
 function handleSubstanceSubmit(e) {
-    e.preventDefault();
-    const name = document.getElementById('substance-name').value.trim();
-    if (!name) return alert('Name is required.');
+    if (e) e.preventDefault();
 
-    const unitsRaw = document.getElementById('substance-units').value;
-    const units = unitsRaw.split(',').map(u => u.trim()).filter(Boolean);
-    if (units.length === 0) return alert('Add at least one unit.');
+    console.log('[substance] submit started');
 
-    const defaultUnit = document.getElementById('substance-default-unit').value.trim() || units[0];
-    if (!units.includes(defaultUnit)) units.unshift(defaultUnit);
+    try {
+        if (!appData || typeof appData !== 'object') appData = {};
+        if (!Array.isArray(appData.substances)) appData.substances = [];
+        if (!appData.settings) appData.settings = {};
+        if (!appData.settings.substanceSettings) appData.settings.substanceSettings = {};
 
-    const payload = {
-        name,
-        icon: document.getElementById('substance-icon').value || '📦',
-        color: document.getElementById('substance-color').value || SUBSTANCE_COLORS[0],
-        units,
-        defaultUnit,
-        costTrackingEnabled: document.getElementById('substance-cost-tracking').checked,
-        taperTrackingEnabled: document.getElementById('substance-taper-tracking').checked,
-        active: true
-    };
+        const nameEl = document.getElementById('substance-name');
+        const unitsEl = document.getElementById('substance-units');
+        const defaultUnitEl = document.getElementById('substance-default-unit');
 
-    if (editingSubstanceId) {
-        const idx = appData.substances.findIndex(s => s.id === editingSubstanceId);
-        if (idx >= 0) {
-            appData.substances[idx] = { ...appData.substances[idx], ...payload };
+        if (!nameEl) {
+            alert('Missing substance-name input.');
+            console.error('[substance] missing #substance-name');
+            return;
         }
-    } else {
-        const id = uniqueSubstanceId(name);
-        appData.substances.push(createSubstance({ id, ...payload }));
-        if (!appData.settings.substanceSettings[id]) {
-            appData.settings.substanceSettings[id] = { packPrice: 10, unitsPerPack: 20, baseline: 5, quitGoal: '' };
+
+        const name = nameEl.value.trim();
+
+        if (!name) {
+            alert('Enter a substance name.');
+            return;
         }
+
+        const duplicate = appData.substances.some(s =>
+            String(s.name || '').toLowerCase() === name.toLowerCase()
+            && s.id !== editingSubstanceId
+        );
+
+        if (duplicate) {
+            alert('That substance already exists.');
+            return;
+        }
+
+        const selectedIcon = document.querySelector('#substance-icon-picker .icon-option.selected')
+            || document.querySelector('.icon-option.selected');
+        const selectedColor = document.querySelector('#substance-color-picker .color-option.selected')
+            || document.querySelector('.color-option.selected');
+
+        const icon = selectedIcon?.dataset.icon || selectedIcon?.textContent?.trim() || '📦';
+        const color = selectedColor?.dataset.color
+            || document.getElementById('substance-color')?.value
+            || SUBSTANCE_COLORS[0];
+
+        const unitsText = unitsEl?.value?.trim() || 'units';
+        const units = unitsText.split(',').map(u => u.trim()).filter(Boolean);
+        if (units.length === 0) units.push('units');
+
+        const defaultUnit = defaultUnitEl?.value?.trim() || units[0] || 'units';
+        const costTrackingEnabled = document.getElementById('substance-cost-tracking')?.checked !== false;
+        const taperTrackingEnabled = document.getElementById('substance-taper-tracking')?.checked !== false;
+
+        let savedSubstance;
+
+        if (editingSubstanceId) {
+            const idx = appData.substances.findIndex(s => s.id === editingSubstanceId);
+            if (idx < 0) {
+                alert('Substance to edit was not found.');
+                return;
+            }
+            savedSubstance = {
+                ...appData.substances[idx],
+                name,
+                icon,
+                color,
+                units,
+                defaultUnit,
+                costTrackingEnabled,
+                taperTrackingEnabled,
+                active: true,
+                archived: false,
+                updatedAt: new Date().toISOString()
+            };
+            appData.substances[idx] = savedSubstance;
+        } else {
+            const activeCount = appData.substances.filter(s => s.active && !s.archived).length;
+            savedSubstance = {
+                id: 'sub-' + Date.now(),
+                name,
+                icon,
+                color,
+                units,
+                defaultUnit,
+                active: true,
+                archived: false,
+                isMain: activeCount === 0,
+                costTrackingEnabled,
+                taperTrackingEnabled,
+                createdAt: new Date().toISOString(),
+                updatedAt: new Date().toISOString()
+            };
+
+            appData.substances.push(savedSubstance);
+
+            appData.settings.substanceSettings[savedSubstance.id] = {
+                defaultUnit,
+                units
+            };
+        }
+
+        normalizeMainSubstances(appData);
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
+        const savedAt = new Date().toISOString();
+        localStorage.setItem(LAST_SAVED_KEY, savedAt);
+        console.log('[substance] saved', savedSubstance);
+
+        const wasEdit = !!editingSubstanceId;
+        safeRefreshAfterSubstanceSave();
+        alert(wasEdit ? 'Substance updated: ' + name : 'Substance added: ' + name);
+    } catch (err) {
+        console.error('[substance] save failed', err);
+        alert('Save failed. Open Console and send the red error.');
     }
+}
 
-    normalizeMainSubstances(appData);
-    saveData(appData);
-    closeSubstanceEditor();
-    populateAllSubstanceDropdowns();
+function safeRefreshAfterSubstanceSave() {
+    try {
+        if (typeof updateLastSaved === 'function') updateLastSaved();
+        else if (typeof updateLastSavedDisplay === 'function') updateLastSavedDisplay();
+    } catch (err) {
+        console.error('[substance] updateLastSaved failed', err);
+    }
+    try {
+        if (typeof closeSubstanceModal === 'function') closeSubstanceModal();
+    } catch (err) {
+        console.error('[substance] closeSubstanceModal failed', err);
+    }
+    try {
+        if (typeof renderSubstances === 'function') renderSubstances();
+        else if (typeof renderSubstancesList === 'function') renderSubstancesList();
+    } catch (err) {
+        console.error('[substance] renderSubstances failed', err);
+    }
+    try {
+        if (typeof populateSubstanceDropdowns === 'function') populateSubstanceDropdowns();
+        else if (typeof populateAllSubstanceDropdowns === 'function') populateAllSubstanceDropdowns();
+    } catch (err) {
+        console.error('[substance] populateSubstanceDropdowns failed', err);
+    }
+    try {
+        if (typeof updateDashboard === 'function') updateDashboard();
+    } catch (err) {
+        console.error('[substance] updateDashboard failed', err);
+    }
+    try {
+        if (typeof refreshAppAfterDataChange === 'function') refreshAppAfterDataChange();
+    } catch (err) {
+        console.error('[substance] refreshAppAfterDataChange failed', err);
+    }
+}
+
+function setupSubstanceForm() {
+    const form = document.getElementById('substance-form');
+    if (!form) {
+        console.warn('[substance] #substance-form not found');
+        return;
+    }
+    if (form.dataset.submitBound !== 'true') {
+        form.addEventListener('submit', (ev) => {
+            ev.preventDefault();
+            console.log('[substance] form submit');
+            handleSubstanceSubmit();
+        });
+        form.dataset.submitBound = 'true';
+    }
+}
+
+function updateLastSaved() {
+    updateLastSavedDisplay();
+}
+
+function renderSubstances() {
     renderSubstancesList();
-    updateQuickActions();
-    updateDashboardMainDisplay();
-    updateDashboard();
-    alert(editingSubstanceId ? 'Substance updated.' : 'Substance added.');
+}
+
+function populateSubstanceDropdowns() {
+    populateAllSubstanceDropdowns();
 }
 
 function archiveSubstance(id) {
@@ -852,7 +1090,7 @@ function deleteSubstance(id) {
 function switchTab(tabId) {
     document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
     document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
-    document.getElementById(tabId).classList.add('active');
+    document.getElementById(tabId)?.classList.add('active');
     document.querySelector(`[data-tab="${tabId}"]`)?.classList.add('active');
 
     if (tabId === 'dashboard-tab') {
@@ -876,14 +1114,13 @@ function switchTab(tabId) {
         renderUseLogTab();
     } else if (tabId === 'taper-tab') {
         applyMainSubstanceToViewSelectors();
-        renderTaperPlan();
-        checkTaperTarget();
+        syncTaperSubstanceToMain();
+        refreshTaperDashboard();
     } else if (tabId === 'settings-tab') {
         applyMainSubstanceToViewSelectors();
         renderSubstancesList();
-        loadSubstanceSettings();
+        loadSettings();
     }
-    recordActivity();
 }
 
 // ——— Use Log ———
@@ -910,14 +1147,598 @@ function formatHoursAgo(ms) {
     return `${days}d ${Math.round(hours % 24)}h ago`;
 }
 
-function getCostPerUnit(substanceId) {
-    const settings = getSubstanceSettings(substanceId);
-    if (!settings.unitsPerPack) return 0;
-    return settings.packPrice / settings.unitsPerPack;
+function findUseEntry(id) {
+    return appData.logs.find(l => l.id === id)
+        || appData.useLogs?.find(l => l.id === id);
+}
+
+function getUseSubstanceId(entry) {
+    return entry.substanceId || entry.substance || '';
+}
+
+function getUseCount(entry) {
+    const count = entry.count ?? entry.lines;
+    return count != null && count !== '' ? count : '';
+}
+
+function getUseLogType(entry) {
+    if (entry.type === 'session' || entry.type === 'quick') return entry.type;
+    return entry.endTime ? 'session' : 'quick';
+}
+
+function setUseFormSubmitLabel(text) {
+    const btn = document.getElementById('use-submit-btn');
+    if (btn) btn.textContent = text;
+}
+
+function getUseEventTimestamp(date, startTime) {
+    const startDt = parseUseDateTime(date, startTime);
+    return startDt && !Number.isNaN(startDt.getTime())
+        ? startDt.toISOString()
+        : new Date().toISOString();
+}
+
+function getUseCreatedAt(entry) {
+    return entry.createdAt || entry.timestamp || new Date().toISOString();
+}
+
+function buildUseEntryFromForm() {
+    const type = document.getElementById('use-type')?.value || 'quick';
+    const substanceId = document.getElementById('use-substance')?.value;
+    const amount = parseFloat(document.getElementById('use-amount')?.value);
+    const unit = document.getElementById('use-unit')?.value;
+    const date = document.getElementById('use-date')?.value;
+    const startTime = document.getElementById('use-start-time')?.value || '12:00';
+    const endTime = document.getElementById('use-end-time')?.value;
+    const linkedPurchaseId = resolveLinkedPurchaseId(substanceId);
+
+    return {
+        type,
+        substanceId,
+        amount: Number.isFinite(amount) ? amount : 0,
+        unit: unit || 'units',
+        date,
+        startTime,
+        time: startTime,
+        endTime: type === 'session' ? (endTime || '') : '',
+        count: parseFloat(document.getElementById('use-count')?.value) || 0,
+        notes: document.getElementById('use-notes')?.value || '',
+        linkedPurchaseId: linkedPurchaseId || null,
+        supplyUnlinked: !linkedPurchaseId
+    };
+}
+
+function stripLegacyUseLogFields(entry) {
+    if (!entry) return;
+    delete entry.cost;
+    delete entry.trigger;
+    delete entry.cravingLevel;
+    delete entry.location;
+}
+
+function resetUseFormAfterSave() {
+    editingUseId = null;
+    document.getElementById('use-log-form')?.reset();
+    setDefaultUseLogDateTime();
+    setUseLogType('quick');
+    setUseFormSubmitLabel('Save Entry');
+    document.getElementById('cancel-use-edit-btn')?.classList.add('hidden');
+    applyMainSubstanceToForms();
+    updateUseUnitDropdown();
+    updateUseTaperPreview();
+    setUsePurchaseLinkMode('auto');
+}
+
+function refreshUseLogRelatedViews() {
+    renderUseLogTab();
+    updateDashboard();
+    updateStats();
+    refreshTaperDashboard();
+    refreshBuyTrackerRelatedViews();
+    renderCalendar();
+}
+
+function getLogDatetimeMs(log) {
+    if (log.startDatetime) {
+        const ms = new Date(log.startDatetime).getTime();
+        if (!Number.isNaN(ms)) return ms;
+    }
+    if (log.timestamp) {
+        const ms = new Date(log.timestamp).getTime();
+        if (!Number.isNaN(ms)) return ms;
+    }
+    const time = log.startTime || log.time || '00:00';
+    const ms = new Date(`${log.date}T${time}`).getTime();
+    return Number.isNaN(ms) ? 0 : ms;
+}
+
+function getPurchaseDatetimeMs(purchase) {
+    const ms = new Date(`${purchase.date}T${purchase.time || '12:00'}`).getTime();
+    return Number.isNaN(ms) ? 0 : ms;
+}
+
+function findPurchaseInData(id, data) {
+    if (id == null || id === '') return null;
+    return (data?.purchases || []).find(p => p.id === id || String(p.id) === String(id)) || null;
+}
+
+function finalizePurchaseRemainingState(purchase) {
+    const remaining = getPurchaseRemainingAmount(purchase);
+    if (remaining <= INVENTORY_EPS) {
+        purchase.remainingAmount = 0;
+        purchase.isDepleted = true;
+    } else {
+        purchase.isDepleted = false;
+    }
+}
+
+function deductPurchaseRemainingInData(purchase, amount) {
+    const amt = parseFloat(amount) || 0;
+    if (amt <= 0) return 0;
+    const remaining = getPurchaseRemainingAmount(purchase);
+    const used = Math.min(amt, remaining);
+    purchase.remainingAmount = Math.max(0, remaining - used);
+    finalizePurchaseRemainingState(purchase);
+    return used;
+}
+
+function migrateInventoryLinkedV1(data) {
+    ensureAppDataMigrations(data);
+    if (data.migrations.inventoryLinkedV1) return;
+
+    const purchases = data.purchases || [];
+    const logs = data.logs || [];
+
+    purchases.forEach(purchase => {
+        const qty = getPurchaseQuantityBought(purchase);
+        if (!purchase.quantityBought && qty) purchase.quantityBought = qty;
+        if (!purchase.quantity && qty) purchase.quantity = qty;
+        purchase.remainingAmount = qty;
+        purchase.isDepleted = false;
+    });
+
+    const sortedLogs = [...logs].sort((a, b) => getLogDatetimeMs(a) - getLogDatetimeMs(b));
+
+    sortedLogs.forEach(log => {
+        const amount = parseFloat(log.amount) || 0;
+        if (amount <= INVENTORY_EPS) return;
+
+        if (log.linkedPurchases?.length) {
+            log.linkedPurchases.forEach(alloc => {
+                const purchase = findPurchaseInData(alloc.purchaseId, data);
+                if (purchase) deductPurchaseRemainingInData(purchase, alloc.amountUsed);
+            });
+            log.supplyUnlinked = false;
+            return;
+        }
+
+        if (log.linkedPurchaseId != null && log.linkedPurchaseId !== '') {
+            const purchase = findPurchaseInData(log.linkedPurchaseId, data);
+            if (purchase) deductPurchaseRemainingInData(purchase, amount);
+            log.supplyUnlinked = false;
+            return;
+        }
+
+        const substanceId = getUseSubstanceId(log);
+        const logMs = getLogDatetimeMs(log);
+        let amountLeft = amount;
+        const allocations = [];
+
+        const eligible = purchases
+            .filter(p => getPurchaseSubstanceId(p) === substanceId)
+            .filter(p => getPurchaseDatetimeMs(p) <= logMs)
+            .sort((a, b) => getPurchaseDatetimeMs(a) - getPurchaseDatetimeMs(b));
+
+        for (const purchase of eligible) {
+            if (amountLeft <= INVENTORY_EPS) break;
+            const remaining = getPurchaseRemainingAmount(purchase);
+            if (remaining <= INVENTORY_EPS) continue;
+            const used = deductPurchaseRemainingInData(purchase, amountLeft);
+            if (used > 0) {
+                allocations.push({ purchaseId: purchase.id, amountUsed: used });
+                amountLeft -= used;
+            }
+        }
+
+        if (allocations.length === 1) {
+            log.linkedPurchaseId = allocations[0].purchaseId;
+            delete log.linkedPurchases;
+            log.supplyUnlinked = false;
+        } else if (allocations.length > 1) {
+            log.linkedPurchases = allocations;
+            log.linkedPurchaseId = allocations[0].purchaseId;
+            log.supplyUnlinked = false;
+        } else {
+            log.supplyUnlinked = true;
+        }
+    });
+
+    purchases.forEach(finalizePurchaseRemainingState);
+    data.migrations.inventoryLinkedV1 = true;
+}
+
+function getPurchaseQuantityBought(purchase) {
+    const q = purchase.quantityBought ?? purchase.quantity;
+    return parseFloat(q) || 0;
+}
+
+function getPurchaseRemainingAmount(purchase) {
+    if (purchase.remainingAmount != null && purchase.remainingAmount !== '') {
+        return Math.max(0, parseFloat(purchase.remainingAmount) || 0);
+    }
+    if (purchase.isDepleted) return 0;
+    return getPurchaseQuantityBought(purchase);
+}
+
+function getLinkedUseAmountForPurchase(purchaseId, logs = []) {
+    let total = 0;
+    (logs || []).forEach(log => {
+        if (log.linkedPurchases?.length) {
+            log.linkedPurchases.forEach(alloc => {
+                if (alloc.purchaseId === purchaseId || String(alloc.purchaseId) === String(purchaseId)) {
+                    total += parseFloat(alloc.amountUsed) || 0;
+                }
+            });
+            return;
+        }
+        if (log.linkedPurchaseId === purchaseId || String(log.linkedPurchaseId) === String(purchaseId)) {
+            total += parseFloat(log.amount) || 0;
+        }
+    });
+    return total;
+}
+
+function migratePurchaseInventory(purchase, logs, data) {
+    const qty = getPurchaseQuantityBought(purchase);
+    if (!purchase.quantityBought && qty) purchase.quantityBought = qty;
+    if (!purchase.quantity && qty) purchase.quantity = qty;
+    if (purchase.remainingAmount == null || purchase.remainingAmount === '') {
+        const used = getLinkedUseAmountForPurchase(purchase.id, logs);
+        purchase.remainingAmount = Math.max(0, qty - used);
+    }
+    finalizePurchaseRemainingState(purchase);
+    if (!purchase.substanceName) {
+        const substanceRef = getPurchaseSubstanceId(purchase);
+        const sub = getSubstance(substanceRef, data);
+        purchase.substanceName = sub?.name || '';
+    }
+    if (!purchase.createdAt) purchase.createdAt = new Date().toISOString();
+    if (!purchase.updatedAt) purchase.updatedAt = purchase.createdAt;
+}
+
+let appData = loadData();
+let currentCalendarDate = new Date();
+let selectedDate = null;
+let currentSubstanceId = resolveStartupSubstanceId();
+
+function findPurchase(id, data = appData) {
+    return findPurchaseInData(id, data);
+}
+
+function getActivePurchasesForSubstance(substanceId) {
+    return (appData.purchases || [])
+        .filter(p => getPurchaseSubstanceId(p) === substanceId && !p.isDepleted && getPurchaseRemainingAmount(p) > 0)
+        .sort((a, b) => new Date(`${a.date}T${a.time || '12:00'}`) - new Date(`${b.date}T${b.time || '12:00'}`));
+}
+
+function getOldestActivePurchase(substanceId) {
+    const active = getActivePurchasesForSubstance(substanceId);
+    return active[0] || null;
+}
+
+function getPurchasePercentUsed(purchase) {
+    const bought = getPurchaseQuantityBought(purchase);
+    if (bought <= 0) return 0;
+    const remaining = getPurchaseRemainingAmount(purchase);
+    return Math.round(((bought - remaining) / bought) * 100);
+}
+
+function getPurchaseSupplyStatus(purchase) {
+    const bought = getPurchaseQuantityBought(purchase);
+    const remaining = getPurchaseRemainingAmount(purchase);
+    if (purchase.isDepleted || remaining <= 0) {
+        return { key: 'depleted', label: '❌ Depleted', className: 'supply-depleted' };
+    }
+    if (bought > 0 && remaining / bought <= SUPPLY_LOW_REMAINING_PCT) {
+        return { key: 'low', label: '⚠️ Low supply', className: 'supply-low' };
+    }
+    return { key: 'ok', label: '✅ In supply', className: 'supply-ok' };
+}
+
+function formatPurchaseOptionLabel(purchase) {
+    const remaining = getPurchaseRemainingAmount(purchase);
+    const bought = getPurchaseQuantityBought(purchase);
+    const unit = purchase.unit || 'units';
+    const store = purchase.store || purchase.location || '';
+    const storePart = store ? ` — ${store}` : '';
+    return `${formatDate(purchase.date)} — ${bought}${unit} bought — ${remaining.toFixed(1)}${unit} left${storePart}`;
+}
+
+function formatLinkedPurchaseDisplay(log) {
+    if (log.linkedPurchases?.length) {
+        const parts = log.linkedPurchases.map(alloc => {
+            const p = findPurchase(alloc.purchaseId);
+            const store = p?.store || p?.location || '';
+            const unit = log.unit || p?.unit || 'units';
+            const storePart = store ? ` · ${store}` : '';
+            return `${alloc.amountUsed}${unit} from ${formatDate(p?.date || '')}${storePart}`;
+        });
+        return parts.join('; ');
+    }
+    if (!log.linkedPurchaseId) return 'Unlinked';
+    const p = findPurchase(log.linkedPurchaseId);
+    if (!p) return 'Unlinked';
+    const store = p.store || p.location || '';
+    const storePart = store ? ` · ${store}` : '';
+    return `${formatDate(p.date)} purchase${storePart}`;
+}
+
+function getUsePurchaseLinkMode() {
+    return document.getElementById('use-purchase-link-mode')?.value || 'auto';
+}
+
+function setUsePurchaseLinkMode(mode) {
+    const el = document.getElementById('use-purchase-link-mode');
+    if (el) el.value = mode;
+    updateUsePurchaseLinkUI();
+}
+
+function resolveLinkedPurchaseId(substanceId) {
+    const mode = getUsePurchaseLinkMode();
+    if (mode === 'none') return null;
+    if (mode === 'manual') {
+        const val = document.getElementById('use-purchase-select')?.value;
+        return val ? parseInt(val, 10) : null;
+    }
+    const oldest = getOldestActivePurchase(substanceId);
+    return oldest ? oldest.id : null;
+}
+
+function restorePurchaseAmount(purchaseId, amount) {
+    if (!purchaseId) return;
+    const purchase = findPurchase(purchaseId);
+    if (!purchase) return;
+    const amt = parseFloat(amount) || 0;
+    if (amt <= 0) return;
+    const cap = getPurchaseQuantityBought(purchase);
+    purchase.remainingAmount = Math.min(cap, getPurchaseRemainingAmount(purchase) + amt);
+    finalizePurchaseRemainingState(purchase);
+    purchase.updatedAt = new Date().toISOString();
+}
+
+function deductPurchaseAmount(purchaseId, amount) {
+    if (!purchaseId) return { ok: true };
+    const purchase = findPurchase(purchaseId);
+    if (!purchase) return { ok: false, error: 'Linked purchase not found.' };
+    const amt = parseFloat(amount) || 0;
+    const remaining = getPurchaseRemainingAmount(purchase);
+    if (amt > remaining + 0.0001) {
+        return {
+            ok: false,
+            error: `Only ${remaining.toFixed(2)} ${purchase.unit || 'units'} left in that bag.`
+        };
+    }
+    purchase.remainingAmount = Math.max(0, remaining - amt);
+    finalizePurchaseRemainingState(purchase);
+    purchase.updatedAt = new Date().toISOString();
+    return { ok: true };
+}
+
+function getTotalRemainingSupply(substanceId) {
+    return (appData.purchases || [])
+        .filter(p => getPurchaseSubstanceId(p) === substanceId && !p.isDepleted)
+        .reduce((s, p) => s + getPurchaseRemainingAmount(p), 0);
+}
+
+function getCurrentBagPurchase(substanceId) {
+    return getOldestActivePurchase(substanceId);
+}
+
+function getAverageDailyUse(substanceId, days = 7) {
+    const today = new Date();
+    let total = 0;
+    let dayCount = 0;
+    for (let i = 0; i < days; i++) {
+        const d = new Date(today);
+        d.setDate(today.getDate() - i);
+        const dateStr = d.toISOString().split('T')[0];
+        const dayTotal = appData.logs
+            .filter(l => getUseSubstanceId(l) === substanceId && l.date === dateStr)
+            .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+        total += dayTotal;
+        dayCount++;
+    }
+    return dayCount ? total / dayCount : 0;
+}
+
+function getCostPerUnitFromPurchase(purchaseId) {
+    const p = findPurchase(purchaseId);
+    if (!p) return null;
+    const cpu = parseFloat(p.costPerUnit);
+    if (Number.isFinite(cpu) && cpu > 0) return cpu;
+    const qty = getPurchaseQuantityBought(p);
+    const total = parseFloat(getPurchaseTotalCost(p)) || 0;
+    return qty > 0 ? total / qty : null;
+}
+
+function updateUsePurchaseLinkUI() {
+    const mode = getUsePurchaseLinkMode();
+    const manualWrap = document.getElementById('use-purchase-manual-wrap');
+    const select = document.getElementById('use-purchase-select');
+    const preview = document.getElementById('use-purchase-preview');
+    const substanceId = document.getElementById('use-substance')?.value;
+
+    if (manualWrap) manualWrap.classList.toggle('hidden', mode !== 'manual');
+
+    if (mode === 'manual' && select && substanceId) {
+        let active = getActivePurchasesForSubstance(substanceId);
+        if (editingUseId) {
+            const entry = findUseEntry(editingUseId);
+            if (entry?.linkedPurchaseId) {
+                const linked = findPurchase(entry.linkedPurchaseId);
+                if (linked && !active.some(p => p.id === linked.id)) {
+                    active = [linked, ...active];
+                }
+            }
+        }
+        const currentVal = select.value;
+        select.innerHTML = '<option value="">Select a purchase…</option>';
+        active.forEach(p => {
+            const opt = document.createElement('option');
+            opt.value = p.id;
+            opt.textContent = formatPurchaseOptionLabel(p);
+            select.appendChild(opt);
+        });
+        if (currentVal && [...select.options].some(o => o.value === currentVal)) {
+            select.value = currentVal;
+        }
+    }
+
+    if (preview) {
+        if (mode === 'none') {
+            preview.textContent = 'This use will not deduct from any purchase (unlinked).';
+            preview.classList.remove('hidden');
+        } else if (!substanceId) {
+            preview.classList.add('hidden');
+        } else if (mode === 'auto') {
+            const bag = getOldestActivePurchase(substanceId);
+            if (bag) {
+                preview.textContent = `Auto: ${formatPurchaseOptionLabel(bag)}`;
+                preview.classList.remove('hidden');
+            } else {
+                preview.textContent = 'No active supply — entry will save as unlinked.';
+                preview.classList.remove('hidden');
+            }
+        } else if (mode === 'manual') {
+            const id = select?.value;
+            const bag = id ? findPurchase(parseInt(id, 10)) : null;
+            preview.textContent = bag ? formatPurchaseOptionLabel(bag) : 'Choose a purchase with remaining supply.';
+            preview.classList.remove('hidden');
+        }
+    }
+}
+
+function updateCurrentSupplyDashboard() {
+    const mainId = getMainSubstanceId();
+    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+    if (!mainId) {
+        set('dash-supply-total', '—');
+        set('dash-supply-current-bag', 'Set a main substance');
+        set('dash-supply-last-purchase', '—');
+        set('dash-supply-days-left', '—');
+        return;
+    }
+    const sub = getSubstance(mainId);
+    const unit = sub?.defaultUnit || 'units';
+    const totalRemaining = getTotalRemainingSupply(mainId);
+    const bag = getCurrentBagPurchase(mainId);
+    const purchases = (appData.purchases || [])
+        .filter(p => getPurchaseSubstanceId(p) === mainId)
+        .sort((a, b) => new Date(`${b.date}T${b.time || '12:00'}`) - new Date(`${a.date}T${a.time || '12:00'}`));
+    const lastPurchase = purchases[0] || null;
+    const dailyAvg = getAverageDailyUse(mainId);
+
+    set('dash-supply-total', `${totalRemaining.toFixed(1)} ${unit} remaining`);
+    if (bag) {
+        set('dash-supply-current-bag', `Current bag: ${getPurchaseRemainingAmount(bag).toFixed(1)} ${unit} left`);
+    } else {
+        set('dash-supply-current-bag', 'No active bag in supply');
+    }
+    if (lastPurchase) {
+        const store = lastPurchase.store || lastPurchase.location || '';
+        set('dash-supply-last-purchase', `Last buy: ${formatDate(lastPurchase.date)}${store ? ' · ' + store : ''}`);
+    } else {
+        set('dash-supply-last-purchase', 'Last buy: —');
+    }
+    if (dailyAvg > 0 && totalRemaining > 0) {
+        set('dash-supply-days-left', `~${Math.round(totalRemaining / dailyAvg)} days left at current pace`);
+    } else {
+        set('dash-supply-days-left', 'Est. days left: —');
+    }
+}
+
+function refreshTaperDashboard() {
+    renderTaperPlan();
+    checkTaperTarget();
+    updateTaperProgress();
+    const sid = getTaperSubstanceId();
+    if (sid && !isAllSubstancesView() && currentSubstanceId === sid) {
+        updateDoNotSurpassDisplay('dashboard', sid);
+    }
+}
+
+function editUseEntry(id) {
+    const entry = findUseEntry(id);
+    if (!entry) return;
+
+    editingUseId = id;
+    const type = getUseLogType(entry);
+    setUseLogType(type);
+
+    const substanceId = getUseSubstanceId(entry);
+    const substanceSelect = document.getElementById('use-substance');
+    if (substanceSelect && substanceId && [...substanceSelect.options].some(o => o.value === substanceId)) {
+        substanceSelect.value = substanceId;
+    }
+    updateUseUnitDropdown();
+
+    const unit = entry.unit || 'units';
+    const unitSelect = document.getElementById('use-unit');
+    if (unitSelect) {
+        if (unit && ![...unitSelect.options].some(o => o.value === unit)) {
+            const option = document.createElement('option');
+            option.value = unit;
+            option.textContent = unit;
+            unitSelect.appendChild(option);
+        }
+        unitSelect.value = unit;
+    }
+
+    setInputValue('use-date', entry.date || '');
+    setInputValue('use-start-time', entry.startTime || entry.time || '12:00');
+    setInputValue('use-end-time', entry.endTime || '');
+    setInputValue('use-amount', entry.amount != null ? entry.amount : '');
+    setInputValue('use-count', getUseCount(entry));
+    setInputValue('use-notes', entry.notes || '');
+
+    if (entry.linkedPurchaseId) {
+        setUsePurchaseLinkMode('manual');
+        const select = document.getElementById('use-purchase-select');
+        if (select) {
+            updateUsePurchaseLinkUI();
+            select.value = String(entry.linkedPurchaseId);
+        }
+    } else if (entry.supplyUnlinked) {
+        setUsePurchaseLinkMode('none');
+    } else {
+        setUsePurchaseLinkMode('auto');
+    }
+    updateUsePurchaseLinkUI();
+
+    setUseFormSubmitLabel('Update Entry');
+    document.getElementById('cancel-use-edit-btn')?.classList.remove('hidden');
+    computeUseFormDuration();
+    updateUseTaperPreview();
+
+    switchTab('use-log-tab');
+    document.getElementById('use-log-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelUseEdit() {
+    editingUseId = null;
+    document.getElementById('use-log-form')?.reset();
+    setDefaultUseLogDateTime();
+    setUseLogType('quick');
+    setUseFormSubmitLabel('Save Entry');
+    document.getElementById('cancel-use-edit-btn')?.classList.add('hidden');
+    applyMainSubstanceToForms();
+    updateUseUnitDropdown();
+    updateUseTaperPreview();
+    setUsePurchaseLinkMode('auto');
 }
 
 function getUseLogsForSubstance(substanceId, { sortAsc = true } = {}) {
-    let list = appData.logs.filter(l => l.substanceId === substanceId);
+    let list = appData.logs.filter(l => getUseSubstanceId(l) === substanceId);
     list = [...list].sort((a, b) => {
         const da = new Date(a.startDatetime || a.timestamp || `${a.date}T${a.startTime || a.time}`);
         const db = new Date(b.startDatetime || b.timestamp || `${b.date}T${b.startTime || b.time}`);
@@ -971,12 +1792,6 @@ function enrichUseEntry(entry, previousEntry) {
         }
     }
 
-    const sub = getSubstance(entry.substanceId);
-    let cost = parseFloat(entry.cost);
-    if ((cost == null || isNaN(cost)) && sub?.costTrackingEnabled) {
-        cost = amount * getCostPerUnit(entry.substanceId);
-    }
-
     return {
         ...entry,
         type: entry.type || (entry.endTime ? 'session' : 'quick'),
@@ -985,8 +1800,7 @@ function enrichUseEntry(entry, previousEntry) {
         timeBetweenHours,
         breakDurationHours,
         startDatetime,
-        endDatetime,
-        cost: cost || 0
+        endDatetime
     };
 }
 
@@ -1048,17 +1862,20 @@ function setupUseLogForm() {
     document.getElementById('use-substance')?.addEventListener('change', () => {
         updateUseUnitDropdown();
         updateUseTaperPreview();
+        updateUsePurchaseLinkUI();
     });
     ['use-amount', 'use-date'].forEach(id => {
-        document.getElementById(id)?.addEventListener('input', updateUseTaperPreview);
+        document.getElementById(id)?.addEventListener('input', () => {
+            updateUseTaperPreview();
+            updateUsePurchaseLinkUI();
+        });
     });
+    document.getElementById('use-purchase-link-mode')?.addEventListener('change', updateUsePurchaseLinkUI);
+    document.getElementById('use-purchase-select')?.addEventListener('change', updateUsePurchaseLinkUI);
     document.getElementById('use-start-time')?.addEventListener('change', computeUseFormDuration);
     document.getElementById('use-end-time')?.addEventListener('change', computeUseFormDuration);
-    document.getElementById('use-craving-level')?.addEventListener('input', e => {
-        const el = document.getElementById('use-craving-level-value');
-        if (el) el.textContent = e.target.value;
-    });
     setUseLogType(document.getElementById('use-type')?.value || 'quick');
+    updateUsePurchaseLinkUI();
 }
 
 function computeUseFormDuration() {
@@ -1096,7 +1913,7 @@ function updateUseTaperPreview() {
         el.classList.add('hidden');
         return;
     }
-    const used = getUsedAmount(substanceId, today);
+    const used = getUsedAmount(substanceId, today, editingUseId);
     const remaining = Math.max(0, limit - used);
     const after = used + amount;
     el.classList.remove('hidden');
@@ -1123,35 +1940,40 @@ function logOneUse() {
     if (!confirmTaperBeforeLog(substanceId, 1, true)) return;
 
     const now = new Date();
-    const settings = getSubstanceSettings(substanceId);
-    const costPerUnit = sub.costTrackingEnabled ? settings.packPrice / settings.unitsPerPack : 0;
-
+    const linkedPurchaseId = getOldestActivePurchase(substanceId)?.id || null;
     const log = {
         id: Date.now(),
         type: 'quick',
         substanceId,
         amount: 1,
         unit: sub.defaultUnit,
-        cost: costPerUnit,
         date: now.toISOString().split('T')[0],
         startTime: now.toTimeString().slice(0, 5),
         time: now.toTimeString().slice(0, 5),
-        trigger: '',
-        cravingLevel: 0,
-        location: '',
         notes: '',
-        timestamp: now.toISOString()
+        linkedPurchaseId,
+        supplyUnlinked: !linkedPurchaseId,
+        timestamp: now.toISOString(),
+        createdAt: now.toISOString(),
+        updatedAt: now.toISOString()
     };
+
+    if (linkedPurchaseId) {
+        const deduct = deductPurchaseAmount(linkedPurchaseId, 1);
+        if (!deduct.ok) {
+            log.linkedPurchaseId = null;
+            log.supplyUnlinked = true;
+        }
+    }
 
     snapshotBestStreakBeforeUse(substanceId);
     appData.logs.push(log);
     saveData(appData);
     updateDashboard();
     renderRecentUseList();
-    updateTaperProgress();
-    checkTaperTarget();
+    refreshTaperDashboard();
+    refreshBuyTrackerRelatedViews();
     notifyTaperAfterLog(substanceId);
-    recordActivity();
     alert(`Logged 1 ${sub.defaultUnit} of ${sub.name}`);
 }
 
@@ -1159,89 +1981,113 @@ function openUseLogSession() {
     switchTab('use-log-tab');
     setUseLogType('session');
     const id = getQuickLogSubstanceId();
-    if (id) document.getElementById('use-substance').value = id;
+    if (id) setInputValue('use-substance', id);
     setDefaultUseLogDateTime();
     updateUseUnitDropdown();
     updateUseTaperPreview();
+    updateUsePurchaseLinkUI();
 }
 
 function undoLastUse() {
     if (!appData.logs.length) return alert('No use entries to undo');
     if (confirm('Undo last use entry?')) {
+        const last = appData.logs[appData.logs.length - 1];
+        if (last?.linkedPurchaseId) {
+            restorePurchaseAmount(last.linkedPurchaseId, last.amount);
+        }
         appData.logs.pop();
         saveData(appData);
         updateDashboard();
         renderRecentUseList();
         renderUseHistoryTable();
-        updateTaperProgress();
+        refreshTaperDashboard();
+        refreshBuyTrackerRelatedViews();
     }
 }
 
 function handleUseLogSubmit(e) {
     e.preventDefault();
-    const type = document.getElementById('use-type').value || 'quick';
-    const substanceId = document.getElementById('use-substance').value;
-    const sub = getSubstance(substanceId);
-    const amount = parseFloat(document.getElementById('use-amount').value);
-    const unit = document.getElementById('use-unit').value;
-    let cost = parseFloat(document.getElementById('use-cost').value);
+    const payload = buildUseEntryFromForm();
+    const { substanceId, amount, type, linkedPurchaseId } = payload;
+    const eventTimestamp = getUseEventTimestamp(payload.date, payload.startTime);
+    const now = new Date().toISOString();
 
-    if (!confirmTaperBeforeLog(substanceId, amount, type === 'quick')) return;
+    if (!confirmTaperBeforeLog(substanceId, amount, type === 'quick', editingUseId)) return;
 
-    if (sub?.costTrackingEnabled && (!cost || cost === 0)) {
-        const settings = getSubstanceSettings(substanceId);
-        cost = (amount / settings.unitsPerPack) * settings.packPrice;
-    } else if (!sub?.costTrackingEnabled) {
-        cost = 0;
+    if (editingUseId != null) {
+        const existing = findUseEntry(editingUseId);
+        const idx = appData.logs.findIndex(l => l.id === editingUseId);
+        if (!existing || idx < 0) {
+            alert('Could not find the entry to update.');
+            cancelUseEdit();
+            return;
+        }
+        restorePurchaseAmount(existing.linkedPurchaseId, existing.amount);
+        if (linkedPurchaseId) {
+            const deduct = deductPurchaseAmount(linkedPurchaseId, amount);
+            if (!deduct.ok) {
+                restorePurchaseAmount(existing.linkedPurchaseId, existing.amount);
+                return alert(deduct.error);
+            }
+        }
+        appData.logs[idx] = {
+            ...existing,
+            ...payload,
+            id: editingUseId,
+            substanceId: payload.substanceId,
+            linkedPurchaseId: linkedPurchaseId || null,
+            supplyUnlinked: !linkedPurchaseId,
+            createdAt: getUseCreatedAt(existing),
+            updatedAt: now,
+            timestamp: eventTimestamp
+        };
+        stripLegacyUseLogFields(appData.logs[idx]);
+        delete appData.logs[idx].substance;
+        delete appData.logs[idx].lines;
+        saveData(appData);
+        resetUseFormAfterSave();
+        populateAllSubstanceDropdowns();
+        refreshUseLogRelatedViews();
+        notifyTaperAfterLog(substanceId);
+        alert(type === 'session' ? 'Session updated!' : 'Entry updated!');
+        return;
     }
 
-    const date = document.getElementById('use-date').value;
-    const startTime = document.getElementById('use-start-time').value;
-    const endTime = document.getElementById('use-end-time').value;
-
-    const entry = {
-        id: Date.now(),
-        type,
-        substanceId,
-        amount,
-        unit,
-        cost: cost || 0,
-        date,
-        startTime,
-        time: startTime,
-        endTime: type === 'session' ? endTime : '',
-        count: parseFloat(document.getElementById('use-count').value) || 0,
-        trigger: document.getElementById('use-trigger').value || '',
-        cravingLevel: parseInt(document.getElementById('use-craving-level').value, 10) || 0,
-        location: document.getElementById('use-location').value || '',
-        notes: document.getElementById('use-notes').value || '',
-        timestamp: new Date().toISOString()
-    };
+    if (linkedPurchaseId) {
+        const deduct = deductPurchaseAmount(linkedPurchaseId, amount);
+        if (!deduct.ok) return alert(deduct.error);
+    }
 
     snapshotBestStreakBeforeUse(substanceId);
-    appData.logs.push(entry);
+    const log = {
+        ...payload,
+        id: Date.now(),
+        createdAt: now,
+        updatedAt: now,
+        timestamp: eventTimestamp,
+        linkedPurchaseId: linkedPurchaseId || null,
+        supplyUnlinked: !linkedPurchaseId
+    };
+    stripLegacyUseLogFields(log);
+    appData.logs.push(log);
     saveData(appData);
-    e.target.reset();
-    setDefaultUseLogDateTime();
-    setUseLogType('quick');
-    applyMainSubstanceToForms();
+    resetUseFormAfterSave();
     populateAllSubstanceDropdowns();
-    updateDashboard();
-    renderUseLogTab();
-    updateTaperProgress();
-    checkTaperTarget();
+    refreshUseLogRelatedViews();
     notifyTaperAfterLog(substanceId);
-    recordActivity();
     alert(type === 'session' ? 'Session saved!' : 'Use logged!');
 }
 
 function deleteUseEntry(id) {
     if (!confirm('Delete this entry?')) return;
+    const entry = findUseEntry(id);
+    if (editingUseId === id) cancelUseEdit();
+    if (entry?.linkedPurchaseId) {
+        restorePurchaseAmount(entry.linkedPurchaseId, entry.amount);
+    }
     appData.logs = appData.logs.filter(l => l.id !== id);
     saveData(appData);
-    renderUseLogTab();
-    updateDashboard();
-    checkTaperTarget();
+    refreshUseLogRelatedViews();
 }
 
 function renderUseLogTab() {
@@ -1262,20 +2108,27 @@ function renderRecentUseList() {
         container.innerHTML = '<p class="empty-hint">No use entries yet</p>';
         return;
     }
-    const cur = appData.settings.currency;
     recent.forEach(log => {
-        const sub = getSubstance(log.substanceId);
+        const substanceId = getUseSubstanceId(log);
+        const sub = getSubstance(substanceId);
         const enriched = enrichUseEntry(log, null);
-        const typeLabel = log.type === 'session' ? '⏱️ Session' : '⚡ Quick';
+        const typeLabel = getUseLogType(log) === 'session' ? '⏱️ Session' : '⚡ Quick';
+        const countStr = getUseCount(log);
         const item = document.createElement('div');
         item.className = 'list-item';
         item.innerHTML = `
             <div class="list-item-content">
-                <strong>${typeLabel} ${sub?.icon || ''} ${log.amount} ${log.unit} ${sub?.name || ''}</strong><br>
-                <small>${formatDate(log.date)} ${log.startTime || log.time}${log.endTime ? '–' + log.endTime : ''}</small>
+                <strong>${typeLabel} ${sub?.icon || ''} ${log.amount ?? '—'} ${log.unit || ''} ${sub?.name || 'Unknown'}</strong><br>
+                <small>${formatDate(log.date || '')} ${log.startTime || log.time || ''}${log.endTime ? '–' + log.endTime : ''}</small>
                 ${enriched.durationHours ? `<br><small>Duration: ${formatDurationHours(enriched.durationHours)}</small>` : ''}
+                ${countStr !== '' ? `<br><small>Count: ${countStr}</small>` : ''}
+                ${log.notes ? `<br><small>${log.notes}</small>` : ''}
+                <br><small class="use-supply-line">${formatLinkedPurchaseDisplay(log)}</small>
             </div>
-            <span>${log.cost ? cur + log.cost.toFixed(2) : '—'}</span>
+            <div class="use-history-actions">
+                <button type="button" class="secondary-btn" onclick="editUseEntry(${log.id})">Edit</button>
+                <button type="button" class="delete-btn" onclick="deleteUseEntry(${log.id})">Delete</button>
+            </div>
         `;
         container.appendChild(item);
     });
@@ -1308,10 +2161,9 @@ function renderUseHistoryTable() {
         return;
     }
 
-    const cur = appData.settings.currency;
     let html = `<div class="session-table-scroll"><table class="session-table"><thead><tr>
-        <th>Type</th><th>Date</th><th>Start</th><th>End</th><th>Duration</th><th>Amount</th><th>Unit</th>
-        <th>Count</th><th>Rate</th><th>Since Prev</th><th>Break</th><th>Cost</th><th>Trigger</th><th>Notes</th><th></th>
+        <th>Date</th><th>Type</th><th>Substance</th><th>Start</th><th>End</th><th>Duration</th><th>Amount</th><th>Unit</th>
+        <th>Count</th><th>Rate</th><th>Since Prev</th><th>Break</th><th>Supply</th><th>Notes</th><th>Actions</th>
     </tr></thead><tbody>`;
 
     allRows.forEach(({ entry, sub, avgRate }) => {
@@ -1319,8 +2171,9 @@ function renderUseHistoryTable() {
         const rateStr = entry.useRate != null ? `${entry.useRate.toFixed(2)}/${sub.defaultUnit}/hr` : '—';
         const typeLabel = entry.type === 'session' ? 'Session' : 'Quick';
         html += `<tr class="${warnings.join(' ')}">
-            <td>${typeLabel}</td>
             <td>${formatDate(entry.date)}</td>
+            <td>${typeLabel}</td>
+            <td>${sub.icon} ${sub.name}</td>
             <td>${entry.startTime || entry.time || '—'}</td>
             <td>${entry.endTime || '—'}</td>
             <td>${formatDurationHours(entry.durationHours)}</td>
@@ -1330,10 +2183,12 @@ function renderUseHistoryTable() {
             <td>${rateStr}</td>
             <td>${formatDurationHours(entry.timeBetweenHours)}</td>
             <td>${formatDurationHours(entry.breakDurationHours)}</td>
-            <td>${entry.cost ? cur + entry.cost.toFixed(2) : '—'}</td>
-            <td>${entry.trigger || '—'}</td>
+            <td class="session-supply-cell">${formatLinkedPurchaseDisplay(entry)}</td>
             <td class="session-notes-cell">${entry.notes || ''}</td>
-            <td><button class="delete-btn" onclick="deleteUseEntry(${entry.id})">×</button></td>
+            <td class="use-history-actions-cell">
+                <button type="button" class="secondary-btn" onclick="editUseEntry(${entry.id})">Edit</button>
+                <button type="button" class="delete-btn" onclick="deleteUseEntry(${entry.id})">×</button>
+            </td>
         </tr>`;
     });
 
@@ -1372,26 +2227,28 @@ function getTimeSinceLastUse(substanceId) {
 }
 
 function logCravingOnly() {
-    document.getElementById('craving-modal').classList.remove('hidden');
+    document.getElementById('craving-modal')?.classList.remove('hidden');
     const sel = document.getElementById('craving-substance');
     if (sel && !isAllSubstancesView()) sel.value = currentSubstanceId;
 }
 
 function closeCravingModal() {
-    document.getElementById('craving-modal').classList.add('hidden');
-    document.getElementById('craving-form').reset();
-    document.getElementById('craving-intensity').value = 5;
-    document.getElementById('intensity-value').textContent = '5';
+    document.getElementById('craving-modal')?.classList.add('hidden');
+    document.getElementById('craving-form')?.reset();
+    setInputValue('craving-intensity', 5);
+    setText('intensity-value', '5');
 }
 
 function handleCravingSubmit(e) {
     e.preventDefault();
+    const substanceId = document.getElementById('craving-substance')?.value;
+    if (!substanceId) return alert('Select a substance.');
     appData.cravings.push({
         id: Date.now(),
-        substanceId: document.getElementById('craving-substance').value,
-        intensity: parseInt(document.getElementById('craving-intensity').value, 10),
-        trigger: document.getElementById('craving-trigger').value || '',
-        whatHelped: document.getElementById('craving-helped').value || '',
+        substanceId,
+        intensity: parseInt(document.getElementById('craving-intensity')?.value, 10) || 5,
+        trigger: document.getElementById('craving-trigger')?.value || '',
+        whatHelped: document.getElementById('craving-helped')?.value || '',
         date: new Date().toISOString().split('T')[0],
         time: new Date().toTimeString().slice(0, 5),
         timestamp: new Date().toISOString()
@@ -1406,24 +2263,171 @@ function handleCravingSubmit(e) {
 function getPurchasesFiltered(substanceId) {
     let list = appData.purchases || [];
     if (substanceId && substanceId !== DASHBOARD_ALL) {
-        list = list.filter(p => p.substanceId === substanceId);
+        list = list.filter(p => getPurchaseSubstanceId(p) === substanceId);
     }
     return list;
+}
+
+function getPurchaseSubstanceId(purchase) {
+    return purchase.substanceId || purchase.substance || purchase.item || '';
+}
+
+function getPurchaseQuantity(purchase) {
+    const q = purchase.quantity ?? purchase.quantityBought;
+    return q != null && q !== '' ? q : '';
+}
+
+function getPurchaseTotalCost(purchase) {
+    const c = purchase.totalCost ?? purchase.cost;
+    return c != null && c !== '' ? c : '';
+}
+
+function getSubstancePurchaseSpend(substanceId, filterFn) {
+    return (appData.purchases || [])
+        .filter(p => p.substanceId === substanceId && (!filterFn || filterFn(p)))
+        .reduce((sum, p) => {
+            const c = parseFloat(getPurchaseTotalCost(p));
+            return sum + (Number.isFinite(c) ? c : 0);
+        }, 0);
+}
+
+function setDefaultBuyDateTime() {
+    const now = new Date();
+    const dateEl = document.getElementById('buy-date');
+    const timeEl = document.getElementById('buy-time');
+    if (dateEl) dateEl.value = now.toISOString().split('T')[0];
+    if (timeEl) timeEl.value = now.toTimeString().slice(0, 5);
+}
+
+function setBuyFormSubmitLabel(text) {
+    const btn = document.getElementById('buy-submit-btn');
+    if (btn) btn.textContent = text;
 }
 
 function setupBuyTrackerForm() {
     const form = document.getElementById('buy-form');
     if (!form) return;
     form.addEventListener('submit', handleBuySubmit);
-    const now = new Date();
-    const dateEl = document.getElementById('buy-date');
-    const timeEl = document.getElementById('buy-time');
-    if (dateEl) dateEl.value = now.toISOString().split('T')[0];
-    if (timeEl) timeEl.value = now.toTimeString().slice(0, 5);
+    setDefaultBuyDateTime();
     ['buy-quantity', 'buy-total-cost'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', updateBuyCostPerUnitPreview);
     });
     document.getElementById('buy-substance')?.addEventListener('change', updateBuyUnitDropdown);
+}
+
+function buildPurchaseFromForm() {
+    const quantity = parseFloat(document.getElementById('buy-quantity')?.value);
+    const totalCost = parseFloat(document.getElementById('buy-total-cost')?.value);
+    const substanceId = document.getElementById('buy-substance')?.value;
+    const sub = getSubstance(substanceId);
+    const qty = Number.isFinite(quantity) ? quantity : 0;
+    return {
+        substanceId,
+        substanceName: sub?.name || '',
+        date: document.getElementById('buy-date')?.value,
+        time: document.getElementById('buy-time')?.value || '12:00',
+        quantityBought: qty,
+        quantity: qty,
+        unit: document.getElementById('buy-unit')?.value || 'units',
+        totalCost: Number.isFinite(totalCost) ? totalCost : 0,
+        costPerUnit: qty > 0 ? (Number.isFinite(totalCost) ? totalCost : 0) / qty : 0,
+        store: document.getElementById('buy-store')?.value || '',
+        paymentMethod: document.getElementById('buy-payment')?.value || '',
+        notes: document.getElementById('buy-notes')?.value || ''
+    };
+}
+
+function finalizeNewPurchaseRecord(payload) {
+    const now = new Date().toISOString();
+    return {
+        ...payload,
+        remainingAmount: payload.quantityBought ?? payload.quantity ?? 0,
+        isDepleted: false,
+        createdAt: now,
+        updatedAt: now
+    };
+}
+
+function applyPurchaseQuantityEdit(existing, newQty) {
+    const used = getPurchaseQuantityBought(existing) - getPurchaseRemainingAmount(existing);
+    const remaining = Math.max(0, newQty - used);
+    existing.quantityBought = newQty;
+    existing.quantity = newQty;
+    existing.remainingAmount = remaining;
+    existing.isDepleted = remaining <= 0;
+    if (newQty > 0) {
+        const total = parseFloat(getPurchaseTotalCost(existing)) || 0;
+        existing.costPerUnit = total / newQty;
+    }
+    existing.updatedAt = new Date().toISOString();
+}
+
+function resetBuyFormAfterSave() {
+    editingPurchaseId = null;
+    document.getElementById('buy-form')?.reset();
+    setDefaultBuyDateTime();
+    setBuyFormSubmitLabel('Save Purchase');
+    document.getElementById('cancel-buy-edit-btn')?.classList.add('hidden');
+    applyMainSubstanceToForms();
+    updateBuyCostPerUnitPreview();
+}
+
+function refreshBuyTrackerRelatedViews() {
+    renderBuyTrackerTab();
+    updateDashboard();
+    updateStats();
+    renderCalendar();
+}
+
+function editPurchase(id) {
+    const purchase = (appData.purchases || []).find(p => p.id === id);
+    if (!purchase) return;
+
+    editingPurchaseId = id;
+    const substanceId = getPurchaseSubstanceId(purchase);
+    const substanceSelect = document.getElementById('buy-substance');
+    if (substanceSelect && substanceId && [...substanceSelect.options].some(o => o.value === substanceId)) {
+        substanceSelect.value = substanceId;
+    }
+    updateBuyUnitDropdown();
+
+    const unit = purchase.unit || 'units';
+    const unitSelect = document.getElementById('buy-unit');
+    if (unitSelect) {
+        if (unit && ![...unitSelect.options].some(o => o.value === unit)) {
+            const option = document.createElement('option');
+            option.value = unit;
+            option.textContent = unit;
+            unitSelect.appendChild(option);
+        }
+        unitSelect.value = unit;
+    }
+
+    setInputValue('buy-date', purchase.date || '');
+    setInputValue('buy-time', purchase.time || '12:00');
+    setInputValue('buy-quantity', getPurchaseQuantity(purchase));
+    setInputValue('buy-total-cost', getPurchaseTotalCost(purchase));
+    setInputValue('buy-store', purchase.store || purchase.location || '');
+    setInputValue('buy-payment', purchase.paymentMethod || '');
+    setInputValue('buy-notes', purchase.notes || '');
+
+    setBuyFormSubmitLabel('Update Purchase');
+    document.getElementById('cancel-buy-edit-btn')?.classList.remove('hidden');
+    updateBuyCostPerUnitPreview();
+
+    switchTab('buy-tracker-tab');
+    document.getElementById('buy-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelBuyEdit() {
+    editingPurchaseId = null;
+    document.getElementById('buy-form')?.reset();
+    setDefaultBuyDateTime();
+    setBuyFormSubmitLabel('Save Purchase');
+    document.getElementById('cancel-buy-edit-btn')?.classList.add('hidden');
+    applyMainSubstanceToForms();
+    updateBuyUnitDropdown();
+    updateBuyCostPerUnitPreview();
 }
 
 function updateBuyCostPerUnitPreview() {
@@ -1440,50 +2444,86 @@ function updateBuyCostPerUnitPreview() {
 
 function handleBuySubmit(e) {
     e.preventDefault();
-    const quantity = parseFloat(document.getElementById('buy-quantity').value);
-    const totalCost = parseFloat(document.getElementById('buy-total-cost').value);
-    const purchase = {
-        id: Date.now(),
-        substanceId: document.getElementById('buy-substance').value,
-        date: document.getElementById('buy-date').value,
-        time: document.getElementById('buy-time').value,
-        quantity,
-        unit: document.getElementById('buy-unit').value,
-        totalCost,
-        costPerUnit: quantity > 0 ? totalCost / quantity : 0,
-        store: document.getElementById('buy-store').value || '',
-        paymentMethod: document.getElementById('buy-payment').value || '',
-        notes: document.getElementById('buy-notes').value || ''
-    };
     if (!appData.purchases) appData.purchases = [];
-    appData.purchases.push(purchase);
+
+    const payload = buildPurchaseFromForm();
+
+    if (editingPurchaseId != null) {
+        const idx = appData.purchases.findIndex(p => p.id === editingPurchaseId);
+        if (idx < 0) {
+            alert('Could not find the purchase to update.');
+            cancelBuyEdit();
+            return;
+        }
+        const existing = appData.purchases[idx];
+        appData.purchases[idx] = {
+            ...existing,
+            ...payload,
+            id: editingPurchaseId,
+            substanceId: payload.substanceId,
+            createdAt: existing.createdAt || new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+        applyPurchaseQuantityEdit(appData.purchases[idx], payload.quantityBought ?? payload.quantity ?? 0);
+        delete appData.purchases[idx].substance;
+        delete appData.purchases[idx].item;
+        delete appData.purchases[idx].cost;
+        delete appData.purchases[idx].location;
+        saveData(appData);
+        resetBuyFormAfterSave();
+        refreshBuyTrackerRelatedViews();
+        alert('Purchase updated!');
+        return;
+    }
+
+    appData.purchases.push({ ...finalizeNewPurchaseRecord(payload), id: Date.now() });
     saveData(appData);
-    e.target.reset();
-    const now = new Date();
-    document.getElementById('buy-date').value = now.toISOString().split('T')[0];
-    document.getElementById('buy-time').value = now.toTimeString().slice(0, 5);
-    applyMainSubstanceToForms();
-    renderBuyTrackerTab();
-    updateDashboard();
+    resetBuyFormAfterSave();
+    refreshBuyTrackerRelatedViews();
     alert('Purchase recorded!');
 }
 
 function openBuyTrackerModal() {
     switchTab('buy-tracker-tab');
     const id = getMainSubstanceId();
-    if (id) document.getElementById('buy-substance').value = id;
-    const now = new Date();
-    document.getElementById('buy-date').value = now.toISOString().split('T')[0];
-    document.getElementById('buy-time').value = now.toTimeString().slice(0, 5);
+    if (id) setInputValue('buy-substance', id);
+    setDefaultBuyDateTime();
     updateBuyUnitDropdown();
 }
 
 function deletePurchase(id) {
-    if (!confirm('Delete this purchase?')) return;
+    const linked = (appData.logs || []).filter(l =>
+        l.linkedPurchaseId === id
+        || l.linkedPurchases?.some(a => a.purchaseId === id || String(a.purchaseId) === String(id))
+    );
+    let msg = 'Delete this purchase?';
+    if (linked.length) {
+        msg = `This purchase has ${linked.length} linked use ${linked.length === 1 ? 'entry' : 'entries'}. Delete anyway? Those uses will become unlinked.`;
+    }
+    if (!confirm(msg)) return;
+    if (editingPurchaseId === id) cancelBuyEdit();
+    linked.forEach(l => {
+        if (l.linkedPurchases?.length) {
+            l.linkedPurchases = l.linkedPurchases.filter(a => a.purchaseId !== id && String(a.purchaseId) !== String(id));
+            if (l.linkedPurchases.length === 1) {
+                l.linkedPurchaseId = l.linkedPurchases[0].purchaseId;
+                delete l.linkedPurchases;
+            } else if (l.linkedPurchases.length === 0) {
+                l.linkedPurchaseId = null;
+                l.supplyUnlinked = true;
+            } else {
+                l.linkedPurchaseId = l.linkedPurchases[0].purchaseId;
+            }
+        } else {
+            l.linkedPurchaseId = null;
+            l.supplyUnlinked = true;
+        }
+        l.updatedAt = new Date().toISOString();
+    });
     appData.purchases = (appData.purchases || []).filter(p => p.id !== id);
     saveData(appData);
-    renderBuyTrackerTab();
-    updateDashboard();
+    refreshBuyTrackerRelatedViews();
+    refreshUseLogRelatedViews();
 }
 
 function getBuyStats(substanceId) {
@@ -1493,9 +2533,10 @@ function getBuyStats(substanceId) {
     const monthStart = today.slice(0, 7) + '-01';
     const cur = appData.settings.currency;
 
-    const spentToday = purchases.filter(p => p.date === today).reduce((s, p) => s + (p.totalCost || 0), 0);
-    const spentWeek = purchases.filter(p => p.date >= weekStart).reduce((s, p) => s + (p.totalCost || 0), 0);
-    const spentMonth = purchases.filter(p => p.date >= monthStart).reduce((s, p) => s + (p.totalCost || 0), 0);
+    const purchaseCost = p => p.totalCost ?? p.cost ?? 0;
+    const spentToday = purchases.filter(p => p.date === today).reduce((s, p) => s + purchaseCost(p), 0);
+    const spentWeek = purchases.filter(p => p.date >= weekStart).reduce((s, p) => s + purchaseCost(p), 0);
+    const spentMonth = purchases.filter(p => p.date >= monthStart).reduce((s, p) => s + purchaseCost(p), 0);
     const countWeek = purchases.filter(p => p.date >= weekStart).length;
     const countMonth = purchases.filter(p => p.date >= monthStart).length;
 
@@ -1508,16 +2549,11 @@ function getBuyStats(substanceId) {
     const lastPurchase = sorted[0] || null;
 
     let daysSupply = null;
-    if (lastPurchase && substanceId && substanceId !== DASHBOARD_ALL) {
-        const qtyPurchased = lastPurchase.quantity || 0;
-        const usedSince = appData.logs
-            .filter(l => l.substanceId === substanceId && l.date >= lastPurchase.date)
-            .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
-        const dailyAvg = usedSince > 0
-            ? usedSince / Math.max(1, Math.ceil((Date.now() - new Date(lastPurchase.date + 'T12:00:00')) / 86400000))
-            : null;
-        if (dailyAvg > 0 && qtyPurchased > usedSince) {
-            daysSupply = Math.round((qtyPurchased - usedSince) / dailyAvg);
+    if (substanceId && substanceId !== DASHBOARD_ALL) {
+        const totalRemaining = getTotalRemainingSupply(substanceId);
+        const dailyAvg = getAverageDailyUse(substanceId);
+        if (dailyAvg > 0 && totalRemaining > 0) {
+            daysSupply = Math.round(totalRemaining / dailyAvg);
         }
     }
 
@@ -1535,7 +2571,7 @@ function renderBuySpendingTrend(substanceId) {
         d.setDate(d.getDate() - i);
         days.push(d.toISOString().split('T')[0]);
     }
-    const totals = days.map(day => purchases.filter(p => p.date === day).reduce((s, p) => s + (p.totalCost || 0), 0));
+    const totals = days.map(day => purchases.filter(p => p.date === day).reduce((s, p) => s + (p.totalCost ?? p.cost ?? 0), 0));
     const max = Math.max(...totals, 1);
     container.innerHTML = '<div class="mini-bar-chart">' + days.map((day, i) => {
         const h = Math.round((totals[i] / max) * 100);
@@ -1556,7 +2592,7 @@ function renderBuyTrackerTab() {
     set('buy-count-month', String(stats.countMonth));
     set('buy-avg-cost-unit', stats.avgCostUnit != null ? `${stats.cur}${stats.avgCostUnit.toFixed(2)}` : '—');
     if (stats.lastPurchase) {
-        const sub = getSubstance(stats.lastPurchase.substanceId);
+        const sub = getSubstance(getPurchaseSubstanceId(stats.lastPurchase));
         set('buy-last-date', `${formatDate(stats.lastPurchase.date)} · ${sub?.name || ''}`);
     } else {
         set('buy-last-date', '—');
@@ -1579,13 +2615,31 @@ function renderBuyHistory(substanceId) {
     }
     const cur = appData.settings.currency;
     purchases.forEach(purchase => {
-        const sub = getSubstance(purchase.substanceId);
+        const substanceId = getPurchaseSubstanceId(purchase);
+        const sub = getSubstance(substanceId);
+        const qty = getPurchaseQuantity(purchase);
+        const total = getPurchaseTotalCost(purchase);
+        const totalNum = parseFloat(total) || 0;
+        const qtyNum = parseFloat(qty) || 0;
+        const cpu = purchase.costPerUnit ?? (qtyNum > 0 ? totalNum / qtyNum : 0);
+        const store = purchase.store || purchase.location || '';
+        const bought = getPurchaseQuantityBought(purchase);
+        const remaining = getPurchaseRemainingAmount(purchase);
+        const pctUsed = getPurchasePercentUsed(purchase);
+        const supply = getPurchaseSupplyStatus(purchase);
+        const unit = purchase.unit || 'units';
         const item = document.createElement('div');
-        item.className = 'list-item';
+        item.className = 'list-item purchase-supply-item';
         item.innerHTML = `
-            <div><strong>${sub?.icon} ${sub?.name}</strong> — ${formatDate(purchase.date)} ${purchase.time || ''}<br>
-            ${purchase.quantity} ${purchase.unit} · ${cur}${purchase.totalCost.toFixed(2)} (${cur}${(purchase.costPerUnit || 0).toFixed(2)}/unit)${purchase.store ? '<br><small>' + purchase.store + '</small>' : ''}</div>
-            <button class="delete-btn" onclick="deletePurchase(${purchase.id})">Delete</button>
+            <div><strong>${sub?.icon || ''} ${sub?.name || 'Unknown'}</strong> — ${formatDate(purchase.date || '')} ${purchase.time || ''}<br>
+            <span class="purchase-supply-qty">${bought}${unit} bought</span><br>
+            <span class="purchase-supply-remaining">${remaining.toFixed(1)}${unit} remaining · ${pctUsed}% used</span><br>
+            <span class="purchase-supply-status ${supply.className}">${supply.label}</span><br>
+            ${cur}${totalNum.toFixed(2)} (${cur}${cpu.toFixed(2)}/unit)${store ? '<br><small>' + store + '</small>' : ''}</div>
+            <div class="purchase-history-actions">
+                <button type="button" class="secondary-btn" onclick="editPurchase(${purchase.id})">Edit</button>
+                <button type="button" class="delete-btn" onclick="deletePurchase(${purchase.id})">Delete</button>
+            </div>
         `;
         container.appendChild(item);
     });
@@ -1603,28 +2657,18 @@ function getDashboardBuyInfo(substanceId) {
 function setupEventListeners() {
     document.getElementById('craving-form')?.addEventListener('submit', handleCravingSubmit);
     document.getElementById('taper-form')?.addEventListener('submit', handleTaperSubmit);
-    document.getElementById('substance-form')?.addEventListener('submit', handleSubstanceSubmit);
+    setupSubstanceForm();
+    document.getElementById('save-substance-btn')?.addEventListener('click', () => {
+        console.log('[substance] save button clicked');
+        handleSubstanceSubmit();
+    });
 
     document.getElementById('craving-intensity')?.addEventListener('input', e => {
         const el = document.getElementById('intensity-value');
         if (el) el.textContent = e.target.value;
     });
     document.getElementById('use-substance')?.addEventListener('change', updateUseUnitDropdown);
-    document.getElementById('settings-substance')?.addEventListener('change', () => {
-        loadSubstanceSettings();
-        updateSettingsSectionsVisibility();
-    });
-    document.getElementById('taper-substance')?.addEventListener('change', () => {
-        renderTaperPlan();
-        checkTaperTarget();
-        updateTaperProgress();
-    });
-
-    document.addEventListener('click', recordActivity);
-    document.addEventListener('keydown', recordActivity);
-    document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'hidden' && appData.privacy?.enabled) lockApp();
-    });
+    document.getElementById('taper-substance')?.addEventListener('change', onTaperSubstanceChange);
 }
 
 // ——— Dashboard ———
@@ -1690,16 +2734,18 @@ function updateDashboard() {
     const buyInfo = getDashboardBuyInfo(filterId);
     set('dash-spent-today-buy', `${cur}${buyInfo.spentToday.toFixed(2)}`);
     if (buyInfo.lastPurchase) {
-        const sub = getSubstance(buyInfo.lastPurchase.substanceId);
+        const sub = getSubstance(getPurchaseSubstanceId(buyInfo.lastPurchase));
         set('dash-last-purchase', `${formatDate(buyInfo.lastPurchase.date)} · ${sub?.name || ''}`);
     } else {
         set('dash-last-purchase', '—');
     }
 
     set('cravings-resisted', String(todayCravings.length));
+    updateCurrentSupplyDashboard();
     renderSubstanceCompare();
     updateQuickActions();
-    updateDoNotSurpassDisplay('dashboard', isAllSubstancesView() ? null : currentSubstanceId);
+    const dashboardTaperId = getMainSubstanceId() || (isAllSubstancesView() ? null : currentSubstanceId);
+    updateDoNotSurpassDisplay('dashboard', dashboardTaperId);
     updateTaperProgress();
     updateDashboardMainDisplay();
 }
@@ -1709,16 +2755,6 @@ function updateDashboardMainDisplay() {
     const main = getMainSubstance();
     if (!el) return;
     el.textContent = main ? `Main Substance: ${main.icon} ${main.name}` : 'Main Substance: —';
-}
-
-function computeAllMoneySaved(today) {
-    return getActiveSubstances().reduce((total, sub) => {
-        if (!sub.costTrackingEnabled) return total;
-        const settings = getSubstanceSettings(sub.id);
-        const amount = appData.logs.filter(l => l.date === today && l.substanceId === sub.id).reduce((s, l) => s + l.amount, 0);
-        const cpu = settings.packPrice / settings.unitsPerPack;
-        return total + (settings.baseline * cpu - amount * cpu);
-    }, 0);
 }
 
 function renderSubstanceCompare() {
@@ -1740,7 +2776,7 @@ function renderSubstanceCompare() {
     getActiveSubstances().forEach(sub => {
         const logs = appData.logs.filter(l => l.date === today && l.substanceId === sub.id);
         const amount = logs.reduce((s, l) => s + l.amount, 0);
-        const spent = logs.reduce((s, l) => s + (l.cost || 0), 0);
+        const spent = getSubstancePurchaseSpend(sub.id, p => p.date === today);
         const { days } = computeRecoveryStreakDays(sub.id);
         const card = document.createElement('div');
         card.className = 'compare-card';
@@ -1753,45 +2789,13 @@ function renderSubstanceCompare() {
         `;
         card.onclick = () => {
             currentSubstanceId = sub.id;
-            document.getElementById('dashboard-substance').value = sub.id;
+            setInputValue('dashboard-substance', sub.id);
             updateDashboard();
         };
         grid.appendChild(card);
     });
 
     container.appendChild(grid);
-}
-
-function updateAvgTimeBetween(todayLogs) {
-    const el = document.getElementById('avg-time-between');
-    if (todayLogs.length < 2) { el.textContent = '--'; return; }
-    const sorted = [...todayLogs].sort((a, b) => new Date(`${a.date}T${a.time}`) - new Date(`${b.date}T${b.time}`));
-    let total = 0;
-    for (let i = 1; i < sorted.length; i++) {
-        total += new Date(`${sorted[i].date}T${sorted[i].time}`) - new Date(`${sorted[i - 1].date}T${sorted[i - 1].time}`);
-    }
-    const mins = Math.floor(total / (sorted.length - 1) / 60000);
-    const hrs = Math.floor(mins / 60);
-    el.textContent = hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
-}
-
-function updateLongestStreakToday(todayLogs) {
-    const el = document.getElementById('longest-streak-today');
-    if (todayLogs.length < 2) { el.textContent = '--'; return; }
-    const sorted = [...todayLogs].sort((a, b) => new Date(`${a.date}T${a.time}`) - new Date(`${b.date}T${b.time}`));
-    let max = 0;
-    for (let i = 1; i < sorted.length; i++) {
-        max = Math.max(max, new Date(`${sorted[i].date}T${sorted[i].time}`) - new Date(`${sorted[i - 1].date}T${sorted[i - 1].time}`));
-    }
-    const mins = Math.floor(max / 60000);
-    const hrs = Math.floor(mins / 60);
-    el.textContent = hrs > 0 ? `${hrs}h ${mins % 60}m` : `${mins}m`;
-}
-
-function updateMoneySaved(todayAmount, settings) {
-    const cpu = settings.packPrice / settings.unitsPerPack;
-    const saved = (settings.baseline || 0) * cpu - todayAmount * cpu;
-    document.getElementById('money-saved').textContent = `${appData.settings.currency}${saved.toFixed(2)}`;
 }
 
 // ——— Recovery streaks ———
@@ -1858,8 +2862,8 @@ function updateStats() {
 
     const substanceLogs = appData.logs.filter(l => l.substanceId === currentSubstanceId);
     const sub = getSubstance(currentSubstanceId);
-    const settings = getSubstanceSettings(currentSubstanceId);
     const today = new Date();
+    const cur = appData.settings.currency;
 
     renderUsageChart();
     renderSpendingChart();
@@ -1873,25 +2877,44 @@ function updateStats() {
     const daysWithData = new Set(substanceLogs.map(l => l.date)).size;
     const avgPerDay = daysWithData ? (substanceLogs.reduce((s, l) => s + l.amount, 0) / daysWithData).toFixed(1) : 0;
 
-    document.getElementById('total-week').textContent = `${totalWeek} ${sub?.defaultUnit || 'units'}`;
-    document.getElementById('total-month').textContent = `${totalMonth} ${sub?.defaultUnit || 'units'}`;
-    document.getElementById('avg-per-day').textContent = avgPerDay;
+    setText('total-week', `${totalWeek} ${sub?.defaultUnit || 'units'}`);
+    setText('total-month', `${totalMonth} ${sub?.defaultUnit || 'units'}`);
+    setText('avg-per-day', avgPerDay);
 
     updateLongestTimeBetween();
-    const totalSpent = substanceLogs.reduce((s, l) => s + (l.cost || 0), 0);
-    document.getElementById('total-spent').textContent = `${appData.settings.currency}${totalSpent.toFixed(2)}`;
+    const totalSpent = getSubstancePurchaseSpend(currentSubstanceId);
+    setText('total-spent', `${cur}${totalSpent.toFixed(2)}`);
 
-    const cpu = settings.packPrice / settings.unitsPerPack;
-    const estimatedSaved = substanceLogs.length * (settings.baseline || 0) * cpu - totalSpent;
-    document.getElementById('estimated-saved').textContent = `${appData.settings.currency}${estimatedSaved.toFixed(2)}`;
-    document.getElementById('cost-per-week').textContent = `${appData.settings.currency}${(avgPerDay * 7 * cpu).toFixed(2)}`;
-    document.getElementById('cost-per-month').textContent = `${appData.settings.currency}${(avgPerDay * 30 * cpu).toFixed(2)}`;
-    document.getElementById('reduction-baseline').textContent = settings.baseline > 0 ? `${((1 - avgPerDay / settings.baseline) * 100).toFixed(0)}%` : '0%';
+    const cpu = getAveragePurchaseCostPerUnit(currentSubstanceId);
+    const avgNum = parseFloat(avgPerDay) || 0;
+    if (cpu != null) {
+        setText('cost-per-week', `${cur}${(avgNum * 7 * cpu).toFixed(2)}`);
+        setText('cost-per-month', `${cur}${(avgNum * 30 * cpu).toFixed(2)}`);
+    } else {
+        setText('cost-per-week', '—');
+        setText('cost-per-month', '—');
+    }
+
+    const taperStart = getTaperStartingDailyAverage(currentSubstanceId);
+    if (taperStart != null && taperStart > 0) {
+        const pct = Math.max(0, Math.round((1 - avgNum / taperStart) * 100));
+        setText('reduction-baseline', `${pct}%`);
+        if (cpu != null) {
+            const baselineSpend = taperStart * cpu;
+            const actualSpend = avgNum * cpu;
+            setText('estimated-saved', `${cur}${Math.max(0, baselineSpend - actualSpend).toFixed(2)}`);
+        } else {
+            setText('estimated-saved', '—');
+        }
+    } else {
+        setText('reduction-baseline', '—');
+        setText('estimated-saved', '—');
+    }
 
     updateRecoveryStreakDisplay(currentSubstanceId);
     renderTriggerBreakdown();
     renderTaperProgressStats(currentSubstanceId);
-    document.getElementById('stats-cravings-count').textContent = appData.cravings.filter(c => c.substanceId === currentSubstanceId).length;
+    setText('stats-cravings-count', String(appData.cravings.filter(c => c.substanceId === currentSubstanceId).length));
 }
 
 function renderSubstanceStatsBreakdown() {
@@ -1902,7 +2925,7 @@ function renderSubstanceStatsBreakdown() {
     getActiveSubstances().forEach(sub => {
         const logs = appData.logs.filter(l => l.substanceId === sub.id);
         const cravings = appData.cravings.filter(c => c.substanceId === sub.id);
-        const spent = logs.reduce((s, l) => s + (l.cost || 0), 0);
+        const spent = getSubstancePurchaseSpend(sub.id);
         const uses = logs.reduce((s, l) => s + l.amount, 0);
         const { days } = computeRecoveryStreakDays(sub.id);
         const best = appData.recoveryStreaks[sub.id]?.best || days;
@@ -1939,7 +2962,7 @@ function renderTaperProgressStats(substanceId) {
     const start = new Date(plan.startDate);
     const end = new Date(plan.endDate);
     const pct = Math.round(Math.min(100, Math.max(0, ((Date.now() - start) / (end - start)) * 100)));
-    el.textContent = `${pct}% (${plan.currentAvg} → ${plan.goalAvg})`;
+    el.textContent = `${pct}% (${plan.startingDailyAverage ?? plan.currentAvg} → ${plan.goalDailyAverage ?? plan.goalAvg})`;
 }
 
 function renderUsageChart() {
@@ -1981,7 +3004,7 @@ function renderSpendingChart() {
         const date = new Date(today);
         date.setDate(date.getDate() - i);
         const dateStr = date.toISOString().split('T')[0];
-        const cost = appData.logs.filter(l => l.date === dateStr && l.substanceId === currentSubstanceId).reduce((s, l) => s + (l.cost || 0), 0);
+        const cost = getSubstancePurchaseSpend(currentSubstanceId, p => p.date === dateStr);
         weekData.push({ day: days[date.getDay()], cost });
     }
     const maxCost = Math.max(...weekData.map(d => d.cost), 0.01);
@@ -1998,12 +3021,12 @@ function renderTriggerBreakdown() {
     const container = document.getElementById('trigger-breakdown');
     if (!container) return;
     const counts = {};
-    appData.logs.filter(l => l.substanceId === currentSubstanceId && l.trigger).forEach(l => {
-        counts[l.trigger] = (counts[l.trigger] || 0) + 1;
+    appData.cravings.filter(c => c.substanceId === currentSubstanceId && c.trigger).forEach(c => {
+        counts[c.trigger] = (counts[c.trigger] || 0) + 1;
     });
     const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]).slice(0, 6);
     if (!sorted.length) {
-        container.innerHTML = '<p class="empty-hint">Log triggers to see patterns</p>';
+        container.innerHTML = '<p class="empty-hint">Log cravings to see trigger patterns</p>';
         return;
     }
     container.innerHTML = '';
@@ -2022,6 +3045,7 @@ function renderTriggerBreakdown() {
 function updateLongestTimeBetween() {
     const logs = appData.logs.filter(l => l.substanceId === currentSubstanceId);
     const el = document.getElementById('longest-time-between');
+    if (!el) return;
     if (logs.length < 2) { el.textContent = '--'; return; }
     const sorted = [...logs].sort((a, b) => new Date(`${a.date}T${a.time}`) - new Date(`${b.date}T${b.time}`));
     let max = 0;
@@ -2035,18 +3059,891 @@ function updateLongestTimeBetween() {
 
 // ——— Taper / Do Not Surpass ———
 const TAPER_RELAPSE_NOTE = 'Going over your limit doesn\'t erase your progress. Every day is a new chance—no shame, just data.';
+const TAPER_REDUCTION_LABELS = {
+    'reduce-amount': 'Reduce by amount',
+    'reduce-percent': 'Reduce by percent',
+    fixed: 'Fixed daily limit',
+    'step-weekly': 'Weekly step-down'
+};
+
+function roundTaperValue(n) {
+    return Math.round((parseFloat(n) || 0) * 2) / 2;
+}
+
+function migrateTaperPlan(plan, substanceId) {
+    if (!plan) return;
+    const now = new Date().toISOString();
+    if (!plan.id) plan.id = `${substanceId}-${Date.now()}`;
+    if (!plan.substanceId) plan.substanceId = substanceId;
+    if (!plan.createdAt) plan.createdAt = plan.startDate ? `${plan.startDate}T12:00:00.000Z` : now;
+    if (!plan.updatedAt) plan.updatedAt = plan.createdAt;
+    if (plan.isPaused === undefined) plan.isPaused = false;
+
+    plan.startingDailyAverage = plan.startingDailyAverage ?? plan.currentAvg ?? 0;
+    plan.goalDailyAverage = plan.goalDailyAverage ?? plan.goalAvg ?? 0;
+    plan.currentAvg = plan.startingDailyAverage;
+    plan.goalAvg = plan.goalDailyAverage;
+
+    if (!plan.reductionType) {
+        const map = { linear: 'reduce-amount', 'step-weekly': 'step-weekly', hold: 'fixed', custom: 'fixed' };
+        plan.reductionType = map[plan.planType] || 'reduce-amount';
+    }
+
+    if (plan.reductionAmount == null && plan.startingDailyAverage > plan.goalDailyAverage) {
+        const weeks = Math.max(1, countWeeksBetween(plan.startDate, plan.endDate));
+        plan.reductionAmount = roundTaperValue((plan.startingDailyAverage - plan.goalDailyAverage) / weeks);
+    }
+    if (plan.reductionPercent == null) plan.reductionPercent = 10;
+
+    plan.weeklyMax = plan.weeklyMax ?? null;
+    plan.doNotSurpassDaily = plan.doNotSurpassDaily ?? plan.warnBeforeSurpass ?? true;
+    plan.doNotSurpassWeekly = plan.doNotSurpassWeekly ?? false;
+    plan.notes = plan.notes ?? plan.taperNotes ?? '';
+    plan.taperNotes = plan.notes;
+
+    if (!plan.weeklyTargets?.length) {
+        plan.weeklyTargets = generateWeeklyTargets(plan);
+    }
+    syncTaperPlanData(substanceId);
+}
+
+function countWeeksBetween(startDate, endDate) {
+    const s = new Date(startDate + 'T12:00:00');
+    const e = new Date(endDate + 'T12:00:00');
+    return Math.max(1, Math.ceil((e - s) / (7 * 86400000)) + 1);
+}
+
+function generateWeeklyTargets(plan) {
+    const { startDate, endDate, startingDailyAverage, goalDailyAverage, reductionType, reductionAmount, reductionPercent, weeklyMax } = plan;
+    const weeks = [];
+    let cursor = startDate;
+    let currentDaily = startingDailyAverage;
+    const goal = goalDailyAverage ?? 0;
+    let guard = 0;
+
+    while (cursor <= endDate && guard < 104) {
+        guard++;
+        const weekStart = cursor;
+        let weekEnd = addDaysToDateStr(getWeekStartDateStr(cursor), 6);
+        if (weekEnd > endDate) weekEnd = endDate;
+
+        let dailyTarget = currentDaily;
+        if (reductionType === 'fixed') {
+            dailyTarget = goal > 0 ? goal : startingDailyAverage;
+        }
+
+        dailyTarget = roundTaperValue(Math.max(goal, dailyTarget));
+        let wMax = weeklyMax > 0 ? roundTaperValue(weeklyMax) : roundTaperValue(dailyTarget * 7);
+
+        weeks.push({
+            weekStart,
+            weekEnd,
+            dailyTarget,
+            weeklyMax: wMax,
+            actualUsed: 0,
+            difference: 0,
+            status: 'under'
+        });
+
+        switch (reductionType) {
+            case 'reduce-amount':
+            case 'step-weekly':
+                currentDaily = Math.max(goal, currentDaily - (parseFloat(reductionAmount) || 0));
+                break;
+            case 'reduce-percent':
+                currentDaily = Math.max(goal, currentDaily * (1 - (parseFloat(reductionPercent) || 0) / 100));
+                break;
+            case 'fixed':
+                currentDaily = goal > 0 ? goal : startingDailyAverage;
+                break;
+            default: {
+                const wk = weeks.length;
+                const totalW = countWeeksBetween(startDate, endDate);
+                const dec = totalW > 1 ? (startingDailyAverage - goal) / (totalW - 1) : 0;
+                currentDaily = Math.max(goal, startingDailyAverage - dec * wk);
+            }
+        }
+
+        const next = addDaysToDateStr(weekEnd, 1);
+        if (next <= cursor) break;
+        cursor = next;
+    }
+    return weeks;
+}
+
+function expandDailyTargetsFromWeekly(plan) {
+    const daily = [];
+    (plan.weeklyTargets || []).forEach(w => {
+        let d = w.weekStart;
+        while (d <= w.weekEnd) {
+            daily.push({
+                date: d,
+                limit: w.dailyTarget,
+                target: w.dailyTarget,
+                used: 0,
+                remaining: w.dailyTarget,
+                status: 'under'
+            });
+            d = addDaysToDateStr(d, 1);
+        }
+    });
+    plan.dailyTargets = daily;
+}
+
+function syncTaperPlanData(substanceId) {
+    const plan = appData.taperPlans[substanceId];
+    if (!plan) return;
+
+    (plan.weeklyTargets || []).forEach(w => {
+        let actual = 0;
+        let d = w.weekStart;
+        while (d <= w.weekEnd) {
+            actual += getUsedAmount(substanceId, d);
+            d = addDaysToDateStr(d, 1);
+        }
+        w.actualUsed = roundTaperValue(actual);
+        w.difference = roundTaperValue(actual - w.weeklyMax);
+        w.status = getTaperLimitStatus(actual, w.weeklyMax).status;
+    });
+
+    expandDailyTargetsFromWeekly(plan);
+    (plan.dailyTargets || []).forEach(day => {
+        const limit = day.limit ?? day.target;
+        if (limit == null) return;
+        const used = getUsedAmount(substanceId, day.date);
+        day.limit = limit;
+        day.target = limit;
+        day.used = used;
+        day.remaining = Math.max(0, limit - used);
+        day.status = getTaperLimitStatus(used, limit).status;
+    });
+}
+
+function getWeekRowForDate(plan, dateStr) {
+    return plan?.weeklyTargets?.find(w => dateStr >= w.weekStart && dateStr <= w.weekEnd);
+}
 
 function getDailyLimitForDate(substanceId, dateStr) {
     const plan = appData.taperPlans[substanceId];
-    if (!plan?.dailyTargets) return null;
-    const day = plan.dailyTargets.find(d => d.date === dateStr);
-    return day != null ? day.target : null;
+    if (!plan || plan.isPaused) return null;
+    const week = getWeekRowForDate(plan, dateStr);
+    if (week) return week.dailyTarget;
+    const day = plan.dailyTargets?.find(d => d.date === dateStr);
+    return day ? (day.limit ?? day.target) : null;
 }
 
-function getUsedAmount(substanceId, dateStr) {
+function getWeeklyLimit(substanceId, dateStr) {
+    const plan = appData.taperPlans[substanceId];
+    if (!plan || plan.isPaused) return null;
+    const week = getWeekRowForDate(plan, dateStr);
+    if (week?.weeklyMax > 0) return week.weeklyMax;
+    if (plan.weeklyMax > 0) return plan.weeklyMax;
+    const daily = getDailyLimitForDate(substanceId, dateStr);
+    return daily != null ? roundTaperValue(daily * 7) : null;
+}
+
+function getTaperLimitStatus(used, limit) {
+    if (limit == null || limit <= 0) {
+        return { status: 'none', label: 'No target', emoji: '—' };
+    }
+    if (used > limit) {
+        return { status: 'over', label: 'Over target', emoji: '🚫' };
+    }
+    if (used >= limit * 0.8) {
+        return { status: 'close', label: 'Close to target', emoji: '⚠️' };
+    }
+    return { status: 'under', label: 'Under target', emoji: '✅' };
+}
+
+function getTaperDailyStatusText(status) {
+    if (status === 'over') return 'Over daily target';
+    if (status === 'close') return 'Close to daily target';
+    if (status === 'under') return 'Under daily target';
+    return 'No daily target';
+}
+
+function getTaperWeeklyStatusText(status) {
+    if (status === 'over') return 'Over weekly target';
+    if (status === 'close') return 'Close to weekly target';
+    if (status === 'under') return 'Under weekly target';
+    return 'No weekly target';
+}
+
+function applyTaperProgressBar(bar, barText, used, limit) {
+    if (!bar) return;
+    const { status } = getTaperLimitStatus(used, limit);
+    const pct = limit > 0 ? (used / limit) * 100 : 0;
+    bar.style.width = `${Math.min(100, Math.max(pct, used > 0 ? 4 : 0))}%`;
+    bar.classList.remove('dns-under', 'dns-close', 'dns-over');
+    bar.classList.add(`dns-${status}`);
+    if (barText) barText.textContent = `${Math.round(pct)}%`;
+    return status;
+}
+
+function getTaperCalculatedMetrics(plan, substanceId) {
+    const sub = getSubstance(substanceId);
+    const unit = sub?.defaultUnit || 'units';
+    const today = new Date().toISOString().split('T')[0];
+    const start = plan.startingDailyAverage ?? 0;
+    const goal = plan.goalDailyAverage ?? 0;
+    const totalReduction = Math.max(0, start - goal);
+    const weeks = plan.weeklyTargets?.length || 1;
+    const weeklyReduction = weeks > 0 ? totalReduction / weeks : 0;
+    const todayTarget = getDailyLimitForDate(substanceId, today);
+    const currentWeek = getWeekRowForDate(plan, today);
+    const nextWeekStart = currentWeek ? addDaysToDateStr(currentWeek.weekEnd, 1) : null;
+    const nextWeek = nextWeekStart ? plan.weeklyTargets.find(w => w.weekStart === nextWeekStart) : null;
+    const nextWeekTarget = nextWeek?.dailyTarget ?? goal;
+
+    return {
+        unit,
+        totalReduction,
+        weeklyReduction,
+        todayTarget,
+        nextWeekTarget,
+        endDate: plan.endDate,
+        weeks
+    };
+}
+
+function getTaperDayStatus(substanceId, dateStr) {
+    const limit = getDailyLimitForDate(substanceId, dateStr);
+    if (limit == null) return 'none';
+    const used = getUsedAmount(substanceId, dateStr);
+    return getTaperLimitStatus(used, limit).status;
+}
+
+function confirmTaperBeforeLog(substanceId, amount, isQuickLog, excludeLogId = null) {
+    const sub = getSubstance(substanceId);
+    if (!sub?.taperTrackingEnabled) return true;
+
+    const plan = appData.taperPlans[substanceId];
+    if (!plan || plan.isPaused) return true;
+
+    const today = new Date().toISOString().split('T')[0];
+    const dailyLimit = getDailyLimitForDate(substanceId, today);
+    const usedToday = getUsedAmount(substanceId, today, excludeLogId);
+    let weekUsed = getWeeklyUsed(substanceId, today);
+    if (excludeLogId) {
+        const ex = findUseEntry(excludeLogId);
+        if (ex && getUseSubstanceId(ex) === substanceId) {
+            const ws = getWeekStartDateStr(today);
+            const we = addDaysToDateStr(ws, 6);
+            if (ex.date >= ws && ex.date <= we) weekUsed -= parseFloat(ex.amount) || 0;
+        }
+    }
+
+    if (plan.doNotSurpassDaily && dailyLimit != null && usedToday + amount > dailyLimit) {
+        if (!confirm('This entry will exceed your daily taper target. Log anyway?')) return false;
+    }
+
+    const weeklyLimit = getWeeklyLimit(substanceId, today);
+    if (plan.doNotSurpassWeekly && weeklyLimit != null && weekUsed + amount > weeklyLimit) {
+        if (!confirm('This entry will exceed your weekly taper target. Log anyway?')) return false;
+    }
+
+    return true;
+}
+
+function notifyTaperAfterLog(substanceId) {
+    const sub = getSubstance(substanceId);
+    if (!sub?.taperTrackingEnabled) return;
+    const today = new Date().toISOString().split('T')[0];
+    const limit = getDailyLimitForDate(substanceId, today);
+    if (limit == null) return;
+    const used = getUsedAmount(substanceId, today);
+    const { status } = getTaperLimitStatus(used, limit);
+    const unit = sub.defaultUnit;
+    if (status === 'close') {
+        alert(`⚠️ Close to daily target: ${used}/${limit} ${unit}. ${Math.max(0, limit - used).toFixed(1)} remaining.`);
+    } else if (status === 'over') {
+        alert(`🚫 Over daily target (${used}/${limit} ${unit}).\n\n${TAPER_RELAPSE_NOTE}`);
+    }
+}
+
+function buildTaperPlanFromForm(substanceId, existingPlan) {
+    const now = new Date().toISOString();
+    const startDate = existingPlan?.startDate || new Date().toISOString().split('T')[0];
+    const plan = {
+        id: existingPlan?.id || `${substanceId}-${Date.now()}`,
+        substanceId,
+        startDate,
+        endDate: document.getElementById('end-date')?.value,
+        startingDailyAverage: parseFloat(document.getElementById('current-avg')?.value) || 0,
+        goalDailyAverage: parseFloat(document.getElementById('goal-avg')?.value) || 0,
+        reductionType: document.getElementById('reduction-type')?.value || 'reduce-amount',
+        reductionAmount: parseFloat(document.getElementById('reduction-amount')?.value) || 0,
+        reductionPercent: parseFloat(document.getElementById('reduction-percent')?.value) || 0,
+        weeklyMax: parseFloat(document.getElementById('weekly-max')?.value) || null,
+        doNotSurpassDaily: document.getElementById('do-not-surpass-daily')?.checked !== false,
+        doNotSurpassWeekly: !!document.getElementById('do-not-surpass-weekly')?.checked,
+        notes: document.getElementById('taper-notes')?.value || '',
+        isPaused: existingPlan?.isPaused || false,
+        createdAt: existingPlan?.createdAt || now,
+        updatedAt: now
+    };
+    plan.currentAvg = plan.startingDailyAverage;
+    plan.goalAvg = plan.goalDailyAverage;
+    plan.weeklyTargets = generateWeeklyTargets(plan);
+    migrateTaperPlan(plan, substanceId);
+    return plan;
+}
+
+function syncTaperSubstanceToMain() {
+    const mainId = getMainSubstanceId();
+    const el = document.getElementById('taper-substance');
+    if (el && mainId && [...el.options].some(o => o.value === mainId)) el.value = mainId;
+}
+
+function onTaperSubstanceChange() {
+    taperEditingPlan = false;
+    refreshTaperDashboard();
+}
+
+function toggleTaperPlanTypeFields() {
+    const type = document.getElementById('reduction-type')?.value || 'reduce-amount';
+    const hint = document.getElementById('plan-type-hint');
+    const amtGroup = document.getElementById('reduction-amount-group');
+    const pctGroup = document.getElementById('reduction-percent-group');
+    amtGroup?.classList.toggle('hidden', type === 'reduce-percent' || type === 'fixed');
+    pctGroup?.classList.toggle('hidden', type !== 'reduce-percent');
+    const hints = {
+        'reduce-amount': 'Reduce a fixed amount from your daily average each week.',
+        'reduce-percent': 'Reduce by a percentage of your daily average each week.',
+        fixed: 'Keep the same daily limit until your target end date.',
+        'step-weekly': 'Step down once per week (same as reduce by amount).'
+    };
+    if (hint) hint.textContent = hints[type] || hints['reduce-amount'];
+}
+
+function fillTaperFormFromPlan(plan) {
+    if (!plan) return;
+    setInputValue('current-avg', plan.startingDailyAverage ?? plan.currentAvg ?? '');
+    setInputValue('goal-avg', plan.goalDailyAverage ?? plan.goalAvg ?? '');
+    setInputValue('reduction-type', plan.reductionType || 'reduce-amount');
+    setInputValue('reduction-amount', plan.reductionAmount ?? '');
+    setInputValue('reduction-percent', plan.reductionPercent ?? '');
+    setInputValue('end-date', plan.endDate || '');
+    setInputValue('weekly-max', plan.weeklyMax ?? '');
+    setInputValue('taper-notes', plan.notes || '');
+    const dailyEl = document.getElementById('do-not-surpass-daily');
+    const weeklyEl = document.getElementById('do-not-surpass-weekly');
+    if (dailyEl) dailyEl.checked = plan.doNotSurpassDaily !== false;
+    if (weeklyEl) weeklyEl.checked = !!plan.doNotSurpassWeekly;
+    toggleTaperPlanTypeFields();
+}
+
+function setDefaultTaperEndDate() {
+    const endEl = document.getElementById('end-date');
+    if (!endEl || endEl.value) return;
+    const d = new Date();
+    d.setDate(d.getDate() + 30);
+    endEl.value = d.toISOString().split('T')[0];
+}
+
+function showTaperSetup() {
+    taperEditingPlan = true;
+    setText('taper-setup-title', 'Create Reduction Plan');
+    setText('taper-generate-btn', 'Save Plan');
+    document.getElementById('taper-dashboard')?.classList.add('hidden');
+    document.getElementById('taper-no-plan')?.classList.add('hidden');
+    document.getElementById('taper-setup')?.classList.remove('hidden');
+    setDefaultTaperEndDate();
+    toggleTaperPlanTypeFields();
+}
+
+function taperMetricTile(label, value) {
+    return `<div class="taper-metric-tile"><span>${label}</span><strong>${value}</strong></div>`;
+}
+
+function taperChipStat(label, value) {
+    return `<div class="taper-chip-stat"><span>${label}</span><strong>${value}</strong></div>`;
+}
+
+function setTaperStatusBadge(el, status, shortLabel) {
+    if (!el) return;
+    el.textContent = shortLabel;
+    el.className = `taper-status-badge taper-status-${status}`;
+}
+
+function shortTaperStatus(status) {
+    if (status === 'over') return 'Over';
+    if (status === 'close') return 'Close';
+    if (status === 'under') return 'Under';
+    return '—';
+}
+
+function renderTaperKpiRow(substanceId) {
+    const plan = appData.taperPlans[substanceId];
+    const sub = getSubstance(substanceId);
+    if (!plan || !sub) return;
+
+    const set = (id, text) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+    };
+    const unit = sub.defaultUnit;
+    const tiles = ['taper-kpi-daily', 'taper-kpi-used', 'taper-kpi-remaining', 'taper-kpi-status'];
+    tiles.forEach(id => document.getElementById(id)?.classList.remove('taper-kpi-under', 'taper-kpi-close', 'taper-kpi-over'));
+
+    if (plan.isPaused) {
+        set('taper-kpi-daily-val', 'Paused');
+        set('taper-kpi-used-val', '—');
+        set('taper-kpi-remaining-val', '—');
+        set('taper-kpi-status-val', 'Paused');
+        return;
+    }
+
+    const today = new Date().toISOString().split('T')[0];
+    const dailyLimit = getDailyLimitForDate(substanceId, today);
+    const usedToday = getUsedAmount(substanceId, today);
+
+    if (dailyLimit == null) {
+        set('taper-kpi-daily-val', '—');
+        set('taper-kpi-used-val', `${usedToday} ${unit}`);
+        set('taper-kpi-remaining-val', '—');
+        set('taper-kpi-status-val', 'No plan');
+        return;
+    }
+
+    const rem = Math.max(0, dailyLimit - usedToday);
+    const { status } = getTaperLimitStatus(usedToday, dailyLimit);
+    ['taper-kpi-status', 'taper-kpi-remaining'].forEach(id => {
+        document.getElementById(id)?.classList.add(`taper-kpi-${status}`);
+    });
+
+    set('taper-kpi-daily-val', `${dailyLimit} ${unit}`);
+    set('taper-kpi-used-val', `${usedToday} ${unit}`);
+    set('taper-kpi-remaining-val', `${rem.toFixed(1)} ${unit}`);
+    set('taper-kpi-status-val', shortTaperStatus(status));
+}
+
+function renderTaperReductionCard(substanceId) {
+    const plan = appData.taperPlans[substanceId];
+    const sub = getSubstance(substanceId);
+    if (!plan || !sub) return;
+    const unit = sub.defaultUnit;
+    const calc = getTaperCalculatedMetrics(plan, substanceId);
+    const ro = document.getElementById('taper-reduction-readonly');
+    const ca = document.getElementById('taper-reduction-calculated');
+    if (ro) {
+        ro.innerHTML = [
+            taperMetricTile('Starting Daily Average', `${plan.startingDailyAverage} ${unit}`),
+            taperMetricTile('Goal Daily Average', `${plan.goalDailyAverage} ${unit}`),
+            taperMetricTile('Reduction Target', TAPER_REDUCTION_LABELS[plan.reductionType] || plan.reductionType),
+            plan.reductionType === 'reduce-percent'
+                ? taperMetricTile('Reduction %', `${plan.reductionPercent}% / wk`)
+                : taperMetricTile('Reduction / wk', `${plan.reductionAmount} ${unit}`),
+            taperMetricTile('Target end date', formatDate(plan.endDate)),
+            taperMetricTile('Weekly Limit', plan.weeklyMax ? `${plan.weeklyMax} ${unit}` : 'Auto'),
+            taperMetricTile('Daily warn', plan.doNotSurpassDaily ? 'On' : 'Off'),
+            taperMetricTile('Weekly warn', plan.doNotSurpassWeekly ? 'On' : 'Off')
+        ].join('');
+    }
+    if (ca) {
+        ca.innerHTML = [
+            taperMetricTile('Total reduction', `${calc.totalReduction.toFixed(1)} ${unit}`),
+            taperMetricTile('Weekly reduction', `${calc.weeklyReduction.toFixed(2)} ${unit}`),
+            taperMetricTile('Today\'s target', calc.todayTarget != null ? `${calc.todayTarget} ${unit}` : '—'),
+            taperMetricTile('Next week target', `${calc.nextWeekTarget} ${unit}`),
+            taperMetricTile('Est. end date', formatDate(calc.endDate))
+        ].join('');
+    }
+}
+
+function renderTaperProgressCard(substanceId) {
+    const plan = appData.taperPlans[substanceId];
+    const sub = getSubstance(substanceId);
+    if (!plan || !sub) return;
+    syncTaperPlanData(substanceId);
+    const today = new Date().toISOString().split('T')[0];
+    const unit = sub.defaultUnit;
+    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+
+    if (plan.isPaused) {
+        setTaperStatusBadge(document.getElementById('taper-today-status'), 'close', 'Paused');
+        setTaperStatusBadge(document.getElementById('taper-weekly-status'), 'close', 'Paused');
+        return;
+    }
+
+    const dailyLimit = getDailyLimitForDate(substanceId, today);
+    const usedToday = getUsedAmount(substanceId, today);
+    const weeklyLimit = getWeeklyLimit(substanceId, today);
+    const weeklyUsed = getWeeklyUsed(substanceId, today);
+
+    if (dailyLimit != null) {
+        const rem = Math.max(0, dailyLimit - usedToday);
+        const pct = dailyLimit > 0 ? (usedToday / dailyLimit) * 100 : 0;
+        const dailyStatus = applyTaperProgressBar(
+            document.getElementById('taper-today-bar'),
+            document.getElementById('taper-today-bar-text'),
+            usedToday,
+            dailyLimit
+        );
+        set('taper-today-limit', `${dailyLimit} ${unit}`);
+        set('taper-today-used', `${usedToday} ${unit}`);
+        set('taper-today-remaining', `${rem.toFixed(1)} ${unit}`);
+        set('taper-today-pct', `${Math.round(pct)}%`);
+        setTaperStatusBadge(document.getElementById('taper-today-status'), dailyStatus, shortTaperStatus(dailyStatus));
+    }
+
+    if (weeklyLimit != null) {
+        const remW = Math.max(0, weeklyLimit - weeklyUsed);
+        const pctW = weeklyLimit > 0 ? (weeklyUsed / weeklyLimit) * 100 : 0;
+        const weeklyStatus = applyTaperProgressBar(
+            document.getElementById('taper-weekly-bar'),
+            document.getElementById('taper-weekly-bar-text'),
+            weeklyUsed,
+            weeklyLimit
+        );
+        set('taper-weekly-max-val', `${weeklyLimit} ${unit}`);
+        set('taper-weekly-used', `${weeklyUsed} ${unit}`);
+        set('taper-weekly-remaining', `${remW.toFixed(1)} ${unit}`);
+        set('taper-weekly-pct', `${Math.round(pctW)}%`);
+        setTaperStatusBadge(document.getElementById('taper-weekly-status'), weeklyStatus, shortTaperStatus(weeklyStatus));
+    }
+}
+
+function getTaperWeeklySummary(plan, substanceId) {
+    const today = new Date().toISOString().split('T')[0];
+    const currentWeek = getWeekRowForDate(plan, today);
+    const weekIndex = currentWeek ? plan.weeklyTargets.findIndex(w => w.weekStart === currentWeek.weekStart) + 1 : 0;
+    const weeksRemaining = Math.max(0, (plan.weeklyTargets?.length || 0) - weekIndex);
+    const start = plan.startingDailyAverage ?? 0;
+    const goal = plan.goalDailyAverage ?? 0;
+    const totalReduction = Math.max(0, start - goal);
+    const currentDaily = currentWeek?.dailyTarget ?? getDailyLimitForDate(substanceId, today) ?? start;
+    const reductionCompleted = Math.max(0, start - currentDaily);
+
+    let avgThis = 0;
+    let daysThis = 0;
+    if (currentWeek) {
+        let d = currentWeek.weekStart;
+        while (d <= today && d <= currentWeek.weekEnd) {
+            avgThis += getUsedAmount(substanceId, d);
+            daysThis++;
+            d = addDaysToDateStr(d, 1);
+        }
+    }
+    avgThis = daysThis ? avgThis / daysThis : getUsedAmount(substanceId, today);
+
+    const prevStart = currentWeek ? addDaysToDateStr(getWeekStartDateStr(currentWeek.weekStart), -7) : null;
+    const prevWeek = prevStart ? plan.weeklyTargets.find(w => w.weekStart === getWeekStartDateStr(prevStart)) : null;
+    let avgLast = 0;
+    if (prevWeek) {
+        let d = prevWeek.weekStart;
+        let cnt = 0;
+        while (d <= prevWeek.weekEnd) {
+            avgLast += getUsedAmount(substanceId, d);
+            cnt++;
+            d = addDaysToDateStr(d, 1);
+        }
+        avgLast = cnt ? avgLast / cnt : 0;
+    }
+    const changeVsLast = avgLast > 0 ? ((avgThis - avgLast) / avgLast) * 100 : null;
+
+    let underWeeks = 0;
+    let overWeeks = 0;
+    (plan.weeklyTargets || []).forEach(w => {
+        if (w.weekEnd > today) return;
+        if (w.status === 'over') overWeeks++;
+        else if (w.status === 'under' || w.status === 'close') underWeeks++;
+    });
+
+    return { weekIndex, weeksRemaining, reductionCompleted, totalReduction, avgThis, avgLast, changeVsLast, underWeeks, overWeeks };
+}
+
+function renderTaperWeeklyPlan(substanceId) {
+    const plan = appData.taperPlans[substanceId];
+    const sub = getSubstance(substanceId);
+    const table = document.getElementById('taper-weekly-table');
+    const summary = document.getElementById('taper-weekly-summary');
+    if (!plan || !sub || !table) return;
+
+    syncTaperPlanData(substanceId);
+    const unit = sub.defaultUnit;
+    const sum = getTaperWeeklySummary(plan, substanceId);
+
+    if (summary) {
+        const changeStr = sum.changeVsLast != null
+            ? `${sum.changeVsLast >= 0 ? '+' : ''}${sum.changeVsLast.toFixed(0)}%`
+            : '—';
+        summary.innerHTML = [
+            taperChipStat('Week', sum.weekIndex || '—'),
+            taperChipStat('Weeks Remaining', sum.weeksRemaining),
+            taperChipStat('Reduction done', `${sum.reductionCompleted.toFixed(1)}/${sum.totalReduction.toFixed(1)}`),
+            taperChipStat('Avg this week', `${sum.avgThis.toFixed(1)} ${unit}`),
+            taperChipStat('Avg last week', `${sum.avgLast.toFixed(1)} ${unit}`),
+            taperChipStat('Change vs Last Week', changeStr),
+            taperChipStat('Under weeks', sum.underWeeks),
+            taperChipStat('Over weeks', sum.overWeeks)
+        ].join('');
+    }
+
+    if (!plan.weeklyTargets?.length) {
+        table.innerHTML = '<p class="empty-hint">No weekly rows.</p>';
+        return;
+    }
+
+    let html = `<table class="taper-preview-table taper-weekly-table"><thead><tr>
+        <th>Week Start</th><th>Week End</th><th>Daily Target</th><th>Weekly Max</th>
+        <th>Actual Used</th><th>Difference</th><th>Status</th>
+    </tr></thead><tbody>`;
+    plan.weeklyTargets.forEach(w => {
+        const { emoji, label } = getTaperLimitStatus(w.actualUsed, w.weeklyMax);
+        const diffLabel = w.difference > 0 ? `+${w.difference}` : w.difference;
+        html += `<tr class="taper-preview-${w.status}">
+            <td>${formatDate(w.weekStart)}</td>
+            <td>${formatDate(w.weekEnd)}</td>
+            <td>${w.dailyTarget} ${unit}</td>
+            <td>${w.weeklyMax} ${unit}</td>
+            <td>${w.actualUsed}</td>
+            <td>${diffLabel}</td>
+            <td>${emoji} ${label === 'Over target' ? 'Over' : label === 'Close to target' ? 'Close' : 'Under'}</td>
+        </tr>`;
+    });
+    html += '</tbody></table>';
+    table.innerHTML = html;
+}
+
+function renderTaperPlanSummary(substanceId) {
+    const plan = appData.taperPlans[substanceId];
+    const sub = getSubstance(substanceId);
+    if (!plan || !sub) return;
+    const summary = document.getElementById('taper-plan-summary-text');
+    const dates = document.getElementById('taper-plan-summary-dates');
+    const icon = document.getElementById('taper-plan-icon');
+    if (icon) icon.textContent = sub.icon || '📉';
+    if (summary) {
+        summary.textContent = `${sub.name} · ${TAPER_REDUCTION_LABELS[plan.reductionType] || plan.reductionType}`;
+    }
+    if (dates) {
+        dates.textContent = `${formatDate(plan.startDate)} → ${formatDate(plan.endDate)} · ${plan.startingDailyAverage} → ${plan.goalDailyAverage} ${sub.defaultUnit}/day`;
+    }
+    const pauseBtn = document.getElementById('taper-pause-btn');
+    if (pauseBtn) pauseBtn.textContent = plan.isPaused ? '▶ Resume' : '⏸ Pause';
+    document.getElementById('taper-paused-banner')?.classList.toggle('hidden', !plan.isPaused);
+
+    const fill = document.getElementById('taper-plan-pct-fill');
+    const pctLabel = document.getElementById('taper-plan-pct-label');
+    if (fill && plan.startDate && plan.endDate) {
+        const start = new Date(plan.startDate + 'T12:00:00');
+        const end = new Date(plan.endDate + 'T12:00:00');
+        const pct = Math.min(100, Math.max(0, ((Date.now() - start) / (end - start)) * 100));
+        const rounded = Math.round(pct);
+        fill.style.width = `${rounded}%`;
+        if (pctLabel) pctLabel.textContent = `Plan progress · ${rounded}%`;
+    }
+}
+
+function updateDoNotSurpassDisplay(prefix, substanceId) {
+    if (!substanceId) {
+        document.getElementById('dns-section')?.classList.add('hidden');
+        return;
+    }
+    const sub = getSubstance(substanceId);
+    const plan = appData.taperPlans[substanceId];
+    const section = document.getElementById('dns-section');
+    if (!sub?.taperTrackingEnabled || !plan || plan.isPaused) {
+        section?.classList.add('hidden');
+        return;
+    }
+    const today = new Date().toISOString().split('T')[0];
+    const dailyLimit = getDailyLimitForDate(substanceId, today);
+    if (dailyLimit == null) {
+        section?.classList.add('hidden');
+        return;
+    }
+    section?.classList.remove('hidden');
+    syncTaperPlanData(substanceId);
+
+    const usedToday = getUsedAmount(substanceId, today);
+    const weeklyLimit = getWeeklyLimit(substanceId, today);
+    const weeklyUsed = getWeeklyUsed(substanceId, today);
+    const unit = sub.defaultUnit;
+    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+
+    const subLabel = document.getElementById('dashboard-taper-substance-label');
+    if (subLabel) subLabel.textContent = `(${sub.name})`;
+
+    const remDaily = Math.max(0, dailyLimit - usedToday);
+    const dailyStatus = applyTaperProgressBar(
+        document.getElementById('dashboard-dns-bar'),
+        document.getElementById('dashboard-dns-bar-text'),
+        usedToday,
+        dailyLimit
+    );
+    set('dashboard-dns-limit', `${dailyLimit} ${unit}`);
+    set('dashboard-dns-used', `${usedToday} ${unit}`);
+    set('dashboard-dns-remaining', `${remDaily.toFixed(1)} ${unit}`);
+    set('dashboard-dns-used-max', `${usedToday} / ${dailyLimit} ${unit} daily`);
+    const dailyStatusEl = document.getElementById('dashboard-dns-status');
+    if (dailyStatusEl) {
+        dailyStatusEl.textContent = getTaperDailyStatusText(dailyStatus);
+        dailyStatusEl.className = `dns-status dns-status-${dailyStatus}`;
+    }
+
+    if (weeklyLimit != null) {
+        const remW = Math.max(0, weeklyLimit - weeklyUsed);
+        const weeklyStatus = applyTaperProgressBar(
+            document.getElementById('dashboard-weekly-bar'),
+            document.getElementById('dashboard-weekly-bar-text'),
+            weeklyUsed,
+            weeklyLimit
+        );
+        set('dashboard-weekly-limit', `${weeklyLimit} ${unit}`);
+        set('dashboard-weekly-used', `${weeklyUsed} ${unit}`);
+        set('dashboard-weekly-remaining', `${remW.toFixed(1)} ${unit}`);
+        const weeklyStatusEl = document.getElementById('dashboard-weekly-status');
+        if (weeklyStatusEl) {
+            weeklyStatusEl.textContent = getTaperWeeklyStatusText(weeklyStatus);
+            weeklyStatusEl.className = `dns-status dns-status-${weeklyStatus}`;
+        }
+        const overall = document.getElementById('dashboard-taper-overall-status');
+        if (overall) {
+            overall.textContent = dailyStatus === 'over' || weeklyStatus === 'over'
+                ? '🚫 Over taper target'
+                : dailyStatus === 'close' || weeklyStatus === 'close'
+                    ? '⚠️ Close to taper target'
+                    : '✅ On track';
+        }
+    }
+}
+
+function handleTaperSubmit(e) {
+    e.preventDefault();
+    const substanceId = document.getElementById('taper-substance')?.value;
+    const sub = getSubstance(substanceId);
+    if (!sub?.taperTrackingEnabled) return alert('Taper tracking is disabled for this substance.');
+    const endDate = document.getElementById('end-date')?.value;
+    const startDate = taperEditingPlan && appData.taperPlans[substanceId]?.startDate
+        ? appData.taperPlans[substanceId].startDate
+        : new Date().toISOString().split('T')[0];
+    if (!endDate || new Date(endDate) <= new Date(startDate)) {
+        return alert('Target end date must be after the start date.');
+    }
+    const wasEdit = !!appData.taperPlans[substanceId];
+    appData.taperPlans[substanceId] = buildTaperPlanFromForm(substanceId, appData.taperPlans[substanceId]);
+    saveData(appData);
+    taperEditingPlan = false;
+    document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
+    setText('taper-generate-btn', 'Save Plan');
+    refreshTaperDashboard();
+    alert(wasEdit ? 'Plan updated!' : 'Taper plan saved!');
+}
+
+function getTaperSubstanceId() {
+    const el = document.getElementById('taper-substance');
+    if (el?.value) return el.value;
+    return getMainSubstanceId() || currentSubstanceId;
+}
+
+function renderTaperPlan() {
+    const substanceId = getTaperSubstanceId();
+    const sub = getSubstance(substanceId);
+    const plan = appData.taperPlans[substanceId];
+    const dashboard = document.getElementById('taper-dashboard');
+    const setup = document.getElementById('taper-setup');
+    const noPlan = document.getElementById('taper-no-plan');
+    const noTaper = document.getElementById('taper-disabled-msg');
+
+    setDefaultTaperEndDate();
+
+    if (!sub?.taperTrackingEnabled) {
+        dashboard?.classList.add('hidden');
+        setup?.classList.add('hidden');
+        noPlan?.classList.add('hidden');
+        noTaper?.classList.remove('hidden');
+        return;
+    }
+    noTaper?.classList.add('hidden');
+
+    if (!plan && !taperEditingPlan) {
+        dashboard?.classList.add('hidden');
+        setup?.classList.add('hidden');
+        noPlan?.classList.remove('hidden');
+        return;
+    }
+
+    noPlan?.classList.add('hidden');
+
+    if (taperEditingPlan) {
+        dashboard?.classList.add('hidden');
+        setup?.classList.remove('hidden');
+        return;
+    }
+
+    setup?.classList.add('hidden');
+    dashboard?.classList.remove('hidden');
+    migrateTaperPlan(plan, substanceId);
+    renderTaperKpiRow(substanceId);
+    renderTaperPlanSummary(substanceId);
+    renderTaperReductionCard(substanceId);
+    renderTaperProgressCard(substanceId);
+    renderTaperWeeklyPlan(substanceId);
+}
+
+function editTaperPlan() {
+    const substanceId = getTaperSubstanceId();
+    const plan = appData.taperPlans[substanceId];
+    if (!plan) return;
+    taperEditingPlan = true;
+    fillTaperFormFromPlan(plan);
+    setText('taper-setup-title', 'Edit Reduction Plan');
+    setText('taper-generate-btn', 'Save Changes');
+    document.getElementById('taper-dashboard')?.classList.add('hidden');
+    document.getElementById('taper-no-plan')?.classList.add('hidden');
+    document.getElementById('taper-setup')?.classList.remove('hidden');
+    document.getElementById('taper-setup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function cancelTaperEdit() {
+    taperEditingPlan = false;
+    document.getElementById('taper-setup')?.classList.add('hidden');
+    setText('taper-generate-btn', 'Save Plan');
+    setText('taper-setup-title', 'Create Reduction Plan');
+    refreshTaperDashboard();
+}
+
+function pauseTaper() {
+    const id = getTaperSubstanceId();
+    const plan = appData.taperPlans[id];
+    if (!plan) return;
+    plan.isPaused = !plan.isPaused;
+    plan.updatedAt = new Date().toISOString();
+    saveData(appData);
+    refreshTaperDashboard();
+}
+
+function resetTaper() {
+    const id = getTaperSubstanceId();
+    if (!confirm('Reset taper plan? This cannot be undone.')) return;
+    delete appData.taperPlans[id];
+    taperEditingPlan = false;
+    saveData(appData);
+    refreshTaperDashboard();
+    document.getElementById('dns-section')?.classList.add('hidden');
+}
+
+function checkTaperTarget() {
+    renderTaperProgressCard(getTaperSubstanceId());
+}
+
+function getDaysLeftInWeek(dateStr) {
+    const d = new Date(dateStr + 'T12:00:00');
+    return 6 - d.getDay();
+}
+
+function addDaysToDateStr(dateStr, days) {
+    const d = new Date(dateStr + 'T12:00:00');
+    d.setDate(d.getDate() + days);
+    return d.toISOString().split('T')[0];
+}
+
+function getUsedAmount(substanceId, dateStr, excludeLogId = null) {
     return appData.logs
-        .filter(l => l.date === dateStr && l.substanceId === substanceId)
-        .reduce((s, l) => s + (l.amount || 0), 0);
+        .filter(l => l.date === dateStr && getUseSubstanceId(l) === substanceId && l.id !== excludeLogId)
+        .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
 }
 
 function getWeekStartDateStr(dateStr) {
@@ -2064,379 +3961,33 @@ function getWeeklyUsed(substanceId, dateStr) {
         return ld >= weekStart && ld <= weekEnd;
     };
     return appData.logs
-        .filter(l => l.substanceId === substanceId && inWeek(l.date))
-        .reduce((s, l) => s + (l.amount || 0), 0);
-}
-
-function getWeeklyLimit(substanceId, dateStr) {
-    const plan = appData.taperPlans[substanceId];
-    if (!plan) return null;
-    if (plan.weeklyMax != null && plan.weeklyMax > 0) return plan.weeklyMax;
-
-    const weekStart = new Date(getWeekStartDateStr(dateStr) + 'T12:00:00');
-    let sum = 0;
-    let hasTarget = false;
-    for (let i = 0; i < 7; i++) {
-        const d = new Date(weekStart);
-        d.setDate(weekStart.getDate() + i);
-        const ds = d.toISOString().split('T')[0];
-        const limit = getDailyLimitForDate(substanceId, ds);
-        if (limit != null) {
-            sum += limit;
-            hasTarget = true;
-        }
-    }
-    return hasTarget ? sum : null;
-}
-
-function getTaperLimitStatus(used, limit) {
-    if (limit == null || limit <= 0) {
-        return { status: 'none', label: 'No limit set', emoji: '—' };
-    }
-    if (used > limit) {
-        return { status: 'over', label: 'Over limit', emoji: '🚫' };
-    }
-    if (used >= limit * 0.8) {
-        return { status: 'close', label: 'Close to limit', emoji: '⚠️' };
-    }
-    return { status: 'under', label: 'Under limit', emoji: '✅' };
-}
-
-function computeUnderTargetStreak(substanceId) {
-    const plan = appData.taperPlans[substanceId];
-    if (!plan) return 0;
-
-    let streak = 0;
-    const check = new Date();
-    for (let i = 0; i < 365; i++) {
-        const dateStr = check.toISOString().split('T')[0];
-        const limit = getDailyLimitForDate(substanceId, dateStr);
-        if (limit == null) {
-            if (i === 0) {
-                check.setDate(check.getDate() - 1);
-                continue;
-            }
-            break;
-        }
-        const used = getUsedAmount(substanceId, dateStr);
-        if (used > limit) break;
-        streak++;
-        check.setDate(check.getDate() - 1);
-    }
-    return streak;
-}
-
-function getTaperDayStatus(substanceId, dateStr) {
-    const limit = getDailyLimitForDate(substanceId, dateStr);
-    if (limit == null) return null;
-    const used = getUsedAmount(substanceId, dateStr);
-    return getTaperLimitStatus(used, limit).status;
-}
-
-function confirmTaperBeforeLog(substanceId, amount, isQuickLog) {
-    const sub = getSubstance(substanceId);
-    if (!sub?.taperTrackingEnabled) return true;
-
-    const today = new Date().toISOString().split('T')[0];
-    const limit = getDailyLimitForDate(substanceId, today);
-    if (limit == null) return true;
-
-    const used = getUsedAmount(substanceId, today);
-    if (used + amount <= limit) return true;
-
-    const plan = appData.taperPlans[substanceId];
-    const unit = sub.defaultUnit;
-
-    if (isQuickLog && plan?.blockQuickLogOverLimit) {
-        alert(`Daily limit is ${limit} ${unit}. You've used ${used}. Quick log is blocked to help you stay within your taper plan.`);
-        return false;
-    }
-
-    return confirm(`You're about to surpass today's taper limit (${used}/${limit} ${unit} used). Log anyway?`);
-}
-
-function notifyTaperAfterLog(substanceId) {
-    const sub = getSubstance(substanceId);
-    if (!sub?.taperTrackingEnabled) return;
-
-    const today = new Date().toISOString().split('T')[0];
-    const limit = getDailyLimitForDate(substanceId, today);
-    if (limit == null) return;
-
-    const used = getUsedAmount(substanceId, today);
-    const { status } = getTaperLimitStatus(used, limit);
-    const unit = sub.defaultUnit;
-
-    if (status === 'close') {
-        alert(`⚠️ Close to limit: ${used}/${limit} ${unit} used today. ${Math.max(0, limit - used).toFixed(1)} remaining.`);
-    } else if (status === 'over') {
-        alert(`🚫 Over today's taper limit (${used}/${limit} ${unit}).\n\n${TAPER_RELAPSE_NOTE}`);
-    }
-}
-
-function updateDoNotSurpassDisplay(prefix, substanceId) {
-    const section = document.getElementById(prefix === 'dashboard' ? 'dns-section' : 'today-target');
-    if (!substanceId) {
-        section?.classList.add('hidden');
-        return;
-    }
-
-    const sub = getSubstance(substanceId);
-    const plan = appData.taperPlans[substanceId];
-    if (!sub?.taperTrackingEnabled || !plan) {
-        section?.classList.add('hidden');
-        return;
-    }
-
-    const today = new Date().toISOString().split('T')[0];
-    const limit = getDailyLimitForDate(substanceId, today);
-    if (limit == null) {
-        section?.classList.add('hidden');
-        return;
-    }
-
-    section?.classList.remove('hidden');
-
-    const used = getUsedAmount(substanceId, today);
-    const remaining = Math.max(0, limit - used);
-    const { status, label, emoji } = getTaperLimitStatus(used, limit);
-    const unit = sub.defaultUnit;
-    const weeklyUsed = getWeeklyUsed(substanceId, today);
-    const weeklyLimit = getWeeklyLimit(substanceId, today);
-    const streak = computeUnderTargetStreak(substanceId);
-
-    const set = (id, text) => {
-        const el = document.getElementById(id);
-        if (el) el.textContent = text;
-    };
-
-    set(`${prefix}-dns-limit`, `${limit} ${unit}`);
-    set(`${prefix}-dns-used`, `${used} ${unit}`);
-    set(`${prefix}-dns-remaining`, `${remaining.toFixed(1)} ${unit}`);
-    set(`${prefix}-dns-used-max`, `${used} / ${limit} ${unit}`);
-
-    const bar = document.getElementById(`${prefix}-dns-bar`);
-    const barText = document.getElementById(`${prefix}-dns-bar-text`);
-    const pct = Math.min(100, limit > 0 ? (used / limit) * 100 : 0);
-    if (bar) {
-        bar.style.width = `${Math.max(pct, used > 0 ? 4 : 0)}%`;
-        bar.classList.remove('dns-under', 'dns-close', 'dns-over');
-        bar.classList.add(`dns-${status}`);
-    }
-    if (barText) barText.textContent = `${Math.round(pct)}%`;
-
-    const statusEl = document.getElementById(`${prefix}-dns-status`);
-    if (statusEl) {
-        statusEl.textContent = `${emoji} ${label}`;
-        statusEl.className = `dns-status dns-status-${status}`;
-    }
-
-    const weeklyEl = document.getElementById(`${prefix}-dns-weekly`);
-    if (weeklyEl && weeklyLimit != null) {
-        weeklyEl.textContent = `Weekly: ${weeklyUsed} / ${weeklyLimit} ${unit}`;
-    }
-
-    const streakEl = document.getElementById(`${prefix}-dns-streak`);
-    if (streakEl) {
-        streakEl.textContent = `Days under target: ${streak}`;
-    }
-
-    const warnEl = document.getElementById(`${prefix}-dns-warning`);
-    if (warnEl) {
-        if (status === 'close') {
-            warnEl.textContent = `⚠️ You're at ${Math.round(pct)}% of today's limit. Only ${remaining.toFixed(1)} ${unit} left.`;
-            warnEl.classList.remove('hidden');
-        } else {
-            warnEl.classList.add('hidden');
-        }
-    }
-
-    const relapseEl = document.getElementById(`${prefix}-dns-relapse`);
-    if (relapseEl) {
-        if (status === 'over') {
-            relapseEl.textContent = TAPER_RELAPSE_NOTE;
-            relapseEl.classList.remove('hidden');
-        } else {
-            relapseEl.classList.add('hidden');
-        }
-    }
-
-    if (prefix === 'taper') {
-        set('today-target-value', `${limit} ${unit} max`);
-        const legacyStatus = document.getElementById('today-target-status');
-        if (legacyStatus) {
-            legacyStatus.textContent = `${used} / ${limit} ${unit} · ${emoji} ${label}`;
-            legacyStatus.style.color = status === 'over' ? 'var(--danger)' : status === 'close' ? 'var(--warning)' : 'var(--accent)';
-        }
-        const notesDisplay = document.getElementById('taper-notes-display');
-        if (notesDisplay) {
-            if (plan.taperNotes) {
-                notesDisplay.textContent = plan.taperNotes;
-                notesDisplay.classList.remove('hidden');
-            } else {
-                notesDisplay.classList.add('hidden');
-            }
-        }
-        loadTaperPlanSettingsForm(substanceId);
-    }
-}
-
-function loadTaperPlanSettingsForm(substanceId) {
-    const plan = appData.taperPlans[substanceId];
-    if (!plan) return;
-    const weekly = document.getElementById('edit-weekly-max');
-    const notes = document.getElementById('edit-taper-notes');
-    const block = document.getElementById('edit-block-quick-log');
-    if (weekly) weekly.value = plan.weeklyMax ?? '';
-    if (notes) notes.value = plan.taperNotes || '';
-    if (block) block.checked = !!plan.blockQuickLogOverLimit;
-}
-
-function saveTaperPlanSettings() {
-    const substanceId = getTaperSubstanceId();
-    const plan = appData.taperPlans[substanceId];
-    if (!plan) return;
-
-    const weeklyVal = document.getElementById('edit-weekly-max')?.value;
-    plan.weeklyMax = weeklyVal ? parseFloat(weeklyVal) : null;
-    plan.taperNotes = document.getElementById('edit-taper-notes')?.value || '';
-    plan.blockQuickLogOverLimit = !!document.getElementById('edit-block-quick-log')?.checked;
-    saveData(appData);
-    updateDoNotSurpassDisplay('taper', substanceId);
-    if (!isAllSubstancesView() && currentSubstanceId === substanceId) {
-        updateDoNotSurpassDisplay('dashboard', substanceId);
-    }
-}
-
-function handleTaperSubmit(e) {
-    e.preventDefault();
-    const substanceId = document.getElementById('taper-substance').value;
-    const sub = getSubstance(substanceId);
-    if (!sub?.taperTrackingEnabled) return alert('Taper tracking is disabled for this substance.');
-
-    const currentAvg = parseFloat(document.getElementById('current-avg').value);
-    const goalAvg = parseFloat(document.getElementById('goal-avg').value);
-    const endDate = document.getElementById('end-date').value;
-    const startDate = new Date().toISOString().split('T')[0];
-    const daysDiff = Math.ceil((new Date(endDate) - new Date(startDate)) / 86400000);
-    if (daysDiff <= 0) return alert('End date must be in the future');
-
-    const decrement = (currentAvg - goalAvg) / daysDiff;
-    const dailyTargets = [];
-    for (let i = 0; i <= daysDiff; i++) {
-        const date = new Date(startDate);
-        date.setDate(date.getDate() + i);
-        dailyTargets.push({
-            date: date.toISOString().split('T')[0],
-            target: Math.round(Math.max(goalAvg, currentAvg - decrement * i) * 2) / 2
-        });
-    }
-
-    const weeklyMaxInput = document.getElementById('weekly-max').value;
-    const weeklyMax = weeklyMaxInput ? parseFloat(weeklyMaxInput) : null;
-    const taperNotes = document.getElementById('taper-notes').value || '';
-    const blockQuickLogOverLimit = !!document.getElementById('block-quick-log-over-limit').checked;
-
-    appData.taperPlans[substanceId] = {
-        startDate,
-        endDate,
-        currentAvg,
-        goalAvg,
-        dailyTargets,
-        weeklyMax,
-        taperNotes,
-        blockQuickLogOverLimit
-    };
-    saveData(appData);
-    renderTaperPlan();
-    checkTaperTarget();
-    updateTaperProgress();
-    if (!isAllSubstancesView() && currentSubstanceId === substanceId) {
-        updateDoNotSurpassDisplay('dashboard', substanceId);
-    }
-    alert('Taper plan generated!');
-}
-
-function getTaperSubstanceId() {
-    return document.getElementById('taper-substance')?.value || currentSubstanceId;
-}
-
-function renderTaperPlan() {
-    const substanceId = getTaperSubstanceId();
-    const sub = getSubstance(substanceId);
-    const plan = appData.taperPlans[substanceId];
-    const setup = document.getElementById('taper-setup');
-    const panel = document.getElementById('taper-plan');
-    const noTaper = document.getElementById('taper-disabled-msg');
-
-    if (!sub?.taperTrackingEnabled) {
-        setup?.classList.add('hidden');
-        panel?.classList.add('hidden');
-        noTaper?.classList.remove('hidden');
-        return;
-    }
-    noTaper?.classList.add('hidden');
-
-    if (!plan) {
-        panel?.classList.add('hidden');
-        setup?.classList.remove('hidden');
-        document.getElementById('today-target')?.classList.add('hidden');
-        return;
-    }
-    setup?.classList.add('hidden');
-    panel?.classList.remove('hidden');
-
-    const container = document.getElementById('taper-days-list');
-    container.innerHTML = '';
-    const today = new Date().toISOString().split('T')[0];
-    plan.dailyTargets.forEach(day => {
-        const item = document.createElement('div');
-        const dayStatus = getTaperDayStatus(substanceId, day.date);
-        item.className = `taper-day-item ${day.date === today ? 'today' : ''}${dayStatus ? ` taper-day-${dayStatus}` : ''}`;
-        const used = getUsedAmount(substanceId, day.date);
-        item.innerHTML = `<span>${formatDate(day.date)}</span><strong>${used}/${day.target} ${sub.defaultUnit}</strong>`;
-        container.appendChild(item);
-    });
-
-    loadTaperPlanSettingsForm(substanceId);
-}
-
-function resetTaper() {
-    const id = getTaperSubstanceId();
-    if (confirm('Reset taper plan?')) {
-        delete appData.taperPlans[id];
-        saveData(appData);
-        renderTaperPlan();
-        document.getElementById('today-target').classList.add('hidden');
-        document.getElementById('dns-section')?.classList.add('hidden');
-        updateTaperProgress();
-    }
-}
-
-function checkTaperTarget() {
-    const substanceId = getTaperSubstanceId();
-    updateDoNotSurpassDisplay('taper', substanceId);
+        .filter(l => getUseSubstanceId(l) === substanceId && inWeek(l.date))
+        .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
 }
 
 function updateTaperProgress() {
-    const substanceId = isAllSubstancesView() ? getTaperSubstanceId() : currentSubstanceId;
+    const substanceId = getMainSubstanceId() || getTaperSubstanceId();
     const sub = getSubstance(substanceId);
     const plan = appData.taperPlans[substanceId];
     const bar = document.getElementById('taper-progress');
-    if (!plan || !sub?.taperTrackingEnabled) {
+    if (!bar) return;
+    const pt = document.getElementById('progress-text');
+    const pl = document.getElementById('progress-label');
+    if (!plan || !sub?.taperTrackingEnabled || plan.isPaused) {
         bar.style.width = '0%';
-        document.getElementById('progress-text').textContent = '0%';
-        document.getElementById('progress-label').textContent = 'No taper goal set';
+        if (pt) pt.textContent = '0%';
+        if (pl) pl.textContent = plan?.isPaused ? 'Taper paused' : 'No taper goal set';
         return;
     }
-    const start = new Date(plan.startDate);
-    const end = new Date(plan.endDate);
+    const start = new Date(plan.startDate + 'T12:00:00');
+    const end = new Date(plan.endDate + 'T12:00:00');
     const pct = Math.min(100, Math.max(0, ((Date.now() - start) / (end - start)) * 100));
     bar.style.width = `${pct}%`;
-    document.getElementById('progress-text').textContent = `${Math.round(pct)}%`;
-    document.getElementById('progress-label').textContent = `${sub.icon} ${sub.name}: ${plan.currentAvg} → ${plan.goalAvg} ${sub.defaultUnit}/day`;
+    if (pt) pt.textContent = `${Math.round(pct)}%`;
+    if (pl) {
+        pl.textContent = `${sub.icon} ${sub.name}: ${plan.startingDailyAverage} → ${plan.goalDailyAverage} ${sub.defaultUnit}/day`;
+    }
 }
-
 // ——— Calendar ———
 function getCalendarTaperSubstanceId() {
     const el = document.getElementById('calendar-substance');
@@ -2448,7 +3999,7 @@ function renderCalendar() {
     container.innerHTML = '';
     const year = currentCalendarDate.getFullYear();
     const month = currentCalendarDate.getMonth();
-    document.getElementById('calendar-month').textContent = currentCalendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    setText('calendar-month', currentCalendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }));
 
     ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(day => {
         const h = document.createElement('div');
@@ -2478,7 +4029,9 @@ function renderCalendar() {
 
         if (taperSubstanceId) {
             const dayStatus = getTaperDayStatus(taperSubstanceId, dateStr);
-            if (dayStatus && dayStatus !== 'none') {
+            if (dayStatus === 'none') {
+                cell.classList.add('taper-none');
+            } else if (dayStatus) {
                 cell.classList.add(`taper-${dayStatus}`);
             }
         }
@@ -2515,7 +4068,10 @@ function renderDayDetails(dateStr) {
     const limit = taperSubstanceId ? getDailyLimitForDate(taperSubstanceId, dateStr) : null;
     const used = taperSubstanceId ? getUsedAmount(taperSubstanceId, dateStr) : 0;
 
-    let html = `<p><strong>${formatDate(dateStr)}</strong></p><p>Total uses: ${dayLogs.reduce((s, l) => s + l.amount, 0)}</p><p>Cost: ${appData.settings.currency}${dayLogs.reduce((s, l) => s + (l.cost || 0), 0).toFixed(2)}</p><p>Cravings: ${dayCravings.length}</p>`;
+    const dayPurchaseSpend = (appData.purchases || [])
+        .filter(p => p.date === dateStr)
+        .reduce((s, p) => s + (p.totalCost ?? p.cost ?? 0), 0);
+    let html = `<p><strong>${formatDate(dateStr)}</strong></p><p>Total uses: ${dayLogs.reduce((s, l) => s + l.amount, 0)}</p><p>Purchases: ${appData.settings.currency}${dayPurchaseSpend.toFixed(2)}</p><p>Cravings: ${dayCravings.length}</p>`;
 
     if (limit != null && sub) {
         const { emoji, label } = getTaperLimitStatus(used, limit);
@@ -2523,7 +4079,8 @@ function renderDayDetails(dateStr) {
     }
     dayLogs.forEach(log => {
         const sub = getSubstance(log.substanceId);
-        html += `<div class="list-item"><div>${sub?.icon} ${log.amount} ${log.unit} ${sub?.name} at ${log.time}</div></div>`;
+        const supplyLine = formatLinkedPurchaseDisplay(log);
+        html += `<div class="list-item"><div>${sub?.icon} ${log.amount} ${log.unit} ${sub?.name} at ${log.startTime || log.time || ''}<br><small>${supplyLine}</small></div></div>`;
     });
     dayCravings.forEach(c => {
         const sub = getSubstance(c.substanceId);
@@ -2534,11 +4091,12 @@ function renderDayDetails(dateStr) {
 
 // ——— Settings ———
 function loadSettings() {
-    document.getElementById('currency').value = appData.settings.currency;
-    document.getElementById('reminder-message').value = appData.settings.reminderMessage;
+    const currencyEl = document.getElementById('currency');
+    const reminderEl = document.getElementById('reminder-message');
     const openMainEl = document.getElementById('open-on-main-substance');
+    if (currencyEl) currencyEl.value = appData.settings.currency;
+    if (reminderEl) reminderEl.value = appData.settings.reminderMessage;
     if (openMainEl) openMainEl.checked = appData.settings.openOnMainSubstance !== false;
-    loadSubstanceSettings();
 }
 
 function saveOpenOnMainSetting() {
@@ -2553,34 +4111,12 @@ function saveOpenOnMainSetting() {
     }
 }
 
-function loadSubstanceSettings() {
-    const id = document.getElementById('settings-substance')?.value || currentSubstanceId;
-    if (id === DASHBOARD_ALL) return;
-    const settings = getSubstanceSettings(id);
-    const priceEl = document.getElementById('settings-unit-price');
-    const unitsEl = document.getElementById('settings-units-per-purchase');
-    const baselineEl = document.getElementById('baseline-cigs');
-    const quitEl = document.getElementById('quit-goal');
-    if (priceEl) priceEl.value = settings.packPrice;
-    if (unitsEl) unitsEl.value = settings.unitsPerPack;
-    if (baselineEl) baselineEl.value = settings.baseline;
-    if (quitEl) quitEl.value = settings.quitGoal;
-    updateSettingsSectionsVisibility();
-}
-
 function saveSettings() {
-    appData.settings.currency = document.getElementById('currency').value || '$';
-    appData.settings.reminderMessage = document.getElementById('reminder-message').value;
-    const id = document.getElementById('settings-substance')?.value;
-    if (id && id !== DASHBOARD_ALL) {
-        if (!appData.settings.substanceSettings[id]) appData.settings.substanceSettings[id] = {};
-        appData.settings.substanceSettings[id].packPrice = parseFloat(document.getElementById('settings-unit-price')?.value) || 10;
-        appData.settings.substanceSettings[id].unitsPerPack = parseInt(document.getElementById('settings-units-per-purchase')?.value, 10) || 20;
-        appData.settings.substanceSettings[id].baseline = parseFloat(document.getElementById('baseline-cigs')?.value) || 20;
-        appData.settings.substanceSettings[id].quitGoal = document.getElementById('quit-goal')?.value || '';
-    }
+    appData.settings.currency = document.getElementById('currency')?.value?.trim() || '$';
+    appData.settings.reminderMessage = document.getElementById('reminder-message')?.value || '';
     saveData(appData);
     updateDashboard();
+    updateStats();
 }
 
 function renderSupportContacts() {
@@ -2601,7 +4137,10 @@ function renderSupportContacts() {
 
 function handleAddContact(e) {
     e.preventDefault();
-    appData.supportContacts.push({ id: Date.now(), name: document.getElementById('contact-name').value, phone: document.getElementById('contact-phone').value });
+    const name = document.getElementById('contact-name')?.value?.trim();
+    const phone = document.getElementById('contact-phone')?.value?.trim();
+    if (!name || !phone) return;
+    appData.supportContacts.push({ id: Date.now(), name, phone });
     saveData(appData);
     e.target.reset();
     renderSupportContacts();
@@ -2633,7 +4172,7 @@ function renderReasons() {
 
 function handleAddReason(e) {
     e.preventDefault();
-    const reason = document.getElementById('reason').value.trim();
+    const reason = document.getElementById('reason')?.value?.trim();
     if (!reason) return;
     appData.reasons.push(reason);
     saveData(appData);
@@ -2653,164 +4192,270 @@ function formatDate(dateStr) {
     return new Date(dateStr + 'T12:00:00').toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-function exportData() {
-    const blob = new Blob([JSON.stringify(appData, null, 2)], { type: 'application/json' });
+function downloadBlob(blob, filename) {
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `recovery-tracker-backup-${new Date().toISOString().split('T')[0]}.json`;
+    a.download = filename;
     a.click();
     URL.revokeObjectURL(a.href);
 }
 
-// ——— Privacy lock ———
-function setupPrivacyLock() {
-    const screen = document.getElementById('privacy-lock-screen');
-    if (!screen) return;
-    screen.querySelectorAll('[data-digit]').forEach(btn => btn.addEventListener('click', () => appendPinDigit(btn.dataset.digit)));
-    screen.querySelectorAll('[data-action]').forEach(btn => {
-        btn.addEventListener('click', () => {
-            if (btn.dataset.action === 'clear') clearPinEntry();
-            if (btn.dataset.action === 'back') { pinEntry = pinEntry.slice(0, -1); updatePinDots(); }
-            if (pinEntry.length >= 4) tryUnlockPin();
-        });
+function cleanExportData(data) {
+    return {
+        version: 'recovery-tracker-v2',
+        exportedAt: new Date().toISOString(),
+
+        substances: (data.substances || []).map(s => ({
+            id: s.id,
+            name: s.name,
+            icon: s.icon,
+            color: s.color,
+            units: s.units || ['units'],
+            defaultUnit: s.defaultUnit || (s.units?.[0] || 'units'),
+            costTrackingEnabled: s.costTrackingEnabled !== false,
+            taperTrackingEnabled: s.taperTrackingEnabled !== false,
+            active: s.active !== false,
+            archived: !!s.archived,
+            isMain: !!s.isMain,
+            createdAt: s.createdAt || null,
+            updatedAt: s.updatedAt || null
+        })),
+
+        logs: (data.logs || []).map(l => ({
+            id: l.id,
+            type: l.type || 'quick',
+            substanceId: l.substanceId || l.substance || '',
+            date: l.date,
+            startTime: l.startTime || l.time || '',
+            endTime: l.endTime || '',
+            amount: Number(l.amount || 0),
+            unit: l.unit || 'units',
+            count: Number(l.count || 0),
+            notes: l.notes || '',
+            linkedPurchaseId: l.linkedPurchaseId || null,
+            linkedPurchases: l.linkedPurchases || [],
+            createdAt: l.createdAt || l.timestamp || null,
+            updatedAt: l.updatedAt || l.timestamp || null
+        })),
+
+        purchases: (data.purchases || []).map(p => ({
+            id: p.id,
+            substanceId: p.substanceId || '',
+            substanceName: p.substanceName || '',
+            date: p.date,
+            time: p.time || '',
+            quantityBought: Number(p.quantityBought ?? p.quantity ?? 0),
+            unit: p.unit || 'units',
+            totalCost: Number(p.totalCost || 0),
+            costPerUnit: Number(p.costPerUnit || 0),
+            store: p.store || '',
+            paymentMethod: p.paymentMethod || '',
+            notes: p.notes || '',
+            remainingAmount: Number(p.remainingAmount ?? p.quantityBought ?? p.quantity ?? 0),
+            isDepleted: !!p.isDepleted,
+            createdAt: p.createdAt || null,
+            updatedAt: p.updatedAt || null
+        })),
+
+        taperPlans: data.taperPlans || {},
+
+        settings: {
+            currency: data.settings?.currency || '$',
+            reminderMessage: data.settings?.reminderMessage || '',
+            openOnMainSubstance: data.settings?.openOnMainSubstance !== false
+        },
+
+        recoveryStreaks: data.recoveryStreaks || {},
+        supportContacts: data.supportContacts || [],
+        reasons: data.reasons || [],
+        migrations: data.migrations || {}
+    };
+}
+
+function exportJsonBackup() {
+    const exportObject = cleanExportData(appData);
+    const dataStr = JSON.stringify(exportObject, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    downloadBlob(blob, `recovery-tracker-backup-${new Date().toISOString().split('T')[0]}.json`);
+}
+
+function exportData() {
+    exportJsonBackup();
+}
+
+function csvEscape(value) {
+    const s = String(value ?? '');
+    if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
+    return s;
+}
+
+function exportDataCsv() {
+    const rows = [];
+    rows.push(['Record Type', 'Substance', 'Date', 'Start', 'End', 'Amount', 'Unit', 'Count', 'Notes'].map(csvEscape).join(','));
+    appData.logs.forEach(log => {
+        rows.push([
+            log.type === 'session' ? 'Use Session' : 'Use Quick',
+            getSubstanceName(log.substanceId),
+            log.date,
+            log.startTime || log.time || '',
+            log.endTime || '',
+            log.amount,
+            log.unit,
+            log.count ?? '',
+            log.notes || ''
+        ].map(csvEscape).join(','));
     });
-    loadPrivacySettingsUI();
-    resetAutoLockTimer();
+    rows.push('');
+    rows.push(['Record Type', 'Substance', 'Date', 'Time', 'Quantity', 'Unit', 'Total Cost', 'Store', 'Notes'].map(csvEscape).join(','));
+    (appData.purchases || []).forEach(p => {
+        rows.push([
+            'Purchase',
+            getSubstanceName(p.substanceId),
+            p.date,
+            p.time || '',
+            p.quantity,
+            p.unit,
+            p.totalCost ?? '',
+            p.store || '',
+            p.notes || ''
+        ].map(csvEscape).join(','));
+    });
+    const blob = new Blob([rows.join('\n')], { type: 'text/csv;charset=utf-8' });
+    downloadBlob(blob, `recovery-tracker-export-${new Date().toISOString().split('T')[0]}.csv`);
 }
 
-function loadPrivacySettingsUI() {
-    const enabled = document.getElementById('privacy-lock-enabled');
-    const setup = document.getElementById('privacy-pin-setup');
-    const autoLock = document.getElementById('auto-lock-minutes');
-    if (!enabled || !appData.privacy) return;
-    enabled.checked = !!appData.privacy.enabled;
-    setup?.classList.toggle('hidden', !appData.privacy.enabled);
-    if (autoLock) autoLock.value = appData.privacy.autoLockMinutes ?? 5;
-}
-
-function togglePrivacyLockSetting() {
-    const enabled = document.getElementById('privacy-lock-enabled').checked;
-    appData.privacy.enabled = enabled;
-    document.getElementById('privacy-pin-setup')?.classList.toggle('hidden', !enabled);
-    if (enabled && !appData.privacy.pinHash) {
-        alert('Set a PIN before enabling the lock.');
-        appData.privacy.enabled = false;
-        document.getElementById('privacy-lock-enabled').checked = false;
-        return;
+function validateBackupData(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        return { ok: false, error: 'Invalid backup file format.' };
     }
-    saveData(appData);
-    if (enabled) lockApp();
-    else { isUnlocked = true; hideLockScreen(); }
-}
-
-function savePrivacyPin() {
-    const pin = document.getElementById('privacy-pin-new').value.trim();
-    const confirmPin = document.getElementById('privacy-pin-confirm').value.trim();
-    if (!/^\d{4,6}$/.test(pin)) return alert('PIN must be 4–6 digits.');
-    if (pin !== confirmPin) return alert('PINs do not match.');
-    appData.privacy.pinHash = hashPin(pin);
-    appData.privacy.enabled = true;
-    document.getElementById('privacy-lock-enabled').checked = true;
-    saveData(appData);
-    document.getElementById('privacy-pin-new').value = '';
-    document.getElementById('privacy-pin-confirm').value = '';
-    lockApp();
-}
-
-function changePrivacyPin() {
-    const current = prompt('Enter your current PIN:');
-    if (!current || hashPin(current) !== appData.privacy.pinHash) return alert('Incorrect PIN.');
-    alert('Enter and confirm your new PIN below, then tap Save PIN.');
-}
-
-function savePrivacySettings() {
-    appData.privacy.autoLockMinutes = parseInt(document.getElementById('auto-lock-minutes').value, 10) || 0;
-    saveData(appData);
-    resetAutoLockTimer();
-}
-
-function lockAppNow() {
-    if (!appData.privacy?.enabled) return alert('Enable privacy lock first.');
-    lockApp();
-}
-
-function lockApp() {
-    if (!appData.privacy?.enabled) return;
-    isUnlocked = false;
-    clearPinEntry();
-    document.getElementById('privacy-lock-screen')?.classList.remove('hidden');
-    document.body.classList.add('locked');
-}
-
-function hideLockScreen() {
-    document.getElementById('privacy-lock-screen')?.classList.add('hidden');
-    document.body.classList.remove('locked');
-    clearPinEntry();
-    isUnlocked = true;
-    lastActivityAt = Date.now();
-    resetAutoLockTimer();
-}
-
-function appendPinDigit(digit) {
-    if (pinEntry.length >= 6) return;
-    pinEntry += digit;
-    updatePinDots();
-    if (pinEntry.length >= 4) tryUnlockPin();
-}
-
-function clearPinEntry() {
-    pinEntry = '';
-    updatePinDots();
-    document.getElementById('pin-error')?.classList.add('hidden');
-}
-
-function updatePinDots() {
-    document.querySelectorAll('#pin-dots span').forEach((dot, i) => dot.classList.toggle('filled', i < pinEntry.length));
-}
-
-function tryUnlockPin() {
-    if (hashPin(pinEntry) === appData.privacy.pinHash) hideLockScreen();
-    else if (pinEntry.length >= 6) {
-        const err = document.getElementById('pin-error');
-        if (err) { err.textContent = 'Incorrect PIN.'; err.classList.remove('hidden'); }
-        clearPinEntry();
+    if (!Array.isArray(data.substances)) return { ok: false, error: 'Backup is missing a substances list.' };
+    if (!Array.isArray(data.logs)) return { ok: false, error: 'Backup is missing a logs list.' };
+    if (!Array.isArray(data.purchases)) return { ok: false, error: 'Backup is missing a purchases list.' };
+    if (!data.settings || typeof data.settings !== 'object') {
+        return { ok: false, error: 'Backup is missing settings.' };
     }
+    return { ok: true };
 }
 
-function recordActivity() {
-    if (!isUnlocked || !appData.privacy?.enabled) return;
-    lastActivityAt = Date.now();
-    resetAutoLockTimer();
+function mergeArrayById(existing, incoming) {
+    const map = new Map((existing || []).map(item => [item.id, item]));
+    (incoming || []).forEach(item => {
+        if (item?.id != null) map.set(item.id, item);
+        else map.set(`import-${Date.now()}-${Math.random()}`, item);
+    });
+    return [...map.values()];
 }
 
-function resetAutoLockTimer() {
-    if (autoLockTimer) clearTimeout(autoLockTimer);
-    const minutes = appData.privacy?.autoLockMinutes ?? 0;
-    if (!appData.privacy?.enabled || minutes <= 0 || !isUnlocked) return;
-    autoLockTimer = setTimeout(() => {
-        if (Date.now() - lastActivityAt >= minutes * 60000) lockApp();
-    }, minutes * 60000);
+function mergeImportedData(current, imported) {
+    const merged = JSON.parse(JSON.stringify(current));
+    merged.substances = mergeArrayById(merged.substances, imported.substances);
+    merged.logs = mergeArrayById(merged.logs, imported.logs);
+    merged.purchases = mergeArrayById(merged.purchases, imported.purchases);
+    merged.cravings = mergeArrayById(merged.cravings || [], imported.cravings || []);
+    merged.supportContacts = mergeArrayById(merged.supportContacts || [], imported.supportContacts || []);
+    merged.settings = {
+        ...merged.settings,
+        ...imported.settings,
+        substanceSettings: {
+            ...(merged.settings?.substanceSettings || {}),
+            ...(imported.settings?.substanceSettings || {})
+        }
+    };
+    merged.taperPlans = { ...(merged.taperPlans || {}), ...(imported.taperPlans || {}) };
+    merged.recoveryStreaks = { ...(merged.recoveryStreaks || {}), ...(imported.recoveryStreaks || {}) };
+    if (Array.isArray(imported.reasons)) {
+        const reasonSet = new Set([...(merged.reasons || []), ...imported.reasons]);
+        merged.reasons = [...reasonSet];
+    }
+    if (imported.privacy && typeof imported.privacy === 'object') {
+        merged.privacy = { ...merged.privacy, ...imported.privacy };
+    }
+    return merged;
+}
+
+function applyImportedBackup(imported, mode) {
+    if (mode === 'replace') {
+        appData = imported;
+    } else {
+        appData = mergeImportedData(appData, imported);
+    }
+    normalizeAppData(appData);
+    saveData(appData);
+    refreshAppAfterDataChange();
+}
+
+function triggerImportJsonBackup() {
+    document.getElementById('import-json-input')?.click();
+}
+
+function handleImportJsonFile(event) {
+    const input = event.target;
+    const file = input.files?.[0];
+    input.value = '';
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+        try {
+            const parsed = JSON.parse(reader.result);
+            const validation = validateBackupData(parsed);
+            if (!validation.ok) {
+                alert(validation.error);
+                return;
+            }
+
+            const logCount = parsed.logs?.length ?? 0;
+            const purchaseCount = parsed.purchases?.length ?? 0;
+            const substanceCount = parsed.substances?.length ?? 0;
+            const summary = `${substanceCount} substance(s), ${logCount} use log(s), ${purchaseCount} purchase(s).`;
+
+            if (!confirm(`Import this backup?\n\n${summary}`)) return;
+
+            const merge = confirm(
+                'How should this backup be applied?\n\nOK = Merge with current data (matching IDs are updated)\nCancel = Replace all current data'
+            );
+            if (merge) {
+                applyImportedBackup(parsed, 'merge');
+                alert('Backup merged successfully.');
+            } else {
+                if (!confirm('Replace ALL current data with this backup? This cannot be undone except by importing another backup.')) return;
+                applyImportedBackup(parsed, 'replace');
+                alert('Backup imported. Your data was replaced.');
+            }
+        } catch (err) {
+            console.error(err);
+            alert('Could not read backup file. Make sure it is valid JSON.');
+        }
+    };
+    reader.onerror = () => alert('Could not read the selected file.');
+    reader.readAsText(file);
 }
 
 function clearAllData() {
     if (!confirm('Clear ALL data? This cannot be undone.')) return;
     if (!confirm('Delete all logs, substances, and settings?')) return;
-    localStorage.removeItem(STORAGE_KEY);
     appData = JSON.parse(JSON.stringify(defaultData));
     appData.substances = getDefaultSubstances();
-    currentSubstanceId = resolveStartupSubstanceId();
-    loadSettings();
-    populateAllSubstanceDropdowns();
-    updateDashboard();
-    renderRecentUseList();
-    renderCalendar();
-    renderTaperPlan();
-    renderSubstancesList();
-    loadPrivacySettingsUI();
-    isUnlocked = true;
-    hideLockScreen();
+    saveData(appData);
+    refreshAppAfterDataChange();
     alert('All data cleared.');
 }
 
 // Legacy global aliases
 function logOneCigarette() { logOneUse(); }
+
+if (typeof window !== 'undefined') {
+    Object.assign(window, {
+        openSubstanceEditor,
+        closeSubstanceEditor,
+        closeSubstanceModal,
+        handleSubstanceSubmit,
+        updateLastSaved,
+        renderSubstances,
+        populateSubstanceDropdowns,
+        setMainSubstance,
+        archiveSubstance,
+        restoreSubstance,
+        deleteSubstance
+    });
+}
