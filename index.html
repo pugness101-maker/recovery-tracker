@@ -120,23 +120,48 @@
 
         <main>
             <!-- Dashboard Tab -->
-            <section id="dashboard-tab" class="tab active">
-                <div class="safety-notice">
+            <section id="dashboard-tab" class="tab active dashboard-page">
+                <div class="safety-notice dash-safety">
                     <strong>Safety Note:</strong> If you feel unsafe, may overdose, or have severe withdrawal symptoms, call emergency services or a medical professional immediately.
                 </div>
 
-                <p class="main-substance-display" id="dashboard-main-substance">Main Substance: —</p>
-
-                <!-- Substance Selector -->
-                <div class="form-group">
-                    <label for="dashboard-substance">Viewing Stats For:</label>
-                    <select id="dashboard-substance" onchange="switchSubstance(this.value)"></select>
-                </div>
+                <header class="dash-header">
+                    <div class="dash-header-top">
+                        <h2 class="dash-title">Dashboard</h2>
+                        <p class="dash-main-substance" id="dashboard-main-substance">Main: —</p>
+                    </div>
+                    <div class="form-group dash-substance-field">
+                        <label for="dashboard-substance">Viewing</label>
+                        <select id="dashboard-substance" onchange="switchSubstance(this.value)"></select>
+                    </div>
+                </header>
 
                 <div id="substance-compare" class="substance-compare hidden"></div>
 
+                <!-- Summary hero cards -->
+                <div class="dash-summary-grid" id="dashboard-main-stats">
+                    <div class="dash-summary-card dash-summary-use">
+                        <span class="dash-summary-label">Today's Use</span>
+                        <span class="dash-summary-value" id="dash-today-total-use">0</span>
+                        <span class="dash-summary-sub" id="dash-today-session-duration">— session time</span>
+                    </div>
+                    <div class="dash-summary-card dash-summary-supply">
+                        <span class="dash-summary-label">Supply</span>
+                        <span class="dash-summary-value" id="dash-supply-total">—</span>
+                    </div>
+                    <div class="dash-summary-card dash-summary-since">
+                        <span class="dash-summary-label">Since Last Use</span>
+                        <span class="dash-summary-value" id="dash-time-since-last-use">—</span>
+                    </div>
+                    <div class="dash-summary-card dash-summary-limit">
+                        <span class="dash-summary-label">Daily Limit</span>
+                        <span class="dash-summary-value" id="dash-remaining-taper">—</span>
+                        <span class="dash-summary-sub" id="dash-daily-limit-status">—</span>
+                    </div>
+                </div>
+
                 <!-- Quick Actions -->
-                <div class="quick-actions">
+                <div class="quick-actions dash-quick-actions">
                     <button id="quick-log-btn" class="quick-btn primary" onclick="logOneUse()">
                         <span class="quick-icon">⚡</span>
                         <span class="quick-label">Quick Use</span>
@@ -159,261 +184,280 @@
                     </button>
                 </div>
 
-                <!-- Main substance taper progress -->
-                <div id="dns-section" class="dns-section hidden">
-                    <h3>Taper Progress <span class="dns-subtitle" id="dashboard-taper-substance-label"></span></h3>
-                    <div class="dns-grid">
-                        <div class="dns-stat">
-                            <span class="dns-label">Daily Limit</span>
+                <!-- Compact Taper -->
+                <div id="dns-section" class="dash-card dash-taper-card hidden">
+                    <div class="dash-card-head">
+                        <h3 class="dash-card-title">Taper Today <span class="dns-subtitle" id="dashboard-taper-substance-label"></span></h3>
+                        <p class="dash-taper-status" id="dashboard-taper-overall-status">—</p>
+                    </div>
+                    <div class="dash-taper-stats">
+                        <div class="dash-taper-stat">
+                            <span class="dns-label">Limit</span>
                             <span class="dns-value" id="dashboard-dns-limit">—</span>
                         </div>
-                        <div class="dns-stat">
-                            <span class="dns-label">Used Today</span>
+                        <div class="dash-taper-stat">
+                            <span class="dns-label">Used</span>
                             <span class="dns-value" id="dashboard-dns-used">—</span>
                         </div>
-                        <div class="dns-stat">
-                            <span class="dns-label">Remaining Today</span>
+                        <div class="dash-taper-stat">
+                            <span class="dns-label">Left</span>
                             <span class="dns-value" id="dashboard-dns-remaining">—</span>
                         </div>
-                        <div class="dns-stat">
-                            <span class="dns-label">Weekly Limit</span>
-                            <span class="dns-value" id="dashboard-weekly-limit">—</span>
-                        </div>
-                        <div class="dns-stat">
-                            <span class="dns-label">Used This Week</span>
-                            <span class="dns-value" id="dashboard-weekly-used">—</span>
-                        </div>
-                        <div class="dns-stat">
-                            <span class="dns-label">Remaining This Week</span>
-                            <span class="dns-value" id="dashboard-weekly-remaining">—</span>
-                        </div>
                     </div>
-                    <p class="dns-used-max" id="dashboard-dns-used-max">0 / 0 daily</p>
                     <div class="progress-bar-container dns-bar-container">
                         <div class="progress-bar dns-bar" id="dashboard-dns-bar">
                             <span class="progress-text" id="dashboard-dns-bar-text"></span>
                         </div>
                     </div>
-                    <p class="taper-progress-label">Daily target</p>
-                    <div class="progress-bar-container dns-bar-container">
-                        <div class="progress-bar dns-bar" id="dashboard-weekly-bar">
-                            <span class="progress-text" id="dashboard-weekly-bar-text"></span>
-                        </div>
-                    </div>
-                    <p class="taper-progress-label">Weekly target</p>
-                    <p class="dns-status" id="dashboard-dns-status">—</p>
-                    <p class="dns-status" id="dashboard-weekly-status">—</p>
-                    <p class="dns-status" id="dashboard-taper-overall-status">—</p>
-                    <div id="dashboard-manual-weekly-card" class="manual-weekly-dashboard hidden">
-                        <div class="manual-weekly-dash-grid">
-                            <div class="dns-stat"><span class="dns-label">Current Week</span><span class="dns-value" id="dash-manual-week-num">—</span></div>
-                            <div class="dns-stat"><span class="dns-label">Target</span><span class="dns-value" id="dash-manual-week-target">—</span></div>
-                            <div class="dns-stat"><span class="dns-label">Actual</span><span class="dns-value" id="dash-manual-week-actual">—</span></div>
-                            <div class="dns-stat"><span class="dns-label">Remaining Allowed</span><span class="dns-value" id="dash-manual-week-remaining">—</span></div>
-                        </div>
-                        <div class="progress-bar-container dns-bar-container">
-                            <div class="progress-bar dns-bar" id="dash-manual-week-bar"><span class="progress-text" id="dash-manual-week-bar-text"></span></div>
-                        </div>
-                        <p class="dns-status" id="dash-manual-week-goal-status">—</p>
-                    </div>
-                    <p class="dns-weekly hidden" id="dashboard-dns-weekly"></p>
-                    <p class="dns-streak hidden" id="dashboard-dns-streak"></p>
-                    <p class="dns-warning hidden" id="dashboard-dns-warning"></p>
-                    <p class="dns-relapse hidden" id="dashboard-dns-relapse"></p>
-                </div>
-
-                <!-- Progress Bar -->
-                <div class="progress-section">
-                    <h3>Quit/Taper Progress</h3>
-                    <div class="progress-bar-container">
-                        <div class="progress-bar" id="taper-progress">
-                            <span class="progress-text" id="progress-text">0%</span>
-                        </div>
-                    </div>
-                    <p class="progress-label" id="progress-label">No taper goal set</p>
-                </div>
-
-                <!-- Dashboard Stats -->
-                <div class="stats-grid" id="dashboard-main-stats">
-                    <div class="stat-card highlight">
-                        <h3>Today's Total Use</h3>
-                        <p class="stat-value" id="dash-today-total-use">0</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Today Session Duration</h3>
-                        <p class="stat-value" id="dash-today-session-duration">—</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Time Since Last Use</h3>
-                        <p class="stat-value" id="dash-time-since-last-use">—</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Daily Taper Limit</h3>
-                        <p class="stat-value" id="dash-daily-taper-limit">—</p>
-                    </div>
-                    <div class="stat-card highlight">
-                        <h3>Remaining Today</h3>
-                        <p class="stat-value" id="dash-remaining-taper">—</p>
-                    </div>
-                    <div class="stat-card supply-card highlight">
-                        <h3>Current Supply</h3>
-                        <p class="stat-value" id="dash-supply-total">—</p>
-                        <p class="stat-sub" id="dash-supply-current-bag">—</p>
-                        <p class="stat-sub" id="dash-supply-last-buy-date">Last buy date: —</p>
-                        <p class="stat-sub" id="dash-supply-since-last-buy">Time since last buy: —</p>
-                        <p class="stat-sub" id="dash-supply-avg-buy-break">Avg time between buys: —</p>
-                        <p class="stat-sub" id="dash-supply-est-next-buy">Est. next buy: —</p>
-                        <p class="stat-sub" id="dash-supply-last-purchase">—</p>
-                        <p class="stat-sub" id="dash-supply-days-left">—</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Spent Today (Buy)</h3>
-                        <p class="stat-value" id="dash-spent-today-buy">$0.00</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Last Purchase</h3>
-                        <p class="stat-value stat-value-sm" id="dash-last-purchase">—</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Recovery Streak</h3>
-                        <p class="stat-value" id="recovery-streak-current">0 days</p>
-                        <p class="stat-sub" id="recovery-streak-since">—</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Cravings Resisted</h3>
-                        <p class="stat-value" id="cravings-resisted">0</p>
+                    <p class="dns-status dns-status-compact" id="dashboard-dns-status">—</p>
+                    <p class="dns-status dns-status-compact hidden" id="dashboard-taper-manual-note"></p>
+                    <!-- Legacy ids kept for JS compatibility (hidden) -->
+                    <span class="hidden" id="dashboard-dns-used-max"></span>
+                    <span class="hidden" id="dashboard-weekly-limit"></span>
+                    <span class="hidden" id="dashboard-weekly-used"></span>
+                    <span class="hidden" id="dashboard-weekly-remaining"></span>
+                    <span class="hidden" id="dashboard-weekly-status"></span>
+                    <span class="hidden" id="dashboard-weekly-bar"></span>
+                    <span class="hidden" id="dashboard-weekly-bar-text"></span>
+                    <span class="hidden" id="dash-daily-taper-limit"></span>
+                    <div id="dashboard-manual-weekly-card" class="hidden">
+                        <span id="dash-manual-week-num"></span>
+                        <span id="dash-manual-week-target"></span>
+                        <span id="dash-manual-week-actual"></span>
+                        <span id="dash-manual-week-remaining"></span>
+                        <span id="dash-manual-week-bar"></span>
+                        <span id="dash-manual-week-bar-text"></span>
+                        <span id="dash-manual-week-goal-status"></span>
                     </div>
                 </div>
 
-                <div class="stats-section break-metrics-section hidden" id="break-metrics-section">
-                    <h3>Break Metrics</h3>
-                    <div class="stats-grid break-metrics-grid">
-                        <div class="stat-card">
-                            <h3>Current Break</h3>
-                            <p class="stat-value" id="dash-break-current">—</p>
-                            <p class="stat-sub">Gap before last session</p>
+                <!-- Recovery Summary -->
+                <div class="dash-card dash-recovery-card" id="break-metrics-section">
+                    <h3 class="dash-card-title">Recovery</h3>
+                    <div class="dash-recovery-grid">
+                        <div class="dash-recovery-item">
+                            <span class="dash-recovery-label">Streak</span>
+                            <span class="dash-recovery-value" id="recovery-streak-current">0 days</span>
+                            <span class="dash-recovery-sub" id="recovery-streak-since">—</span>
                         </div>
-                        <div class="stat-card">
-                            <h3>Longest Break</h3>
-                            <p class="stat-value" id="dash-break-longest">—</p>
+                        <div class="dash-recovery-item">
+                            <span class="dash-recovery-label">Cravings Resisted</span>
+                            <span class="dash-recovery-value" id="cravings-resisted">0</span>
+                            <span class="dash-recovery-sub">today</span>
                         </div>
-                        <div class="stat-card">
-                            <h3>Average Break</h3>
-                            <p class="stat-value" id="dash-break-average">—</p>
-                        </div>
-                        <div class="stat-card">
-                            <h3>30-Day Average</h3>
-                            <p class="stat-value" id="dash-break-avg-30">—</p>
-                        </div>
-                        <div class="stat-card highlight">
-                            <h3>Current Streak Without Use</h3>
-                            <p class="stat-value" id="dash-break-streak-no-use">—</p>
-                            <p class="stat-sub">Since last session ended</p>
+                        <div class="dash-recovery-item dash-recovery-breaks">
+                            <span class="dash-recovery-label">Break Metrics</span>
+                            <div class="dash-break-rows">
+                                <div class="dash-break-row"><span>Current</span><strong id="dash-break-current">—</strong></div>
+                                <div class="dash-break-row"><span>Longest</span><strong id="dash-break-longest">—</strong></div>
+                                <div class="dash-break-row"><span>30-day avg</span><strong id="dash-break-avg-30">—</strong></div>
+                            </div>
                         </div>
                     </div>
+                    <span class="hidden" id="recovery-streak-best"></span>
+                    <span class="hidden" id="dash-break-average"></span>
+                    <span class="hidden" id="dash-break-streak-no-use"></span>
+                </div>
+
+                <!-- Compact Supply -->
+                <div class="dash-card dash-supply-card">
+                    <h3 class="dash-card-title">Current Supply</h3>
+                    <div class="dash-supply-rows">
+                        <div class="dash-supply-row">
+                            <span>Remaining</span>
+                            <strong id="dash-supply-remaining">—</strong>
+                        </div>
+                        <div class="dash-supply-row">
+                            <span>Days left (est.)</span>
+                            <strong id="dash-supply-days-left">—</strong>
+                        </div>
+                        <div class="dash-supply-row">
+                            <span>Last purchase</span>
+                            <strong id="dash-supply-last-buy-date">—</strong>
+                        </div>
+                        <div class="dash-supply-row">
+                            <span>Current supply last used</span>
+                            <strong id="dash-supply-last-used">—</strong>
+                        </div>
+                        <div class="dash-supply-row">
+                            <span>Time since last use</span>
+                            <strong id="dash-supply-since-last-use">—</strong>
+                        </div>
+                    </div>
+                    <!-- Legacy supply ids (hidden, for JS that may reference them) -->
+                    <span class="hidden" id="dash-supply-current-bag"></span>
+                    <span class="hidden" id="dash-supply-since-last-buy"></span>
+                    <span class="hidden" id="dash-supply-avg-buy-break"></span>
+                    <span class="hidden" id="dash-supply-est-next-buy"></span>
+                    <span class="hidden" id="dash-supply-last-purchase"></span>
+                    <span class="hidden" id="dash-supply-purchased"></span>
+                    <span class="hidden" id="dash-supply-used"></span>
+                    <span class="hidden" id="dash-supply-gifted"></span>
+                    <span class="hidden" id="dash-supply-received"></span>
+                    <span class="hidden" id="dash-supply-remaining-breakdown"></span>
+                    <span class="hidden" id="dash-gift-given"></span>
+                    <span class="hidden" id="dash-gift-received"></span>
+                    <span class="hidden" id="dash-gift-net"></span>
+                    <span class="hidden" id="dash-spent-today-buy"></span>
+                    <span class="hidden" id="dash-last-purchase"></span>
+                </div>
+
+                <!-- Recent Activity -->
+                <div class="dash-card dash-activity-card">
+                    <h3 class="dash-card-title">Recent Activity</h3>
+                    <div id="dash-recent-activity" class="dash-activity-list"></div>
+                </div>
+
+                <!-- Legacy taper progress (hidden; full view on Taper tab) -->
+                <div class="progress-section hidden" aria-hidden="true">
+                    <div class="progress-bar" id="taper-progress"><span class="progress-text" id="progress-text"></span></div>
+                    <p class="progress-label" id="progress-label"></p>
                 </div>
             </section>
 
             <!-- Use Log Tab -->
-            <section id="use-log-tab" class="tab">
-                <h2>Use Log</h2>
-                <p class="settings-hint">Quick Use = instant log. Session = tracked start/end with duration and rate.</p>
+            <section id="use-log-tab" class="tab use-log-page">
+                <div class="use-log-page-header">
+                    <h2>Use Log</h2>
+                </div>
 
-                <form id="use-log-form">
-                    <div class="form-group use-type-toggle">
-                        <label>Entry Type</label>
-                        <div class="type-toggle-btns">
-                            <button type="button" class="type-toggle-btn active" data-type="quick" onclick="setUseLogType('quick')">⚡ Quick Use</button>
-                            <button type="button" class="type-toggle-btn" data-type="session" onclick="setUseLogType('session')">⏱️ Session</button>
-                        </div>
+                <form id="use-log-form" class="use-log-form">
+                    <div class="use-log-entry-toggle" id="use-entry-type-group">
+                        <button type="button" class="use-entry-toggle-btn type-toggle-btn active" data-type="quick" onclick="setUseLogType('quick')">
+                            <span class="use-entry-toggle-icon">⚡</span>
+                            <span class="use-entry-toggle-label">Quick Use</span>
+                        </button>
+                        <button type="button" class="use-entry-toggle-btn type-toggle-btn" data-type="session" onclick="setUseLogType('session')">
+                            <span class="use-entry-toggle-icon">⏱️</span>
+                            <span class="use-entry-toggle-label">Session</span>
+                        </button>
                         <input type="hidden" id="use-type" value="quick">
                     </div>
 
-                    <div class="form-group">
-                        <label for="use-substance">Substance</label>
-                        <select id="use-substance" required></select>
+                    <div class="use-log-field-block">
+                        <span class="use-log-field-label">Transaction Type</span>
+                        <div class="use-tx-pills" role="group" aria-label="Transaction type">
+                            <button type="button" class="use-tx-pill active" data-tx="use" onclick="setUseTransactionType('use')">Personal Use</button>
+                            <button type="button" class="use-tx-pill" data-tx="gift_given" onclick="setUseTransactionType('gift_given')">Gift Given</button>
+                            <button type="button" class="use-tx-pill" data-tx="gift_received" onclick="setUseTransactionType('gift_received')">Gift Received</button>
+                            <button type="button" class="use-tx-pill" data-tx="inventory_adjustment" onclick="setUseTransactionType('inventory_adjustment')">Adjustment</button>
+                        </div>
+                        <input type="hidden" id="use-transaction-type" value="use">
                     </div>
 
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="use-date">Date</label>
-                            <input type="date" id="use-date" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="use-start-time">Start Time</label>
-                            <input type="time" id="use-start-time" required>
-                        </div>
-                        <div class="form-group session-only-field hidden">
-                            <label for="use-end-time">End Time (optional)</label>
-                            <input type="time" id="use-end-time">
-                        </div>
-                    </div>
-                    <p id="use-duration-preview" class="use-duration-preview hidden">Duration: —</p>
-
-                    <div class="form-group">
-                        <label for="use-purchase-link-mode">Use From Purchase / Bag</label>
-                        <select id="use-purchase-link-mode" onchange="updateUsePurchaseLinkUI()">
-                            <option value="auto">Auto-select current supply</option>
-                            <option value="manual">Manual select purchase</option>
-                            <option value="none">No linked purchase</option>
-                        </select>
-                    </div>
-                    <div id="use-purchase-manual-wrap" class="form-group hidden">
-                        <label for="use-purchase-select">Select purchase</label>
-                        <select id="use-purchase-select"></select>
-                    </div>
-                    <p id="use-purchase-preview" class="use-supply-preview hidden">—</p>
-
-                    <div class="form-row">
-                        <div class="form-group">
-                            <label for="use-amount">Amount</label>
-                            <input type="number" id="use-amount" min="0" step="0.01" value="1" required>
-                        </div>
-                        <div class="form-group">
-                            <label for="use-unit">Unit</label>
-                            <select id="use-unit" required></select>
-                        </div>
-                        <div class="form-group">
-                            <label for="use-count">Count (lines/hits/drinks)</label>
-                            <input type="number" id="use-count" min="0" step="1" placeholder="Optional">
+                    <div class="use-log-field-block hidden" id="use-adjustment-direction-group">
+                        <span class="use-log-field-label">Adjustment</span>
+                        <div class="use-adj-pills" role="group" aria-label="Adjustment direction">
+                            <button type="button" class="use-adj-pill active" data-dir="add" onclick="setUseAdjustmentDirection('add')">Add to inventory</button>
+                            <button type="button" class="use-adj-pill" data-dir="remove" onclick="setUseAdjustmentDirection('remove')">Remove from inventory</button>
                         </div>
                     </div>
 
-                    <div class="form-group">
-                        <label for="use-notes">Notes</label>
-                        <textarea id="use-notes" rows="2" placeholder="Notes..."></textarea>
+                    <div class="use-log-core-card">
+                        <div class="form-group use-log-compact">
+                            <label for="use-substance">Substance</label>
+                            <select id="use-substance" required></select>
+                        </div>
+
+                        <div class="use-log-datetime-grid">
+                            <div class="form-group use-log-compact">
+                                <label for="use-date">Date</label>
+                                <input type="date" id="use-date" required>
+                            </div>
+                            <div class="form-group use-log-compact">
+                                <label for="use-start-time">Start</label>
+                                <input type="time" id="use-start-time" required>
+                            </div>
+                            <div class="form-group use-log-compact session-only-field hidden">
+                                <label for="use-end-time">End</label>
+                                <input type="time" id="use-end-time">
+                            </div>
+                        </div>
+                        <p id="use-duration-preview" class="use-duration-preview hidden">Duration: —</p>
+
+                        <div class="use-log-amount-grid">
+                            <div class="form-group use-log-compact">
+                                <label for="use-amount" id="use-amount-label">Amount</label>
+                                <input type="number" id="use-amount" min="0" step="0.01" value="1" required>
+                            </div>
+                            <div class="form-group use-log-compact">
+                                <label for="use-unit">Unit</label>
+                                <select id="use-unit" required></select>
+                            </div>
+                        </div>
+
+                        <div class="form-group use-log-compact hidden" id="use-gift-party-group">
+                            <label for="use-gift-party" id="use-gift-party-label">Recipient Name</label>
+                            <input type="text" id="use-gift-party" placeholder="Name">
+                        </div>
+
+                        <div class="form-group use-log-compact use-log-notes-group">
+                            <label for="use-notes">Notes</label>
+                            <textarea id="use-notes" rows="2" placeholder="Optional notes…"></textarea>
+                        </div>
                     </div>
 
-                    <p id="use-taper-preview" class="session-taper-preview hidden"></p>
-                    <button type="submit" class="submit-btn" id="use-submit-btn">Save Entry</button>
-                    <button type="button" id="cancel-use-edit-btn" class="secondary-btn hidden" onclick="cancelUseEdit()">Cancel Edit</button>
+                    <p id="use-taper-preview" class="use-taper-banner hidden" role="status"></p>
+
+                    <details class="use-log-advanced" id="use-advanced-section">
+                        <summary class="use-log-advanced-summary">Advanced options</summary>
+                        <div class="use-log-advanced-body">
+                            <div class="form-group use-log-compact">
+                                <label for="use-purchase-link-mode" id="use-purchase-link-label">Use From Purchase / Bag</label>
+                                <select id="use-purchase-link-mode" onchange="updateUsePurchaseLinkUI()">
+                                    <option value="auto">Auto-select current supply</option>
+                                    <option value="manual">Manual select purchase</option>
+                                    <option value="none">No linked purchase</option>
+                                </select>
+                            </div>
+                            <div id="use-purchase-manual-wrap" class="form-group use-log-compact hidden">
+                                <label for="use-purchase-select">Select purchase</label>
+                                <select id="use-purchase-select"></select>
+                            </div>
+                            <p id="use-purchase-preview" class="use-supply-preview hidden">—</p>
+                            <div class="form-group use-log-compact">
+                                <label for="use-count">Count (lines/hits/drinks)</label>
+                                <input type="number" id="use-count" min="0" step="1" placeholder="Optional">
+                            </div>
+                        </div>
+                    </details>
+
+                    <div class="use-log-form-actions">
+                        <button type="submit" class="submit-btn" id="use-submit-btn">Save Entry</button>
+                        <button type="button" id="cancel-use-edit-btn" class="secondary-btn hidden" onclick="cancelUseEdit()">Cancel Edit</button>
+                    </div>
                 </form>
 
-                <div class="recent-logs">
-                    <h3>Recent Use</h3>
-                    <div id="recent-use-list"></div>
+                <div class="recent-logs use-log-recent">
+                    <h3 class="use-log-section-title">Recent Use</h3>
+                    <div id="recent-use-list" class="use-recent-list"></div>
                 </div>
 
-                <div class="bulk-actions-section">
-                    <h3>Bulk Actions</h3>
-                    <p class="settings-hint">FIFO link sessions to purchases by substance and date. Preview before applying.</p>
-                    <div class="bulk-actions-row">
-                        <button type="button" class="secondary-btn" onclick="startBulkLinkSessions('all')">🔗 Auto Link Sessions</button>
-                        <button type="button" class="secondary-btn" onclick="startBulkLinkSessions('unlinked_only')">Link Unlinked Only</button>
-                        <button type="button" class="secondary-btn" onclick="startBulkLinkSessions('clear')">Clear All Links</button>
-                        <button type="button" class="secondary-btn" id="manual-link-selected-btn" onclick="openManualBulkLinkModal()" disabled>📎 Manual Link Selected to Supply</button>
+                <details class="bulk-actions-collapsible">
+                    <summary class="bulk-actions-summary">
+                        <span>Bulk Actions</span>
+                        <span class="bulk-actions-summary-hint">Link sessions to supply</span>
+                    </summary>
+                    <div class="bulk-actions-body">
+                        <p class="settings-hint">FIFO link sessions to purchases by substance and date. Preview before applying.</p>
+                        <div class="bulk-actions-row">
+                            <button type="button" class="secondary-btn" onclick="startBulkLinkSessions('all')">🔗 Auto Link</button>
+                            <button type="button" class="secondary-btn" onclick="startBulkLinkSessions('unlinked_only')">Link Unlinked</button>
+                            <button type="button" class="secondary-btn" onclick="startBulkLinkSessions('clear')">Clear Links</button>
+                            <button type="button" class="secondary-btn" id="manual-link-selected-btn" onclick="openManualBulkLinkModal()" disabled>📎 Manual Link Selected</button>
+                        </div>
                     </div>
-                </div>
+                </details>
 
-                <div class="use-history-section">
-                    <h3>Use History</h3>
+                <div class="use-history-section use-log-history">
+                    <h3 class="use-log-section-title">Use History</h3>
                     <div class="use-history-toolbar" id="use-history-toolbar">
                         <label class="use-history-select-all-label">
                             <input type="checkbox" id="use-history-select-all" aria-label="Select all visible sessions">
-                            Select All Visible
+                            Select all
                         </label>
-                        <button type="button" class="secondary-btn" id="use-history-clear-selection">Clear Selection</button>
-                        <span class="use-history-selected-count" id="use-history-selected-count">Selected: 0 sessions</span>
+                        <button type="button" class="secondary-btn use-history-clear-btn" id="use-history-clear-selection">Clear</button>
+                        <span class="use-history-selected-count" id="use-history-selected-count">0 selected</span>
                     </div>
                     <div id="use-history-table-wrap"></div>
                 </div>
@@ -428,6 +472,34 @@
                     <select id="stats-substance" onchange="switchStatsSubstance(this.value)"></select>
                 </div>
 
+                <div class="stats-date-range-toolbar">
+                    <div class="form-group">
+                        <label for="stats-date-range">Date Range</label>
+                        <select id="stats-date-range" onchange="onStatsDateRangeChange()">
+                            <option value="last-7">Last 7 Days</option>
+                            <option value="last-14">Last 14 Days</option>
+                            <option value="last-30">Last 30 Days</option>
+                            <option value="this-week">This Week</option>
+                            <option value="this-month">This Month</option>
+                            <option value="last-month">Last Month</option>
+                            <option value="all-time">All Time</option>
+                            <option value="custom">Custom Range</option>
+                        </select>
+                    </div>
+                    <div id="stats-custom-range-wrap" class="stats-custom-range hidden">
+                        <div class="form-group">
+                            <label for="stats-custom-start">Start Date</label>
+                            <input type="date" id="stats-custom-start">
+                        </div>
+                        <div class="form-group">
+                            <label for="stats-custom-end">End Date</label>
+                            <input type="date" id="stats-custom-end">
+                        </div>
+                        <button type="button" class="secondary-btn" onclick="applyStatsCustomRange()">Apply</button>
+                    </div>
+                    <p class="stats-range-summary" id="stats-range-summary"></p>
+                </div>
+
                 <div id="stats-all-view" class="hidden">
                     <div class="stats-section">
                         <h3>By Substance</h3>
@@ -437,17 +509,51 @@
 
                 <div id="stats-single-view">
                 <div class="stats-section">
-                    <h3>Usage Per Day (Last 7 Days)</h3>
+                    <h3 id="usage-chart-title">Usage Per Day</h3>
                     <div id="cigarettes-per-day-chart" class="chart-container"></div>
+                </div>
+
+                <div class="stats-section">
+                    <h3>Usage Analytics</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <h3>Avg Duration</h3>
+                            <p class="stat-value" id="stats-avg-duration">—</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Avg / Session</h3>
+                            <p class="stat-value" id="stats-avg-per-session">—</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Avg / hr</h3>
+                            <p class="stat-value" id="stats-avg-per-hr">—</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Session Count</h3>
+                            <p class="stat-value" id="stats-session-count">0</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Total Duration</h3>
+                            <p class="stat-value" id="stats-total-duration">—</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Longest Session</h3>
+                            <p class="stat-value" id="stats-longest-session">—</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Shortest Session</h3>
+                            <p class="stat-value" id="stats-shortest-session">—</p>
+                        </div>
+                    </div>
                 </div>
 
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <h3>Total This Week</h3>
+                        <h3>Total Used</h3>
                         <p class="stat-value" id="total-week">0</p>
                     </div>
                     <div class="stat-card">
-                        <h3>Total This Month</h3>
+                        <h3>Total Sessions</h3>
                         <p class="stat-value" id="total-month">0</p>
                     </div>
                     <div class="stat-card">
@@ -497,7 +603,7 @@
                 </div>
 
                 <div class="stats-section">
-                    <h3>Spending (Last 7 Days)</h3>
+                    <h3 id="spending-chart-title">Spending</h3>
                     <div id="spending-per-day-chart" class="chart-container"></div>
                 </div>
 
@@ -535,6 +641,28 @@
                 <div class="stats-section hidden" id="stats-weekly-plan-section">
                     <h3>Weekly Plan Progress</h3>
                     <div id="stats-weekly-plan-table" class="taper-table-wrap"></div>
+                </div>
+
+                <div class="stats-section" id="gift-analytics-section">
+                    <h3>Gift Analytics</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <h3>Total Given</h3>
+                            <p class="stat-value" id="stats-gift-given">—</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Total Received</h3>
+                            <p class="stat-value" id="stats-gift-received">—</p>
+                        </div>
+                        <div class="stat-card highlight">
+                            <h3>Net Gifts</h3>
+                            <p class="stat-value" id="stats-gift-net">—</p>
+                        </div>
+                    </div>
+                    <h4 class="stats-subheading">Top Recipients</h4>
+                    <div id="stats-gift-recipients" class="breakdown-list"></div>
+                    <h4 class="stats-subheading">Top Senders</h4>
+                    <div id="stats-gift-senders" class="breakdown-list"></div>
                 </div>
 
                 <div class="stats-section" id="buy-break-analytics-section">
@@ -876,6 +1004,15 @@
                 </form>
 
                 <div class="buy-stats-section">
+                    <h3>Supply Analytics</h3>
+                    <div class="stats-grid buy-supply-duration-grid">
+                        <div class="stat-card highlight"><h3>Longest Lasting Supply</h3><p class="stat-value" id="buy-longest-supply-duration">—</p></div>
+                        <div class="stat-card"><h3>Average Supply Duration</h3><p class="stat-value" id="buy-avg-supply-duration">—</p></div>
+                        <div class="stat-card"><h3>Shortest Supply Duration</h3><p class="stat-value" id="buy-shortest-supply-duration">—</p></div>
+                        <div class="stat-card"><h3>Avg Days Between Purchases</h3><p class="stat-value" id="buy-avg-days-between-purchases">—</p></div>
+                    </div>
+                    <p class="buy-supply-duration-note settings-hint">Supply duration stats use purchases with 2+ linked logs.</p>
+
                     <h3>Buy Tracker Stats</h3>
                     <div class="stats-grid">
                         <div class="stat-card"><h3>Spent Today</h3><p class="stat-value" id="buy-spent-today">$0</p></div>
@@ -892,6 +1029,10 @@
                         <div class="stat-card"><h3>30-Day Avg Buy Break</h3><p class="stat-value" id="buy-break-avg-30">—</p></div>
                         <div class="stat-card"><h3>Est. Days Supply</h3><p class="stat-value" id="buy-days-supply">—</p></div>
                         <div class="stat-card"><h3>Est. Next Buy</h3><p class="stat-value stat-value-sm" id="buy-est-next">—</p></div>
+                        <div class="stat-card"><h3>Last Supply Used</h3><p class="stat-value stat-value-sm" id="buy-last-supply-used">—</p></div>
+                        <div class="stat-card highlight"><h3>Time Since Last Supply Use</h3><p class="stat-value" id="buy-since-last-supply-use">—</p></div>
+                        <div class="stat-card"><h3>Oldest Active Supply</h3><p class="stat-value stat-value-sm" id="buy-oldest-active-supply">—</p></div>
+                        <div class="stat-card"><h3>Active Supplies</h3><p class="stat-value" id="buy-active-supplies-count">0</p></div>
                     </div>
                     <div class="buy-trend-section">
                         <h4>Spending Trend (Last 7 Days)</h4>

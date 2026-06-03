@@ -116,6 +116,7 @@ const defaultData = {
 
 let editingSubstanceId = null;
 let editingPurchaseId = null;
+const expandedPurchaseIds = new Set();
 let editingUseId = null;
 let taperEditingPlan = false;
 
@@ -271,8 +272,31 @@ function normalizeLegacyRefs(data) {
     });
 }
 
+function migrateUseLogsToLogs(data) {
+    const legacy = data.useLogs;
+    if (!Array.isArray(legacy) || !legacy.length) {
+        delete data.useLogs;
+        return;
+    }
+    data.logs = [...(data.logs || [])];
+    const seen = new Set(data.logs.map(l => l.id));
+    legacy.forEach(l => {
+        if (l?.id != null && seen.has(l.id)) {
+            const idx = data.logs.findIndex(x => x.id === l.id);
+            if (idx >= 0) data.logs[idx] = l;
+        } else if (l?.id != null) {
+            data.logs.push(l);
+            seen.add(l.id);
+        } else {
+            data.logs.push(l);
+        }
+    });
+    delete data.useLogs;
+}
+
 function normalizeAppData(data) {
     normalizeLegacyRefs(data);
+    migrateUseLogsToLogs(data);
     data.logs = data.logs || [];
     data.purchases = data.purchases || [];
     data.cravings = data.cravings || [];
@@ -286,6 +310,22 @@ function normalizeAppData(data) {
         if (!log.createdAt) log.createdAt = fallbackTs || new Date().toISOString();
         if (!log.updatedAt) log.updatedAt = log.createdAt;
         if (!log.timestamp && fallbackTs) log.timestamp = fallbackTs;
+        if (!log.transactionType) log.transactionType = 'use';
+        const resolvedSubstanceId = normalizeSubstanceRef(getUseSubstanceId(log), data);
+        if (resolvedSubstanceId) log.substanceId = resolvedSubstanceId;
+        if (!Array.isArray(log.linkedPurchases)) log.linkedPurchases = [];
+        if (log.inventoryAffects === undefined) {
+            log.inventoryAffects = !!(log.linkedPurchaseId != null && log.linkedPurchaseId !== ''
+                || log.linkedPurchases.length);
+        }
+        if (hasLinkedSupply(log) && log.inventoryAffects === false) {
+            log.inventoryAffects = true;
+        }
+        if (!log.inventoryAffects && !hasLinkedSupply(log)) {
+            log.linkedPurchaseId = null;
+            log.linkedPurchases = [];
+            log.supplyUnlinked = true;
+        }
     });
 
     (data.sessions || []).forEach(s => {
@@ -477,6 +517,7 @@ function initializeApp() {
     setupBuyTrackerForm();
     setupUseLogForm();
     setupSubstanceForm();
+    setupStatsDateRange();
     setDefaultUseLogDateTime();
     refreshAllRecoveryStreaks();
     updateQuickActions();
@@ -719,7 +760,7 @@ function switchStatsSubstance(substanceId) {
 
 function filterLogsBySubstance(logs, substanceId) {
     if (substanceId === DASHBOARD_ALL) return logs;
-    return logs.filter(log => log.substanceId === substanceId);
+    return logs.filter(log => logMatchesSubstance(log, substanceId));
 }
 
 function filterCravingsBySubstance(cravings, substanceId) {
@@ -1177,8 +1218,8 @@ function medianBreakHours(values) {
 }
 
 function recalculateBreaksForData(substanceId, data) {
-    const logs = (data.logs || [])
-        .filter(l => getUseSubstanceId(l) === substanceId)
+    const logs = getUseEntries(data)
+        .filter(l => logMatchesSubstance(l, substanceId, data) && isPersonalUseLog(l))
         .sort((a, b) => getLogDatetimeMs(a) - getLogDatetimeMs(b));
 
     logs.forEach((log, index) => {
@@ -1225,12 +1266,12 @@ function recalculateAllBreaks() {
 }
 
 function recalculateAllBreaksForData(data) {
-    const substanceIds = new Set((data.logs || []).map(l => getUseSubstanceId(l)).filter(Boolean));
+    const substanceIds = new Set(getUseEntries(data).map(l => getUseSubstanceId(l)).filter(Boolean));
     substanceIds.forEach(id => recalculateBreaksForData(id, data));
 }
 
 function getBreakMetrics(substanceId) {
-    const logs = getUseLogsForSubstance(substanceId, { sortAsc: true });
+    const logs = getUseLogsForSubstance(substanceId, { sortAsc: true, personalUseOnly: true });
     const breakHoursList = logs
         .filter(l => l.breakHours != null && !isNaN(l.breakHours))
         .map(l => l.breakHours);
@@ -1458,8 +1499,40 @@ function formatHoursAgo(ms) {
 }
 
 function findUseEntry(id) {
-    return appData.logs.find(l => l.id === id)
-        || appData.useLogs?.find(l => l.id === id);
+    return getUseEntries().find(l => l.id === id || String(l.id) === String(id));
+}
+
+function logIdEquals(a, b) {
+    if (a == null || b == null) return false;
+    return a === b || String(a) === String(b);
+}
+
+function isSameTaperWeek(logDate, dateStr) {
+    if (!logDate || !dateStr) return false;
+    return getWeekStartDateStr(logDate) === getWeekStartDateStr(dateStr);
+}
+
+function getUseEntries(data = appData) {
+    return Array.isArray(data?.logs) ? data.logs : [];
+}
+
+function normalizeSubstanceRef(ref, data = appData) {
+    if (ref == null || ref === '') return '';
+    const substances = data?.substances || [];
+    const refStr = String(ref);
+    const byId = substances.find(s => String(s.id) === refStr);
+    if (byId) return byId.id;
+    const byName = substances.find(s =>
+        s.name === ref || String(s.name).toLowerCase() === refStr.toLowerCase()
+    );
+    if (byName) return byName.id;
+    return refStr;
+}
+
+function logMatchesSubstance(log, substanceId, data = appData) {
+    if (!substanceId) return true;
+    return normalizeSubstanceRef(getUseSubstanceId(log), data)
+        === normalizeSubstanceRef(substanceId, data);
 }
 
 function getUseSubstanceId(entry) {
@@ -1474,6 +1547,177 @@ function getUseCount(entry) {
 function getUseLogType(entry) {
     if (entry.type === 'session' || entry.type === 'quick') return entry.type;
     return entry.endTime ? 'session' : 'quick';
+}
+
+function getLogTransactionType(log) {
+    const t = log?.transactionType;
+    if (t === 'gift_given' || t === 'gift_received' || t === 'inventory_adjustment') return t;
+    if (t === 'correction') return 'inventory_adjustment';
+    return 'use';
+}
+
+function isPersonalUseLog(log) {
+    return getLogTransactionType(log) === 'use';
+}
+
+function isGiftGivenLog(log) {
+    return getLogTransactionType(log) === 'gift_given';
+}
+
+function isGiftReceivedLog(log) {
+    return getLogTransactionType(log) === 'gift_received';
+}
+
+function isInventoryAdjustmentLog(log) {
+    return getLogTransactionType(log) === 'inventory_adjustment';
+}
+
+function isNonUseTransactionLog(log) {
+    return !isPersonalUseLog(log);
+}
+
+function logInventoryAffects(log) {
+    if (log?.inventoryAffects === false) return false;
+    if (log?.inventoryAffects === true) return true;
+    if (log?.linkedPurchases?.length) return true;
+    return log?.linkedPurchaseId != null && log.linkedPurchaseId !== '';
+}
+
+function hasLinkedSupply(log) {
+    if (log?.linkedPurchaseId != null && log.linkedPurchaseId !== '') return true;
+    return Array.isArray(log?.linkedPurchases) && log.linkedPurchases.length > 0;
+}
+
+function getLinkedSupplyLabel(log) {
+    const purchases = appData.purchases || [];
+
+    if (log.linkedPurchaseId != null && log.linkedPurchaseId !== '') {
+        const purchase = purchases.find(p => String(p.id) === String(log.linkedPurchaseId));
+        if (purchase) {
+            const store = purchase.store || purchase.location || purchase.substanceName || '';
+            return `${formatDate(purchase.date)} purchase${store ? ` · ${store}` : ''}`;
+        }
+    }
+
+    if (Array.isArray(log.linkedPurchases) && log.linkedPurchases.length) {
+        return log.linkedPurchases.map(lp => {
+            const purchase = purchases.find(p => String(p.id) === String(lp.purchaseId));
+            const amt = lp.amountUsed ?? lp.amount ?? 0;
+            const unit = log.unit || purchase?.unit || '';
+            if (!purchase) return `${amt}${unit} from unknown supply`;
+            const store = purchase.store || purchase.location || '';
+            return `${amt}${unit} from ${formatDate(purchase.date)}${store ? ` · ${store}` : ''}`;
+        }).join(', ');
+    }
+
+    const tx = getLogTransactionType(log);
+    if (tx === 'gift_received') return 'Gift received · no purchase';
+    if (log.inventoryAffects === false) return 'No inventory change';
+
+    return 'Unlinked use';
+}
+
+function formatInventoryLinkDisplay(log) {
+    return getLinkedSupplyLabel(log);
+}
+
+function getAdjustmentDirection(log) {
+    return log?.adjustmentDirection === 'remove' ? 'remove' : 'add';
+}
+
+function inventoryAdjustmentAdds(log) {
+    return isInventoryAdjustmentLog(log) && getAdjustmentDirection(log) === 'add';
+}
+
+function inventoryAdjustmentRemoves(log) {
+    return isInventoryAdjustmentLog(log) && getAdjustmentDirection(log) === 'remove';
+}
+
+function getTransactionTypeLabel(tx) {
+    if (tx === 'gift_given') return 'Gift Given';
+    if (tx === 'gift_received') return 'Gift Received';
+    if (tx === 'inventory_adjustment') return 'Inventory Adjustment';
+    return 'Personal Use';
+}
+
+function formatLogHistoryLabel(entry, sub) {
+    const tx = getLogTransactionType(entry);
+    const unit = entry.unit || sub?.defaultUnit || 'units';
+    const amount = entry.amount ?? '—';
+    if (tx === 'gift_given') {
+        const who = entry.giftPartyName ? ` — ${entry.giftPartyName}` : '';
+        return `🎁 Gift Given${who} — ${amount}${unit}`;
+    }
+    if (tx === 'gift_received') {
+        const who = entry.giftPartyName ? ` — ${entry.giftPartyName}` : '';
+        return `🎁 Gift Received${who} — ${amount}${unit}`;
+    }
+    if (tx === 'inventory_adjustment') {
+        const dir = getAdjustmentDirection(entry) === 'remove' ? '−' : '+';
+        return `📦 Inventory ${dir}${amount}${unit}`;
+    }
+    const typeLabel = getUseLogType(entry) === 'session' ? '⏱️ Session' : '⚡ Quick Use';
+    return `${typeLabel} ${sub?.icon || ''} ${amount} ${unit} ${sub?.name || 'Unknown'}`;
+}
+
+function setUseTransactionType(tx) {
+    const hidden = document.getElementById('use-transaction-type');
+    if (hidden) hidden.value = tx;
+    document.querySelectorAll('.use-tx-pill').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tx === tx);
+    });
+
+    const isGiftGiven = tx === 'gift_given';
+    const isGiftReceived = tx === 'gift_received';
+    const isGift = isGiftGiven || isGiftReceived;
+    const isAdjustment = tx === 'inventory_adjustment';
+    const isNonUse = isGift || isAdjustment;
+
+    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isNonUse);
+    document.getElementById('use-adjustment-direction-group')?.classList.toggle('hidden', !isAdjustment);
+    document.getElementById('use-gift-party-group')?.classList.toggle('hidden', !isGift);
+
+    const partyLabel = document.getElementById('use-gift-party-label');
+    if (partyLabel) partyLabel.textContent = isGiftReceived ? 'From' : 'Recipient Name';
+
+    const amountLabel = document.getElementById('use-amount-label');
+    if (amountLabel) {
+        if (isAdjustment) amountLabel.textContent = 'Amount';
+        else if (isGiftReceived) amountLabel.textContent = 'Amount Received';
+        else if (isGiftGiven) amountLabel.textContent = 'Amount Given';
+        else amountLabel.textContent = 'Amount';
+    }
+
+    const linkLabel = document.getElementById('use-purchase-link-label');
+    if (linkLabel) {
+        if (isGiftReceived || (isAdjustment && getUseAdjustmentDirection() === 'add')) {
+            linkLabel.textContent = 'Add to Inventory';
+        } else if (isAdjustment) {
+            linkLabel.textContent = 'Remove from Inventory';
+        } else {
+            linkLabel.textContent = 'Use From Purchase / Bag';
+        }
+    }
+
+    document.querySelectorAll('.session-only-field').forEach(el => {
+        el.classList.toggle('hidden', isNonUse || document.getElementById('use-type')?.value !== 'session');
+    });
+
+    if (isNonUse) setUseLogType('quick');
+    updateUseTaperPreview();
+    updateUsePurchaseLinkUI();
+}
+
+function getUseAdjustmentDirection() {
+    const active = document.querySelector('.use-adj-pill.active');
+    return active?.dataset.dir === 'remove' ? 'remove' : 'add';
+}
+
+function setUseAdjustmentDirection(dir) {
+    document.querySelectorAll('.use-adj-pill').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.dir === dir);
+    });
+    updateUsePurchaseLinkUI();
 }
 
 function setUseFormSubmitLabel(text) {
@@ -1493,28 +1737,38 @@ function getUseCreatedAt(entry) {
 }
 
 function buildUseEntryFromForm() {
-    const type = document.getElementById('use-type')?.value || 'quick';
+    const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
+    const isGift = transactionType === 'gift_given' || transactionType === 'gift_received';
+    const isAdjustment = transactionType === 'inventory_adjustment';
+    const type = (isGift || isAdjustment) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
     const substanceId = document.getElementById('use-substance')?.value;
     const amount = parseFloat(document.getElementById('use-amount')?.value);
     const unit = document.getElementById('use-unit')?.value;
     const date = document.getElementById('use-date')?.value;
     const startTime = document.getElementById('use-start-time')?.value || '12:00';
     const endTime = document.getElementById('use-end-time')?.value;
-    const linkedPurchaseId = resolveLinkedPurchaseId(substanceId);
+    const linkMode = getUsePurchaseLinkMode();
+    const linkedPurchaseId = resolveLinkedPurchaseId(substanceId, transactionType);
+    const inventoryAffects = linkMode !== 'none' && linkedPurchaseId != null;
 
     return {
         type,
+        transactionType,
         substanceId,
         amount: Number.isFinite(amount) ? amount : 0,
         unit: unit || 'units',
         date,
         startTime,
         time: startTime,
-        endTime: type === 'session' ? (endTime || '') : '',
-        count: parseFloat(document.getElementById('use-count')?.value) || 0,
+        endTime: !isGift && !isAdjustment && type === 'session' ? (endTime || '') : '',
+        count: (isGift || isAdjustment) ? 0 : (parseFloat(document.getElementById('use-count')?.value) || 0),
+        giftPartyName: isGift ? (document.getElementById('use-gift-party')?.value?.trim() || '') : '',
+        adjustmentDirection: isAdjustment ? getUseAdjustmentDirection() : undefined,
         notes: document.getElementById('use-notes')?.value || '',
-        linkedPurchaseId: linkedPurchaseId || null,
-        supplyUnlinked: !linkedPurchaseId
+        linkedPurchaseId: inventoryAffects ? linkedPurchaseId : null,
+        linkedPurchases: [],
+        supplyUnlinked: !inventoryAffects,
+        inventoryAffects
     };
 }
 
@@ -1537,6 +1791,8 @@ function resetUseFormAfterSave() {
     updateUseUnitDropdown();
     updateUseTaperPreview();
     setUsePurchaseLinkMode('auto');
+    setUseTransactionType('use');
+    setUseAdjustmentDirection('add');
 }
 
 function refreshUseLogRelatedViews() {
@@ -1594,6 +1850,81 @@ function deductPurchaseRemainingInData(purchase, amount) {
     return used;
 }
 
+function addPurchaseRemainingInData(purchase, amount) {
+    const amt = parseFloat(amount) || 0;
+    if (amt <= 0) return 0;
+    const cap = getPurchaseQuantityBought(purchase);
+    const remaining = getPurchaseRemainingAmount(purchase);
+    purchase.remainingAmount = Math.min(cap, remaining + amt);
+    finalizePurchaseRemainingState(purchase);
+    return purchase.remainingAmount - remaining;
+}
+
+function subtractPurchaseRemainingInData(purchase, amount) {
+    const amt = parseFloat(amount) || 0;
+    if (amt <= 0) return 0;
+    purchase.remainingAmount = Math.max(0, getPurchaseRemainingAmount(purchase) - amt);
+    finalizePurchaseRemainingState(purchase);
+    return amt;
+}
+
+function resolveGiftReceivedPurchaseInData(substanceId, purchases) {
+    const list = (purchases || [])
+        .filter(p => getPurchaseSubstanceId(p) === substanceId)
+        .sort((a, b) => getPurchaseDatetimeMs(a) - getPurchaseDatetimeMs(b));
+    const active = list.find(p => !p.isDepleted && getPurchaseRemainingAmount(p) > INVENTORY_EPS);
+    if (active) return active;
+    return list.length ? list[list.length - 1] : null;
+}
+
+function resolveGiftReceivedPurchaseId(substanceId) {
+    const purchase = resolveGiftReceivedPurchaseInData(substanceId, appData.purchases || []);
+    return purchase?.id || null;
+}
+
+function addPurchaseAmount(purchaseId, amount) {
+    if (!purchaseId) return { ok: true };
+    const purchase = findPurchase(purchaseId);
+    if (!purchase) return { ok: false, error: 'Linked purchase not found.' };
+    addPurchaseRemainingInData(purchase, amount);
+    purchase.updatedAt = new Date().toISOString();
+    return { ok: true };
+}
+
+function applyLogInventoryEffect(log) {
+    if (!logInventoryAffects(log)) return { ok: true };
+
+    const amount = parseFloat(log.amount) || 0;
+    if (amount <= INVENTORY_EPS) return { ok: true };
+
+    if (isGiftReceivedLog(log) || inventoryAdjustmentAdds(log)) {
+        if (log.linkedPurchases?.length) {
+            for (const alloc of log.linkedPurchases) {
+                const result = addPurchaseAmount(alloc.purchaseId, alloc.amountUsed ?? alloc.amount);
+                if (!result.ok) return result;
+            }
+            return { ok: true };
+        }
+        return log.linkedPurchaseId
+            ? addPurchaseAmount(log.linkedPurchaseId, amount)
+            : { ok: true };
+    }
+
+    if (log.linkedPurchases?.length) {
+        for (const alloc of log.linkedPurchases) {
+            const result = deductPurchaseAmount(alloc.purchaseId, alloc.amountUsed ?? alloc.amount);
+            if (!result.ok) return result;
+        }
+        return { ok: true };
+    }
+
+    if (inventoryAdjustmentRemoves(log) || log.linkedPurchaseId) {
+        return deductPurchaseAmount(log.linkedPurchaseId, amount);
+    }
+
+    return { ok: true };
+}
+
 function resetAllPurchaseInventory(purchases) {
     purchases.forEach(purchase => {
         const qty = getPurchaseQuantityBought(purchase);
@@ -1611,11 +1942,19 @@ function logIsUnlinked(log) {
 
 function applyExistingLogLinks(log, purchases) {
     const purchaseIds = [];
+    if (!logInventoryAffects(log)) return purchaseIds;
+
+    const amount = parseFloat(log.amount) || 0;
+    if (amount <= INVENTORY_EPS) return purchaseIds;
+
+    const addsInventory = isGiftReceivedLog(log) || inventoryAdjustmentAdds(log);
+    const applyChange = addsInventory ? addPurchaseRemainingInData : deductPurchaseRemainingInData;
+
     if (log.linkedPurchases?.length) {
         log.linkedPurchases.forEach(alloc => {
             const purchase = findPurchaseInData(alloc.purchaseId, { purchases });
             if (purchase) {
-                deductPurchaseRemainingInData(purchase, alloc.amountUsed);
+                applyChange(purchase, alloc.amountUsed);
                 purchaseIds.push(purchase.id);
             }
         });
@@ -1625,7 +1964,7 @@ function applyExistingLogLinks(log, purchases) {
     if (log.linkedPurchaseId != null && log.linkedPurchaseId !== '') {
         const purchase = findPurchaseInData(log.linkedPurchaseId, { purchases });
         if (purchase) {
-            deductPurchaseRemainingInData(purchase, parseFloat(log.amount) || 0);
+            applyChange(purchase, amount);
             purchaseIds.push(purchase.id);
         }
         log.supplyUnlinked = false;
@@ -1637,6 +1976,18 @@ function fifoLinkLogToPurchases(log, purchases) {
     const amount = parseFloat(log.amount) || 0;
     if (amount <= INVENTORY_EPS) {
         return { linked: false, unmatched: false, purchaseIds: [] };
+    }
+
+    if (isGiftReceivedLog(log) || inventoryAdjustmentAdds(log)) {
+        if (!logInventoryAffects(log)) {
+            return { linked: false, unmatched: true, purchaseIds: [] };
+        }
+        const purchaseIds = applyExistingLogLinks(log, purchases);
+        return {
+            linked: purchaseIds.length > 0,
+            unmatched: purchaseIds.length === 0,
+            purchaseIds
+        };
     }
 
     const substanceId = getUseSubstanceId(log);
@@ -1664,15 +2015,15 @@ function fifoLinkLogToPurchases(log, purchases) {
 
     if (allocations.length === 1) {
         log.linkedPurchaseId = allocations[0].purchaseId;
-        delete log.linkedPurchases;
+        log.linkedPurchases = [];
         log.supplyUnlinked = false;
     } else if (allocations.length > 1) {
         log.linkedPurchases = allocations;
-        log.linkedPurchaseId = allocations[0].purchaseId;
+        log.linkedPurchaseId = null;
         log.supplyUnlinked = false;
     } else {
-        delete log.linkedPurchaseId;
-        delete log.linkedPurchases;
+        log.linkedPurchaseId = null;
+        log.linkedPurchases = [];
         log.supplyUnlinked = true;
     }
 
@@ -1712,6 +2063,49 @@ function migrateInventoryLinkedV1(data) {
 
     purchases.forEach(finalizePurchaseRemainingState);
     data.migrations.inventoryLinkedV1 = true;
+}
+
+function recalculateAllInventory(data = appData) {
+    const purchases = data.purchases || [];
+    const logs = data.logs || [];
+    resetAllPurchaseInventory(purchases);
+
+    const sortedLogs = [...logs].sort((a, b) => getLogDatetimeMs(a) - getLogDatetimeMs(b));
+
+    sortedLogs.forEach(log => {
+        const amount = parseFloat(log.amount) || 0;
+        if (amount <= INVENTORY_EPS) return;
+
+        if (log.linkedPurchases?.length) {
+            applyExistingLogLinks(log, purchases);
+            return;
+        }
+
+        if (log.linkedPurchaseId != null && log.linkedPurchaseId !== '') {
+            applyExistingLogLinks(log, purchases);
+            return;
+        }
+
+        if (logInventoryAffects(log)) {
+            fifoLinkLogToPurchases(log, purchases);
+        }
+    });
+
+    purchases.forEach(finalizePurchaseRemainingState);
+}
+
+function refreshAfterLogLinkChange(substanceId) {
+    saveData(appData);
+    recalculateAllInventory();
+    if (substanceId) recalculateBreaks(substanceId);
+    else recalculateAllBreaks();
+    renderUseHistoryTable();
+    renderRecentUseList();
+    refreshBuyTrackerRelatedViews();
+    updateDashboard();
+    updateStats();
+    updateCurrentSupplyDashboard();
+    refreshTaperDashboard();
 }
 
 function getPurchaseQuantityBought(purchase) {
@@ -1767,6 +2161,9 @@ let appData = loadData();
 let currentCalendarDate = new Date();
 let selectedDate = null;
 let currentSubstanceId = resolveStartupSubstanceId();
+let statsDateRangePreset = 'last-7';
+let statsCustomStartDate = '';
+let statsCustomEndDate = '';
 
 function findPurchase(id, data = appData) {
     return findPurchaseInData(id, data);
@@ -1812,22 +2209,7 @@ function formatPurchaseOptionLabel(purchase) {
 }
 
 function formatLinkedPurchaseDisplay(log) {
-    if (log.linkedPurchases?.length) {
-        const parts = log.linkedPurchases.map(alloc => {
-            const p = findPurchase(alloc.purchaseId);
-            const store = p?.store || p?.location || '';
-            const unit = log.unit || p?.unit || 'units';
-            const storePart = store ? ` · ${store}` : '';
-            return `${alloc.amountUsed}${unit} from ${formatDate(p?.date || '')}${storePart}`;
-        });
-        return parts.join('; ');
-    }
-    if (!log.linkedPurchaseId) return 'Unlinked';
-    const p = findPurchase(log.linkedPurchaseId);
-    if (!p) return 'Unlinked';
-    const store = p.store || p.location || '';
-    const storePart = store ? ` · ${store}` : '';
-    return `${formatDate(p.date)} purchase${storePart}`;
+    return getLinkedSupplyLabel(log);
 }
 
 function getUsePurchaseLinkMode() {
@@ -1840,12 +2222,30 @@ function setUsePurchaseLinkMode(mode) {
     updateUsePurchaseLinkUI();
 }
 
-function resolveLinkedPurchaseId(substanceId) {
+function parsePurchaseSelectId(val) {
+    if (val == null || val === '') return null;
+    const parsed = parseInt(val, 10);
+    return Number.isNaN(parsed) ? val : parsed;
+}
+
+function resolveLinkedPurchaseId(substanceId, transactionType = 'use') {
     const mode = getUsePurchaseLinkMode();
     if (mode === 'none') return null;
+
+    const addsInventory = transactionType === 'gift_received'
+        || (transactionType === 'inventory_adjustment' && getUseAdjustmentDirection() === 'add');
+
+    if (addsInventory) {
+        if (mode === 'manual') {
+            const val = document.getElementById('use-purchase-select')?.value;
+            return val ? parsePurchaseSelectId(val) : null;
+        }
+        return resolveGiftReceivedPurchaseId(substanceId);
+    }
+
     if (mode === 'manual') {
         const val = document.getElementById('use-purchase-select')?.value;
-        return val ? parseInt(val, 10) : null;
+        return val ? parsePurchaseSelectId(val) : null;
     }
     const oldest = getOldestActivePurchase(substanceId);
     return oldest ? oldest.id : null;
@@ -1863,28 +2263,37 @@ function restorePurchaseAmount(purchaseId, amount) {
     purchase.updatedAt = new Date().toISOString();
 }
 
-function restoreLogSupplyLinks(log, data = appData) {
+function restoreLogInventoryEffect(log, data = appData) {
+    if (!hasLinkedSupply(log)) return;
+
     const purchases = data.purchases || [];
-    if (log.linkedPurchases?.length) {
-        log.linkedPurchases.forEach(alloc => {
-            const purchase = findPurchaseInData(alloc.purchaseId, { purchases });
-            if (!purchase) return;
-            const amt = parseFloat(alloc.amountUsed) || 0;
-            const cap = getPurchaseQuantityBought(purchase);
-            purchase.remainingAmount = Math.min(cap, getPurchaseRemainingAmount(purchase) + amt);
-            finalizePurchaseRemainingState(purchase);
-        });
-    } else if (log.linkedPurchaseId != null && log.linkedPurchaseId !== '') {
-        const purchase = findPurchaseInData(log.linkedPurchaseId, { purchases });
-        if (purchase) {
-            const amt = parseFloat(log.amount) || 0;
+    const applyRestore = (purchase, amt) => {
+        if (!purchase || amt <= 0) return;
+        if (isGiftReceivedLog(log) || inventoryAdjustmentAdds(log)) {
+            subtractPurchaseRemainingInData(purchase, amt);
+        } else {
             const cap = getPurchaseQuantityBought(purchase);
             purchase.remainingAmount = Math.min(cap, getPurchaseRemainingAmount(purchase) + amt);
             finalizePurchaseRemainingState(purchase);
         }
+    };
+
+    if (log.linkedPurchases?.length) {
+        log.linkedPurchases.forEach(alloc => {
+            const purchase = findPurchaseInData(alloc.purchaseId, { purchases });
+            applyRestore(purchase, parseFloat(alloc.amountUsed ?? alloc.amount) || 0);
+        });
+    } else if (log.linkedPurchaseId != null && log.linkedPurchaseId !== '') {
+        const purchase = findPurchaseInData(log.linkedPurchaseId, { purchases });
+        applyRestore(purchase, parseFloat(log.amount) || 0);
     }
-    delete log.linkedPurchaseId;
-    delete log.linkedPurchases;
+}
+
+function restoreLogSupplyLinks(log, data = appData) {
+    restoreLogInventoryEffect(log, data);
+    log.linkedPurchaseId = null;
+    log.linkedPurchases = [];
+    log.inventoryAffects = false;
     log.supplyUnlinked = true;
 }
 
@@ -1894,19 +2303,33 @@ function getPurchasesForManualLink(substanceId) {
         .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
 }
 
-function applyLogLinkAllocations(log, allocations) {
-    if (allocations.length === 1) {
+function applyLogLinkAllocations(log, allocations, { forceSplitArray = false } = {}) {
+    if (allocations.length === 1 && !forceSplitArray) {
         log.linkedPurchaseId = allocations[0].purchaseId;
-        delete log.linkedPurchases;
+        log.linkedPurchases = [];
         log.supplyUnlinked = false;
-    } else if (allocations.length > 1) {
+    } else if (allocations.length >= 1) {
         log.linkedPurchases = allocations;
-        log.linkedPurchaseId = allocations[0].purchaseId;
+        log.linkedPurchaseId = null;
         log.supplyUnlinked = false;
     } else {
-        delete log.linkedPurchaseId;
-        delete log.linkedPurchases;
+        log.linkedPurchaseId = null;
+        log.linkedPurchases = [];
         log.supplyUnlinked = true;
+    }
+}
+
+function setLogPurchaseLink(log, purchaseId, amount, { split = false } = {}) {
+    const amt = parseFloat(amount) || 0;
+    log.inventoryAffects = true;
+    log.supplyUnlinked = false;
+    log.updatedAt = new Date().toISOString();
+    if (split) {
+        log.linkedPurchaseId = null;
+        log.linkedPurchases = [{ purchaseId, amountUsed: amt }];
+    } else {
+        log.linkedPurchaseId = purchaseId;
+        log.linkedPurchases = [];
     }
 }
 
@@ -2022,14 +2445,17 @@ function runManualBulkLinkOnData(data, selectedIds, purchaseId, options) {
             const result = manualFifoLinkFromPurchase(log, purchases, purchaseId, {
                 allowOverdraw: options.allowOverdraw
             });
+            log.inventoryAffects = true;
+            log.updatedAt = new Date().toISOString();
+            if (result.allocations.length === 1) {
+                applyLogLinkAllocations(log, result.allocations, { forceSplitArray: true });
+            }
             totalOverdraw += result.overdraw;
         });
         purchases.forEach(finalizePurchaseRemainingState);
     } else {
         selectedLogs.forEach(log => {
-            log.linkedPurchaseId = primary.id;
-            delete log.linkedPurchases;
-            log.supplyUnlinked = false;
+            setLogPurchaseLink(log, primary.id, parseFloat(log.amount) || 0, { split: false });
         });
 
         if (options.allowOverdraw) {
@@ -2113,6 +2539,53 @@ function getTotalRemainingSupply(substanceId) {
         .reduce((s, p) => s + getPurchaseRemainingAmount(p), 0);
 }
 
+function getGiftMetrics(substanceId) {
+    const logs = getUseEntries().filter(l => logMatchesSubstance(l, substanceId));
+    return getGiftMetricsFromLogs(logs);
+}
+
+function getGiftMetricsFromLogs(logs) {
+    let given = 0;
+    let received = 0;
+    const recipients = {};
+    const senders = {};
+    (logs || []).forEach(l => {
+        const amt = parseFloat(l.amount) || 0;
+        if (isGiftGivenLog(l)) {
+            given += amt;
+            const name = l.giftPartyName?.trim() || 'Unknown';
+            recipients[name] = (recipients[name] || 0) + amt;
+        } else if (isGiftReceivedLog(l)) {
+            received += amt;
+            const name = l.giftPartyName?.trim() || 'Unknown';
+            senders[name] = (senders[name] || 0) + amt;
+        }
+    });
+    return { given, received, net: received - given, recipients, senders };
+}
+
+function getInventoryBreakdown(substanceId) {
+    const purchases = (appData.purchases || []).filter(p => getPurchaseSubstanceId(p) === substanceId);
+    const purchased = purchases.reduce((s, p) => s + getPurchaseQuantityBought(p), 0);
+    const logs = getUseEntries().filter(l => logMatchesSubstance(l, substanceId));
+    let used = 0;
+    let gifted = 0;
+    let received = 0;
+    logs.forEach(l => {
+        const amt = parseFloat(l.amount) || 0;
+        if (isPersonalUseLog(l)) used += amt;
+        else if (isGiftGivenLog(l)) gifted += amt;
+        else if (isGiftReceivedLog(l)) received += amt;
+    });
+    return {
+        purchased,
+        used,
+        gifted,
+        received,
+        remaining: getTotalRemainingSupply(substanceId)
+    };
+}
+
 function getCurrentBagPurchase(substanceId) {
     return getOldestActivePurchase(substanceId);
 }
@@ -2125,10 +2598,7 @@ function getAverageDailyUse(substanceId, days = 7) {
         const d = new Date(today);
         d.setDate(today.getDate() - i);
         const dateStr = d.toISOString().split('T')[0];
-        const dayTotal = appData.logs
-            .filter(l => getUseSubstanceId(l) === substanceId && l.date === dateStr)
-            .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
-        total += dayTotal;
+        total += getUsedAmount(substanceId, dateStr);
         dayCount++;
     }
     return dayCount ? total / dayCount : 0;
@@ -2150,106 +2620,176 @@ function updateUsePurchaseLinkUI() {
     const select = document.getElementById('use-purchase-select');
     const preview = document.getElementById('use-purchase-preview');
     const substanceId = document.getElementById('use-substance')?.value;
+    const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
+    const isReceived = transactionType === 'gift_received';
+    const isGiven = transactionType === 'gift_given';
+    const isAdjustment = transactionType === 'inventory_adjustment';
+    const adjustmentAdds = isAdjustment && getUseAdjustmentDirection() === 'add';
+    const addsInventory = isReceived || adjustmentAdds;
+
+    const linkLabel = document.getElementById('use-purchase-link-label');
+    if (linkLabel) {
+        if (addsInventory) linkLabel.textContent = 'Add to Inventory';
+        else if (isAdjustment) linkLabel.textContent = 'Remove from Inventory';
+        else linkLabel.textContent = 'Use From Purchase / Bag';
+    }
 
     if (manualWrap) manualWrap.classList.toggle('hidden', mode !== 'manual');
 
     if (mode === 'manual' && select && substanceId) {
-        let active = getActivePurchasesForSubstance(substanceId);
+        let active = addsInventory
+            ? getPurchasesForManualLink(substanceId)
+            : getActivePurchasesForSubstance(substanceId);
         if (editingUseId) {
             const entry = findUseEntry(editingUseId);
-            if (entry?.linkedPurchaseId) {
-                const linked = findPurchase(entry.linkedPurchaseId);
-                if (linked && !active.some(p => p.id === linked.id)) {
+            const linkedIds = new Set();
+            if (entry?.linkedPurchaseId != null && entry.linkedPurchaseId !== '') {
+                linkedIds.add(String(entry.linkedPurchaseId));
+            }
+            if (entry?.linkedPurchases?.length) {
+                entry.linkedPurchases.forEach(lp => linkedIds.add(String(lp.purchaseId)));
+            }
+            linkedIds.forEach(linkedId => {
+                const linked = (appData.purchases || []).find(p => String(p.id) === linkedId);
+                if (linked && !active.some(p => String(p.id) === linkedId)) {
                     active = [linked, ...active];
                 }
-            }
+            });
         }
         const currentVal = select.value;
-        select.innerHTML = '<option value="">Select a purchase…</option>';
+        select.innerHTML = '<option value="">No linked purchase</option>';
         active.forEach(p => {
             const opt = document.createElement('option');
-            opt.value = p.id;
+            opt.value = String(p.id);
             opt.textContent = formatPurchaseOptionLabel(p);
             select.appendChild(opt);
         });
-        if (currentVal && [...select.options].some(o => o.value === currentVal)) {
-            select.value = currentVal;
+        if (currentVal && [...select.options].some(o => o.value === currentVal || String(o.value) === String(currentVal))) {
+            select.value = [...select.options].find(o => o.value === currentVal || String(o.value) === String(currentVal)).value;
         }
     }
 
     if (preview) {
         if (mode === 'none') {
-            preview.textContent = 'This use will not deduct from any purchase (unlinked).';
+            preview.textContent = 'This entry will save without changing inventory.';
             preview.classList.remove('hidden');
         } else if (!substanceId) {
             preview.classList.add('hidden');
+        } else if (addsInventory) {
+            if (mode === 'auto') {
+                const target = resolveGiftReceivedPurchaseInData(substanceId, appData.purchases || []);
+                preview.textContent = target
+                    ? `Auto add to: ${formatPurchaseOptionLabel(target)}`
+                    : 'No purchase found — will save without changing inventory.';
+            } else {
+                const id = select?.value;
+                const bag = id ? findPurchase(parsePurchaseSelectId(id)) : null;
+                preview.textContent = bag
+                    ? `Add to: ${formatPurchaseOptionLabel(bag)}`
+                    : 'Choose a purchase to add to, or select No linked purchase.';
+            }
+            preview.classList.remove('hidden');
         } else if (mode === 'auto') {
             const bag = getOldestActivePurchase(substanceId);
             if (bag) {
-                preview.textContent = `Auto: ${formatPurchaseOptionLabel(bag)}`;
+                preview.textContent = isGiven
+                    ? `Auto deduct (gift): ${formatPurchaseOptionLabel(bag)}`
+                    : `Auto: ${formatPurchaseOptionLabel(bag)}`;
                 preview.classList.remove('hidden');
             } else {
-                preview.textContent = 'No active supply — entry will save as unlinked.';
+                preview.textContent = 'No active supply — will save without changing inventory.';
                 preview.classList.remove('hidden');
             }
         } else if (mode === 'manual') {
             const id = select?.value;
-            const bag = id ? findPurchase(parseInt(id, 10)) : null;
-            preview.textContent = bag ? formatPurchaseOptionLabel(bag) : 'Choose a purchase with remaining supply.';
+            const purchaseId = id ? parsePurchaseSelectId(id) : null;
+            const amount = parseFloat(document.getElementById('use-amount')?.value) || 0;
+            const unit = document.getElementById('use-unit')?.value || 'units';
+            if (purchaseId) {
+                const previewLog = {
+                    linkedPurchaseId: purchaseId,
+                    linkedPurchases: [],
+                    unit,
+                    inventoryAffects: true
+                };
+                preview.textContent = getLinkedSupplyLabel(previewLog);
+            } else {
+                preview.textContent = 'Choose a purchase with remaining supply, or select No linked purchase.';
+            }
             preview.classList.remove('hidden');
         }
     }
 }
 
 function updateCurrentSupplyDashboard() {
-    const mainId = getMainSubstanceId();
+    const mainId = getMainSubstanceId() || (!isAllSubstancesView() ? currentSubstanceId : null);
     const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
     if (!mainId) {
         set('dash-supply-total', '—');
-        set('dash-supply-current-bag', 'Set a main substance');
-        set('dash-supply-last-buy-date', 'Last buy date: —');
-        set('dash-supply-since-last-buy', 'Time since last buy: —');
-        set('dash-supply-avg-buy-break', 'Avg time between buys: —');
-        set('dash-supply-est-next-buy', 'Est. next buy: —');
-        set('dash-supply-last-purchase', '—');
+        set('dash-supply-remaining', '—');
         set('dash-supply-days-left', '—');
+        set('dash-supply-last-buy-date', '—');
+        set('dash-supply-last-used', '—');
+        set('dash-supply-since-last-use', '—');
         return;
     }
     const sub = getSubstance(mainId);
     const unit = sub?.defaultUnit || 'units';
     const totalRemaining = getTotalRemainingSupply(mainId);
-    const bag = getCurrentBagPurchase(mainId);
     const purchases = (appData.purchases || [])
         .filter(p => getPurchaseSubstanceId(p) === mainId)
-        .sort((a, b) => new Date(`${b.date}T${b.time || '12:00'}`) - new Date(`${a.date}T${a.time || '12:00'}`));
+        .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
     const lastPurchase = purchases[0] || null;
     const dailyAvg = getAverageDailyUse(mainId);
 
-    set('dash-supply-total', `${totalRemaining.toFixed(1)} ${unit} remaining`);
-    if (bag) {
-        set('dash-supply-current-bag', `Current bag: ${getPurchaseRemainingAmount(bag).toFixed(1)} ${unit} left`);
+    const remainingLabel = `${totalRemaining.toFixed(1)} ${unit}`;
+    set('dash-supply-total', remainingLabel);
+    set('dash-supply-remaining', remainingLabel);
+
+    if (dailyAvg > 0 && totalRemaining > 0) {
+        set('dash-supply-days-left', `~${Math.round(totalRemaining / dailyAvg)} days`);
     } else {
-        set('dash-supply-current-bag', 'No active bag in supply');
+        set('dash-supply-days-left', '—');
     }
-    const buyMetrics = getBuyBreakMetrics(mainId);
+
     if (lastPurchase) {
         const store = lastPurchase.store || lastPurchase.location || '';
-        set('dash-supply-last-buy-date', `Last buy date: ${formatDate(lastPurchase.date)}${lastPurchase.time ? ' ' + lastPurchase.time : ''}`);
-        set('dash-supply-last-purchase', `Last buy: ${formatDate(lastPurchase.date)}${store ? ' · ' + store : ''}`);
+        set('dash-supply-last-buy-date', `${formatDate(lastPurchase.date)}${store ? ` · ${store}` : ''}`);
     } else {
-        set('dash-supply-last-buy-date', 'Last buy date: —');
-        set('dash-supply-last-purchase', 'Last buy: —');
+        set('dash-supply-last-buy-date', '—');
     }
-    set('dash-supply-since-last-buy', `Time since last buy: ${buyMetrics.timeSinceLastBuy?.text || '—'}`);
-    set('dash-supply-avg-buy-break', `Avg time between buys: ${formatBuyBreakFromHours(buyMetrics.average)}`);
-    set('dash-supply-est-next-buy', buyMetrics.estimatedNextBuy
-        ? `Est. next buy: ${buyMetrics.estimatedNextBuy.label}`
-        : 'Est. next buy: —');
-    if (dailyAvg > 0 && totalRemaining > 0) {
-        set('dash-supply-days-left', `~${Math.round(totalRemaining / dailyAvg)} days left at current pace`);
+
+    const currentBag = getOldestActivePurchase(mainId);
+    if (currentBag) {
+        const bagMetrics = getPurchaseSupplyMetrics(currentBag);
+        set('dash-supply-last-used', bagMetrics.lastSupplyUseAt
+            ? formatDatetimeShort(bagMetrics.lastSupplyUseAt)
+            : 'Never');
+        set('dash-supply-since-last-use', bagMetrics.timeSinceLastSupplyUse != null
+            ? formatTimeSinceMs(bagMetrics.timeSinceLastSupplyUse)
+            : '—');
     } else {
-        set('dash-supply-days-left', 'Est. days left: —');
+        set('dash-supply-last-used', '—');
+        set('dash-supply-since-last-use', '—');
     }
+}
+
+function updateGiftMetricsDashboard() {
+    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+    const substanceId = isAllSubstancesView() ? getMainSubstanceId() : currentSubstanceId;
+    if (!substanceId) {
+        set('dash-gift-given', '—');
+        set('dash-gift-received', '—');
+        set('dash-gift-net', 'Net: —');
+        return;
+    }
+    const sub = getSubstance(substanceId);
+    const unit = sub?.defaultUnit || 'units';
+    const metrics = getGiftMetrics(substanceId);
+    set('dash-gift-given', `${metrics.given.toFixed(1)}${unit}`);
+    set('dash-gift-received', `${metrics.received.toFixed(1)}${unit}`);
+    const netLabel = metrics.net >= 0 ? `+${metrics.net.toFixed(1)}` : metrics.net.toFixed(1);
+    set('dash-gift-net', `Net: ${netLabel}${unit}`);
 }
 
 function refreshTaperDashboard() {
@@ -2295,16 +2835,27 @@ function editUseEntry(id) {
     setInputValue('use-amount', entry.amount != null ? entry.amount : '');
     setInputValue('use-count', getUseCount(entry));
     setInputValue('use-notes', entry.notes || '');
+    setInputValue('use-gift-party', entry.giftPartyName || '');
+    setUseTransactionType(getLogTransactionType(entry));
+    if (isInventoryAdjustmentLog(entry)) {
+        setUseAdjustmentDirection(getAdjustmentDirection(entry));
+    }
 
-    if (entry.linkedPurchaseId) {
+    if (!hasLinkedSupply(entry) && !logInventoryAffects(entry)) {
+        setUsePurchaseLinkMode('none');
+    } else if (hasLinkedSupply(entry)) {
         setUsePurchaseLinkMode('manual');
         const select = document.getElementById('use-purchase-select');
+        updateUsePurchaseLinkUI();
         if (select) {
-            updateUsePurchaseLinkUI();
-            select.value = String(entry.linkedPurchaseId);
+            const linkedId = entry.linkedPurchaseId != null && entry.linkedPurchaseId !== ''
+                ? entry.linkedPurchaseId
+                : entry.linkedPurchases?.[0]?.purchaseId;
+            if (linkedId != null && linkedId !== '') {
+                const match = [...select.options].find(o => String(o.value) === String(linkedId));
+                if (match) select.value = match.value;
+            }
         }
-    } else if (entry.supplyUnlinked) {
-        setUsePurchaseLinkMode('none');
     } else {
         setUsePurchaseLinkMode('auto');
     }
@@ -2330,10 +2881,16 @@ function cancelUseEdit() {
     updateUseUnitDropdown();
     updateUseTaperPreview();
     setUsePurchaseLinkMode('auto');
+    setUseTransactionType('use');
+    setUseAdjustmentDirection('add');
 }
 
-function getUseLogsForSubstance(substanceId, { sortAsc = true } = {}) {
-    let list = appData.logs.filter(l => getUseSubstanceId(l) === substanceId);
+function getUseLogsForSubstance(substanceId, { sortAsc = true, personalUseOnly = false, data = appData } = {}) {
+    let list = getUseEntries(data).filter(l => {
+        if (!logMatchesSubstance(l, substanceId, data)) return false;
+        if (personalUseOnly && !isPersonalUseLog(l)) return false;
+        return true;
+    });
     list = [...list].sort((a, b) => {
         const da = getLogDatetimeMs(a);
         const db = getLogDatetimeMs(b);
@@ -2354,7 +2911,8 @@ function getUseEndDatetime(entry) {
 }
 
 function enrichUseEntry(entry, previousEntry) {
-    const isSession = entry.type === 'session' || !!entry.endTime;
+    const isGift = !isPersonalUseLog(entry);
+    const isSession = !isGift && (entry.type === 'session' || !!entry.endTime);
     const startTime = entry.startTime || entry.time;
     const start = parseUseDateTime(entry.date, startTime);
     let end = null;
@@ -2379,7 +2937,7 @@ function enrichUseEntry(entry, previousEntry) {
     if (breakDurationHours == null && entry.breakMinutes != null) {
         breakDurationHours = entry.breakMinutes / 60;
     }
-    if (breakDurationHours == null && previousEntry && start) {
+    if (breakDurationHours == null && !isGift && previousEntry && isPersonalUseLog(previousEntry) && start) {
         const prevEnd = getUseEndDatetime(previousEntry);
         if (prevEnd) {
             const gapMs = start - prevEnd;
@@ -2424,6 +2982,7 @@ function renderBreakSincePreviousCell(entry) {
 
 function getUseRowWarnings(entry, substanceId, avgRate) {
     const warnings = [];
+    if (!isPersonalUseLog(entry)) return warnings;
     const today = new Date().toISOString().split('T')[0];
     const limit = getDailyLimitForDate(substanceId, today);
     const used = getUsedAmount(substanceId, today);
@@ -2442,7 +3001,7 @@ function getUseRowWarnings(entry, substanceId, avgRate) {
 function setUseLogType(type) {
     const hidden = document.getElementById('use-type');
     if (hidden) hidden.value = type;
-    document.querySelectorAll('.type-toggle-btn').forEach(btn => {
+    document.querySelectorAll('.use-entry-toggle-btn, .type-toggle-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.type === type);
     });
     document.querySelectorAll('.session-only-field').forEach(el => {
@@ -2509,32 +3068,63 @@ function computeUseFormDuration() {
 function updateUseTaperPreview() {
     const el = document.getElementById('use-taper-preview');
     if (!el) return;
+    const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
+    if (!isPersonalUseLog({ transactionType })) {
+        el.classList.add('hidden');
+        return;
+    }
     const substanceId = document.getElementById('use-substance')?.value;
     const amount = parseFloat(document.getElementById('use-amount')?.value) || 0;
+    const entryDate = document.getElementById('use-date')?.value
+        || new Date().toISOString().split('T')[0];
     if (!substanceId) {
         el.classList.add('hidden');
         return;
     }
     const sub = getSubstance(substanceId);
-    const today = new Date().toISOString().split('T')[0];
-    const limit = getDailyLimitForDate(substanceId, today);
+    const limit = getDailyLimitForDate(substanceId, entryDate);
     if (!sub?.taperTrackingEnabled || limit == null) {
         el.classList.add('hidden');
         return;
     }
-    const used = getUsedAmount(substanceId, today, editingUseId);
-    const remaining = Math.max(0, limit - used);
-    const after = used + amount;
+
+    const excludeId = editingUseId || null;
+    const used = getUsedAmountForDate(substanceId, entryDate, excludeId);
+    const projected = used + amount;
+    const unit = sub.defaultUnit;
+    const isEditing = excludeId != null;
+    const today = new Date().toISOString().split('T')[0];
+    const existing = isEditing ? findUseEntry(excludeId) : null;
+
+    if (isEditing && existing
+        && logMatchesSubstance(existing, substanceId)
+        && existing.date === entryDate) {
+        const originalAmount = parseFloat(existing.amount) || 0;
+        if (Math.abs(amount - originalAmount) < 0.001) {
+            el.classList.remove('hidden');
+            el.className = 'use-taper-banner use-taper-banner-ok';
+            el.textContent = `Editing entry: ${projected.toFixed(1)} / ${limit} ${unit} for that day.`;
+            return;
+        }
+    }
+
     el.classList.remove('hidden');
-    if (amount > remaining) {
-        el.className = 'session-taper-preview session-taper-warn';
-        el.textContent = `⚠️ ${remaining.toFixed(1)} ${sub.defaultUnit} remaining today (${used}/${limit} used). This entry (${amount}) would exceed the limit.`;
-    } else if (after >= limit * 0.8) {
-        el.className = 'session-taper-preview session-taper-close';
-        el.textContent = `⚠️ Close to limit: ${(limit - after).toFixed(1)} ${sub.defaultUnit} left after saving (${used} + ${amount} / ${limit}).`;
+    const dayPhrase = isEditing ? 'that day' : (entryDate === today ? 'today' : 'that day');
+
+    if (projected > limit) {
+        el.className = 'use-taper-banner use-taper-banner-warn';
+        el.textContent = isEditing
+            ? `Editing this entry would put that day at ${projected.toFixed(1)} / ${limit} ${unit}.`
+            : `This entry would put ${dayPhrase} at ${projected.toFixed(1)} / ${limit} ${unit}.`;
+    } else if (projected >= limit * 0.8) {
+        el.className = 'use-taper-banner use-taper-banner-close';
+        el.textContent = isEditing
+            ? `Editing this entry would put that day at ${projected.toFixed(1)} / ${limit} ${unit}.`
+            : `This entry would put ${dayPhrase} at ${projected.toFixed(1)} / ${limit} ${unit}.`;
     } else {
-        el.className = 'session-taper-preview';
-        el.textContent = `✅ ${remaining.toFixed(1)} ${sub.defaultUnit} remaining today (${used}/${limit} used).`;
+        el.className = 'use-taper-banner use-taper-banner-ok';
+        const remaining = Math.max(0, limit - projected);
+        el.textContent = `${remaining.toFixed(1)} ${unit} remaining (${projected.toFixed(1)} / ${limit} ${unit}).`;
     }
 }
 
@@ -2553,6 +3143,7 @@ function logOneUse() {
     const log = {
         id: Date.now(),
         type: 'quick',
+        transactionType: 'use',
         substanceId,
         amount: 1,
         unit: sub.defaultUnit,
@@ -2561,7 +3152,9 @@ function logOneUse() {
         time: now.toTimeString().slice(0, 5),
         notes: '',
         linkedPurchaseId,
+        linkedPurchases: [],
         supplyUnlinked: !linkedPurchaseId,
+        inventoryAffects: !!linkedPurchaseId,
         timestamp: now.toISOString(),
         createdAt: now.toISOString(),
         updatedAt: now.toISOString()
@@ -2571,11 +3164,14 @@ function logOneUse() {
         const deduct = deductPurchaseAmount(linkedPurchaseId, 1);
         if (!deduct.ok) {
             log.linkedPurchaseId = null;
+            log.linkedPurchases = [];
             log.supplyUnlinked = true;
+            log.inventoryAffects = false;
         }
     }
 
     snapshotBestStreakBeforeUse(substanceId);
+    if (!Array.isArray(appData.logs)) appData.logs = [];
     appData.logs.push(log);
     saveData(appData);
     updateDashboard();
@@ -2598,13 +3194,13 @@ function openUseLogSession() {
 }
 
 function undoLastUse() {
-    if (!appData.logs.length) return alert('No use entries to undo');
+    const entries = getUseEntries();
+    if (!entries.length) return alert('No use entries to undo');
     if (confirm('Undo last use entry?')) {
-        const last = appData.logs[appData.logs.length - 1];
-        if (last?.linkedPurchaseId) {
-            restorePurchaseAmount(last.linkedPurchaseId, last.amount);
-        }
-        appData.logs.pop();
+        const last = entries[entries.length - 1];
+        if (last) restoreLogSupplyLinks(last);
+        if (!Array.isArray(appData.logs)) appData.logs = [];
+        appData.logs = getUseEntries().filter(l => l.id !== last.id && String(l.id) !== String(last.id));
         saveData(appData);
         updateDashboard();
         renderRecentUseList();
@@ -2614,77 +3210,96 @@ function undoLastUse() {
     }
 }
 
+function getUseSaveSuccessMessage(entry) {
+    if (isGiftGivenLog(entry)) return 'Gift given recorded!';
+    if (isGiftReceivedLog(entry)) return 'Gift received recorded!';
+    if (isInventoryAdjustmentLog(entry)) return 'Inventory adjustment saved!';
+    return entry.type === 'session' ? 'Session saved!' : 'Use logged!';
+}
+
+function getUseUpdateSuccessMessage(entry) {
+    if (isGiftGivenLog(entry)) return 'Gift given updated!';
+    if (isGiftReceivedLog(entry)) return 'Gift received updated!';
+    if (isInventoryAdjustmentLog(entry)) return 'Inventory adjustment updated!';
+    return entry.type === 'session' ? 'Session updated!' : 'Entry updated!';
+}
+
 function handleUseLogSubmit(e) {
     e.preventDefault();
     const payload = buildUseEntryFromForm();
-    const { substanceId, amount, type, linkedPurchaseId } = payload;
+    const { substanceId, amount, type, transactionType } = payload;
+    const isPersonalUse = isPersonalUseLog({ transactionType });
     const eventTimestamp = getUseEventTimestamp(payload.date, payload.startTime);
     const now = new Date().toISOString();
 
-    if (!confirmTaperBeforeLog(substanceId, amount, type === 'quick', editingUseId)) return;
+    if (!confirmTaperBeforeLog(substanceId, amount, type === 'quick', editingUseId, transactionType, payload.date)) return;
 
     if (editingUseId != null) {
         const existing = findUseEntry(editingUseId);
-        const idx = appData.logs.findIndex(l => l.id === editingUseId);
+        const idx = getUseEntries().findIndex(l => l.id === editingUseId || String(l.id) === String(editingUseId));
         if (!existing || idx < 0) {
             alert('Could not find the entry to update.');
             cancelUseEdit();
             return;
         }
-        restorePurchaseAmount(existing.linkedPurchaseId, existing.amount);
-        if (linkedPurchaseId) {
-            const deduct = deductPurchaseAmount(linkedPurchaseId, amount);
-            if (!deduct.ok) {
-                restorePurchaseAmount(existing.linkedPurchaseId, existing.amount);
-                return alert(deduct.error);
-            }
-        }
-        appData.logs[idx] = {
+        const priorState = JSON.parse(JSON.stringify(existing));
+        restoreLogInventoryEffect(existing);
+        const updated = {
             ...existing,
             ...payload,
             id: editingUseId,
             substanceId: payload.substanceId,
-            linkedPurchaseId: linkedPurchaseId || null,
-            supplyUnlinked: !linkedPurchaseId,
+            linkedPurchaseId: payload.inventoryAffects ? payload.linkedPurchaseId : null,
+            linkedPurchases: payload.inventoryAffects ? (payload.linkedPurchases || []) : [],
+            inventoryAffects: payload.inventoryAffects,
+            supplyUnlinked: !payload.inventoryAffects,
             createdAt: getUseCreatedAt(existing),
             updatedAt: now,
             timestamp: eventTimestamp
         };
-        stripLegacyUseLogFields(appData.logs[idx]);
-        delete appData.logs[idx].substance;
-        delete appData.logs[idx].lines;
-        saveData(appData);
+        stripLegacyUseLogFields(updated);
+        delete updated.substance;
+        delete updated.lines;
+
+        const inv = applyLogInventoryEffect(updated);
+        if (!inv.ok) {
+            applyExistingLogLinks(priorState, appData.purchases || []);
+            Object.assign(existing, priorState);
+            return alert(inv.error);
+        }
+
+        appData.logs[idx] = updated;
+        refreshAfterLogLinkChange(substanceId);
         resetUseFormAfterSave();
         populateAllSubstanceDropdowns();
-        refreshUseLogRelatedViews();
-        notifyTaperAfterLog(substanceId);
-        alert(type === 'session' ? 'Session updated!' : 'Entry updated!');
+        if (isPersonalUse && payload.date === new Date().toISOString().split('T')[0]) {
+            notifyTaperAfterLog(substanceId);
+        }
+        alert(getUseUpdateSuccessMessage(updated));
         return;
     }
 
-    if (linkedPurchaseId) {
-        const deduct = deductPurchaseAmount(linkedPurchaseId, amount);
-        if (!deduct.ok) return alert(deduct.error);
-    }
-
-    snapshotBestStreakBeforeUse(substanceId);
+    if (isPersonalUse) snapshotBestStreakBeforeUse(substanceId);
     const log = {
         ...payload,
         id: Date.now(),
         createdAt: now,
         updatedAt: now,
-        timestamp: eventTimestamp,
-        linkedPurchaseId: linkedPurchaseId || null,
-        supplyUnlinked: !linkedPurchaseId
+        timestamp: eventTimestamp
     };
     stripLegacyUseLogFields(log);
+
+    const inv = applyLogInventoryEffect(log);
+    if (!inv.ok) return alert(inv.error);
+
+    if (!Array.isArray(appData.logs)) appData.logs = [];
     appData.logs.push(log);
     saveData(appData);
     resetUseFormAfterSave();
     populateAllSubstanceDropdowns();
     refreshUseLogRelatedViews();
-    notifyTaperAfterLog(substanceId);
-    alert(type === 'session' ? 'Session saved!' : 'Use logged!');
+    if (isPersonalUse) notifyTaperAfterLog(substanceId);
+    alert(getUseSaveSuccessMessage(log));
 }
 
 function deleteUseEntry(id) {
@@ -2692,7 +3307,7 @@ function deleteUseEntry(id) {
     const entry = findUseEntry(id);
     if (editingUseId === id) cancelUseEdit();
     if (entry) restoreLogSupplyLinks(entry);
-    appData.logs = appData.logs.filter(l => l.id !== id);
+    appData.logs = getUseEntries().filter(l => l.id !== id && String(l.id) !== String(id));
     saveData(appData);
     refreshUseLogRelatedViews();
 }
@@ -2706,18 +3321,57 @@ function renderUseLogTab() {
 let bulkLinkPending = null;
 const useHistorySelection = new Set();
 
+function useHistorySelectionHas(id) {
+    if (useHistorySelection.has(id)) return true;
+    return [...useHistorySelection].some(sid => String(sid) === String(id));
+}
+
 function buildUseHistoryRows() {
+    console.log('[use-history] logs', appData.logs?.length, 'useLogs', appData.useLogs?.length);
+    const entries = getUseEntries();
+    console.log('[use-history] getUseEntries', entries.length);
+
     const filterId = isAllSubstancesView() ? null : currentSubstanceId;
-    const substances = filterId ? [getSubstance(filterId)].filter(Boolean) : getLoggableSubstances();
+    let substances = filterId ? [getSubstance(filterId)].filter(Boolean) : getLoggableSubstances();
+
+    if (filterId && !substances.length && entries.length) {
+        substances = getLoggableSubstances();
+    }
+
     let allRows = [];
     substances.forEach(sub => {
         const enriched = buildEnrichedUseEntries(sub.id);
+        const avgRate = (() => {
+            const rates = enriched
+                .filter(e => isPersonalUseLog(e))
+                .map(e => e.useRate)
+                .filter(r => r != null && r > 0);
+            return rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : null;
+        })();
+        enriched.forEach(entry => allRows.push({ entry, sub, avgRate }));
+    });
+
+    if (!allRows.length && entries.length && filterId) {
+        const matched = entries.filter(l => logMatchesSubstance(l, filterId));
+        const sub = getSubstance(filterId) || {
+            id: filterId,
+            name: getSubstanceName(filterId),
+            icon: '📦',
+            defaultUnit: 'units',
+            color: '#888'
+        };
+        const enriched = [];
+        const sorted = [...matched].sort((a, b) => getLogDatetimeMs(a) - getLogDatetimeMs(b));
+        sorted.forEach((entry, i) => {
+            enriched.push(enrichUseEntry(entry, i > 0 ? enriched[i - 1] : null));
+        });
         const avgRate = (() => {
             const rates = enriched.map(e => e.useRate).filter(r => r != null && r > 0);
             return rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : null;
         })();
         enriched.forEach(entry => allRows.push({ entry, sub, avgRate }));
-    });
+    }
+
     allRows.sort((a, b) => {
         const da = new Date(a.entry.startDatetime || a.entry.timestamp || 0);
         const db = new Date(b.entry.startDatetime || b.entry.timestamp || 0);
@@ -2732,7 +3386,7 @@ function getVisibleUseHistoryLogIds() {
 
 function updateUseHistorySelectionUI() {
     const countEl = document.getElementById('use-history-selected-count');
-    if (countEl) countEl.textContent = `Selected: ${useHistorySelection.size} sessions`;
+    if (countEl) countEl.textContent = `${useHistorySelection.size} selected`;
     const btn = document.getElementById('manual-link-selected-btn');
     if (btn) btn.disabled = useHistorySelection.size === 0;
 }
@@ -2746,7 +3400,7 @@ function syncUseHistorySelectAllCheckbox() {
         selectAll.indeterminate = false;
         return;
     }
-    const selectedVisible = visibleIds.filter(id => useHistorySelection.has(id)).length;
+    const selectedVisible = visibleIds.filter(id => useHistorySelectionHas(id)).length;
     selectAll.checked = selectedVisible === visibleIds.length;
     selectAll.indeterminate = selectedVisible > 0 && selectedVisible < visibleIds.length;
 }
@@ -2873,17 +3527,21 @@ function applyManualBulkLink() {
     }
 
     const options = getManualBulkLinkOptionsFromUI();
-    const result = runManualBulkLinkOnData(appData, [...useHistorySelection], purchaseId, options);
+    const selectedLogIds = [...useHistorySelection];
+    const substanceId = getManualBulkLinkSubstanceId() || getPurchaseSubstanceId(findPurchase(purchaseId));
+    const result = runManualBulkLinkOnData(appData, selectedLogIds, purchaseId, options);
     if (typeof result === 'string') {
         alert(result);
         return;
     }
 
-    saveData(appData);
+    console.log('[manual-link] updated logs',
+        selectedLogIds.map(id => appData.logs.find(l => String(l.id) === String(id)))
+    );
+
     closeManualBulkLinkModal();
     clearUseHistorySelection();
-    refreshUseLogRelatedViews();
-    updateCurrentSupplyDashboard();
+    refreshAfterLogLinkChange(substanceId);
     updateLastSavedDisplay();
 
     const { stats } = result;
@@ -2910,8 +3568,9 @@ function setupManualBulkLinkListeners() {
 
     document.getElementById('use-history-table-wrap')?.addEventListener('change', e => {
         if (!e.target.classList.contains('use-history-row-cb')) return;
-        const id = parseInt(e.target.dataset.logId, 10);
-        if (Number.isNaN(id)) return;
+        const idRaw = e.target.dataset.logId;
+        const id = parsePurchaseSelectId(idRaw);
+        if (id == null) return;
         if (e.target.checked) useHistorySelection.add(id);
         else useHistorySelection.delete(id);
         updateUseHistorySelectionUI();
@@ -2935,6 +3594,7 @@ function setupManualBulkLinkListeners() {
 
 function runBulkInventoryLink(data, mode) {
     const working = JSON.parse(JSON.stringify(data));
+    migrateUseLogsToLogs(working);
     const purchases = working.purchases || [];
     const logs = working.logs || [];
     resetAllPurchaseInventory(purchases);
@@ -3064,11 +3724,63 @@ function applyBulkLinkPreview() {
     alert(msg);
 }
 
+function getUseLogBadgeInfo(log) {
+    const tx = getLogTransactionType(log);
+    if (tx === 'gift_given') return { label: 'Gift Given', className: 'badge-gift-given' };
+    if (tx === 'gift_received') return { label: 'Gift Received', className: 'badge-gift-received' };
+    if (tx === 'inventory_adjustment') return { label: 'Adjustment', className: 'badge-inventory' };
+    if (getUseLogType(log) === 'session') return { label: 'Session', className: 'badge-session' };
+    return { label: 'Quick Use', className: 'badge-quick' };
+}
+
+function renderUseLogBadge(log) {
+    const { label, className } = getUseLogBadgeInfo(log);
+    return `<span class="use-log-badge ${className}">${label}</span>`;
+}
+
+function renderUseHistoryCard(entry, sub, avgRate) {
+    const warnings = getUseRowWarnings(entry, sub.id, avgRate);
+    const rateStr = entry.useRate != null ? `${entry.useRate.toFixed(2)}/${sub.defaultUnit}/hr` : '—';
+    const checked = useHistorySelectionHas(entry.id) ? 'checked' : '';
+    const timeRange = entry.endTime
+        ? `${entry.startTime || entry.time || '—'} – ${entry.endTime}`
+        : (entry.startTime || entry.time || '—');
+    const countStr = entry.count || '—';
+    const warningClass = warnings.length ? ` ${warnings.join(' ')}` : '';
+
+    return `<article class="use-history-card${warningClass}" data-log-id="${entry.id}">
+        <div class="use-history-card-top">
+            <label class="use-history-card-check">
+                <input type="checkbox" class="use-history-row-cb" data-log-id="${entry.id}" aria-label="Select entry" ${checked}>
+            </label>
+            <div class="use-history-card-main">
+                <div class="use-history-card-title-row">
+                    ${renderUseLogBadge(entry)}
+                    <span class="use-history-card-amount">${entry.amount} ${entry.unit}</span>
+                </div>
+                <div class="use-history-card-meta">${sub.icon} ${sub.name} · ${formatDate(entry.date)} · ${timeRange}</div>
+            </div>
+        </div>
+        <dl class="use-history-card-details">
+            <div><dt>Duration</dt><dd>${formatDurationHours(entry.durationHours)}</dd></div>
+            <div><dt>Count</dt><dd>${countStr}</dd></div>
+            <div><dt>Rate</dt><dd>${rateStr}</dd></div>
+            <div><dt>Break</dt><dd>${entry.breakText || '—'}</dd></div>
+            <div class="use-history-card-supply"><dt>Supply</dt><dd>${formatInventoryLinkDisplay(entry)}</dd></div>
+            ${entry.notes ? `<div class="use-history-card-notes"><dt>Notes</dt><dd>${entry.notes}</dd></div>` : ''}
+        </dl>
+        <div class="use-history-card-actions">
+            <button type="button" class="secondary-btn" onclick="editUseEntry(${entry.id})">Edit</button>
+            <button type="button" class="delete-btn" onclick="deleteUseEntry(${entry.id})">Delete</button>
+        </div>
+    </article>`;
+}
+
 function renderRecentUseList() {
     const container = document.getElementById('recent-use-list');
     if (!container) return;
     container.innerHTML = '';
-    const recent = [...appData.logs].sort((a, b) =>
+    const recent = [...getUseEntries()].sort((a, b) =>
         new Date(b.timestamp || `${b.date}T${b.startTime || b.time}`) -
         new Date(a.timestamp || `${a.date}T${a.startTime || a.time}`)
     ).slice(0, 5);
@@ -3080,22 +3792,27 @@ function renderRecentUseList() {
         const substanceId = getUseSubstanceId(log);
         const sub = getSubstance(substanceId);
         const enriched = enrichUseEntry(log, null);
-        const typeLabel = getUseLogType(log) === 'session' ? '⏱️ Session' : '⚡ Quick';
         const countStr = getUseCount(log);
+        const timeRange = log.endTime
+            ? `${log.startTime || log.time || ''}–${log.endTime}`
+            : (log.startTime || log.time || '');
         const item = document.createElement('div');
-        item.className = 'list-item';
+        item.className = 'use-recent-card';
         item.innerHTML = `
-            <div class="list-item-content">
-                <strong>${typeLabel} ${sub?.icon || ''} ${log.amount ?? '—'} ${log.unit || ''} ${sub?.name || 'Unknown'}</strong><br>
-                <small>${formatDate(log.date || '')} ${log.startTime || log.time || ''}${log.endTime ? '–' + log.endTime : ''}</small>
-                ${enriched.durationHours ? `<br><small>Duration: ${formatDurationHours(enriched.durationHours)}</small>` : ''}
-                ${countStr !== '' ? `<br><small>Count: ${countStr}</small>` : ''}
-                ${log.notes ? `<br><small>${log.notes}</small>` : ''}
-                <br><small class="use-supply-line">${formatLinkedPurchaseDisplay(log)}</small>
+            <div class="use-recent-main">
+                <div class="use-recent-top">
+                    ${renderUseLogBadge(log)}
+                    <span class="use-recent-amount">${log.amount ?? '—'} ${log.unit || ''}</span>
+                </div>
+                <div class="use-recent-sub">${sub?.icon || ''} ${sub?.name || 'Unknown'} · ${formatDate(log.date || '')}${timeRange ? ` · ${timeRange}` : ''}</div>
+                ${enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}
+                ${countStr !== '' ? `<div class="use-recent-detail">${countStr} lines</div>` : ''}
+                ${log.notes ? `<div class="use-recent-notes">${log.notes}</div>` : ''}
+                <div class="use-recent-supply">${formatInventoryLinkDisplay(log)}</div>
             </div>
-            <div class="use-history-actions">
+            <div class="use-recent-actions">
                 <button type="button" class="secondary-btn" onclick="editUseEntry(${log.id})">Edit</button>
-                <button type="button" class="delete-btn" onclick="deleteUseEntry(${log.id})">Delete</button>
+                <button type="button" class="delete-btn" onclick="deleteUseEntry(${log.id})">Del</button>
             </div>
         `;
         container.appendChild(item);
@@ -3109,27 +3826,39 @@ function renderUseHistoryTable() {
     const allRows = buildUseHistoryRows();
 
     if (!allRows.length) {
-        wrap.innerHTML = '<p class="empty-hint">No entries yet. Log your first use above.</p>';
+        const hasEntries = getUseEntries().length > 0;
+        wrap.innerHTML = hasEntries
+            ? '<p class="empty-hint">No entries for the selected substance in this view.</p>'
+            : '<p class="empty-hint">No entries yet. Log your first use above.</p>';
         updateUseHistorySelectionUI();
         syncUseHistorySelectAllCheckbox();
         return;
     }
 
-    let html = `<div class="session-table-scroll"><table class="session-table"><thead><tr>
+    let tableHtml = `<div class="use-history-table-view session-table-scroll"><table class="session-table use-history-table"><thead><tr>
         <th class="use-history-cb-col"><span class="sr-only">Select</span></th>
         <th>Date</th><th>Type</th><th>Substance</th><th>Start</th><th>End</th><th>Duration</th><th>Amount</th><th>Unit</th>
         <th>Count</th><th>Rate</th><th>Break Since Previous</th><th>Supply</th><th>Notes</th><th>Actions</th>
     </tr></thead><tbody>`;
 
+    let cardsHtml = '<div class="use-history-cards">';
+
     allRows.forEach(({ entry, sub, avgRate }) => {
         const warnings = getUseRowWarnings(entry, sub.id, avgRate);
         const rateStr = entry.useRate != null ? `${entry.useRate.toFixed(2)}/${sub.defaultUnit}/hr` : '—';
-        const typeLabel = entry.type === 'session' ? 'Session' : 'Quick';
-        const checked = useHistorySelection.has(entry.id) ? 'checked' : '';
-        html += `<tr class="${warnings.join(' ')}">
+        const typeLabel = isGiftGivenLog(entry)
+            ? 'Gift Given'
+            : isGiftReceivedLog(entry)
+                ? 'Gift Received'
+                : isInventoryAdjustmentLog(entry)
+                    ? 'Adjustment'
+                    : (entry.type === 'session' ? 'Session' : 'Quick');
+        const partyLabel = entry.giftPartyName ? ` (${entry.giftPartyName})` : '';
+        const checked = useHistorySelectionHas(entry.id) ? 'checked' : '';
+        tableHtml += `<tr class="${warnings.join(' ')}">
             <td class="use-history-cb-col"><input type="checkbox" class="use-history-row-cb" data-log-id="${entry.id}" aria-label="Select session" ${checked}></td>
             <td>${formatDate(entry.date)}</td>
-            <td>${typeLabel}</td>
+            <td>${renderUseLogBadge(entry)}${partyLabel ? `<span class="use-history-party">${partyLabel}</span>` : ''}</td>
             <td>${sub.icon} ${sub.name}</td>
             <td>${entry.startTime || entry.time || '—'}</td>
             <td>${entry.endTime || '—'}</td>
@@ -3139,30 +3868,37 @@ function renderUseHistoryTable() {
             <td>${entry.count || '—'}</td>
             <td>${rateStr}</td>
             <td>${renderBreakSincePreviousCell(entry)}</td>
-            <td class="session-supply-cell">${formatLinkedPurchaseDisplay(entry)}</td>
+            <td class="session-supply-cell">${formatInventoryLinkDisplay(entry)}</td>
             <td class="session-notes-cell">${entry.notes || ''}</td>
             <td class="use-history-actions-cell">
                 <button type="button" class="secondary-btn" onclick="editUseEntry(${entry.id})">Edit</button>
                 <button type="button" class="delete-btn" onclick="deleteUseEntry(${entry.id})">×</button>
             </td>
         </tr>`;
+        cardsHtml += renderUseHistoryCard(entry, sub, avgRate);
     });
 
-    html += '</tbody></table></div>';
-    html += `<div class="session-legend">
+    tableHtml += '</tbody></table></div>';
+    cardsHtml += '</div>';
+
+    const legendHtml = `<div class="session-legend use-history-legend">
         <span class="legend-high-rate">High rate</span>
         <span class="legend-short-break">Short break</span>
         <span class="legend-long-break">Long break</span>
         <span class="legend-taper-close">Near taper limit</span>
     </div>`;
-    wrap.innerHTML = html;
+
+    wrap.innerHTML = tableHtml + cardsHtml + legendHtml;
     updateUseHistorySelectionUI();
     syncUseHistorySelectAllCheckbox();
 }
 
 function getTodayUseStats(substanceId) {
     const today = new Date().toISOString().split('T')[0];
-    const logs = filterLogsBySubstance(appData.logs.filter(l => l.date === today), substanceId);
+    const logs = filterLogsBySubstance(
+        getUseEntries().filter(l => l.date === today && isPersonalUseLog(l)),
+        substanceId
+    );
     const enriched = logs.map(l => enrichUseEntry(l, null));
     const totalAmount = logs.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
     const sessionDuration = enriched
@@ -3172,7 +3908,7 @@ function getTodayUseStats(substanceId) {
 }
 
 function getTimeSinceLastUse(substanceId) {
-    const logs = filterLogsBySubstance([...appData.logs], substanceId);
+    const logs = filterLogsBySubstance(getUseEntries().filter(isPersonalUseLog), substanceId);
     if (!logs.length) return null;
     const sorted = logs.sort((a, b) =>
         new Date(b.timestamp || `${b.date}T${b.startTime || b.time}`) -
@@ -3451,10 +4187,7 @@ function openBuyTrackerModal() {
 }
 
 function deletePurchase(id) {
-    const linked = (appData.logs || []).filter(l =>
-        l.linkedPurchaseId === id
-        || l.linkedPurchases?.some(a => a.purchaseId === id || String(a.purchaseId) === String(id))
-    );
+    const linked = getLogsForPurchase(id);
     let msg = 'Delete this purchase?';
     if (linked.length) {
         msg = `This purchase has ${linked.length} linked use ${linked.length === 1 ? 'entry' : 'entries'}. Delete anyway? Those uses will become unlinked.`;
@@ -3480,9 +4213,334 @@ function deletePurchase(id) {
         l.updatedAt = new Date().toISOString();
     });
     appData.purchases = (appData.purchases || []).filter(p => p.id !== id);
+    expandedPurchaseIds.delete(id);
     saveData(appData);
     refreshBuyTrackerRelatedViews();
     refreshUseLogRelatedViews();
+}
+
+function logMatchesPurchase(log, purchaseId) {
+    if (log.linkedPurchaseId === purchaseId || String(log.linkedPurchaseId) === String(purchaseId)) return true;
+    return Array.isArray(log.linkedPurchases)
+        && log.linkedPurchases.some(lp => lp.purchaseId === purchaseId || String(lp.purchaseId) === String(purchaseId));
+}
+
+function getLogsForPurchase(purchaseId) {
+    return getUseEntries().filter(log => logMatchesPurchase(log, purchaseId));
+}
+
+function getAmountUsedFromPurchase(log, purchaseId) {
+    if (Array.isArray(log.linkedPurchases) && log.linkedPurchases.length) {
+        const alloc = log.linkedPurchases.find(lp =>
+            lp.purchaseId === purchaseId || String(lp.purchaseId) === String(purchaseId));
+        return alloc ? parseFloat(alloc.amountUsed) || 0 : 0;
+    }
+    return parseFloat(log.amount) || 0;
+}
+
+function getLogActivityEndDatetime(log) {
+    const end = getUseEndDatetime(log);
+    if (end && !Number.isNaN(end.getTime())) return end;
+    return parseUseDateTime(log.date, log.startTime || log.time);
+}
+
+function formatDatetimeShort(date) {
+    if (!date || Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleString('en-US', { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+function formatTimeSinceMs(ms) {
+    if (ms == null || ms < 0 || Number.isNaN(ms)) return '—';
+    return formatBreakText(Math.floor(ms / 60000));
+}
+
+function formatDatetimeLong(date) {
+    if (!date || Number.isNaN(date.getTime())) return '—';
+    return date.toLocaleString('en-US', {
+        month: 'short',
+        day: 'numeric',
+        year: 'numeric',
+        hour: 'numeric',
+        minute: '2-digit'
+    });
+}
+
+function escapeAttr(str) {
+    return String(str || '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;');
+}
+
+function getLogSupplyStartDate(log) {
+    return parseUseDateTime(log.date, log.startTime || log.time);
+}
+
+function computeSupplyDurationMetrics(logs) {
+    if (!logs.length) {
+        return {
+            label: 'Unused',
+            ms: null,
+            tooltip: 'No linked use logs for this supply.'
+        };
+    }
+
+    const firstStart = getLogSupplyStartDate(logs[0]);
+    const lastEnd = getLogActivityEndDatetime(logs[logs.length - 1]);
+
+    if (logs.length === 1) {
+        const tooltip = [
+            `First Use: ${formatDatetimeLong(firstStart)}`,
+            `Last Use: ${formatDatetimeLong(lastEnd)}`,
+            'Supply Duration: Single Use'
+        ].join('\n');
+        return { label: 'Single Use', ms: 0, tooltip, firstUseAt: firstStart, lastUseAt: lastEnd };
+    }
+
+    const firstMs = firstStart?.getTime();
+    const lastMs = lastEnd?.getTime();
+    const ms = firstMs != null && lastMs != null ? lastMs - firstMs : null;
+    const label = ms != null && ms >= 0 ? formatTimeSinceMs(ms) : '—';
+    const tooltip = [
+        `First Use: ${formatDatetimeLong(firstStart)}`,
+        `Last Use: ${formatDatetimeLong(lastEnd)}`,
+        `Supply Duration: ${label}`
+    ].join('\n');
+
+    return {
+        label,
+        ms: ms != null && ms >= 0 ? ms : null,
+        tooltip,
+        firstUseAt: firstStart,
+        lastUseAt: lastEnd
+    };
+}
+
+function getPurchaseSupplyMetrics(purchase) {
+    const purchaseId = purchase.id;
+    const logs = getLogsForPurchase(purchaseId)
+        .slice()
+        .sort((a, b) => getLogDatetimeMs(a) - getLogDatetimeMs(b));
+    const bought = getPurchaseQuantityBought(purchase);
+    const remaining = getPurchaseRemainingAmount(purchase);
+    let totalUsed = 0;
+    logs.forEach(log => { totalUsed += getAmountUsedFromPurchase(log, purchaseId); });
+
+    const firstLog = logs[0] || null;
+    const lastLog = logs[logs.length - 1] || null;
+    const firstUseAt = firstLog ? getLogSupplyStartDate(firstLog) : null;
+    const lastSupplyUseAt = lastLog ? getLogActivityEndDatetime(lastLog) : null;
+    const supplyDuration = computeSupplyDurationMetrics(logs);
+
+    const purchaseMs = getPurchaseDatetimeMs(purchase);
+    let timeFromBuyToFirstUse = null;
+    if (purchaseMs && firstUseAt && !Number.isNaN(firstUseAt.getTime())) {
+        const ms = firstUseAt.getTime() - purchaseMs;
+        if (ms >= 0) timeFromBuyToFirstUse = ms;
+    }
+
+    let timeSinceLastSupplyUse = null;
+    if (lastSupplyUseAt && !Number.isNaN(lastSupplyUseAt.getTime())) {
+        const ms = Date.now() - lastSupplyUseAt.getTime();
+        if (ms >= 0) timeSinceLastSupplyUse = ms;
+    }
+
+    return {
+        quantityBought: bought,
+        totalUsed,
+        remaining,
+        percentUsed: getPurchasePercentUsed(purchase),
+        linkedSessionCount: logs.length,
+        logs,
+        firstLog,
+        lastLog,
+        firstUseAt,
+        lastSupplyUseAt,
+        timeFromBuyToFirstUse,
+        timeSinceLastSupplyUse,
+        supplyDurationLabel: supplyDuration.label,
+        supplyDurationMs: supplyDuration.ms,
+        supplyDurationTooltip: supplyDuration.tooltip
+    };
+}
+
+function getSubstanceSupplyDurationStats(substanceId) {
+    const purchases = substanceId
+        ? getPurchasesForSubstance(substanceId, appData)
+        : [...getPurchasesFiltered(null)];
+
+    const durationMsList = [];
+    purchases.forEach(purchase => {
+        const metrics = getPurchaseSupplyMetrics(purchase);
+        if (metrics.logs.length >= 2 && metrics.supplyDurationMs != null) {
+            durationMsList.push(metrics.supplyDurationMs);
+        }
+    });
+
+    const sortedPurchases = [...purchases].sort((a, b) => getPurchaseDatetimeMs(a) - getPurchaseDatetimeMs(b));
+    const buyGapMs = [];
+    for (let i = 1; i < sortedPurchases.length; i++) {
+        const prevMs = getPurchaseDatetimeMs(sortedPurchases[i - 1]);
+        const curMs = getPurchaseDatetimeMs(sortedPurchases[i]);
+        if (prevMs && curMs) {
+            const gap = curMs - prevMs;
+            if (gap >= 0) buyGapMs.push(gap);
+        }
+    }
+
+    const avgDaysBetweenPurchases = buyGapMs.length
+        ? (buyGapMs.reduce((sum, ms) => sum + ms, 0) / buyGapMs.length) / 86400000
+        : null;
+
+    return {
+        longestMs: durationMsList.length ? Math.max(...durationMsList) : null,
+        averageMs: durationMsList.length
+            ? durationMsList.reduce((sum, ms) => sum + ms, 0) / durationMsList.length
+            : null,
+        shortestMs: durationMsList.length ? Math.min(...durationMsList) : null,
+        avgDaysBetweenPurchases,
+        qualifyingCount: durationMsList.length
+    };
+}
+
+function getSubstanceSupplyUseMetrics(substanceId) {
+    if (!substanceId || substanceId === DASHBOARD_ALL) {
+        return {
+            lastSupplyUseAt: null,
+            timeSinceLastSupplyUse: null,
+            oldestActive: null,
+            activeCount: 0
+        };
+    }
+
+    const purchases = getPurchasesForSubstance(substanceId, appData);
+    const active = getActivePurchasesForSubstance(substanceId);
+    const oldestActive = getOldestActivePurchase(substanceId);
+
+    let lastSupplyUseAt = null;
+    purchases.forEach(purchase => {
+        const { lastSupplyUseAt: at } = getPurchaseSupplyMetrics(purchase);
+        if (at && !Number.isNaN(at.getTime()) && (!lastSupplyUseAt || at > lastSupplyUseAt)) {
+            lastSupplyUseAt = at;
+        }
+    });
+
+    let timeSinceLastSupplyUse = null;
+    if (lastSupplyUseAt) {
+        const ms = Date.now() - lastSupplyUseAt.getTime();
+        if (ms >= 0) timeSinceLastSupplyUse = ms;
+    }
+
+    return { lastSupplyUseAt, timeSinceLastSupplyUse, oldestActive, activeCount: active.length };
+}
+
+function getTransactionTypeShortLabel(log) {
+    const tx = getLogTransactionType(log);
+    if (tx === 'gift_given') return 'Gift Given';
+    if (tx === 'gift_received') return 'Gift Received';
+    if (tx === 'inventory_adjustment') return 'Inventory Adjustment';
+    return 'Use';
+}
+
+function renderPurchaseLinkedLogSummaryLine(log, purchaseId, unit) {
+    const enriched = enrichUseEntry(log, null);
+    const amount = getAmountUsedFromPurchase(log, purchaseId);
+    const startTime = log.startTime || log.time || '';
+    const endTime = log.endTime || '';
+    const timeRange = endTime ? `${startTime}–${endTime}` : startTime;
+    const count = getUseCount(log);
+    const parts = [
+        `${formatDate(log.date)} ${timeRange}`.trim(),
+        `${amount}${unit}`
+    ];
+    if (count !== '' && count != null) parts.push(`${count} lines`);
+    else if (enriched.durationHours) parts.push(formatDurationHours(enriched.durationHours));
+    return parts.join(' · ');
+}
+
+function renderPurchaseLinkedLogsPanel(purchase) {
+    const purchaseId = purchase.id;
+    const unit = purchase.unit || 'units';
+    const store = purchase.store || purchase.location || '';
+    const metrics = getPurchaseSupplyMetrics(purchase);
+    const header = `${formatDate(purchase.date)} purchase${store ? ` · ${store}` : ''} · ${metrics.quantityBought}${unit}`;
+
+    const totalsHtml = `
+        <div class="purchase-supply-totals">
+            <div class="purchase-supply-stat"><span>Quantity bought</span><strong>${metrics.quantityBought}${unit}</strong></div>
+            <div class="purchase-supply-stat"><span>Total used</span><strong>${metrics.totalUsed.toFixed(1)}${unit}</strong></div>
+            <div class="purchase-supply-stat"><span>Remaining</span><strong>${metrics.remaining.toFixed(1)}${unit}</strong></div>
+            <div class="purchase-supply-stat"><span>Percent used</span><strong>${metrics.percentUsed}%</strong></div>
+            <div class="purchase-supply-stat"><span>Linked logs</span><strong>${metrics.linkedSessionCount}</strong></div>
+            <div class="purchase-supply-stat"><span>Supply duration</span><strong>${metrics.supplyDurationLabel}</strong></div>
+            <div class="purchase-supply-stat"><span>First use</span><strong>${metrics.firstUseAt ? formatDatetimeLong(metrics.firstUseAt) : 'Never'}</strong></div>
+            <div class="purchase-supply-stat"><span>Last use</span><strong>${metrics.lastSupplyUseAt ? formatDatetimeLong(metrics.lastSupplyUseAt) : 'Never'}</strong></div>
+            <div class="purchase-supply-stat"><span>Time since last use</span><strong>${metrics.timeSinceLastSupplyUse != null ? formatTimeSinceMs(metrics.timeSinceLastSupplyUse) : '—'}</strong></div>
+            <div class="purchase-supply-stat"><span>Buy → first use</span><strong>${metrics.timeFromBuyToFirstUse != null ? formatTimeSinceMs(metrics.timeFromBuyToFirstUse) : '—'}</strong></div>
+        </div>`;
+
+    if (!metrics.logs.length) {
+        return `<div class="purchase-linked-panel">
+            <p class="purchase-linked-header">${header}</p>
+            ${totalsHtml}
+            <p class="empty-hint purchase-linked-empty">No linked use logs for this supply.</p>
+        </div>`;
+    }
+
+    const summaryLines = metrics.logs.map(log =>
+        `<li>${renderPurchaseLinkedLogSummaryLine(log, purchaseId, unit)}</li>`
+    ).join('');
+
+    let detailRows = '';
+    metrics.logs.slice().reverse().forEach(log => {
+        const enriched = enrichUseEntry(log, null);
+        const amount = getAmountUsedFromPurchase(log, purchaseId);
+        const count = getUseCount(log);
+        detailRows += `<tr>
+            <td>${formatDate(log.date)}</td>
+            <td>${log.startTime || log.time || '—'}</td>
+            <td>${log.endTime || '—'}</td>
+            <td>${enriched.durationHours != null ? formatDurationHours(enriched.durationHours) : '—'}</td>
+            <td>${amount}${unit}</td>
+            <td>${count !== '' && count != null ? count : '—'}</td>
+            <td>${getTransactionTypeShortLabel(log)}</td>
+            <td>${formatInventoryLinkDisplay(log)}</td>
+            <td class="session-notes-cell">${log.notes || ''}</td>
+        </tr>`;
+    });
+
+    return `<div class="purchase-linked-panel">
+        <p class="purchase-linked-header">${header}</p>
+        ${totalsHtml}
+        <div class="purchase-linked-used-by">
+            <strong>Used by:</strong>
+            <ul class="purchase-linked-summary-list">${summaryLines}</ul>
+        </div>
+        <div class="purchase-linked-detail-table-wrap session-table-scroll">
+            <table class="session-table purchase-linked-logs-table">
+                <thead><tr>
+                    <th>Date</th><th>Start</th><th>End</th><th>Duration</th><th>Amount</th>
+                    <th>Count</th><th>Type</th><th>Link</th><th>Notes</th>
+                </tr></thead>
+                <tbody>${detailRows}</tbody>
+            </table>
+        </div>
+    </div>`;
+}
+
+function togglePurchaseLinkedLogs(purchaseId) {
+    const id = typeof purchaseId === 'string' ? parseInt(purchaseId, 10) : purchaseId;
+    if (expandedPurchaseIds.has(id)) expandedPurchaseIds.delete(id);
+    else expandedPurchaseIds.add(id);
+
+    const detail = document.getElementById(`purchase-detail-${id}`);
+    const btn = document.querySelector(`[data-purchase-toggle="${id}"]`);
+    const expanded = expandedPurchaseIds.has(id);
+    if (detail) detail.classList.toggle('hidden', !expanded);
+    if (btn) {
+        btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+        btn.textContent = expanded ? 'Hide Linked Logs' : 'View Linked Logs';
+    }
 }
 
 function getBuyStats(substanceId) {
@@ -3516,7 +4574,9 @@ function getBuyStats(substanceId) {
         }
     }
 
-    return { spentToday, spentWeek, spentMonth, countWeek, countMonth, avgCostUnit, lastPurchase, daysSupply, purchases, cur };
+    return { spentToday, spentWeek, spentMonth, countWeek, countMonth, avgCostUnit, lastPurchase, daysSupply, purchases, cur,
+        supplyUse: getSubstanceSupplyUseMetrics(substanceId && substanceId !== DASHBOARD_ALL ? substanceId : null),
+        supplyDuration: getSubstanceSupplyDurationStats(substanceId) };
 }
 
 function renderBuySpendingTrend(substanceId) {
@@ -3543,6 +4603,20 @@ function renderBuyTrackerTab() {
     const filterId = isAllSubstancesView() ? null : currentSubstanceId;
     const stats = getBuyStats(filterId);
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
+    const durationStats = stats.supplyDuration || getSubstanceSupplyDurationStats(filterId);
+    set('buy-longest-supply-duration', durationStats.longestMs != null
+        ? formatTimeSinceMs(durationStats.longestMs)
+        : '—');
+    set('buy-avg-supply-duration', durationStats.averageMs != null
+        ? formatTimeSinceMs(durationStats.averageMs)
+        : '—');
+    set('buy-shortest-supply-duration', durationStats.shortestMs != null
+        ? formatTimeSinceMs(durationStats.shortestMs)
+        : '—');
+    set('buy-avg-days-between-purchases', durationStats.avgDaysBetweenPurchases != null
+        ? `~${durationStats.avgDaysBetweenPurchases.toFixed(1)} days`
+        : '—');
 
     set('buy-spent-today', `${stats.cur}${stats.spentToday.toFixed(2)}`);
     set('buy-spent-week', `${stats.cur}${stats.spentWeek.toFixed(2)}`);
@@ -3573,6 +4647,27 @@ function renderBuyTrackerTab() {
         set('buy-break-shortest', '—');
         set('buy-break-avg-30', '—');
         set('buy-est-next', '—');
+        set('buy-last-supply-used', '—');
+        set('buy-since-last-supply-use', '—');
+        set('buy-oldest-active-supply', '—');
+        set('buy-active-supplies-count', '—');
+    }
+
+    if (filterId) {
+        const supplyUse = stats.supplyUse || getSubstanceSupplyUseMetrics(filterId);
+        set('buy-last-supply-used', supplyUse.lastSupplyUseAt
+            ? formatDatetimeShort(supplyUse.lastSupplyUseAt)
+            : 'Never');
+        set('buy-since-last-supply-use', supplyUse.timeSinceLastSupplyUse != null
+            ? formatTimeSinceMs(supplyUse.timeSinceLastSupplyUse)
+            : '—');
+        if (supplyUse.oldestActive) {
+            const store = supplyUse.oldestActive.store || supplyUse.oldestActive.location || '';
+            set('buy-oldest-active-supply', `${formatDate(supplyUse.oldestActive.date)}${store ? ` · ${store}` : ''}`);
+        } else {
+            set('buy-oldest-active-supply', '—');
+        }
+        set('buy-active-supplies-count', String(supplyUse.activeCount));
     }
 
     renderBuySpendingTrend(filterId);
@@ -3595,7 +4690,7 @@ function renderBuyHistory(substanceId) {
     const cur = appData.settings.currency;
     let html = `<div class="session-table-scroll"><table class="session-table purchase-history-table"><thead><tr>
         <th>Date</th><th>Time</th><th>Substance</th><th>Bought</th><th>Remaining</th><th>Used %</th>
-        <th>Supply</th><th>Cost</th><th>Store</th><th>Break Since Previous Buy</th><th>Actions</th>
+        <th>Supply Duration</th><th>Since Last Use</th><th>Supply</th><th>Cost</th><th>Store</th><th>Break Since Previous Buy</th><th>Linked Logs</th><th>Actions</th>
     </tr></thead><tbody>`;
 
     purchases.forEach(purchase => {
@@ -3611,22 +4706,38 @@ function renderBuyHistory(substanceId) {
         const supply = getPurchaseSupplyStatus(purchase);
         const unit = purchase.unit || 'units';
         const breakCell = renderBuyBreakSincePreviousCell(purchase);
+        const metrics = getPurchaseSupplyMetrics(purchase);
+        const supplyDurationLabel = metrics.supplyDurationLabel || 'Unused';
+        const supplyDurationTooltip = escapeAttr(metrics.supplyDurationTooltip || '');
+        const sinceLastUseLabel = metrics.timeSinceLastSupplyUse != null
+            ? formatTimeSinceMs(metrics.timeSinceLastSupplyUse)
+            : '—';
+        const expanded = expandedPurchaseIds.has(purchase.id);
+        const toggleLabel = expanded ? 'Hide Linked Logs' : 'View Linked Logs';
 
-        html += `<tr>
+        html += `<tr class="purchase-history-row">
             <td>${formatDate(purchase.date || '')}</td>
             <td>${purchase.time || '—'}</td>
             <td>${sub?.icon || ''} ${sub?.name || 'Unknown'}</td>
             <td>${bought}${unit}</td>
             <td>${remaining.toFixed(1)}${unit}</td>
             <td>${pctUsed}%</td>
+            <td class="purchase-supply-duration-cell" title="${supplyDurationTooltip}">${supplyDurationLabel}</td>
+            <td>${sinceLastUseLabel}</td>
             <td><span class="purchase-supply-status ${supply.className}">${supply.label}</span></td>
             <td>${cur}${totalNum.toFixed(2)} <small>(${cur}${cpu.toFixed(2)}/u)</small></td>
             <td>${store || '—'}</td>
             <td>${breakCell}</td>
+            <td class="purchase-expand-cell">
+                <button type="button" class="secondary-btn purchase-expand-btn" data-purchase-toggle="${purchase.id}" aria-expanded="${expanded ? 'true' : 'false'}" onclick="togglePurchaseLinkedLogs(${purchase.id})">${toggleLabel}</button>
+            </td>
             <td class="purchase-history-actions-cell">
                 <button type="button" class="secondary-btn" onclick="editPurchase(${purchase.id})">Edit</button>
                 <button type="button" class="delete-btn" onclick="deletePurchase(${purchase.id})">Delete</button>
             </td>
+        </tr>`;
+        html += `<tr id="purchase-detail-${purchase.id}" class="purchase-linked-detail${expanded ? '' : ' hidden'}">
+            <td colspan="14">${renderPurchaseLinkedLogsPanel(purchase)}</td>
         </tr>`;
     });
 
@@ -3662,11 +4773,97 @@ function setupEventListeners() {
 }
 
 // ——— Dashboard ———
+function renderRecentActivity() {
+    const container = document.getElementById('dash-recent-activity');
+    if (!container) return;
+
+    const sid = isAllSubstancesView() ? null : currentSubstanceId;
+    const logs = sid
+        ? getUseEntries().filter(l => logMatchesSubstance(l, sid))
+        : getUseEntries();
+
+    const lastUse = [...logs]
+        .filter(isPersonalUseLog)
+        .sort((a, b) => getLogDatetimeMs(b) - getLogDatetimeMs(a))[0] || null;
+
+    const lastSession = [...logs]
+        .filter(l => isPersonalUseLog(l) && (l.type === 'session' || l.endTime))
+        .sort((a, b) => getLogDatetimeMs(b) - getLogDatetimeMs(a))[0] || null;
+
+    const purchases = (appData.purchases || [])
+        .filter(p => !sid || logMatchesSubstance({ substanceId: getPurchaseSubstanceId(p) }, sid));
+    const lastPurchase = [...purchases]
+        .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a))[0] || null;
+
+    const cravings = (appData.cravings || [])
+        .filter(c => !sid || logMatchesSubstance(c, sid));
+    const lastCraving = [...cravings]
+        .sort((a, b) => {
+            const ta = a.timestamp ? new Date(a.timestamp).getTime() : new Date(`${a.date}T${a.time || '12:00'}`).getTime();
+            const tb = b.timestamp ? new Date(b.timestamp).getTime() : new Date(`${b.date}T${b.time || '12:00'}`).getTime();
+            return tb - ta;
+        })[0] || null;
+
+    const rows = [];
+
+    if (lastUse) {
+        const sub = getSubstance(getUseSubstanceId(lastUse));
+        rows.push({
+            icon: isGiftGivenLog(lastUse) || isGiftReceivedLog(lastUse) ? '🎁' : '⚡',
+            title: formatLogHistoryLabel(lastUse, sub),
+            meta: `${formatDate(lastUse.date)} · ${lastUse.startTime || lastUse.time || ''}`
+        });
+    }
+
+    if (lastSession) {
+        const sub = getSubstance(getUseSubstanceId(lastSession));
+        const enriched = enrichUseEntry(lastSession, null);
+        const dur = enriched.durationHours ? formatDurationHours(enriched.durationHours) : '—';
+        rows.push({
+            icon: '⏱️',
+            title: `Session · ${lastSession.amount ?? '—'} ${lastSession.unit || sub?.defaultUnit || ''}`,
+            meta: `${formatDate(lastSession.date)} · ${dur}`
+        });
+    }
+
+    if (lastPurchase) {
+        const sub = getSubstance(getPurchaseSubstanceId(lastPurchase));
+        const qty = getPurchaseQuantityBought(lastPurchase);
+        rows.push({
+            icon: '🛒',
+            title: `Purchase · ${qty} ${lastPurchase.unit || sub?.defaultUnit || ''}`,
+            meta: `${formatDate(lastPurchase.date)}${lastPurchase.store ? ` · ${lastPurchase.store}` : ''}`
+        });
+    }
+
+    if (lastCraving) {
+        const sub = getSubstance(lastCraving.substanceId);
+        rows.push({
+            icon: '🎯',
+            title: `Craving resisted · ${lastCraving.intensity ?? '—'}/10`,
+            meta: `${formatDate(lastCraving.date)} · ${sub?.name || 'Unknown'}`
+        });
+    }
+
+    if (!rows.length) {
+        container.innerHTML = '<p class="empty-hint">No recent activity yet</p>';
+        return;
+    }
+
+    container.innerHTML = rows.map(row => `
+        <div class="dash-activity-item">
+            <span class="dash-activity-icon">${row.icon}</span>
+            <div class="dash-activity-body">
+                <strong>${row.title}</strong>
+                <small>${row.meta}</small>
+            </div>
+        </div>
+    `).join('');
+}
+
 function updateDashboard() {
     const today = new Date().toISOString().split('T')[0];
-    const filterId = isAllSubstancesView() ? DASHBOARD_ALL : currentSubstanceId;
     const todayCravings = filterCravingsBySubstance(appData.cravings.filter(c => c.date === today), currentSubstanceId);
-    const cur = appData.settings.currency;
 
     let todayAmount = 0;
     let sessionDuration = 0;
@@ -3686,7 +4883,9 @@ function updateDashboard() {
     const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
 
     set('dash-today-total-use', `${todayAmount.toFixed(1)} ${unitLabel}`);
-    set('dash-today-session-duration', formatDurationHours(sessionDuration));
+    set('dash-today-session-duration', sessionDuration > 0
+        ? `${formatDurationHours(sessionDuration)} session time`
+        : 'No sessions today');
 
     const sinceMs = isAllSubstancesView()
         ? (() => {
@@ -3705,29 +4904,25 @@ function updateDashboard() {
         const limit = getDailyLimitForDate(currentSubstanceId, today);
         const used = getUsedAmount(currentSubstanceId, today);
         if (sub?.taperTrackingEnabled && limit != null) {
+            const remaining = Math.max(0, limit - used);
+            const { emoji } = getTaperLimitStatus(used, limit);
+            set('dash-remaining-taper', `${remaining.toFixed(1)} ${sub.defaultUnit}`);
+            set('dash-daily-limit-status', `${used.toFixed(1)} / ${limit} ${sub.defaultUnit} ${emoji}`);
             set('dash-daily-taper-limit', `${limit} ${sub.defaultUnit}`);
-            set('dash-remaining-taper', `${Math.max(0, limit - used).toFixed(1)} ${sub.defaultUnit}`);
         } else {
-            set('dash-daily-taper-limit', '—');
             set('dash-remaining-taper', '—');
+            set('dash-daily-limit-status', 'No taper limit set');
+            set('dash-daily-taper-limit', '—');
         }
         updateRecoveryStreakDisplay(currentSubstanceId);
     } else {
+        set('dash-remaining-taper', '—');
+        set('dash-daily-limit-status', 'Select a substance');
         set('dash-daily-taper-limit', '—');
-        set('dash-remaining-taper', 'Select substance');
         set('recovery-streak-current', '—');
-        set('recovery-streak-since', 'Select a substance');
+        set('recovery-streak-since', 'All substances');
         const bestEl = document.getElementById('recovery-streak-best');
         if (bestEl) bestEl.textContent = '—';
-    }
-
-    const buyInfo = getDashboardBuyInfo(filterId);
-    set('dash-spent-today-buy', `${cur}${buyInfo.spentToday.toFixed(2)}`);
-    if (buyInfo.lastPurchase) {
-        const sub = getSubstance(getPurchaseSubstanceId(buyInfo.lastPurchase));
-        set('dash-last-purchase', `${formatDate(buyInfo.lastPurchase.date)} · ${sub?.name || ''}`);
-    } else {
-        set('dash-last-purchase', '—');
     }
 
     set('cravings-resisted', String(todayCravings.length));
@@ -3739,6 +4934,7 @@ function updateDashboard() {
     updateTaperProgress();
     updateDashboardMainDisplay();
     updateBreakMetricsDashboard();
+    renderRecentActivity();
 }
 
 function formatBreakFromHours(hours) {
@@ -3747,25 +4943,23 @@ function formatBreakFromHours(hours) {
 }
 
 function updateBreakMetricsDashboard() {
-    const section = document.getElementById('break-metrics-section');
-    if (!section) return;
-
-    if (isAllSubstancesView()) {
-        section.classList.add('hidden');
-        return;
-    }
-
-    section.classList.remove('hidden');
-    const metrics = getBreakMetrics(currentSubstanceId);
     const set = (id, text) => {
         const el = document.getElementById(id);
         if (el) el.textContent = text;
     };
 
+    if (isAllSubstancesView()) {
+        set('dash-break-current', '—');
+        set('dash-break-longest', '—');
+        set('dash-break-avg-30', '—');
+        return;
+    }
+
+    const metrics = getBreakMetrics(currentSubstanceId);
     set('dash-break-current', metrics.current?.text || '—');
     set('dash-break-longest', formatBreakFromHours(metrics.longest));
-    set('dash-break-average', formatBreakFromHours(metrics.average));
     set('dash-break-avg-30', formatBreakFromHours(metrics.avg30Days));
+    set('dash-break-average', formatBreakFromHours(metrics.average));
     set('dash-break-streak-no-use', metrics.streakWithoutUse?.text || '—');
 }
 
@@ -3876,7 +5070,7 @@ function updateDashboardMainDisplay() {
     const el = document.getElementById('dashboard-main-substance');
     const main = getMainSubstance();
     if (!el) return;
-    el.textContent = main ? `Main Substance: ${main.icon} ${main.name}` : 'Main Substance: —';
+    el.textContent = main ? `Main: ${main.icon} ${main.name}` : 'Main: —';
 }
 
 function renderSubstanceCompare() {
@@ -3896,7 +5090,7 @@ function renderSubstanceCompare() {
     grid.className = 'compare-grid';
 
     getActiveSubstances().forEach(sub => {
-        const logs = appData.logs.filter(l => l.date === today && l.substanceId === sub.id);
+        const logs = appData.logs.filter(l => l.date === today && l.substanceId === sub.id && isPersonalUseLog(l));
         const amount = logs.reduce((s, l) => s + l.amount, 0);
         const spent = getSubstancePurchaseSpend(sub.id, p => p.date === today);
         const { days } = computeRecoveryStreakDays(sub.id);
@@ -3922,8 +5116,8 @@ function renderSubstanceCompare() {
 
 // ——— Recovery streaks ———
 function getLastUseForSubstance(substanceId) {
-    return appData.logs
-        .filter(l => l.substanceId === substanceId)
+    return getUseEntries()
+        .filter(l => logMatchesSubstance(l, substanceId) && isPersonalUseLog(l))
         .sort((a, b) => new Date(b.timestamp || `${b.date}T${b.time}`) - new Date(a.timestamp || `${a.date}T${a.time}`))[0] || null;
 }
 
@@ -3971,43 +5165,275 @@ function updateRecoveryStreakDisplay(substanceId) {
 }
 
 // ——— Stats / Analytics ———
+
+function toDateStr(date) {
+    return date.toISOString().split('T')[0];
+}
+
+function getStatsDateRange() {
+    const today = new Date();
+    const todayStr = toDateStr(today);
+
+    switch (statsDateRangePreset) {
+        case 'last-14': {
+            const start = new Date(today);
+            start.setDate(start.getDate() - 13);
+            return { startDate: toDateStr(start), endDate: todayStr, preset: 'last-14' };
+        }
+        case 'last-30': {
+            const start = new Date(today);
+            start.setDate(start.getDate() - 29);
+            return { startDate: toDateStr(start), endDate: todayStr, preset: 'last-30' };
+        }
+        case 'this-week': {
+            const start = new Date(today);
+            start.setDate(start.getDate() - start.getDay());
+            return { startDate: toDateStr(start), endDate: todayStr, preset: 'this-week' };
+        }
+        case 'this-month': {
+            const start = new Date(today.getFullYear(), today.getMonth(), 1);
+            return { startDate: toDateStr(start), endDate: todayStr, preset: 'this-month' };
+        }
+        case 'last-month': {
+            const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+            const end = new Date(today.getFullYear(), today.getMonth(), 0);
+            return { startDate: toDateStr(start), endDate: toDateStr(end), preset: 'last-month' };
+        }
+        case 'custom': {
+            const start = statsCustomStartDate || todayStr;
+            const end = statsCustomEndDate || todayStr;
+            return {
+                startDate: start <= end ? start : end,
+                endDate: start <= end ? end : start,
+                preset: 'custom'
+            };
+        }
+        case 'all-time':
+            return { startDate: null, endDate: todayStr, preset: 'all-time' };
+        case 'last-7':
+        default: {
+            const start = new Date(today);
+            start.setDate(start.getDate() - 6);
+            return { startDate: toDateStr(start), endDate: todayStr, preset: 'last-7' };
+        }
+    }
+}
+
+function filterLogsByDateRange(logs, startDate, endDate) {
+    return (logs || []).filter(l => {
+        if (!l.date) return false;
+        if (startDate && l.date < startDate) return false;
+        if (endDate && l.date > endDate) return false;
+        return true;
+    });
+}
+
+function resolveStatsRangeBounds(startDate, endDate, logs) {
+    const todayStr = toDateStr(new Date());
+    let end = endDate || todayStr;
+    let start = startDate;
+    if (!start) {
+        const dated = (logs || []).map(l => l.date).filter(Boolean).sort();
+        start = dated[0] || end;
+    }
+    if (start > end) {
+        const swap = start;
+        start = end;
+        end = swap;
+    }
+    return { startDate: start, endDate: end };
+}
+
+function countDaysInRange(startDate, endDate) {
+    const start = new Date(startDate + 'T12:00:00');
+    const end = new Date(endDate + 'T12:00:00');
+    return Math.max(1, Math.floor((end - start) / 86400000) + 1);
+}
+
+function getStatsChartGrouping(startDate, endDate) {
+    const days = countDaysInRange(startDate, endDate);
+    if (days > 90) return 'month';
+    if (days > 14) return 'week';
+    return 'day';
+}
+
+function calculateSessionDurationMinutes(log) {
+    if (!log?.endTime) return null;
+    const startTime = log.startTime || log.time;
+    if (!startTime || !log.date) return null;
+    const start = parseUseDateTime(log.date, startTime);
+    let end = parseUseDateTime(log.date, log.endTime);
+    if (!start || !end) return null;
+    if (end < start) end.setDate(end.getDate() + 1);
+    const minutes = (end - start) / 60000;
+    return minutes >= 0 ? minutes : null;
+}
+
+function calculateUseStats(logs) {
+    const personalUseLogs = (logs || []).filter(isPersonalUseLog);
+    const sessionCount = personalUseLogs.length;
+    const totalAmount = personalUseLogs.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+
+    const durationEntries = personalUseLogs
+        .map(log => ({ log, minutes: calculateSessionDurationMinutes(log) }))
+        .filter(entry => entry.minutes != null && entry.minutes > 0);
+
+    const durationMinutesList = durationEntries.map(entry => entry.minutes);
+    const totalDurationMinutes = durationMinutesList.reduce((s, m) => s + m, 0);
+    const totalDurationHours = totalDurationMinutes / 60;
+
+    const avgDurationMinutes = durationMinutesList.length
+        ? totalDurationMinutes / durationMinutesList.length
+        : null;
+
+    const avgPerSession = sessionCount > 0 ? totalAmount / sessionCount : null;
+
+    const amountWithDuration = durationEntries.reduce(
+        (s, entry) => s + (parseFloat(entry.log.amount) || 0),
+        0
+    );
+    const avgPerHour = totalDurationHours > 0 ? amountWithDuration / totalDurationHours : null;
+
+    return {
+        sessionCount,
+        totalAmount,
+        avgDurationMinutes,
+        avgPerSession,
+        avgPerHour,
+        totalDurationMinutes,
+        longestMinutes: durationMinutesList.length ? Math.max(...durationMinutesList) : null,
+        shortestMinutes: durationMinutesList.length ? Math.min(...durationMinutesList) : null
+    };
+}
+
+function getStatsRangeLabel(preset, startDate, endDate) {
+    const labels = {
+        'last-7': 'Last 7 Days',
+        'last-14': 'Last 14 Days',
+        'last-30': 'Last 30 Days',
+        'this-week': 'This Week',
+        'this-month': 'This Month',
+        'last-month': 'Last Month',
+        'all-time': 'All Time',
+        custom: 'Custom Range'
+    };
+    const name = labels[preset] || 'Selected Range';
+    if (preset === 'all-time') return `${name} · through ${formatDate(endDate)}`;
+    return `${name} · ${formatDate(startDate)} – ${formatDate(endDate)}`;
+}
+
+function setupStatsDateRange() {
+    const today = new Date();
+    const start = new Date(today);
+    start.setDate(start.getDate() - 6);
+    statsCustomStartDate = toDateStr(start);
+    statsCustomEndDate = toDateStr(today);
+
+    const select = document.getElementById('stats-date-range');
+    if (select) select.value = statsDateRangePreset;
+
+    const startEl = document.getElementById('stats-custom-start');
+    const endEl = document.getElementById('stats-custom-end');
+    if (startEl) startEl.value = statsCustomStartDate;
+    if (endEl) endEl.value = statsCustomEndDate;
+}
+
+function onStatsDateRangeChange() {
+    const select = document.getElementById('stats-date-range');
+    statsDateRangePreset = select?.value || 'last-7';
+    document.getElementById('stats-custom-range-wrap')?.classList.toggle('hidden', statsDateRangePreset !== 'custom');
+    if (statsDateRangePreset !== 'custom') updateStats();
+}
+
+function applyStatsCustomRange() {
+    statsCustomStartDate = document.getElementById('stats-custom-start')?.value || '';
+    statsCustomEndDate = document.getElementById('stats-custom-end')?.value || '';
+    if (!statsCustomStartDate || !statsCustomEndDate) {
+        alert('Select both a start and end date.');
+        return;
+    }
+    statsDateRangePreset = 'custom';
+    const select = document.getElementById('stats-date-range');
+    if (select) select.value = 'custom';
+    document.getElementById('stats-custom-range-wrap')?.classList.remove('hidden');
+    updateStats();
+}
+
+function getStatsLogsForSubstance(substanceId) {
+    const range = getStatsDateRange();
+    const allLogs = getUseEntries().filter(l => logMatchesSubstance(l, substanceId) && isPersonalUseLog(l));
+    const bounds = resolveStatsRangeBounds(range.startDate, range.endDate, allLogs);
+    return {
+        logs: filterLogsByDateRange(allLogs, bounds.startDate, bounds.endDate),
+        bounds,
+        preset: range.preset
+    };
+}
+
+function renderUseStatsCards(useStats, unit) {
+    setText('stats-avg-duration', useStats.avgDurationMinutes != null
+        ? formatDurationHours(useStats.avgDurationMinutes / 60)
+        : '—');
+    setText('stats-avg-per-session', useStats.avgPerSession != null
+        ? `${useStats.avgPerSession.toFixed(1)} ${unit}`
+        : '—');
+    setText('stats-avg-per-hr', useStats.avgPerHour != null
+        ? `${useStats.avgPerHour.toFixed(2)} ${unit}/hr`
+        : '—');
+    setText('stats-session-count', String(useStats.sessionCount));
+    setText('stats-total-duration', useStats.totalDurationMinutes > 0
+        ? formatDurationHours(useStats.totalDurationMinutes / 60)
+        : '—');
+    setText('stats-longest-session', useStats.longestMinutes != null
+        ? formatDurationHours(useStats.longestMinutes / 60)
+        : '—');
+    setText('stats-shortest-session', useStats.shortestMinutes != null
+        ? formatDurationHours(useStats.shortestMinutes / 60)
+        : '—');
+}
+
 function updateStats() {
     if (isAllSubstancesView()) {
+        document.querySelector('.stats-date-range-toolbar')?.classList.add('hidden');
         renderSubstanceStatsBreakdown();
         document.getElementById('stats-single-view')?.classList.add('hidden');
         document.getElementById('stats-all-view')?.classList.remove('hidden');
         return;
     }
 
+    document.querySelector('.stats-date-range-toolbar')?.classList.remove('hidden');
+
     document.getElementById('stats-single-view')?.classList.remove('hidden');
     document.getElementById('stats-all-view')?.classList.add('hidden');
 
-    const substanceLogs = appData.logs.filter(l => l.substanceId === currentSubstanceId);
+    const { logs: rangeLogs, bounds, preset } = getStatsLogsForSubstance(currentSubstanceId);
     const sub = getSubstance(currentSubstanceId);
-    const today = new Date();
+    const unit = sub?.defaultUnit || 'units';
     const cur = appData.settings.currency;
+    const daysInRange = countDaysInRange(bounds.startDate, bounds.endDate);
+    const useStats = calculateUseStats(rangeLogs);
 
-    renderUsageChart();
-    renderSpendingChart();
+    const summaryEl = document.getElementById('stats-range-summary');
+    if (summaryEl) summaryEl.textContent = getStatsRangeLabel(preset, bounds.startDate, bounds.endDate);
 
-    const weekStart = new Date(today);
-    weekStart.setDate(today.getDate() - today.getDay());
-    const monthStart = new Date(today.getFullYear(), today.getMonth(), 1);
+    renderUsageChart(bounds);
+    renderSpendingChart(bounds);
 
-    const totalWeek = substanceLogs.filter(l => new Date(l.date) >= weekStart).reduce((s, l) => s + l.amount, 0);
-    const totalMonth = substanceLogs.filter(l => new Date(l.date) >= monthStart).reduce((s, l) => s + l.amount, 0);
-    const daysWithData = new Set(substanceLogs.map(l => l.date)).size;
-    const avgPerDay = daysWithData ? (substanceLogs.reduce((s, l) => s + l.amount, 0) / daysWithData).toFixed(1) : 0;
+    const avgPerDay = daysInRange ? (useStats.totalAmount / daysInRange).toFixed(1) : '0';
 
-    setText('total-week', `${totalWeek} ${sub?.defaultUnit || 'units'}`);
-    setText('total-month', `${totalMonth} ${sub?.defaultUnit || 'units'}`);
+    setText('total-week', `${useStats.totalAmount.toFixed(1)} ${unit}`);
+    setText('total-month', String(useStats.sessionCount));
     setText('avg-per-day', avgPerDay);
+    renderUseStatsCards(useStats, unit);
 
     updateLongestTimeBetween();
     updateBreakStats();
     updateBuyBreakStats();
     renderWeeklyPlanProgressStats(currentSubstanceId);
-    const totalSpent = getSubstancePurchaseSpend(currentSubstanceId);
+    renderGiftAnalytics(bounds);
+
+    const inRangePurchaseFilter = p => p.date >= bounds.startDate && p.date <= bounds.endDate;
+    const totalSpent = getSubstancePurchaseSpend(currentSubstanceId, inRangePurchaseFilter);
     setText('total-spent', `${cur}${totalSpent.toFixed(2)}`);
 
     const cpu = getAveragePurchaseCostPerUnit(currentSubstanceId);
@@ -4039,7 +5465,10 @@ function updateStats() {
     updateRecoveryStreakDisplay(currentSubstanceId);
     renderTriggerBreakdown();
     renderTaperProgressStats(currentSubstanceId);
-    setText('stats-cravings-count', String(appData.cravings.filter(c => c.substanceId === currentSubstanceId).length));
+    const cravingsInRange = appData.cravings.filter(
+        c => c.substanceId === currentSubstanceId && c.date >= bounds.startDate && c.date <= bounds.endDate
+    );
+    setText('stats-cravings-count', String(cravingsInRange.length));
 }
 
 function renderSubstanceStatsBreakdown() {
@@ -4048,7 +5477,7 @@ function renderSubstanceStatsBreakdown() {
     container.innerHTML = '';
 
     getActiveSubstances().forEach(sub => {
-        const logs = appData.logs.filter(l => l.substanceId === sub.id);
+        const logs = appData.logs.filter(l => l.substanceId === sub.id && isPersonalUseLog(l));
         const cravings = appData.cravings.filter(c => c.substanceId === sub.id);
         const spent = getSubstancePurchaseSpend(sub.id);
         const uses = logs.reduce((s, l) => s + l.amount, 0);
@@ -4079,6 +5508,47 @@ function renderSubstanceStatsBreakdown() {
     });
 }
 
+function renderGiftAnalytics(bounds) {
+    const section = document.getElementById('gift-analytics-section');
+    if (!section) return;
+
+    if (isAllSubstancesView()) {
+        section.classList.add('hidden');
+        return;
+    }
+
+    section.classList.remove('hidden');
+    const sub = getSubstance(currentSubstanceId);
+    const unit = sub?.defaultUnit || 'units';
+    const giftLogs = filterLogsByDateRange(
+        (appData.logs || []).filter(l => getUseSubstanceId(l) === currentSubstanceId),
+        bounds?.startDate,
+        bounds?.endDate
+    );
+    const metrics = getGiftMetricsFromLogs(giftLogs);
+
+    setText('stats-gift-given', `${metrics.given.toFixed(1)} ${unit}`);
+    setText('stats-gift-received', `${metrics.received.toFixed(1)} ${unit}`);
+    const netLabel = metrics.net >= 0 ? `+${metrics.net.toFixed(1)}` : metrics.net.toFixed(1);
+    setText('stats-gift-net', `${netLabel} ${unit}`);
+
+    renderGiftPartyBreakdown('stats-gift-recipients', metrics.recipients, unit);
+    renderGiftPartyBreakdown('stats-gift-senders', metrics.senders, unit);
+}
+
+function renderGiftPartyBreakdown(containerId, totalsMap, unit) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    const sorted = Object.entries(totalsMap).sort((a, b) => b[1] - a[1]).slice(0, 10);
+    if (!sorted.length) {
+        container.innerHTML = '<p class="empty-hint">No data yet</p>';
+        return;
+    }
+    container.innerHTML = sorted.map(([name, amt]) =>
+        `<div class="breakdown-row"><span>${name}</span><strong>${amt.toFixed(1)} ${unit}</strong></div>`
+    ).join('');
+}
+
 function renderTaperProgressStats(substanceId) {
     const el = document.getElementById('stats-taper-progress');
     if (!el) return;
@@ -4090,30 +5560,112 @@ function renderTaperProgressStats(substanceId) {
     el.textContent = `${pct}% (${plan.startingDailyAverage ?? plan.currentAvg} → ${plan.goalDailyAverage ?? plan.goalAvg})`;
 }
 
-function renderUsageChart() {
-    const container = document.getElementById('cigarettes-per-day-chart');
-    container.innerHTML = '';
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const today = new Date();
-    const weekData = [];
-    for (let i = 6; i >= 0; i--) {
-        const date = new Date(today);
-        date.setDate(date.getDate() - i);
-        const dateStr = date.toISOString().split('T')[0];
-        const count = appData.logs.filter(l => l.date === dateStr && l.substanceId === currentSubstanceId).reduce((s, l) => s + l.amount, 0);
-        weekData.push({ day: days[date.getDay()], count });
+function buildUsageChartBuckets(bounds) {
+    const { startDate, endDate } = bounds;
+    const grouping = getStatsChartGrouping(startDate, endDate);
+    const logs = getUseEntries().filter(
+        l => logMatchesSubstance(l, currentSubstanceId) && isPersonalUseLog(l)
+    );
+    const filtered = filterLogsByDateRange(logs, startDate, endDate);
+    const buckets = [];
+
+    if (grouping === 'day') {
+        let cursor = new Date(startDate + 'T12:00:00');
+        const end = new Date(endDate + 'T12:00:00');
+        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        while (cursor <= end) {
+            const dateStr = toDateStr(cursor);
+            const count = filtered
+                .filter(l => l.date === dateStr)
+                .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+            buckets.push({
+                label: dayNames[cursor.getDay()],
+                detail: cursor.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                bucketStart: dateStr,
+                bucketEnd: dateStr,
+                count
+            });
+            cursor.setDate(cursor.getDate() + 1);
+        }
+        return { grouping, buckets };
     }
-    const max = Math.max(...weekData.map(d => d.count), 1);
-    weekData.forEach(data => {
+
+    if (grouping === 'week') {
+        let cursor = new Date(startDate + 'T12:00:00');
+        cursor.setDate(cursor.getDate() - cursor.getDay());
+        const end = new Date(endDate + 'T12:00:00');
+        while (cursor <= end) {
+            const weekStartStr = toDateStr(cursor);
+            const weekEnd = new Date(cursor);
+            weekEnd.setDate(weekEnd.getDate() + 6);
+            const weekEndStr = toDateStr(weekEnd);
+            const count = filtered
+                .filter(l => l.date >= weekStartStr && l.date <= weekEndStr)
+                .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+            buckets.push({
+                label: cursor.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+                detail: 'Week',
+                bucketStart: weekStartStr,
+                bucketEnd: weekEndStr,
+                count
+            });
+            cursor.setDate(cursor.getDate() + 7);
+        }
+        return { grouping, buckets };
+    }
+
+    let cursor = new Date(startDate.slice(0, 7) + '-01T12:00:00');
+    const end = new Date(endDate.slice(0, 7) + '-01T12:00:00');
+    while (cursor <= end) {
+        const monthKey = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
+        const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
+        const count = filtered
+            .filter(l => l.date.startsWith(monthKey))
+            .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+        buckets.push({
+            label: cursor.toLocaleDateString('en-US', { month: 'short' }),
+            detail: String(cursor.getFullYear()),
+            bucketStart: `${monthKey}-01`,
+            bucketEnd: toDateStr(monthEnd),
+            count
+        });
+        cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return { grouping, buckets };
+}
+
+function renderUsageChart(bounds) {
+    const container = document.getElementById('cigarettes-per-day-chart');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const { grouping, buckets } = buildUsageChartBuckets(bounds);
+    const titleEl = document.getElementById('usage-chart-title');
+    if (titleEl) {
+        titleEl.textContent = grouping === 'month'
+            ? 'Usage Per Month'
+            : grouping === 'week'
+                ? 'Usage Per Week'
+                : 'Usage Per Day';
+    }
+
+    if (!buckets.length) {
+        container.innerHTML = '<p class="empty-hint">No usage in selected range</p>';
+        return;
+    }
+
+    const max = Math.max(...buckets.map(d => d.count), 1);
+    buckets.forEach(data => {
         const bar = document.createElement('div');
         bar.className = 'chart-bar';
         bar.style.height = `${Math.max((data.count / max) * 100, 4)}%`;
-        bar.innerHTML = `<span class="chart-bar-value">${data.count}</span><span class="chart-bar-label">${data.day}</span>`;
+        bar.title = data.detail ? `${data.detail}: ${data.count}` : String(data.count);
+        bar.innerHTML = `<span class="chart-bar-value">${data.count.toFixed(1)}</span><span class="chart-bar-label">${data.label}</span>`;
         container.appendChild(bar);
     });
 }
 
-function renderSpendingChart() {
+function renderSpendingChart(bounds) {
     const container = document.getElementById('spending-per-day-chart');
     if (!container) return;
     container.innerHTML = '';
@@ -4122,22 +5674,36 @@ function renderSpendingChart() {
         container.innerHTML = '<p class="empty-hint">Cost tracking disabled for this substance</p>';
         return;
     }
-    const days = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-    const today = new Date();
-    const weekData = [];
-    for (let i = 6; i >= 0; i--) {
-        const date = new Date(today);
-        date.setDate(date.getDate() - i);
-        const dateStr = date.toISOString().split('T')[0];
-        const cost = getSubstancePurchaseSpend(currentSubstanceId, p => p.date === dateStr);
-        weekData.push({ day: days[date.getDay()], cost });
+
+    const { grouping, buckets } = buildUsageChartBuckets(bounds);
+    const titleEl = document.getElementById('spending-chart-title');
+    if (titleEl) {
+        titleEl.textContent = grouping === 'month'
+            ? 'Spending Per Month'
+            : grouping === 'week'
+                ? 'Spending Per Week'
+                : 'Spending Per Day';
     }
-    const maxCost = Math.max(...weekData.map(d => d.cost), 0.01);
-    weekData.forEach(data => {
+
+    const purchases = (appData.purchases || []).filter(
+        p => getPurchaseSubstanceId(p) === currentSubstanceId
+            && p.date >= bounds.startDate
+            && p.date <= bounds.endDate
+    );
+
+    const spendBuckets = buckets.map(bucket => ({
+        ...bucket,
+        cost: purchases
+            .filter(p => p.date >= bucket.bucketStart && p.date <= bucket.bucketEnd)
+            .reduce((s, p) => s + (p.totalCost ?? p.cost ?? 0), 0)
+    }));
+
+    const maxCost = Math.max(...spendBuckets.map(d => d.cost), 0.01);
+    spendBuckets.forEach(data => {
         const bar = document.createElement('div');
         bar.className = 'chart-bar chart-bar-spend';
         bar.style.height = `${Math.max((data.cost / maxCost) * 100, 4)}%`;
-        bar.innerHTML = `<span class="chart-bar-value">${appData.settings.currency}${data.cost.toFixed(0)}</span><span class="chart-bar-label">${data.day}</span>`;
+        bar.innerHTML = `<span class="chart-bar-value">${appData.settings.currency}${data.cost.toFixed(0)}</span><span class="chart-bar-label">${data.label}</span>`;
         container.appendChild(bar);
     });
 }
@@ -4631,32 +6197,39 @@ function getTaperDayStatus(substanceId, dateStr) {
     return getTaperLimitStatus(used, limit).status;
 }
 
-function confirmTaperBeforeLog(substanceId, amount, isQuickLog, excludeLogId = null) {
+function confirmTaperBeforeLog(substanceId, amount, isQuickLog, excludeLogId = null, transactionType = 'use', entryDate = null) {
+    if (!isPersonalUseLog({ transactionType })) return true;
+
     const sub = getSubstance(substanceId);
     if (!sub?.taperTrackingEnabled) return true;
 
     const plan = appData.taperPlans[substanceId];
     if (!plan || plan.isPaused) return true;
 
-    const today = new Date().toISOString().split('T')[0];
-    const dailyLimit = getDailyLimitForDate(substanceId, today);
-    const usedToday = getUsedAmount(substanceId, today, excludeLogId);
-    let weekUsed = getWeeklyUsed(substanceId, today);
+    const checkDate = entryDate || new Date().toISOString().split('T')[0];
+    const dailyLimit = getDailyLimitForDate(substanceId, checkDate);
+    const usedToday = getUsedAmountForDate(substanceId, checkDate, excludeLogId);
+    const weekUsed = getUsedAmountForWeek(substanceId, checkDate, excludeLogId);
+    const projectedToday = usedToday + amount;
+    const projectedWeek = weekUsed + amount;
+
     if (excludeLogId) {
         const ex = findUseEntry(excludeLogId);
-        if (ex && getUseSubstanceId(ex) === substanceId) {
-            const ws = getWeekStartDateStr(today);
-            const we = addDaysToDateStr(ws, 6);
-            if (ex.date >= ws && ex.date <= we) weekUsed -= parseFloat(ex.amount) || 0;
+        if (ex && logMatchesSubstance(ex, substanceId) && ex.date === checkDate) {
+            const originalAmount = parseFloat(ex.amount) || 0;
+            if (Math.abs(amount - originalAmount) < 0.001) return true;
         }
     }
 
-    if (plan.doNotSurpassDaily && dailyLimit != null && usedToday + amount > dailyLimit) {
-        if (!confirm('This entry will exceed your daily taper target. Log anyway?')) return false;
+    if (plan.doNotSurpassDaily && dailyLimit != null && projectedToday > dailyLimit) {
+        const msg = excludeLogId
+            ? `Editing this entry would put that day at ${projectedToday.toFixed(1)} / ${dailyLimit} ${sub.defaultUnit}. Log anyway?`
+            : `This entry would put ${checkDate === new Date().toISOString().split('T')[0] ? 'today' : 'that day'} at ${projectedToday.toFixed(1)} / ${dailyLimit} ${sub.defaultUnit}. Log anyway?`;
+        if (!confirm(msg)) return false;
     }
 
-    const weeklyLimit = getWeeklyLimit(substanceId, today);
-    if (plan.doNotSurpassWeekly && weeklyLimit != null && weekUsed + amount > weeklyLimit) {
+    const weeklyLimit = getWeeklyLimit(substanceId, checkDate);
+    if (plan.doNotSurpassWeekly && weeklyLimit != null && projectedWeek > weeklyLimit) {
         if (!confirm('This entry will exceed your weekly taper target. Log anyway?')) return false;
     }
 
@@ -5203,7 +6776,7 @@ function updateDoNotSurpassDisplay(prefix, substanceId) {
     if (subLabel) subLabel.textContent = `(${sub.name})`;
 
     const isManual = isManualWeeklyPlan(plan);
-    manualCard?.classList.toggle('hidden', !isManual);
+    manualCard?.classList.toggle('hidden', true);
 
     if (isManual) {
         const weekNum = getManualWeeklyWeekNumber(plan, today);
@@ -5211,7 +6784,7 @@ function updateDoNotSurpassDisplay(prefix, substanceId) {
         const target = weekRow?.targetAmount ?? weekRow?.weeklyMax ?? weeklyLimit ?? 0;
         const actual = weekRow?.actualUsed ?? weeklyUsed;
         const rem = Math.max(0, target - actual);
-        const weekStatus = applyTaperProgressBar(
+        applyTaperProgressBar(
             document.getElementById('dash-manual-week-bar'),
             document.getElementById('dash-manual-week-bar-text'),
             actual,
@@ -5223,19 +6796,13 @@ function updateDoNotSurpassDisplay(prefix, substanceId) {
         set('dash-manual-week-actual', `${actual} ${unit}/week`);
         set('dash-manual-week-remaining', `${rem.toFixed(1)} ${unit}`);
 
-        const goalUsed = getManualWeeklyGoalUsed(plan, substanceId, today);
-        const goalAmount = plan.goalLimitAmount > 0 ? plan.goalLimitAmount : null;
-        const goalStatusEl = document.getElementById('dash-manual-week-goal-status');
-        if (goalStatusEl && goalAmount != null) {
-            const goalStat = getManualWeeklyGoalStatus(goalUsed, goalAmount);
-            const period = plan.goalLimitType === 'weekly' ? 'week' : 'day';
-            goalStatusEl.textContent = `${goalStat.emoji} ${goalStat.label} (${goalUsed.toFixed(1)}/${goalAmount} ${unit}/${period})`;
-            goalStatusEl.className = `dns-status dns-status-${goalStat.status}`;
-        } else if (goalStatusEl) {
-            const { emoji, label } = getManualWeeklyStatus(actual, target);
-            goalStatusEl.textContent = `${emoji} ${label}`;
-            goalStatusEl.className = `dns-status dns-status-${weekStatus}`;
+        const manualNote = document.getElementById('dashboard-taper-manual-note');
+        if (manualNote) {
+            manualNote.textContent = `Manual plan · Week ${weekNum}: ${actual}/${target} ${unit}/week`;
+            manualNote.classList.remove('hidden');
         }
+    } else {
+        document.getElementById('dashboard-taper-manual-note')?.classList.add('hidden');
     }
 
     if (dailyLimit != null) {
@@ -5426,10 +6993,30 @@ function addDaysToDateStr(dateStr, days) {
     return d.toISOString().split('T')[0];
 }
 
+function getUsedAmountForDate(substanceId, date, excludeLogId = null, data = appData) {
+    return getUseEntries(data)
+        .filter(log =>
+            logMatchesSubstance(log, substanceId, data)
+            && log.date === date
+            && !logIdEquals(log.id, excludeLogId)
+            && isPersonalUseLog(log)
+        )
+        .reduce((sum, log) => sum + Number(log.amount || 0), 0);
+}
+
+function getUsedAmountForWeek(substanceId, date, excludeLogId = null, data = appData) {
+    return getUseEntries(data)
+        .filter(log =>
+            logMatchesSubstance(log, substanceId, data)
+            && isSameTaperWeek(log.date, date)
+            && !logIdEquals(log.id, excludeLogId)
+            && isPersonalUseLog(log)
+        )
+        .reduce((sum, log) => sum + Number(log.amount || 0), 0);
+}
+
 function getUsedAmount(substanceId, dateStr, excludeLogId = null, data = appData) {
-    return (data?.logs || [])
-        .filter(l => l.date === dateStr && getUseSubstanceId(l) === substanceId && l.id !== excludeLogId)
-        .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+    return getUsedAmountForDate(substanceId, dateStr, excludeLogId, data);
 }
 
 function getWeekStartDateStr(dateStr) {
@@ -5438,17 +7025,8 @@ function getWeekStartDateStr(dateStr) {
     return d.toISOString().split('T')[0];
 }
 
-function getWeeklyUsed(substanceId, dateStr) {
-    const weekStart = new Date(getWeekStartDateStr(dateStr) + 'T12:00:00');
-    const weekEnd = new Date(weekStart);
-    weekEnd.setDate(weekStart.getDate() + 6);
-    const inWeek = (date) => {
-        const ld = new Date(date + 'T12:00:00');
-        return ld >= weekStart && ld <= weekEnd;
-    };
-    return appData.logs
-        .filter(l => getUseSubstanceId(l) === substanceId && inWeek(l.date))
-        .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+function getWeeklyUsed(substanceId, dateStr, excludeLogId = null, data = appData) {
+    return getUsedAmountForWeek(substanceId, dateStr, excludeLogId, data);
 }
 
 function updateTaperProgress() {
@@ -5528,7 +7106,7 @@ function renderCalendar() {
         }).join('');
         if (ids.length > 2) indicators += '<span class="substance-indicator">+</span>';
 
-        cell.innerHTML = `<span>${day}</span>${indicators ? `<div class="substance-indicators">${indicators}</div>` : ''}${dayLogs.length ? `<span class="calendar-day-count">${dayLogs.reduce((s, l) => s + l.amount, 0)}</span>` : ''}`;
+        cell.innerHTML = `<span>${day}</span>${indicators ? `<div class="substance-indicators">${indicators}</div>` : ''}${dayLogs.length ? `<span class="calendar-day-count">${dayLogs.filter(isPersonalUseLog).reduce((s, l) => s + l.amount, 0)}</span>` : ''}`;
         cell.onclick = () => selectDate(dateStr);
         container.appendChild(cell);
     }
@@ -5557,7 +7135,7 @@ function renderDayDetails(dateStr) {
     const dayPurchaseSpend = (appData.purchases || [])
         .filter(p => p.date === dateStr)
         .reduce((s, p) => s + (p.totalCost ?? p.cost ?? 0), 0);
-    let html = `<p><strong>${formatDate(dateStr)}</strong></p><p>Total uses: ${dayLogs.reduce((s, l) => s + l.amount, 0)}</p><p>Purchases: ${appData.settings.currency}${dayPurchaseSpend.toFixed(2)}</p><p>Cravings: ${dayCravings.length}</p>`;
+    let html = `<p><strong>${formatDate(dateStr)}</strong></p><p>Total uses: ${dayLogs.filter(isPersonalUseLog).reduce((s, l) => s + l.amount, 0)}</p><p>Purchases: ${appData.settings.currency}${dayPurchaseSpend.toFixed(2)}</p><p>Cravings: ${dayCravings.length}</p>`;
 
     if (limit != null && sub) {
         const { emoji, label } = getTaperLimitStatus(used, limit);
@@ -5565,8 +7143,11 @@ function renderDayDetails(dateStr) {
     }
     dayLogs.forEach(log => {
         const sub = getSubstance(log.substanceId);
-        const supplyLine = formatLinkedPurchaseDisplay(log);
-        html += `<div class="list-item"><div>${sub?.icon} ${log.amount} ${log.unit} ${sub?.name} at ${log.startTime || log.time || ''}<br><small>${supplyLine}</small></div></div>`;
+        const supplyLine = formatInventoryLinkDisplay(log);
+        const label = isPersonalUseLog(log)
+            ? `${sub?.icon} ${log.amount} ${log.unit} ${sub?.name} at ${log.startTime || log.time || ''}`
+            : `${formatLogHistoryLabel(log, sub)} at ${log.startTime || log.time || ''}`;
+        html += `<div class="list-item"><div>${label}<br><small>${supplyLine}</small></div></div>`;
     });
     dayCravings.forEach(c => {
         const sub = getSubstance(c.substanceId);
@@ -5710,6 +7291,7 @@ function cleanExportData(data) {
         logs: (data.logs || []).map(l => ({
             id: l.id,
             type: l.type || 'quick',
+            transactionType: getLogTransactionType(l),
             substanceId: l.substanceId || l.substance || '',
             date: l.date,
             startTime: l.startTime || l.time || '',
@@ -5717,9 +7299,13 @@ function cleanExportData(data) {
             amount: Number(l.amount || 0),
             unit: l.unit || 'units',
             count: Number(l.count || 0),
+            giftPartyName: l.giftPartyName || '',
+            adjustmentDirection: l.adjustmentDirection || null,
             notes: l.notes || '',
             linkedPurchaseId: l.linkedPurchaseId || null,
             linkedPurchases: l.linkedPurchases || [],
+            inventoryAffects: logInventoryAffects(l),
+            supplyUnlinked: !logInventoryAffects(l),
             ...(l.breakMinutes != null ? {
                 breakMinutes: l.breakMinutes,
                 breakHours: l.breakHours,
@@ -5825,6 +7411,9 @@ function validateBackupData(data) {
         return { ok: false, error: 'Invalid backup file format.' };
     }
     if (!Array.isArray(data.substances)) return { ok: false, error: 'Backup is missing a substances list.' };
+    if (!Array.isArray(data.logs) && Array.isArray(data.useLogs)) {
+        data.logs = data.useLogs;
+    }
     if (!Array.isArray(data.logs)) return { ok: false, error: 'Backup is missing a logs list.' };
     if (!Array.isArray(data.purchases)) return { ok: false, error: 'Backup is missing a purchases list.' };
     if (!data.settings || typeof data.settings !== 'object') {
@@ -5844,6 +7433,10 @@ function mergeArrayById(existing, incoming) {
 
 function mergeImportedData(current, imported) {
     const merged = JSON.parse(JSON.stringify(current));
+    if (Array.isArray(imported.useLogs)) {
+        imported.logs = mergeArrayById(imported.logs || [], imported.useLogs);
+        delete imported.useLogs;
+    }
     merged.substances = mergeArrayById(merged.substances, imported.substances);
     merged.logs = mergeArrayById(merged.logs, imported.logs);
     merged.purchases = mergeArrayById(merged.purchases, imported.purchases);
