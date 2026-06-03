@@ -408,6 +408,412 @@ function ensureAppDataSettings(data) {
     }
     if (!data.settings.currency) data.settings.currency = '$';
     if (data.settings.reminderMessage === undefined) data.settings.reminderMessage = '';
+    ensureTableColumnSettings(data);
+    ensureCollapsedSections(data);
+}
+
+const DEFAULT_COLLAPSED_SECTIONS = {
+    useLogForm: false,
+    recentUse: false,
+    bulkActions: true,
+    useHistory: false,
+    purchaseForm: false,
+    purchaseHistory: false,
+    buySpendingTrend: true,
+    buyMetrics: true,
+    statsDateRange: false,
+    statsUsageChart: true,
+    statsUseStats: false,
+    statsBreakMetrics: true,
+    statsBuyMetrics: true,
+    taperTodayStatus: false,
+    taperReductionPlan: true,
+    taperWeeklyPlan: false,
+    taperCalendarPreview: true,
+    taperInsights: true,
+    settingsSubstances: false,
+    settingsMainSubstance: true,
+    settingsPreferences: true,
+    settingsBackup: true
+};
+
+function ensureCollapsedSections(data) {
+    if (!data.settings) data.settings = {};
+    if (!data.settings.collapsedSections) {
+        data.settings.collapsedSections = { ...DEFAULT_COLLAPSED_SECTIONS };
+        return;
+    }
+    const stored = data.settings.collapsedSections;
+    Object.keys(DEFAULT_COLLAPSED_SECTIONS).forEach(key => {
+        if (stored[key] === undefined) stored[key] = DEFAULT_COLLAPSED_SECTIONS[key];
+    });
+    if (stored.statsCharts !== undefined && stored.statsUsageChart === undefined) {
+        stored.statsUsageChart = stored.statsCharts;
+    }
+}
+
+function toggleSection(sectionKey) {
+    ensureCollapsedSections(appData);
+    const current = !!appData.settings.collapsedSections[sectionKey];
+    appData.settings.collapsedSections[sectionKey] = !current;
+    saveData(appData);
+    applyCollapsedSections();
+    if (sectionKey === 'purchaseHistory') {
+        renderPurchaseHistory();
+    }
+}
+
+function applyCollapsedSections() {
+    ensureCollapsedSections(appData);
+    const collapsed = appData.settings?.collapsedSections || {};
+
+    document.querySelectorAll('.collapsible-section').forEach(section => {
+        const key = section.dataset.section;
+        if (!key) return;
+        const isCollapsed = !!collapsed[key];
+
+        section.classList.toggle('collapsed', isCollapsed);
+        const content = section.querySelector('.section-content');
+        const chevron = section.querySelector('.chevron');
+
+        if (content) {
+            content.hidden = isCollapsed;
+            content.style.display = isCollapsed ? 'none' : 'block';
+        }
+        if (chevron) chevron.textContent = isCollapsed ? '›' : '⌄';
+    });
+}
+
+const TABLE_COLUMN_DEFAULTS = {
+    useHistory: {
+        order: ['select', 'date', 'start', 'end', 'duration', 'amount', 'unit', 'count', 'rate', 'break', 'supply', 'notes', 'actions'],
+        hidden: []
+    },
+    purchaseHistory: {
+        order: ['date', 'time', 'substance', 'bought', 'remaining', 'usedPct', 'supplyDuration', 'sinceLastUse', 'supply', 'cost', 'store', 'break', 'actions'],
+        hidden: []
+    }
+};
+
+const TABLE_COLUMN_LABELS = {
+    useHistory: {
+        select: 'Select',
+        date: 'Date',
+        start: 'Start',
+        end: 'End',
+        duration: 'Duration',
+        amount: 'Amount',
+        unit: 'Unit',
+        count: 'Count',
+        rate: 'Rate',
+        break: 'Break Since Previous',
+        supply: 'Supply',
+        notes: 'Notes',
+        actions: 'Actions'
+    },
+    purchaseHistory: {
+        date: 'Date',
+        time: 'Time',
+        substance: 'Substance',
+        bought: 'Bought',
+        remaining: 'Remaining',
+        usedPct: 'Used %',
+        supplyDuration: 'Supply Duration',
+        sinceLastUse: 'Since Last Use',
+        supply: 'Supply',
+        cost: 'Cost',
+        store: 'Store',
+        break: 'Break Since Previous Buy',
+        actions: 'Actions'
+    }
+};
+
+const TABLE_COLUMNS_REQUIRED = {
+    useHistory: ['select', 'actions'],
+    purchaseHistory: ['actions']
+};
+
+let columnSettingsTableKey = null;
+
+function ensureTableColumnSettings(data) {
+    if (!data.settings) data.settings = {};
+    if (!data.settings.tableColumns) {
+        data.settings.tableColumns = JSON.parse(JSON.stringify(TABLE_COLUMN_DEFAULTS));
+        return;
+    }
+    Object.keys(TABLE_COLUMN_DEFAULTS).forEach(tableKey => {
+        const defaults = TABLE_COLUMN_DEFAULTS[tableKey];
+        const stored = data.settings.tableColumns[tableKey] || {};
+        const order = Array.isArray(stored.order) ? stored.order.filter(id => defaults.order.includes(id)) : [];
+        defaults.order.forEach(id => {
+            if (!order.includes(id)) order.push(id);
+        });
+        const hidden = Array.isArray(stored.hidden)
+            ? stored.hidden.filter(id => defaults.order.includes(id) && !(TABLE_COLUMNS_REQUIRED[tableKey] || []).includes(id))
+            : [];
+        data.settings.tableColumns[tableKey] = { order, hidden };
+    });
+}
+
+function getTableColumnConfig(tableKey) {
+    ensureTableColumnSettings(appData);
+    return appData.settings.tableColumns[tableKey] || TABLE_COLUMN_DEFAULTS[tableKey];
+}
+
+function getEffectiveColumnOrder(tableKey) {
+    const defaults = TABLE_COLUMN_DEFAULTS[tableKey];
+    const config = getTableColumnConfig(tableKey);
+    const hidden = new Set(config.hidden || []);
+    const required = new Set(TABLE_COLUMNS_REQUIRED[tableKey] || []);
+    const order = [...config.order];
+    defaults.order.forEach(id => {
+        if (!order.includes(id)) order.push(id);
+    });
+    return order.filter(id => defaults.order.includes(id) && (!hidden.has(id) || required.has(id)));
+}
+
+function saveTableColumnConfig(tableKey, config) {
+    ensureTableColumnSettings(appData);
+    appData.settings.tableColumns[tableKey] = config;
+    saveData(appData);
+}
+
+function resetTableColumnConfig(tableKey) {
+    saveTableColumnConfig(tableKey, JSON.parse(JSON.stringify(TABLE_COLUMN_DEFAULTS[tableKey])));
+}
+
+function openColumnSettingsModal(tableKey) {
+    columnSettingsTableKey = tableKey;
+    const modal = document.getElementById('column-settings-modal');
+    const title = document.getElementById('column-settings-title');
+    if (title) {
+        title.textContent = tableKey === 'useHistory' ? 'Customize Use History Columns' : 'Customize Purchase History Columns';
+    }
+    renderColumnSettingsList(tableKey);
+    modal?.classList.remove('hidden');
+}
+
+function closeColumnSettingsModal() {
+    columnSettingsTableKey = null;
+    document.getElementById('column-settings-modal')?.classList.add('hidden');
+}
+
+function renderColumnSettingsList(tableKey) {
+    const list = document.getElementById('column-settings-list');
+    if (!list) return;
+    const config = getTableColumnConfig(tableKey);
+    const labels = TABLE_COLUMN_LABELS[tableKey];
+    const required = new Set(TABLE_COLUMNS_REQUIRED[tableKey] || []);
+    const hidden = new Set(config.hidden || []);
+    const order = [...config.order];
+    TABLE_COLUMN_DEFAULTS[tableKey].order.forEach(id => {
+        if (!order.includes(id)) order.push(id);
+    });
+
+    list.innerHTML = order.map(colId => {
+        const checked = !hidden.has(colId);
+        const disabled = required.has(colId) ? 'disabled checked' : (checked ? 'checked' : '');
+        const reqNote = required.has(colId) ? ' <span class="column-required-tag">(required)</span>' : '';
+        return `<li class="column-settings-item" draggable="true" data-col-id="${colId}">
+            <span class="column-drag-handle" draggable="true" aria-hidden="true">☰</span>
+            <label class="column-settings-label">
+                <input type="checkbox" class="column-settings-visible" data-col-id="${colId}" ${disabled}>
+                ${labels[colId] || colId}${reqNote}
+            </label>
+        </li>`;
+    }).join('');
+}
+
+function readColumnSettingsFromModal(tableKey) {
+    const list = document.getElementById('column-settings-list');
+    if (!list) return getTableColumnConfig(tableKey);
+    const required = new Set(TABLE_COLUMNS_REQUIRED[tableKey] || []);
+    const order = [...list.querySelectorAll('.column-settings-item')].map(li => li.dataset.colId);
+    const hidden = [];
+    list.querySelectorAll('.column-settings-visible').forEach(input => {
+        if (!input.checked && !required.has(input.dataset.colId)) {
+            hidden.push(input.dataset.colId);
+        }
+    });
+    return { order, hidden };
+}
+
+function applyColumnSettingsFromModal() {
+    if (!columnSettingsTableKey) return;
+    const tableKey = columnSettingsTableKey;
+    const config = readColumnSettingsFromModal(tableKey);
+    saveTableColumnConfig(tableKey, config);
+    closeColumnSettingsModal();
+    if (tableKey === 'useHistory') {
+        renderUseHistoryTable();
+    } else {
+        renderPurchaseHistory(isAllSubstancesView() ? null : currentSubstanceId);
+    }
+}
+
+function resetColumnSettingsFromModal() {
+    if (!columnSettingsTableKey) return;
+    const tableKey = columnSettingsTableKey;
+    resetTableColumnConfig(tableKey);
+    renderColumnSettingsList(tableKey);
+    if (tableKey === 'useHistory') {
+        renderUseHistoryTable();
+    } else {
+        renderPurchaseHistory(isAllSubstancesView() ? null : currentSubstanceId);
+    }
+}
+
+function setupColumnSettingsModal() {
+    document.getElementById('use-history-customize-columns')?.addEventListener('click', () => {
+        openColumnSettingsModal('useHistory');
+    });
+    document.getElementById('purchase-history-customize-columns')?.addEventListener('click', () => {
+        openColumnSettingsModal('purchaseHistory');
+    });
+    document.getElementById('column-settings-close')?.addEventListener('click', closeColumnSettingsModal);
+    document.getElementById('column-settings-apply')?.addEventListener('click', applyColumnSettingsFromModal);
+    document.getElementById('column-settings-reset')?.addEventListener('click', resetColumnSettingsFromModal);
+
+    const list = document.getElementById('column-settings-list');
+    if (!list) return;
+
+    let dragItem = null;
+
+    list.addEventListener('dragstart', e => {
+        if (!e.target.closest('.column-drag-handle')) {
+            e.preventDefault();
+            return;
+        }
+        const item = e.target.closest('.column-settings-item');
+        if (!item) return;
+        dragItem = item;
+        item.classList.add('column-settings-dragging');
+        e.dataTransfer.effectAllowed = 'move';
+        e.dataTransfer.setData('text/plain', item.dataset.colId);
+    });
+
+    list.addEventListener('dragend', () => {
+        dragItem?.classList.remove('column-settings-dragging');
+        dragItem = null;
+        list.querySelectorAll('.column-settings-item').forEach(el => el.classList.remove('column-settings-drop-target'));
+    });
+
+    list.addEventListener('dragover', e => {
+        e.preventDefault();
+        const item = e.target.closest('.column-settings-item');
+        if (!item || item === dragItem) return;
+        list.querySelectorAll('.column-settings-item').forEach(el => el.classList.remove('column-settings-drop-target'));
+        item.classList.add('column-settings-drop-target');
+    });
+
+    list.addEventListener('drop', e => {
+        e.preventDefault();
+        const target = e.target.closest('.column-settings-item');
+        if (!target || !dragItem || target === dragItem) return;
+        const items = [...list.querySelectorAll('.column-settings-item')];
+        const dragIdx = items.indexOf(dragItem);
+        const targetIdx = items.indexOf(target);
+        if (dragIdx < targetIdx) target.after(dragItem);
+        else target.before(dragItem);
+        target.classList.remove('column-settings-drop-target');
+    });
+}
+
+function renderUseHistoryHeaderCell(colId) {
+    const labels = TABLE_COLUMN_LABELS.useHistory;
+    if (colId === 'select') {
+        return `<th class="use-history-cb-col"><span class="sr-only">${labels.select}</span></th>`;
+    }
+    if (colId === 'actions') {
+        return `<th class="actions-cell">${labels.actions}</th>`;
+    }
+    return `<th>${labels[colId] || colId}</th>`;
+}
+
+function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
+    const rateStr = entry.useRate != null ? `${entry.useRate.toFixed(2)}/${sub.defaultUnit}/hr` : '—';
+    const checked = useHistorySelectionHas(entry.id) ? 'checked' : '';
+    switch (colId) {
+        case 'select':
+            return `<td class="use-history-cb-col"><input type="checkbox" class="use-history-row-cb" data-log-id="${entry.id}" aria-label="Select session" ${checked}></td>`;
+        case 'date':
+            return `<td>${formatDate(entry.date)}</td>`;
+        case 'start':
+            return `<td>${entry.startTime || entry.time || '—'}</td>`;
+        case 'end':
+            return `<td>${entry.endTime || '—'}</td>`;
+        case 'duration':
+            return `<td>${formatDurationHours(entry.durationHours)}</td>`;
+        case 'amount':
+            return `<td>${entry.amount}</td>`;
+        case 'unit':
+            return `<td>${entry.unit}</td>`;
+        case 'count':
+            return `<td>${entry.count || '—'}</td>`;
+        case 'rate':
+            return `<td>${rateStr}</td>`;
+        case 'break':
+            return `<td>${renderBreakSincePreviousCell(entry)}</td>`;
+        case 'supply':
+            return `<td class="supply-cell session-supply-cell">${formatInventoryLinkDisplay(entry)}</td>`;
+        case 'notes':
+            return `<td class="notes-cell session-notes-cell">${entry.notes || ''}</td>`;
+        case 'actions':
+            return `<td class="actions-cell use-history-actions-cell">
+                <button type="button" class="secondary-btn" onclick="editUseEntry(${entry.id})">Edit</button>
+                <button type="button" class="delete-btn" onclick="deleteUseEntry(${entry.id})">×</button>
+            </td>`;
+        default:
+            return '<td>—</td>';
+    }
+}
+
+function renderPurchaseHistoryHeaderCell(colId) {
+    const labels = TABLE_COLUMN_LABELS.purchaseHistory;
+    if (colId === 'actions') return `<th class="actions-cell">${labels.actions}</th>`;
+    return `<th>${labels[colId] || colId}</th>`;
+}
+
+function renderPurchaseHistoryBodyCell(colId, ctx) {
+    const {
+        purchase, sub, cur, store, bought, remaining, pctUsed, supply, unit,
+        breakCell, supplyDurationLabel, supplyDurationTooltip, sinceLastUseLabel,
+        totalNum, cpu, expanded, toggleLabel
+    } = ctx;
+    switch (colId) {
+        case 'date':
+            return `<td>${formatDate(purchase.date || '')}</td>`;
+        case 'time':
+            return `<td>${purchase.time || '—'}</td>`;
+        case 'substance':
+            return `<td>${sub?.icon || ''} ${sub?.name || 'Unknown'}</td>`;
+        case 'bought':
+            return `<td>${bought}${unit}</td>`;
+        case 'remaining':
+            return `<td>${remaining.toFixed(1)}${unit}</td>`;
+        case 'usedPct':
+            return `<td>${pctUsed}%</td>`;
+        case 'supplyDuration':
+            return `<td class="purchase-supply-duration-cell" title="${supplyDurationTooltip}">${supplyDurationLabel}</td>`;
+        case 'sinceLastUse':
+            return `<td>${sinceLastUseLabel}</td>`;
+        case 'supply':
+            return `<td class="supply-cell"><span class="purchase-supply-status ${supply.className}">${supply.label}</span></td>`;
+        case 'cost':
+            return `<td>${cur}${totalNum.toFixed(2)} <small>(${cur}${cpu.toFixed(2)}/u)</small></td>`;
+        case 'store':
+            return `<td>${store || '—'}</td>`;
+        case 'break':
+            return `<td>${breakCell}</td>`;
+        case 'actions':
+            return `<td class="actions-cell purchase-history-actions-cell">
+                <button type="button" class="secondary-btn purchase-expand-btn" data-purchase-toggle="${purchase.id}" aria-expanded="${expanded ? 'true' : 'false'}" onclick="togglePurchaseLinkedLogs(${purchase.id})">${toggleLabel}</button>
+                <button type="button" class="secondary-btn" onclick="editPurchase(${purchase.id})">Edit</button>
+                <button type="button" class="delete-btn" onclick="deletePurchase(${purchase.id})">Delete</button>
+            </td>`;
+        default:
+            return '<td>—</td>';
+    }
 }
 
 function normalizeMainSubstances(data) {
@@ -509,7 +915,7 @@ function initializeApp() {
     syncTaperSubstanceToMain();
     updateDashboard();
     renderRecentUseList();
-    renderCalendar();
+    renderHistory();
     refreshTaperDashboard();
     renderSupportContacts();
     renderReasons();
@@ -525,6 +931,7 @@ function initializeApp() {
     applyMainSubstanceToForms();
 
     updateLastSavedDisplay();
+    applyCollapsedSections();
 }
 
 function refreshAppAfterDataChange() {
@@ -543,7 +950,7 @@ function refreshAppAfterDataChange() {
     renderUseLogTab();
     updateStats();
     renderBuyTrackerTab();
-    renderCalendar();
+    renderHistory();
     syncTaperSubstanceToMain();
     refreshTaperDashboard();
     renderSubstancesList();
@@ -608,7 +1015,7 @@ function applyMainSubstanceToViewSelectors() {
     });
     const taperEl = document.getElementById('taper-substance');
     if (taperEl && [...taperEl.options].some(o => o.value === mainId)) taperEl.value = mainId;
-    const calEl = document.getElementById('calendar-substance');
+    const calEl = document.getElementById('history-substance');
     if (calEl && [...calEl.options].some(o => o.value === mainId)) calEl.value = mainId;
 }
 
@@ -682,7 +1089,7 @@ function populateAllSubstanceDropdowns() {
     populateSelect('taper-substance', taperSubs, { currentValue: mainId && taperSubs.some(s => s.id === mainId) ? mainId : taperSubs[0]?.id });
     populateSelect('use-substance', getLoggableSubstances(), { currentValue: mainId });
     populateSelect('buy-substance', active, { currentValue: mainId });
-    populateSelect('calendar-substance', taperSubs, { currentValue: mainId && taperSubs.some(s => s.id === mainId) ? mainId : taperSubs[0]?.id });
+    populateSelect('history-substance', getLoggableSubstances(), { currentValue: mainId && active.some(s => s.id === mainId) ? mainId : active[0]?.id });
     updateUseUnitDropdown();
     updateBuyUnitDropdown();
 }
@@ -778,6 +1185,7 @@ function renderSubstancesList() {
 
     if (sorted.length === 0) {
         container.innerHTML = '<p class="empty-hint">No substances yet. Add one below.</p>';
+        applyCollapsedSections();
         return;
     }
 
@@ -807,6 +1215,7 @@ function renderSubstancesList() {
         `;
         container.appendChild(item);
     });
+    applyCollapsedSections();
 }
 
 function openSubstanceEditor(id) {
@@ -1145,12 +1554,12 @@ function switchTab(tabId) {
         applyMainSubstanceToViewSelectors();
         updateStats();
     } else if (tabId === 'calendar-tab') {
-        const taperSubs = sortSubstancesMainFirst(getTaperSubstances());
+        const subs = sortSubstancesMainFirst(getLoggableSubstances());
         const mainId = getMainSubstanceId();
-        populateSelect('calendar-substance', taperSubs, {
-            currentValue: mainId && taperSubs.some(s => s.id === mainId) ? mainId : taperSubs[0]?.id
+        populateSelect('history-substance', subs, {
+            currentValue: mainId && subs.some(s => s.id === mainId) ? mainId : subs[0]?.id
         });
-        renderCalendar();
+        renderHistory();
     } else if (tabId === 'buy-tracker-tab') {
         applyMainSubstanceToForms();
         renderBuyTrackerTab();
@@ -1166,6 +1575,7 @@ function switchTab(tabId) {
         renderSubstancesList();
         loadSettings();
     }
+    applyCollapsedSections();
 }
 
 // ——— Use Log ———
@@ -1803,7 +2213,7 @@ function refreshUseLogRelatedViews() {
     updateStats();
     refreshTaperDashboard();
     refreshBuyTrackerRelatedViews();
-    renderCalendar();
+    renderHistory();
 }
 
 function getLogDatetimeMs(log) {
@@ -2796,6 +3206,7 @@ function refreshTaperDashboard() {
     renderTaperPlan();
     checkTaperTarget();
     updateTaperProgress();
+    renderHistory();
     const sid = getTaperSubstanceId();
     if (sid && !isAllSubstancesView() && currentSubstanceId === sid) {
         updateDoNotSurpassDisplay('dashboard', sid);
@@ -3786,6 +4197,7 @@ function renderRecentUseList() {
     ).slice(0, 5);
     if (!recent.length) {
         container.innerHTML = '<p class="empty-hint">No use entries yet</p>';
+        applyCollapsedSections();
         return;
     }
     recent.forEach(log => {
@@ -3817,6 +4229,7 @@ function renderRecentUseList() {
         `;
         container.appendChild(item);
     });
+    applyCollapsedSections();
 }
 
 function renderUseHistoryTable() {
@@ -3832,49 +4245,26 @@ function renderUseHistoryTable() {
             : '<p class="empty-hint">No entries yet. Log your first use above.</p>';
         updateUseHistorySelectionUI();
         syncUseHistorySelectAllCheckbox();
+        applyCollapsedSections();
         return;
     }
 
-    let tableHtml = `<div class="use-history-table-view session-table-scroll"><table class="session-table use-history-table"><thead><tr>
-        <th class="use-history-cb-col"><span class="sr-only">Select</span></th>
-        <th>Date</th><th>Type</th><th>Substance</th><th>Start</th><th>End</th><th>Duration</th><th>Amount</th><th>Unit</th>
-        <th>Count</th><th>Rate</th><th>Break Since Previous</th><th>Supply</th><th>Notes</th><th>Actions</th>
-    </tr></thead><tbody>`;
+    let tableHtml = `<div class="use-history-table-view table-scroll"><table class="session-table history-table use-history-table"><thead><tr>`;
+    const useColumns = getEffectiveColumnOrder('useHistory');
+    useColumns.forEach(colId => {
+        tableHtml += renderUseHistoryHeaderCell(colId);
+    });
+    tableHtml += '</tr></thead><tbody>';
 
     let cardsHtml = '<div class="use-history-cards">';
 
     allRows.forEach(({ entry, sub, avgRate }) => {
         const warnings = getUseRowWarnings(entry, sub.id, avgRate);
-        const rateStr = entry.useRate != null ? `${entry.useRate.toFixed(2)}/${sub.defaultUnit}/hr` : '—';
-        const typeLabel = isGiftGivenLog(entry)
-            ? 'Gift Given'
-            : isGiftReceivedLog(entry)
-                ? 'Gift Received'
-                : isInventoryAdjustmentLog(entry)
-                    ? 'Adjustment'
-                    : (entry.type === 'session' ? 'Session' : 'Quick');
-        const partyLabel = entry.giftPartyName ? ` (${entry.giftPartyName})` : '';
-        const checked = useHistorySelectionHas(entry.id) ? 'checked' : '';
-        tableHtml += `<tr class="${warnings.join(' ')}">
-            <td class="use-history-cb-col"><input type="checkbox" class="use-history-row-cb" data-log-id="${entry.id}" aria-label="Select session" ${checked}></td>
-            <td>${formatDate(entry.date)}</td>
-            <td>${renderUseLogBadge(entry)}${partyLabel ? `<span class="use-history-party">${partyLabel}</span>` : ''}</td>
-            <td>${sub.icon} ${sub.name}</td>
-            <td>${entry.startTime || entry.time || '—'}</td>
-            <td>${entry.endTime || '—'}</td>
-            <td>${formatDurationHours(entry.durationHours)}</td>
-            <td>${entry.amount}</td>
-            <td>${entry.unit}</td>
-            <td>${entry.count || '—'}</td>
-            <td>${rateStr}</td>
-            <td>${renderBreakSincePreviousCell(entry)}</td>
-            <td class="session-supply-cell">${formatInventoryLinkDisplay(entry)}</td>
-            <td class="session-notes-cell">${entry.notes || ''}</td>
-            <td class="use-history-actions-cell">
-                <button type="button" class="secondary-btn" onclick="editUseEntry(${entry.id})">Edit</button>
-                <button type="button" class="delete-btn" onclick="deleteUseEntry(${entry.id})">×</button>
-            </td>
-        </tr>`;
+        tableHtml += `<tr class="${warnings.join(' ')}">`;
+        useColumns.forEach(colId => {
+            tableHtml += renderUseHistoryBodyCell(colId, entry, sub, avgRate);
+        });
+        tableHtml += '</tr>';
         cardsHtml += renderUseHistoryCard(entry, sub, avgRate);
     });
 
@@ -3891,6 +4281,7 @@ function renderUseHistoryTable() {
     wrap.innerHTML = tableHtml + cardsHtml + legendHtml;
     updateUseHistorySelectionUI();
     syncUseHistorySelectAllCheckbox();
+    applyCollapsedSections();
 }
 
 function getTodayUseStats(substanceId) {
@@ -4071,7 +4462,7 @@ function refreshBuyTrackerRelatedViews() {
     renderBuyTrackerTab();
     updateDashboard();
     updateStats();
-    renderCalendar();
+    renderHistory();
 }
 
 function editPurchase(id) {
@@ -4671,27 +5062,49 @@ function renderBuyTrackerTab() {
     }
 
     renderBuySpendingTrend(filterId);
-    renderBuyHistory(filterId);
+    renderPurchaseHistory(filterId);
+    applyCollapsedSections();
 }
 
-function renderBuyHistory(substanceId) {
-    const wrap = document.getElementById('buy-history-table-wrap');
-    if (!wrap) return;
+function renderPurchaseHistory(substanceId) {
+    const filterId = substanceId !== undefined
+        ? substanceId
+        : (isAllSubstancesView() ? null : currentSubstanceId);
+    const container = document.getElementById('purchase-history-list')
+        || document.getElementById('buy-history-table-wrap')
+        || document.getElementById('purchase-history');
 
-    const purchases = substanceId
-        ? [...getPurchasesForSubstance(substanceId, appData, { sortAsc: false })]
+    console.log('[purchase-history] purchases', appData.purchases?.length);
+    console.log('[purchase-history] container', container);
+
+    if (!container) {
+        console.error('[purchase-history] missing container');
+        return;
+    }
+
+    if (!appData.purchases?.length) {
+        container.innerHTML = '<p class="empty-hint">No purchases yet.</p>';
+        applyCollapsedSections();
+        return;
+    }
+
+    const purchases = filterId
+        ? [...getPurchasesForSubstance(filterId, appData, { sortAsc: false })]
         : [...getPurchasesFiltered(null)].sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
 
     if (!purchases.length) {
-        wrap.innerHTML = '<p class="empty-hint">No purchases recorded</p>';
+        container.innerHTML = '<p class="empty-hint">No purchases recorded</p>';
+        applyCollapsedSections();
         return;
     }
 
     const cur = appData.settings.currency;
-    let html = `<div class="session-table-scroll"><table class="session-table purchase-history-table"><thead><tr>
-        <th>Date</th><th>Time</th><th>Substance</th><th>Bought</th><th>Remaining</th><th>Used %</th>
-        <th>Supply Duration</th><th>Since Last Use</th><th>Supply</th><th>Cost</th><th>Store</th><th>Break Since Previous Buy</th><th>Linked Logs</th><th>Actions</th>
-    </tr></thead><tbody>`;
+    const purchaseColumns = getEffectiveColumnOrder('purchaseHistory');
+    let html = `<div class="table-scroll"><table class="session-table history-table purchase-history-table"><thead><tr>`;
+    purchaseColumns.forEach(colId => {
+        html += renderPurchaseHistoryHeaderCell(colId);
+    });
+    html += '</tr></thead><tbody>';
 
     purchases.forEach(purchase => {
         const purchaseSubstanceId = getPurchaseSubstanceId(purchase);
@@ -4714,35 +5127,43 @@ function renderBuyHistory(substanceId) {
             : '—';
         const expanded = expandedPurchaseIds.has(purchase.id);
         const toggleLabel = expanded ? 'Hide Linked Logs' : 'View Linked Logs';
+        const rowCtx = {
+            purchase,
+            sub,
+            cur,
+            store,
+            bought,
+            remaining,
+            pctUsed,
+            supply,
+            unit,
+            breakCell,
+            supplyDurationLabel,
+            supplyDurationTooltip,
+            sinceLastUseLabel,
+            totalNum,
+            cpu,
+            expanded,
+            toggleLabel
+        };
 
-        html += `<tr class="purchase-history-row">
-            <td>${formatDate(purchase.date || '')}</td>
-            <td>${purchase.time || '—'}</td>
-            <td>${sub?.icon || ''} ${sub?.name || 'Unknown'}</td>
-            <td>${bought}${unit}</td>
-            <td>${remaining.toFixed(1)}${unit}</td>
-            <td>${pctUsed}%</td>
-            <td class="purchase-supply-duration-cell" title="${supplyDurationTooltip}">${supplyDurationLabel}</td>
-            <td>${sinceLastUseLabel}</td>
-            <td><span class="purchase-supply-status ${supply.className}">${supply.label}</span></td>
-            <td>${cur}${totalNum.toFixed(2)} <small>(${cur}${cpu.toFixed(2)}/u)</small></td>
-            <td>${store || '—'}</td>
-            <td>${breakCell}</td>
-            <td class="purchase-expand-cell">
-                <button type="button" class="secondary-btn purchase-expand-btn" data-purchase-toggle="${purchase.id}" aria-expanded="${expanded ? 'true' : 'false'}" onclick="togglePurchaseLinkedLogs(${purchase.id})">${toggleLabel}</button>
-            </td>
-            <td class="purchase-history-actions-cell">
-                <button type="button" class="secondary-btn" onclick="editPurchase(${purchase.id})">Edit</button>
-                <button type="button" class="delete-btn" onclick="deletePurchase(${purchase.id})">Delete</button>
-            </td>
-        </tr>`;
+        html += '<tr class="purchase-history-row">';
+        purchaseColumns.forEach(colId => {
+            html += renderPurchaseHistoryBodyCell(colId, rowCtx);
+        });
+        html += '</tr>';
         html += `<tr id="purchase-detail-${purchase.id}" class="purchase-linked-detail${expanded ? '' : ' hidden'}">
-            <td colspan="14">${renderPurchaseLinkedLogsPanel(purchase)}</td>
+            <td colspan="${purchaseColumns.length}">${renderPurchaseLinkedLogsPanel(purchase)}</td>
         </tr>`;
     });
 
     html += '</tbody></table></div>';
-    wrap.innerHTML = html;
+    container.innerHTML = html;
+    applyCollapsedSections();
+}
+
+function renderBuyHistory(substanceId) {
+    renderPurchaseHistory(substanceId);
 }
 
 function getDashboardBuyInfo(substanceId) {
@@ -4756,6 +5177,7 @@ function getDashboardBuyInfo(substanceId) {
 // ——— Event listeners ———
 function setupEventListeners() {
     setupManualBulkLinkListeners();
+    setupColumnSettingsModal();
     document.getElementById('craving-form')?.addEventListener('submit', handleCravingSubmit);
     document.getElementById('taper-form')?.addEventListener('submit', handleTaperSubmit);
     setupSubstanceForm();
@@ -5398,6 +5820,7 @@ function updateStats() {
         renderSubstanceStatsBreakdown();
         document.getElementById('stats-single-view')?.classList.add('hidden');
         document.getElementById('stats-all-view')?.classList.remove('hidden');
+        applyCollapsedSections();
         return;
     }
 
@@ -5469,6 +5892,7 @@ function updateStats() {
         c => c.substanceId === currentSubstanceId && c.date >= bounds.startDate && c.date <= bounds.endDate
     );
     setText('stats-cravings-count', String(cravingsInRange.length));
+    applyCollapsedSections();
 }
 
 function renderSubstanceStatsBreakdown() {
@@ -5557,7 +5981,16 @@ function renderTaperProgressStats(substanceId) {
     const start = new Date(plan.startDate);
     const end = new Date(plan.endDate);
     const pct = Math.round(Math.min(100, Math.max(0, ((Date.now() - start) / (end - start)) * 100)));
-    el.textContent = `${pct}% (${plan.startingDailyAverage ?? plan.currentAvg} → ${plan.goalDailyAverage ?? plan.goalAvg})`;
+    if (isManualWeeklyPlan(plan)) {
+        const weekCount = plan.manualWeeklyTargets?.length || plan.weeklyTargets?.length || 0;
+        const goalPart = plan.goalDailyAverage != null ? ` · goal ${plan.goalDailyAverage}` : '';
+        el.textContent = `${pct}% · ${weekCount} manual week${weekCount === 1 ? '' : 's'}${goalPart}`;
+    } else {
+        const startAvg = plan.startingDailyAverage ?? plan.currentAvg;
+        const goalAvg = plan.goalDailyAverage ?? plan.goalAvg;
+        const range = startAvg != null ? `${startAvg} → ${goalAvg ?? '—'}` : String(goalAvg ?? '—');
+        el.textContent = `${pct}% (${range})`;
+    }
 }
 
 function buildUsageChartBuckets(bounds) {
@@ -5854,8 +6287,9 @@ function collectManualWeeklyTargetsFromForm() {
 function addManualWeeklyWeek() {
     const targets = collectManualWeeklyTargetsFromForm();
     const last = targets[targets.length - 1];
-    const nextAmount = last ? Math.max(0, (parseFloat(last.targetAmount) || 0) - 1) : 0;
-    targets.push({ week: targets.length + 1, targetAmount: roundTaperValue(nextAmount) });
+    const lastAmt = parseFloat(last?.targetAmount);
+    const nextAmount = Number.isFinite(lastAmt) ? roundTaperValue(Math.max(0, lastAmt - 1)) : '';
+    targets.push({ week: targets.length + 1, targetAmount: nextAmount });
     renderManualWeeklyTargetsEditor(targets);
 }
 
@@ -5867,24 +6301,29 @@ function removeManualWeeklyWeek() {
     renderManualWeeklyTargetsEditor(targets);
 }
 
-function autoFillManualWeeklyTargets() {
-    const start = parseFloat(document.getElementById('manual-autofill-start')?.value);
-    const end = parseFloat(document.getElementById('manual-autofill-end')?.value);
-    let weekCount = parseInt(document.getElementById('manual-autofill-weeks')?.value, 10);
-    if (!Number.isFinite(start) || !Number.isFinite(end)) {
-        alert('Enter start and end amounts for auto fill.');
-        return;
+function parseOptionalTaperNumber(inputEl) {
+    const raw = inputEl?.value?.trim?.() ?? inputEl?.value;
+    if (raw === '' || raw == null) return null;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) ? n : null;
+}
+
+function mountManualWeeklyFormFields(isManual) {
+    const manualSection = document.getElementById('manual-weekly-plan-section');
+    const goalGroup = document.getElementById('goal-avg-group');
+    const endGroup = document.getElementById('end-date-group');
+    const startGoalRow = document.getElementById('taper-start-goal-row');
+    const endRow = document.getElementById('taper-end-weekly-row');
+    const targetsList = document.getElementById('manual-weekly-targets-list');
+    if (!manualSection || !goalGroup || !endGroup || !targetsList) return;
+
+    if (isManual) {
+        manualSection.insertBefore(endGroup, targetsList);
+        manualSection.insertBefore(goalGroup, endGroup);
+    } else {
+        startGoalRow?.appendChild(goalGroup);
+        endRow?.insertBefore(endGroup, endRow.firstChild);
     }
-    if (!Number.isFinite(weekCount) || weekCount < 1) weekCount = 1;
-    const totalWeeks = weekCount + 1;
-    const targets = [];
-    for (let i = 0; i < totalWeeks; i++) {
-        const amount = totalWeeks === 1
-            ? start
-            : start + ((end - start) * i) / (totalWeeks - 1);
-        targets.push({ week: i + 1, targetAmount: roundTaperValue(amount) });
-    }
-    renderManualWeeklyTargetsEditor(targets);
 }
 
 function getCurrentManualWeekRow(plan, dateStr) {
@@ -5907,21 +6346,40 @@ function migrateTaperPlan(plan, substanceId, data) {
     if (!plan.updatedAt) plan.updatedAt = plan.createdAt;
     if (plan.isPaused === undefined) plan.isPaused = false;
 
-    plan.startingDailyAverage = plan.startingDailyAverage ?? plan.currentAvg ?? 0;
-    plan.goalDailyAverage = plan.goalDailyAverage ?? plan.goalAvg ?? 0;
-    plan.currentAvg = plan.startingDailyAverage;
-    plan.goalAvg = plan.goalDailyAverage;
+    if (isManualWeeklyPlan(plan)) {
+        if (plan.startingDailyAverage == null && plan.currentAvg != null) {
+            plan.startingDailyAverage = plan.currentAvg;
+        }
+        plan.reductionAmount = 0;
+        plan.reductionPercent = 0;
+        if (plan.goalDailyAverage == null && plan.goalAvg != null) {
+            plan.goalDailyAverage = plan.goalAvg;
+        }
+        plan.currentAvg = plan.startingDailyAverage ?? null;
+        plan.goalAvg = plan.goalDailyAverage ?? null;
+    } else {
+        plan.startingDailyAverage = plan.startingDailyAverage ?? plan.currentAvg ?? null;
+        plan.goalDailyAverage = plan.goalDailyAverage ?? plan.goalAvg ?? 0;
+        plan.currentAvg = plan.startingDailyAverage;
+        plan.goalAvg = plan.goalDailyAverage;
+
+        if (!plan.reductionType) {
+            const map = { linear: 'reduce-amount', 'step-weekly': 'step-weekly', hold: 'fixed', custom: 'fixed' };
+            plan.reductionType = map[plan.planType] || 'reduce-amount';
+        }
+
+        const startVal = plan.startingDailyAverage ?? 0;
+        if (plan.reductionAmount == null && startVal > plan.goalDailyAverage) {
+            const weeks = Math.max(1, countWeeksBetween(plan.startDate, plan.endDate));
+            plan.reductionAmount = roundTaperValue((startVal - plan.goalDailyAverage) / weeks);
+        }
+        if (plan.reductionPercent == null) plan.reductionPercent = 10;
+    }
 
     if (!plan.reductionType) {
         const map = { linear: 'reduce-amount', 'step-weekly': 'step-weekly', hold: 'fixed', custom: 'fixed' };
         plan.reductionType = map[plan.planType] || 'reduce-amount';
     }
-
-    if (plan.reductionAmount == null && plan.startingDailyAverage > plan.goalDailyAverage) {
-        const weeks = Math.max(1, countWeeksBetween(plan.startDate, plan.endDate));
-        plan.reductionAmount = roundTaperValue((plan.startingDailyAverage - plan.goalDailyAverage) / weeks);
-    }
-    if (plan.reductionPercent == null) plan.reductionPercent = 10;
 
     plan.weeklyMax = plan.weeklyMax ?? null;
     plan.doNotSurpassDaily = plan.doNotSurpassDaily ?? plan.warnBeforeSurpass ?? true;
@@ -5931,9 +6389,7 @@ function migrateTaperPlan(plan, substanceId, data) {
 
     if (isManualWeeklyPlan(plan)) {
         if (!plan.goalLimitType) plan.goalLimitType = 'daily';
-        if (plan.goalLimitAmount == null) {
-            plan.goalLimitAmount = plan.goalLimitAmount ?? plan.goalDailyAverage ?? 0;
-        }
+        if (plan.goalLimitAmount == null) plan.goalLimitAmount = 0;
         if (!plan.manualWeeklyTargets?.length) {
             if (plan.weeklyTargets?.length) {
                 plan.manualWeeklyTargets = plan.weeklyTargets.map((w, i) => ({
@@ -5941,8 +6397,7 @@ function migrateTaperPlan(plan, substanceId, data) {
                     targetAmount: w.targetAmount ?? w.weeklyMax ?? roundTaperValue((w.dailyTarget || 0) * 7)
                 }));
             } else {
-                const startWeekly = roundTaperValue((plan.startingDailyAverage || 0) * 7);
-                plan.manualWeeklyTargets = [{ week: 1, targetAmount: startWeekly }];
+                plan.manualWeeklyTargets = [{ week: 1, targetAmount: '' }];
             }
         }
         plan.weeklyTargets = buildWeeklyTargetsFromManual(plan);
@@ -5969,7 +6424,7 @@ function generateWeeklyTargets(plan) {
     const { startDate, endDate, startingDailyAverage, goalDailyAverage, reductionType, reductionAmount, reductionPercent, weeklyMax } = plan;
     const weeks = [];
     let cursor = startDate;
-    let currentDaily = startingDailyAverage;
+    let currentDaily = startingDailyAverage ?? 0;
     const goal = goalDailyAverage ?? 0;
     let guard = 0;
 
@@ -6170,9 +6625,18 @@ function getTaperCalculatedMetrics(plan, substanceId) {
     const today = new Date().toISOString().split('T')[0];
     const start = plan.startingDailyAverage ?? 0;
     const goal = plan.goalDailyAverage ?? 0;
-    const totalReduction = Math.max(0, start - goal);
-    const weeks = plan.weeklyTargets?.length || 1;
-    const weeklyReduction = weeks > 0 ? totalReduction / weeks : 0;
+    let totalReduction = Math.max(0, start - goal);
+    let weeklyReduction = 0;
+    if (isManualWeeklyPlan(plan)) {
+        const manual = plan.manualWeeklyTargets || [];
+        const first = parseFloat(manual[0]?.targetAmount) || 0;
+        const last = parseFloat(manual[manual.length - 1]?.targetAmount) || 0;
+        totalReduction = Math.max(0, first - last);
+        weeklyReduction = manual.length > 1 ? totalReduction / (manual.length - 1) : 0;
+    } else {
+        const weeks = plan.weeklyTargets?.length || 1;
+        weeklyReduction = weeks > 0 ? totalReduction / weeks : 0;
+    }
     const todayTarget = getDailyLimitForDate(substanceId, today);
     const currentWeek = getWeekRowForDate(plan, today);
     const nextWeekStart = currentWeek ? addDaysToDateStr(currentWeek.weekEnd, 1) : null;
@@ -6186,7 +6650,7 @@ function getTaperCalculatedMetrics(plan, substanceId) {
         todayTarget,
         nextWeekTarget,
         endDate: plan.endDate,
-        weeks
+        weeks: plan.weeklyTargets?.length || 0
     };
 }
 
@@ -6256,17 +6720,23 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
     const now = new Date().toISOString();
     const startDate = existingPlan?.startDate || new Date().toISOString().split('T')[0];
     const reductionType = document.getElementById('reduction-type')?.value || 'reduce-amount';
+    const isManual = reductionType === 'manual-weekly';
+    const startingDailyAverage = isManual
+        ? null
+        : parseOptionalTaperNumber(document.getElementById('current-avg'));
+    const goalDailyAverage = parseOptionalTaperNumber(document.getElementById('goal-avg'));
+
     const plan = {
         id: existingPlan?.id || `${substanceId}-${Date.now()}`,
         substanceId,
         startDate,
-        endDate: document.getElementById('end-date')?.value,
-        startingDailyAverage: parseFloat(document.getElementById('current-avg')?.value) || 0,
-        goalDailyAverage: parseFloat(document.getElementById('goal-avg')?.value) || 0,
+        endDate: document.getElementById('end-date')?.value || null,
+        startingDailyAverage,
+        goalDailyAverage: isManual ? goalDailyAverage : (goalDailyAverage ?? 0),
         reductionType,
-        reductionAmount: parseFloat(document.getElementById('reduction-amount')?.value) || 0,
-        reductionPercent: parseFloat(document.getElementById('reduction-percent')?.value) || 0,
-        weeklyMax: parseFloat(document.getElementById('weekly-max')?.value) || null,
+        reductionAmount: isManual ? 0 : (parseFloat(document.getElementById('reduction-amount')?.value) || 0),
+        reductionPercent: isManual ? 0 : (parseFloat(document.getElementById('reduction-percent')?.value) || 0),
+        weeklyMax: isManual ? null : (parseFloat(document.getElementById('weekly-max')?.value) || null),
         doNotSurpassDaily: document.getElementById('do-not-surpass-daily')?.checked !== false,
         doNotSurpassWeekly: !!document.getElementById('do-not-surpass-weekly')?.checked,
         notes: document.getElementById('taper-notes')?.value || '',
@@ -6275,11 +6745,11 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
         updatedAt: now
     };
 
-    if (isManualWeeklyPlan(plan)) {
+    if (isManual) {
         plan.manualWeeklyTargets = collectManualWeeklyTargetsFromForm();
-        plan.goalLimitAmount = parseFloat(document.getElementById('goal-limit-amount')?.value) || 0;
+        plan.goalLimitAmount = parseOptionalTaperNumber(document.getElementById('goal-limit-amount')) ?? 0;
         plan.goalLimitType = document.getElementById('goal-limit-type')?.value || 'daily';
-        plan.endDate = computeManualPlanEndDate(plan);
+        plan.endDate = plan.endDate || computeManualPlanEndDate(plan);
     }
 
     plan.currentAvg = plan.startingDailyAverage;
@@ -6305,16 +6775,41 @@ function toggleTaperPlanTypeFields() {
     const hint = document.getElementById('plan-type-hint');
     const amtGroup = document.getElementById('reduction-amount-group');
     const pctGroup = document.getElementById('reduction-percent-group');
+    const reductionRow = document.getElementById('taper-reduction-fields-row');
     const manualSection = document.getElementById('manual-weekly-plan-section');
+    const startAvgGroup = document.getElementById('taper-start-avg-group');
+    const endWeeklyRow = document.getElementById('taper-end-weekly-row');
+    const weeklyMaxGroup = document.getElementById('weekly-max-group');
+    const warnToggles = document.getElementById('taper-warn-toggles');
+    const goalAvgInput = document.getElementById('goal-avg');
+    const goalAvgLabel = document.getElementById('goal-avg-label');
+    const endDateInput = document.getElementById('end-date');
+    const endDateLabel = document.getElementById('end-date-label');
     const isManual = type === 'manual-weekly';
 
+    reductionRow?.classList.toggle('hidden', isManual);
     amtGroup?.classList.toggle('hidden', isManual || type === 'reduce-percent' || type === 'fixed');
-    pctGroup?.classList.toggle('hidden', !isManual && type !== 'reduce-percent');
+    pctGroup?.classList.toggle('hidden', isManual || type !== 'reduce-percent');
     manualSection?.classList.toggle('hidden', !isManual);
+    startAvgGroup?.classList.toggle('hidden', isManual);
+    document.getElementById('taper-start-goal-row')?.classList.toggle('hidden', isManual);
+    endWeeklyRow?.classList.toggle('hidden', isManual);
+    weeklyMaxGroup?.classList.toggle('hidden', isManual);
+    warnToggles?.classList.toggle('hidden', isManual);
+
+    mountManualWeeklyFormFields(isManual);
+
+    if (goalAvgLabel) {
+        goalAvgLabel.textContent = isManual ? 'Goal Daily Average (optional)' : 'Goal Daily Average';
+    }
+    if (goalAvgInput) goalAvgInput.required = !isManual;
+    if (endDateLabel) {
+        endDateLabel.textContent = isManual ? 'Target end date (optional)' : 'Target end date';
+    }
+    if (endDateInput) endDateInput.required = !isManual;
 
     if (isManual && !document.querySelector('.manual-week-target-input')) {
-        const startWeekly = roundTaperValue((parseFloat(document.getElementById('current-avg')?.value) || 0) * 7);
-        renderManualWeeklyTargetsEditor([{ week: 1, targetAmount: startWeekly || '' }]);
+        renderManualWeeklyTargetsEditor([{ week: 1, targetAmount: '' }]);
     }
 
     const hints = {
@@ -6322,15 +6817,17 @@ function toggleTaperPlanTypeFields() {
         'reduce-percent': 'Reduce by a percentage of your daily average each week.',
         fixed: 'Keep the same daily limit until your target end date.',
         'step-weekly': 'Step down once per week (same as reduce by amount).',
-        'manual-weekly': 'Set each week\'s target amount manually. Optional daily/weekly use-under goal.'
+        'manual-weekly': 'Set each week\'s max amount manually.'
     };
     if (hint) hint.textContent = hints[type] || hints['reduce-amount'];
 }
 
 function fillTaperFormFromPlan(plan) {
     if (!plan) return;
-    setInputValue('current-avg', plan.startingDailyAverage ?? plan.currentAvg ?? '');
-    setInputValue('goal-avg', plan.goalDailyAverage ?? plan.goalAvg ?? '');
+    const startVal = plan.startingDailyAverage ?? plan.currentAvg;
+    setInputValue('current-avg', startVal != null && startVal !== '' ? startVal : '');
+    const goalVal = plan.goalDailyAverage ?? plan.goalAvg;
+    setInputValue('goal-avg', goalVal != null && goalVal !== '' ? goalVal : '');
     setInputValue('reduction-type', plan.reductionType || 'reduce-amount');
     setInputValue('reduction-amount', plan.reductionAmount ?? '');
     setInputValue('reduction-percent', plan.reductionPercent ?? '');
@@ -6345,10 +6842,6 @@ function fillTaperFormFromPlan(plan) {
         renderManualWeeklyTargetsEditor(plan.manualWeeklyTargets || []);
         setInputValue('goal-limit-amount', plan.goalLimitAmount ?? '');
         setInputValue('goal-limit-type', plan.goalLimitType || 'daily');
-        setInputValue('manual-autofill-start', plan.manualWeeklyTargets?.[0]?.targetAmount ?? '');
-        const last = plan.manualWeeklyTargets?.[plan.manualWeeklyTargets.length - 1];
-        setInputValue('manual-autofill-end', last?.targetAmount ?? plan.goalDailyAverage ?? '');
-        setInputValue('manual-autofill-weeks', Math.max(1, (plan.manualWeeklyTargets?.length || 1) - 1));
     }
     toggleTaperPlanTypeFields();
 }
@@ -6356,6 +6849,7 @@ function fillTaperFormFromPlan(plan) {
 function setDefaultTaperEndDate() {
     const endEl = document.getElementById('end-date');
     if (!endEl || endEl.value) return;
+    if (document.getElementById('reduction-type')?.value === 'manual-weekly') return;
     const d = new Date();
     d.setDate(d.getDate() + 30);
     endEl.value = d.toISOString().split('T')[0];
@@ -6448,22 +6942,27 @@ function renderTaperReductionCard(substanceId) {
     const ca = document.getElementById('taper-reduction-calculated');
     if (ro) {
         const tiles = [
-            taperMetricTile('Starting Daily Average', `${plan.startingDailyAverage} ${unit}`),
-            taperMetricTile('Goal Daily Average', `${plan.goalDailyAverage} ${unit}`),
             taperMetricTile('Reduction Target', TAPER_REDUCTION_LABELS[plan.reductionType] || plan.reductionType)
         ];
         if (isManualWeeklyPlan(plan)) {
+            tiles.unshift(
+                taperMetricTile('Goal Daily Average', plan.goalDailyAverage != null ? `${plan.goalDailyAverage} ${unit}` : '—')
+            );
             tiles.push(taperMetricTile('Weeks in plan', String(plan.manualWeeklyTargets?.length || 0)));
             if (plan.goalLimitAmount > 0) {
                 tiles.push(taperMetricTile('Goal use under', `${plan.goalLimitAmount} ${unit}/${plan.goalLimitType}`));
             }
         } else {
+            tiles.unshift(
+                taperMetricTile('Starting Daily Average', plan.startingDailyAverage != null ? `${plan.startingDailyAverage} ${unit}` : '—'),
+                taperMetricTile('Goal Daily Average', plan.goalDailyAverage != null ? `${plan.goalDailyAverage} ${unit}` : '—')
+            );
             tiles.push(
                 plan.reductionType === 'reduce-percent'
                     ? taperMetricTile('Reduction %', `${plan.reductionPercent}% / wk`)
-                    : taperMetricTile('Reduction / wk', `${plan.reductionAmount} ${unit}`)
+                    : taperMetricTile('Reduction / wk', `${plan.reductionAmount} ${unit}`),
+                taperMetricTile('Weekly Limit', plan.weeklyMax ? `${plan.weeklyMax} ${unit}` : 'Auto')
             );
-            tiles.push(taperMetricTile('Weekly Limit', plan.weeklyMax ? `${plan.weeklyMax} ${unit}` : 'Auto'));
         }
         tiles.push(
             taperMetricTile('Target end date', formatDate(plan.endDate)),
@@ -6473,13 +6972,23 @@ function renderTaperReductionCard(substanceId) {
         ro.innerHTML = tiles.join('');
     }
     if (ca) {
-        ca.innerHTML = [
-            taperMetricTile('Total reduction', `${calc.totalReduction.toFixed(1)} ${unit}`),
-            taperMetricTile('Weekly reduction', `${calc.weeklyReduction.toFixed(2)} ${unit}`),
-            taperMetricTile('Today\'s target', calc.todayTarget != null ? `${calc.todayTarget} ${unit}` : '—'),
-            taperMetricTile('Next week target', `${calc.nextWeekTarget} ${unit}`),
-            taperMetricTile('Est. end date', formatDate(calc.endDate))
-        ].join('');
+        if (isManualWeeklyPlan(plan)) {
+            ca.innerHTML = [
+                taperMetricTile('Total reduction', `${calc.totalReduction.toFixed(1)} ${unit}`),
+                taperMetricTile('Avg weekly step', `${calc.weeklyReduction.toFixed(2)} ${unit}`),
+                taperMetricTile('Today\'s target', calc.todayTarget != null ? `${calc.todayTarget} ${unit}` : '—'),
+                taperMetricTile('Next week target', `${calc.nextWeekTarget} ${unit}`),
+                taperMetricTile('Est. end date', formatDate(calc.endDate))
+            ].join('');
+        } else {
+            ca.innerHTML = [
+                taperMetricTile('Total reduction', `${calc.totalReduction.toFixed(1)} ${unit}`),
+                taperMetricTile('Weekly reduction', `${calc.weeklyReduction.toFixed(2)} ${unit}`),
+                taperMetricTile('Today\'s target', calc.todayTarget != null ? `${calc.todayTarget} ${unit}` : '—'),
+                taperMetricTile('Next week target', `${calc.nextWeekTarget} ${unit}`),
+                taperMetricTile('Est. end date', formatDate(calc.endDate))
+            ].join('');
+        }
     }
 }
 
@@ -6549,11 +7058,20 @@ function getTaperWeeklySummary(plan, substanceId) {
     const currentWeek = getWeekRowForDate(plan, today);
     const weekIndex = currentWeek ? plan.weeklyTargets.findIndex(w => w.weekStart === currentWeek.weekStart) + 1 : 0;
     const weeksRemaining = Math.max(0, (plan.weeklyTargets?.length || 0) - weekIndex);
-    const start = plan.startingDailyAverage ?? 0;
     const goal = plan.goalDailyAverage ?? 0;
-    const totalReduction = Math.max(0, start - goal);
+    let start = plan.startingDailyAverage ?? 0;
+    let totalReduction = Math.max(0, start - goal);
+    if (isManualWeeklyPlan(plan)) {
+        const manual = plan.manualWeeklyTargets || [];
+        const first = parseFloat(manual[0]?.targetAmount) || 0;
+        const last = parseFloat(manual[manual.length - 1]?.targetAmount) || 0;
+        start = first;
+        totalReduction = Math.max(0, first - last);
+    }
     const currentDaily = currentWeek?.dailyTarget ?? getDailyLimitForDate(substanceId, today) ?? start;
-    const reductionCompleted = Math.max(0, start - currentDaily);
+    const reductionCompleted = isManualWeeklyPlan(plan)
+        ? Math.max(0, start - (currentWeek?.targetAmount ?? currentWeek?.weeklyMax ?? currentDaily))
+        : Math.max(0, start - currentDaily);
 
     let avgThis = 0;
     let daysThis = 0;
@@ -6724,7 +7242,16 @@ function renderTaperPlanSummary(substanceId) {
         summary.textContent = `${sub.name} · ${TAPER_REDUCTION_LABELS[plan.reductionType] || plan.reductionType}`;
     }
     if (dates) {
-        dates.textContent = `${formatDate(plan.startDate)} → ${formatDate(plan.endDate)} · ${plan.startingDailyAverage} → ${plan.goalDailyAverage} ${sub.defaultUnit}/day`;
+        if (isManualWeeklyPlan(plan)) {
+            const weekCount = plan.manualWeeklyTargets?.length || plan.weeklyTargets?.length || 0;
+            const goalPart = plan.goalDailyAverage != null ? ` · goal ${plan.goalDailyAverage} ${sub.defaultUnit}/day` : '';
+            dates.textContent = `${formatDate(plan.startDate)} → ${formatDate(plan.endDate)} · ${weekCount} manual week${weekCount === 1 ? '' : 's'}${goalPart}`;
+        } else {
+            const start = plan.startingDailyAverage ?? plan.currentAvg;
+            const goal = plan.goalDailyAverage ?? plan.goalAvg;
+            const startPart = start != null ? `${start} → ${goal}` : String(goal ?? '—');
+            dates.textContent = `${formatDate(plan.startDate)} → ${formatDate(plan.endDate)} · ${startPart} ${sub.defaultUnit}/day`;
+        }
     }
     const pauseBtn = document.getElementById('taper-pause-btn');
     if (pauseBtn) pauseBtn.textContent = plan.isPaused ? '▶ Resume' : '⏸ Pause';
@@ -6869,6 +7396,8 @@ function handleTaperSubmit(e) {
     if (reductionType === 'manual-weekly') {
         const targets = collectManualWeeklyTargetsFromForm();
         if (!targets.length) return alert('Add at least one weekly target.');
+        const hasAmount = targets.some(t => (parseFloat(t.targetAmount) || 0) > 0);
+        if (!hasAmount) return alert('Enter at least one weekly target amount.');
     } else {
         const endDate = document.getElementById('end-date')?.value;
         if (!endDate || new Date(endDate) <= new Date(startDate)) {
@@ -6934,6 +7463,55 @@ function renderTaperPlan() {
     renderTaperReductionCard(substanceId);
     renderTaperProgressCard(substanceId);
     renderTaperWeeklyPlan(substanceId);
+    renderTaperCalendarPreview(substanceId);
+    renderTaperInsights(substanceId);
+    applyCollapsedSections();
+}
+
+function renderTaperCalendarPreview(substanceId) {
+    const container = document.getElementById('taper-calendar-preview');
+    if (!container) return;
+    const plan = appData.taperPlans[substanceId];
+    const sub = getSubstance(substanceId);
+    if (!plan || !sub) {
+        container.innerHTML = '<p class="empty-hint">No taper plan for this substance.</p>';
+        return;
+    }
+    const today = new Date();
+    let rows = '';
+    for (let i = 6; i >= 0; i--) {
+        const d = new Date(today);
+        d.setDate(d.getDate() - i);
+        const dateStr = d.toISOString().split('T')[0];
+        const limit = getDailyLimitForDate(substanceId, dateStr);
+        const used = getUsedAmount(substanceId, dateStr);
+        const status = limit != null ? getTaperLimitStatus(used, limit) : { emoji: '—', label: 'No target' };
+        rows += `<tr><td>${formatDate(dateStr)}</td><td>${limit != null ? limit : '—'}</td><td>${used}</td><td>${status.emoji} ${status.label}</td></tr>`;
+    }
+    container.innerHTML = `<table class="taper-preview-table"><thead><tr><th>Date</th><th>Target</th><th>Used</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`;
+}
+
+function renderTaperInsights(substanceId) {
+    const container = document.getElementById('taper-insights');
+    if (!container) return;
+    const plan = appData.taperPlans[substanceId];
+    const sub = getSubstance(substanceId);
+    if (!plan || !sub) {
+        container.innerHTML = '<p class="empty-hint">No insights yet.</p>';
+        return;
+    }
+    const unit = sub.defaultUnit;
+    const items = [
+        ['Plan type', TAPER_REDUCTION_LABELS[plan.reductionType] || plan.reductionType || '—'],
+        ['Start average', plan.startingDailyAverage != null ? `${plan.startingDailyAverage} ${unit}/day` : '—'],
+        ['Goal average', plan.goalDailyAverage != null ? `${plan.goalDailyAverage} ${unit}/day` : '—'],
+        ['Target end', plan.endDate ? formatDate(plan.endDate) : '—'],
+        ['Weekly max', plan.weeklyMax != null ? `${plan.weeklyMax} ${unit}` : '—'],
+        ['Status', plan.isPaused ? 'Paused' : 'Active']
+    ];
+    container.innerHTML = items.map(([label, val]) =>
+        `<div class="taper-insight-item"><span>${label}</span><strong>${val}</strong></div>`
+    ).join('');
 }
 
 function editTaperPlan() {
@@ -7049,21 +7627,603 @@ function updateTaperProgress() {
     bar.style.width = `${pct}%`;
     if (pt) pt.textContent = `${Math.round(pct)}%`;
     if (pl) {
-        pl.textContent = `${sub.icon} ${sub.name}: ${plan.startingDailyAverage} → ${plan.goalDailyAverage} ${sub.defaultUnit}/day`;
+        if (isManualWeeklyPlan(plan)) {
+            const weekCount = plan.manualWeeklyTargets?.length || plan.weeklyTargets?.length || 0;
+            pl.textContent = `${sub.icon} ${sub.name}: ${weekCount} manual week${weekCount === 1 ? '' : 's'}`;
+        } else {
+            const startAvg = plan.startingDailyAverage ?? plan.currentAvg;
+            const goalAvg = plan.goalDailyAverage ?? plan.goalAvg;
+            const range = startAvg != null ? `${startAvg} → ${goalAvg ?? '—'}` : String(goalAvg ?? '—');
+            pl.textContent = `${sub.icon} ${sub.name}: ${range} ${sub.defaultUnit}/day`;
+        }
     }
 }
-// ——— Calendar ———
+// ——— History / Calendar ———
+function getHistorySubstanceId() {
+    const el = document.getElementById('history-substance');
+    return el?.value || getMainSubstanceId() || currentSubstanceId || null;
+}
+
 function getCalendarTaperSubstanceId() {
-    const el = document.getElementById('calendar-substance');
-    return el?.value || getTaperSubstances()[0]?.id || null;
+    return getHistorySubstanceId();
+}
+
+function getHistoryViewMode() {
+    return appData.settings?.historyView || 'calendar';
+}
+
+function setHistoryView(view) {
+    if (!appData.settings) appData.settings = {};
+    appData.settings.historyView = view;
+    saveData(appData);
+    renderHistory();
+}
+
+function applyHistoryViewToggleUI() {
+    const mode = getHistoryViewMode();
+    document.querySelectorAll('.history-view-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.view === mode);
+    });
+}
+
+function getMonthDateBounds(year, month) {
+    const monthStart = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const daysInMonth = new Date(year, month + 1, 0).getDate();
+    const monthEnd = `${year}-${String(month + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
+    return { monthStart, monthEnd, daysInMonth };
+}
+
+function getWeeksForMonth(year, month) {
+    const { monthStart, monthEnd } = getMonthDateBounds(year, month);
+    const weeks = [];
+    let cursor = getWeekStartDateStr(monthStart);
+    while (cursor <= monthEnd) {
+        const fullWeekEnd = addDaysToDateStr(cursor, 6);
+        weeks.push({
+            fullWeekStart: cursor,
+            fullWeekEnd,
+            weekStart: cursor < monthStart ? monthStart : cursor,
+            weekEnd: fullWeekEnd > monthEnd ? monthEnd : fullWeekEnd
+        });
+        cursor = addDaysToDateStr(cursor, 7);
+    }
+    return weeks;
+}
+
+function getLogsForWeek(substanceId, weekStart, weekEnd, { personalUseOnly = false, data = appData } = {}) {
+    return getUseEntries(data).filter(log => {
+        if (!substanceId || !logMatchesSubstance(log, substanceId, data)) return false;
+        if (log.date < weekStart || log.date > weekEnd) return false;
+        if (personalUseOnly && !isPersonalUseLog(log)) return false;
+        return true;
+    });
+}
+
+function getPurchasesForWeek(substanceId, weekStart, weekEnd, data = appData) {
+    return (data.purchases || []).filter(p => {
+        if (!substanceId || getPurchaseSubstanceId(p) !== substanceId) return false;
+        return p.date >= weekStart && p.date <= weekEnd;
+    });
+}
+
+function getTaperGoalForWeek(substanceId, weekStart) {
+    if (!substanceId) return null;
+    return getWeeklyLimit(substanceId, weekStart);
+}
+
+function formatWeekRange(weekStart, weekEnd) {
+    const s = new Date(weekStart + 'T12:00:00');
+    const e = new Date(weekEnd + 'T12:00:00');
+    const sMon = s.toLocaleDateString('en-US', { month: 'short' });
+    const eMon = e.toLocaleDateString('en-US', { month: 'short' });
+    if (sMon === eMon) return `${sMon} ${s.getDate()}–${e.getDate()}`;
+    return `${sMon} ${s.getDate()}–${eMon} ${e.getDate()}`;
+}
+
+function formatHistoryAmount(value) {
+    if (value == null || Number.isNaN(value)) return '—';
+    return Number(parseFloat(value).toFixed(1)).toString();
+}
+
+function formatDurationColon(hours) {
+    if (hours == null || Number.isNaN(hours) || hours <= 0) return '—';
+    const totalMinutes = Math.round(hours * 60);
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    return `${h}:${String(m).padStart(2, '0')}`;
+}
+
+function formatBreakColonHours(hours) {
+    if (hours == null || Number.isNaN(hours)) return '—';
+    const totalMinutes = Math.floor(hours * 60);
+    const h = Math.floor(totalMinutes / 60);
+    const m = totalMinutes % 60;
+    return `${h}:${String(m).padStart(2, '0')}`;
+}
+
+function getWeeklyGoalStatus(actualUse, goalUse) {
+    if (goalUse == null || goalUse <= 0) {
+        return { status: 'none', label: 'No goal', emoji: '—' };
+    }
+    if (actualUse > goalUse) {
+        return { status: 'over', label: 'Over goal', emoji: '🚫' };
+    }
+    if (actualUse >= goalUse * 0.8) {
+        return { status: 'close', label: 'Close to goal', emoji: '⚠️' };
+    }
+    return { status: 'under', label: 'Under goal', emoji: '✅' };
+}
+
+function findNextPersonalUseLog(substanceId, afterMs, data = appData) {
+    return getUseLogsForSubstance(substanceId, { sortAsc: true, personalUseOnly: true, data })
+        .find(log => getLogDatetimeMs(log) > afterMs) || null;
+}
+
+function calculateWeeklySummary(substanceId, weekStart, weekEnd, data = appData, opts = {}) {
+    const dayBreakdownStart = opts.dayBreakdownStart || weekStart;
+    const dayBreakdownEnd = opts.dayBreakdownEnd || weekEnd;
+    const goalWeekStart = opts.goalWeekStart || weekStart;
+    const personalLogs = getLogsForWeek(substanceId, weekStart, weekEnd, { personalUseOnly: true, data });
+    const allLogs = getLogsForWeek(substanceId, weekStart, weekEnd, { data });
+    const purchases = getPurchasesForWeek(substanceId, weekStart, weekEnd, data);
+    const enrichedAll = buildEnrichedUseEntries(substanceId);
+    const personalEnriched = enrichedAll.filter(e => e.date >= weekStart && e.date <= weekEnd && isPersonalUseLog(e));
+
+    const totalUse = personalLogs.reduce((sum, log) => sum + (parseFloat(log.amount) || 0), 0);
+    const sessionCount = personalLogs.length;
+    let totalDurationHours = 0;
+    personalEnriched.forEach(entry => {
+        if (entry.durationHours) totalDurationHours += entry.durationHours;
+    });
+
+    const avgPerSession = sessionCount > 0 ? totalUse / sessionCount : null;
+    const avgRate = totalDurationHours > 0 ? totalUse / totalDurationHours : null;
+
+    const breaks = [];
+    personalEnriched.forEach((entry, index) => {
+        if (index === 0 && entry.breakDurationHours != null) breaks.push(entry.breakDurationHours);
+        else if (index > 0 && entry.breakDurationHours != null) breaks.push(entry.breakDurationHours);
+    });
+    const longestBreak = breaks.length ? Math.max(...breaks) : null;
+    const avgBreak = breaks.length ? breaks.reduce((a, b) => a + b, 0) / breaks.length : null;
+
+    const purchaseCount = purchases.length;
+    const totalBought = purchases.reduce((sum, p) => sum + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
+    const totalSpent = purchases.reduce((sum, p) => sum + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+
+    const goalUse = getTaperGoalForWeek(substanceId, goalWeekStart);
+    const left = goalUse != null && goalUse > 0 ? goalUse - totalUse : null;
+    const difference = goalUse != null && goalUse > 0 ? totalUse - goalUse : null;
+    const goalStatus = getWeeklyGoalStatus(totalUse, goalUse);
+
+    const days = [];
+    for (let d = dayBreakdownStart; d <= dayBreakdownEnd; d = addDaysToDateStr(d, 1)) {
+        const dayPersonal = getLogsForWeek(substanceId, d, d, { personalUseOnly: true, data });
+        const dayAll = getLogsForWeek(substanceId, d, d, { data });
+        const dayUse = dayPersonal.reduce((sum, log) => sum + (parseFloat(log.amount) || 0), 0);
+        let dayDuration = 0;
+        personalEnriched.filter(entry => entry.date === d).forEach(entry => {
+            if (entry.durationHours) dayDuration += entry.durationHours;
+        });
+        const dayEnriched = personalEnriched.filter(entry => entry.date === d);
+        const breakHours = dayEnriched[0]?.breakDurationHours ?? null;
+        let nextSession = null;
+        if (dayEnriched.length) {
+            const lastDayEntry = dayEnriched[dayEnriched.length - 1];
+            const afterMs = getLogDatetimeMs(lastDayEntry);
+            const nextLog = findNextPersonalUseLog(substanceId, afterMs, data);
+            if (nextLog) {
+                nextSession = parseUseDateTime(nextLog.date, nextLog.startTime || nextLog.time);
+            }
+        }
+        const dailyLimit = substanceId ? getDailyLimitForDate(substanceId, d) : null;
+        const dailyStatus = getTaperLimitStatus(dayUse, dailyLimit).status;
+        const giftLogs = dayAll.filter(log => !isPersonalUseLog(log));
+        days.push({
+            date: d,
+            use: dayUse,
+            durationHours: dayDuration,
+            sessions: dayPersonal.length,
+            breakHours,
+            nextSession,
+            dailyLimit,
+            dailyStatus,
+            giftLogs
+        });
+    }
+
+    const sub = getSubstance(substanceId);
+    const unit = sub?.defaultUnit || '';
+    const summaryText = buildWeeklySummaryText({
+        weekStart,
+        weekEnd,
+        totalUse,
+        sessionCount,
+        totalDurationHours,
+        goalUse,
+        left
+    }, unit);
+
+    return {
+        weekStart,
+        weekEnd,
+        totalUse,
+        sessionCount,
+        totalDurationHours,
+        avgPerSession,
+        avgRate,
+        longestBreak,
+        avgBreak,
+        purchaseCount,
+        totalBought,
+        totalSpent,
+        goalUse,
+        left,
+        difference,
+        goalStatus,
+        days,
+        summaryText
+    };
+}
+
+function buildWeeklySummaryText(summary, unit) {
+    const range = formatWeekRange(summary.weekStart, summary.weekEnd);
+    const dur = formatDurationHours(summary.totalDurationHours);
+    let text = `Week of ${range}: ${formatHistoryAmount(summary.totalUse)}${unit} used across ${summary.sessionCount} session${summary.sessionCount === 1 ? '' : 's'}`;
+    if (summary.totalDurationHours > 0) text += `, ${dur} total duration`;
+    text += '.';
+    if (summary.goalUse != null && summary.goalUse > 0) {
+        const left = summary.left ?? 0;
+        if (left >= 0) {
+            text += ` Goal was ${formatHistoryAmount(summary.goalUse)}${unit}, leaving ${formatHistoryAmount(left)}${unit} under target.`;
+        } else {
+            text += ` Goal was ${formatHistoryAmount(summary.goalUse)}${unit}, ${formatHistoryAmount(Math.abs(left))}${unit} over target.`;
+        }
+    } else {
+        text += ' No weekly goal set.';
+    }
+    return text;
+}
+
+function calculateMonthlyHistorySummary(substanceId, year, month, data = appData) {
+    const { monthStart, monthEnd } = getMonthDateBounds(year, month);
+    const weeks = getWeeksForMonth(year, month);
+    const weekSummaries = weeks.map(w => calculateWeeklySummary(substanceId, w.weekStart, w.weekEnd, data, {
+        goalWeekStart: w.fullWeekStart,
+        dayBreakdownStart: w.fullWeekStart,
+        dayBreakdownEnd: w.fullWeekEnd
+    }));
+
+    const personalLogs = getUseEntries(data).filter(log =>
+        logMatchesSubstance(log, substanceId, data)
+        && isPersonalUseLog(log)
+        && log.date >= monthStart
+        && log.date <= monthEnd
+    );
+    const enriched = buildEnrichedUseEntries(substanceId);
+    const monthEnriched = enriched.filter(e => e.date >= monthStart && e.date <= monthEnd && isPersonalUseLog(e));
+
+    const totalUse = personalLogs.reduce((sum, log) => sum + (parseFloat(log.amount) || 0), 0);
+    const totalSessions = personalLogs.length;
+    const totalDurationHours = monthEnriched.reduce((sum, e) => sum + (e.durationHours || 0), 0);
+
+    const purchases = (data.purchases || []).filter(p =>
+        getPurchaseSubstanceId(p) === substanceId && p.date >= monthStart && p.date <= monthEnd
+    );
+    const totalPurchases = purchases.length;
+    const totalSpent = purchases.reduce((sum, p) => sum + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+
+    const activeWeeks = weekSummaries.filter(w => w.sessionCount > 0 || w.totalUse > 0);
+    const avgUsePerWeek = activeWeeks.length ? totalUse / activeWeeks.length : 0;
+
+    const allBreaks = monthEnriched
+        .map(e => e.breakDurationHours)
+        .filter(h => h != null && h >= 0);
+    const bestBreak = allBreaks.length ? Math.max(...allBreaks) : null;
+
+    const overGoalWeeks = weekSummaries.filter(w => w.goalStatus.status === 'over').length;
+    const underGoalWeeks = weekSummaries.filter(w => w.goalStatus.status === 'under').length;
+
+    return {
+        monthStart,
+        monthEnd,
+        totalUse,
+        totalSessions,
+        totalDurationHours,
+        totalPurchases,
+        totalSpent,
+        avgUsePerWeek,
+        bestBreak,
+        overGoalWeeks,
+        underGoalWeeks,
+        weekSummaries
+    };
+}
+
+function renderHistory() {
+    applyHistoryViewToggleUI();
+    const year = currentCalendarDate.getFullYear();
+    const month = currentCalendarDate.getMonth();
+    setText('calendar-month', currentCalendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }));
+
+    renderMonthlyHistorySummary(year, month);
+
+    const mode = getHistoryViewMode();
+    document.getElementById('history-calendar-view')?.classList.toggle('hidden', mode !== 'calendar');
+    document.getElementById('history-weekly-view')?.classList.toggle('hidden', mode !== 'weekly');
+    document.getElementById('history-monthly-view')?.classList.toggle('hidden', mode !== 'monthly');
+
+    if (mode === 'calendar') {
+        renderCalendar();
+        renderWeeklyTotalsTable(year, month);
+    } else if (mode === 'weekly') {
+        renderWeeklySummary(year, month);
+    } else {
+        renderMonthlyHistoryDetail(year, month);
+    }
+}
+
+function renderMonthlyHistorySummary(year, month) {
+    const container = document.getElementById('history-monthly-summary');
+    if (!container) return;
+    const substanceId = getHistorySubstanceId();
+    const sub = getSubstance(substanceId);
+    if (!substanceId || !sub) {
+        container.innerHTML = '<p class="empty-hint">Select a substance to view history.</p>';
+        return;
+    }
+    const summary = calculateMonthlyHistorySummary(substanceId, year, month);
+    const unit = sub.defaultUnit;
+    const currency = appData.settings.currency || '$';
+    const tiles = [
+        ['Total use', `${formatHistoryAmount(summary.totalUse)} ${unit}`],
+        ['Sessions', String(summary.totalSessions)],
+        ['Duration', formatDurationHours(summary.totalDurationHours)],
+        ['Purchases', String(summary.totalPurchases)],
+        ['Spent', `${currency}${summary.totalSpent.toFixed(2)}`],
+        ['Avg / week', `${formatHistoryAmount(summary.avgUsePerWeek)} ${unit}`],
+        ['Best break', formatBreakColonHours(summary.bestBreak)],
+        ['Over-goal weeks', String(summary.overGoalWeeks)],
+        ['Under-goal weeks', String(summary.underGoalWeeks)]
+    ];
+    container.innerHTML = `
+        <h3 class="history-section-title">Monthly Summary</h3>
+        <div class="history-monthly-grid">${tiles.map(([label, value]) =>
+            `<div class="history-stat-tile"><span>${label}</span><strong>${value}</strong></div>`
+        ).join('')}</div>`;
+}
+
+function renderWeeklyTotalsTable(year, month) {
+    const container = document.getElementById('history-weekly-totals');
+    if (!container) return;
+    const substanceId = getHistorySubstanceId();
+    const sub = getSubstance(substanceId);
+    if (!substanceId || !sub) {
+        container.innerHTML = '';
+        return;
+    }
+    const unit = sub.defaultUnit;
+    const currency = appData.settings.currency || '$';
+    const weeks = getWeeksForMonth(year, month);
+    const rows = weeks.map(w => calculateWeeklySummary(substanceId, w.weekStart, w.weekEnd, appData, {
+        goalWeekStart: w.fullWeekStart,
+        dayBreakdownStart: w.fullWeekStart,
+        dayBreakdownEnd: w.fullWeekEnd
+    }));
+
+    if (!rows.some(r => r.sessionCount > 0 || r.totalUse > 0 || r.purchaseCount > 0)) {
+        container.innerHTML = '<h3 class="history-section-title">Weekly Totals</h3><p class="empty-hint">No activity this month.</p>';
+        return;
+    }
+
+    container.innerHTML = `
+        <h3 class="history-section-title">Weekly Totals</h3>
+        <div class="table-scroll">
+            <table class="history-table history-weekly-table">
+                <thead>
+                    <tr>
+                        <th>Week Start</th>
+                        <th>Week End</th>
+                        <th>Total Use</th>
+                        <th>Sessions</th>
+                        <th>Duration</th>
+                        <th>Avg ${unit}/session</th>
+                        <th>Avg ${unit}/hr</th>
+                        <th>Longest Break</th>
+                        <th>Avg Break</th>
+                        <th>Purchases</th>
+                        <th>Total Bought</th>
+                        <th>Total Spent</th>
+                        <th>Goal</th>
+                        <th>Left</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.map(row => `
+                        <tr>
+                            <td>${formatDate(row.weekStart)}</td>
+                            <td>${formatDate(row.weekEnd)}</td>
+                            <td>${formatHistoryAmount(row.totalUse)} ${unit}</td>
+                            <td>${row.sessionCount}</td>
+                            <td>${formatDurationHours(row.totalDurationHours)}</td>
+                            <td>${row.avgPerSession != null ? formatHistoryAmount(row.avgPerSession) : '—'}</td>
+                            <td>${row.avgRate != null ? formatHistoryAmount(row.avgRate) : '—'}</td>
+                            <td>${formatBreakColonHours(row.longestBreak)}</td>
+                            <td>${formatBreakColonHours(row.avgBreak)}</td>
+                            <td>${row.purchaseCount}</td>
+                            <td>${formatHistoryAmount(row.totalBought)} ${unit}</td>
+                            <td>${currency}${row.totalSpent.toFixed(2)}</td>
+                            <td>${row.goalUse != null && row.goalUse > 0 ? `${formatHistoryAmount(row.goalUse)} ${unit}` : '—'}</td>
+                            <td class="history-goal-${row.goalStatus.status}">${row.left != null ? `${formatHistoryAmount(row.left)} ${unit}` : '—'}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+        </div>`;
+}
+
+function renderWeeklyGoalComparisonRow(row, unit) {
+    const gs = row.goalStatus;
+    return `
+        <tr class="history-goal-row history-goal-${gs.status}">
+            <td>${formatWeekRange(row.weekStart, row.weekEnd)}</td>
+            <td>${row.goalUse != null && row.goalUse > 0 ? `${formatHistoryAmount(row.goalUse)} ${unit}` : '—'}</td>
+            <td>${formatHistoryAmount(row.totalUse)} ${unit}</td>
+            <td>${row.left != null ? `${formatHistoryAmount(row.left)} ${unit}` : '—'}</td>
+            <td>${row.difference != null ? `${row.difference >= 0 ? '+' : ''}${formatHistoryAmount(row.difference)} ${unit}` : '—'}</td>
+            <td>${gs.emoji} ${gs.label}</td>
+        </tr>`;
+}
+
+function renderWeeklyDayBreakdown(days, unit, monthStart, monthEnd) {
+    const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    return `
+        <div class="history-week-days">
+            ${days.map(day => {
+                const d = new Date(day.date + 'T12:00:00');
+                const dayLabel = dayNames[d.getDay()];
+                const dateShort = d.toLocaleDateString('en-US', { month: 'numeric', day: 'numeric' });
+                const nextLabel = day.nextSession ? formatDatetimeShort(day.nextSession) : '—';
+                const outsideMonth = monthStart && monthEnd && (day.date < monthStart || day.date > monthEnd);
+                const gifts = day.giftLogs.length
+                    ? `<div class="history-day-gifts">${day.giftLogs.map(log => {
+                        const sub = getSubstance(log.substanceId);
+                        return `<small>${formatLogHistoryLabel(log, sub)}</small>`;
+                    }).join('')}</div>`
+                    : '';
+                return `
+                    <div class="history-day-cell history-day-${day.dailyStatus}${day.sessions === 0 && !day.giftLogs.length ? ' history-day-empty' : ''}${outsideMonth ? ' history-day-outside' : ''}">
+                        <div class="history-day-head">${dayLabel}</div>
+                        <div class="history-day-date">${dateShort} ${dayLabel.slice(0, 3)}</div>
+                        <div class="history-day-stat">Use: ${day.sessions ? `${formatHistoryAmount(day.use)}${unit}` : '—'}</div>
+                        <div class="history-day-stat">Dur: ${formatDurationColon(day.durationHours)}</div>
+                        <div class="history-day-stat">Sessions: ${day.sessions || '—'}</div>
+                        <div class="history-day-stat">Break: ${formatBreakColonHours(day.breakHours)}</div>
+                        <div class="history-day-stat">Next: ${nextLabel}</div>
+                        ${gifts}
+                    </div>`;
+            }).join('')}
+        </div>`;
+}
+
+function renderWeeklySummaryCard(row, unit, currency, monthStart, monthEnd) {
+    return `
+        <article class="history-week-card">
+            <header class="history-week-card-header">
+                <h4>${formatWeekRange(row.weekStart, row.weekEnd)}</h4>
+                <div class="history-week-quick-stats">
+                    <span>Use: ${formatHistoryAmount(row.totalUse)}${unit}</span>
+                    <span>Sessions: ${row.sessionCount}</span>
+                    <span>Duration: ${formatDurationHours(row.totalDurationHours)}</span>
+                    ${row.goalUse != null && row.goalUse > 0 ? `<span>Goal: ${formatHistoryAmount(row.goalUse)}${unit}</span><span>Left: ${formatHistoryAmount(row.left)}${unit}</span>` : ''}
+                </div>
+            </header>
+            <p class="history-week-summary-text">${row.summaryText}</p>
+            <div class="table-scroll">
+                <table class="history-table history-goal-table">
+                    <thead>
+                        <tr>
+                            <th>Week</th>
+                            <th>Goal Use</th>
+                            <th>Actual Use</th>
+                            <th>Left</th>
+                            <th>Difference</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>${renderWeeklyGoalComparisonRow(row, unit)}</tbody>
+                </table>
+            </div>
+            <h5 class="history-subsection-title">Day Breakdown</h5>
+            ${renderWeeklyDayBreakdown(row.days, unit, monthStart, monthEnd)}
+            <div class="history-week-meta">
+                <span>Avg: ${row.avgPerSession != null ? `${formatHistoryAmount(row.avgPerSession)}${unit}/session` : '—'}</span>
+                <span>Purchases: ${row.purchaseCount} · ${currency}${row.totalSpent.toFixed(2)}</span>
+            </div>
+        </article>`;
+}
+
+function renderWeeklySummary(year, month) {
+    const container = document.getElementById('history-weekly-view');
+    if (!container) return;
+    const substanceId = getHistorySubstanceId();
+    const sub = getSubstance(substanceId);
+    if (!substanceId || !sub) {
+        container.innerHTML = '<p class="empty-hint">Select a substance to view weekly summary.</p>';
+        return;
+    }
+    const unit = sub.defaultUnit;
+    const currency = appData.settings.currency || '$';
+    const { monthStart, monthEnd } = getMonthDateBounds(year, month);
+    const weeks = getWeeksForMonth(year, month);
+    const rows = weeks.map(w => calculateWeeklySummary(substanceId, w.weekStart, w.weekEnd, appData, {
+        goalWeekStart: w.fullWeekStart,
+        dayBreakdownStart: w.fullWeekStart,
+        dayBreakdownEnd: w.fullWeekEnd
+    }));
+    const activeRows = rows.filter(r => r.sessionCount > 0 || r.totalUse > 0 || r.purchaseCount > 0 || (r.goalUse != null && r.goalUse > 0));
+
+    if (!activeRows.length) {
+        container.innerHTML = '<p class="empty-hint">No weekly activity this month.</p>';
+        return;
+    }
+
+    container.innerHTML = activeRows.map(row => renderWeeklySummaryCard(row, unit, currency, monthStart, monthEnd)).join('');
+}
+
+function renderMonthlyHistoryDetail(year, month) {
+    const container = document.getElementById('history-monthly-view');
+    if (!container) return;
+    const substanceId = getHistorySubstanceId();
+    const sub = getSubstance(substanceId);
+    if (!substanceId || !sub) {
+        container.innerHTML = '<p class="empty-hint">Select a substance to view monthly summary.</p>';
+        return;
+    }
+    const { monthStart, monthEnd } = getMonthDateBounds(year, month);
+    const summary = calculateMonthlyHistorySummary(substanceId, year, month);
+    const unit = sub.defaultUnit;
+    const currency = appData.settings.currency || '$';
+
+    const goalRows = summary.weekSummaries.filter(w =>
+        w.sessionCount > 0 || w.totalUse > 0 || (w.goalUse != null && w.goalUse > 0)
+    );
+
+    container.innerHTML = `
+        <div class="history-monthly-detail">
+            <p class="history-monthly-intro">Overview for ${currentCalendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' })} — ${sub.icon} ${sub.name}</p>
+            <div class="table-scroll">
+                <table class="history-table history-goal-table">
+                    <thead>
+                        <tr>
+                            <th>Week</th>
+                            <th>Goal Use</th>
+                            <th>Actual Use</th>
+                            <th>Left</th>
+                            <th>Difference</th>
+                            <th>Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${goalRows.length
+                            ? goalRows.map(row => renderWeeklyGoalComparisonRow(row, unit)).join('')
+                            : '<tr><td colspan="6" class="empty-hint">No weekly data this month.</td></tr>'}
+                    </tbody>
+                </table>
+            </div>
+            <h3 class="history-section-title">Weekly Breakdown</h3>
+            ${goalRows.length
+                ? goalRows.map(row => renderWeeklySummaryCard(row, unit, currency, monthStart, monthEnd)).join('')
+                : '<p class="empty-hint">No activity recorded this month.</p>'}
+        </div>`;
 }
 
 function renderCalendar() {
     const container = document.getElementById('calendar-grid');
+    if (!container) return;
     container.innerHTML = '';
     const year = currentCalendarDate.getFullYear();
     const month = currentCalendarDate.getMonth();
-    setText('calendar-month', currentCalendarDate.toLocaleDateString('en-US', { month: 'long', year: 'numeric' }));
 
     ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'].forEach(day => {
         const h = document.createElement('div');
@@ -7075,38 +8235,34 @@ function renderCalendar() {
     const firstDay = new Date(year, month, 1).getDay();
     const daysInMonth = new Date(year, month + 1, 0).getDate();
     const today = new Date().toISOString().split('T')[0];
+    const substanceId = getHistorySubstanceId();
 
     for (let i = 0; i < firstDay; i++) container.appendChild(document.createElement('div'));
 
-    const taperSubstanceId = getCalendarTaperSubstanceId();
-
     for (let day = 1; day <= daysInMonth; day++) {
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-        const dayLogs = appData.logs.filter(l => l.date === dateStr);
-        const dayCravings = appData.cravings.filter(c => c.date === dateStr);
-        const ids = [...new Set(dayLogs.map(l => l.substanceId))];
+        const dayLogs = appData.logs.filter(l =>
+            l.date === dateStr && (!substanceId || logMatchesSubstance(l, substanceId))
+        );
+        const dayCravings = appData.cravings.filter(c =>
+            c.date === dateStr && (!substanceId || c.substanceId === substanceId)
+        );
         const cell = document.createElement('div');
         cell.className = 'calendar-day';
         if (dayLogs.length || dayCravings.length) cell.classList.add('has-data');
         if (dateStr === today) cell.classList.add('today');
         if (dateStr === selectedDate) cell.classList.add('selected');
 
-        if (taperSubstanceId) {
-            const dayStatus = getTaperDayStatus(taperSubstanceId, dateStr);
-            if (dayStatus === 'none') {
-                cell.classList.add('taper-none');
-            } else if (dayStatus) {
-                cell.classList.add(`taper-${dayStatus}`);
-            }
+        if (substanceId) {
+            const dayStatus = getTaperDayStatus(substanceId, dateStr);
+            if (dayStatus === 'none') cell.classList.add('taper-none');
+            else if (dayStatus) cell.classList.add(`taper-${dayStatus}`);
         }
 
-        let indicators = ids.slice(0, 2).map(id => {
-            const sub = getSubstance(id);
-            return `<span class="substance-indicator" style="color:${sub?.color || '#888'}">${sub?.icon || '?'}</span>`;
-        }).join('');
-        if (ids.length > 2) indicators += '<span class="substance-indicator">+</span>';
-
-        cell.innerHTML = `<span>${day}</span>${indicators ? `<div class="substance-indicators">${indicators}</div>` : ''}${dayLogs.length ? `<span class="calendar-day-count">${dayLogs.filter(isPersonalUseLog).reduce((s, l) => s + l.amount, 0)}</span>` : ''}`;
+        const personalUse = dayLogs.filter(isPersonalUseLog);
+        const dayTotal = personalUse.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+        const sub = substanceId ? getSubstance(substanceId) : null;
+        cell.innerHTML = `<span>${day}</span>${sub ? `<div class="substance-indicators"><span class="substance-indicator" style="color:${sub.color}">${sub.icon}</span></div>` : ''}${dayTotal > 0 ? `<span class="calendar-day-count">${formatHistoryAmount(dayTotal)}</span>` : ''}`;
         cell.onclick = () => selectDate(dateStr);
         container.appendChild(cell);
     }
@@ -7114,44 +8270,55 @@ function renderCalendar() {
 
 function changeMonth(delta) {
     currentCalendarDate.setMonth(currentCalendarDate.getMonth() + delta);
-    renderCalendar();
+    renderHistory();
 }
 
 function selectDate(dateStr) {
     selectedDate = dateStr;
-    renderCalendar();
+    renderHistory();
     renderDayDetails(dateStr);
 }
 
 function renderDayDetails(dateStr) {
     const container = document.getElementById('day-details-content');
-    const dayLogs = appData.logs.filter(l => l.date === dateStr);
-    const dayCravings = appData.cravings.filter(c => c.date === dateStr);
-    const taperSubstanceId = getCalendarTaperSubstanceId();
-    const sub = taperSubstanceId ? getSubstance(taperSubstanceId) : null;
-    const limit = taperSubstanceId ? getDailyLimitForDate(taperSubstanceId, dateStr) : null;
-    const used = taperSubstanceId ? getUsedAmount(taperSubstanceId, dateStr) : 0;
+    if (!container) return;
+    const substanceId = getHistorySubstanceId();
+    const dayLogs = appData.logs.filter(l =>
+        l.date === dateStr && (!substanceId || logMatchesSubstance(l, substanceId))
+    );
+    const dayCravings = appData.cravings.filter(c =>
+        c.date === dateStr && (!substanceId || c.substanceId === substanceId)
+    );
+    const sub = substanceId ? getSubstance(substanceId) : null;
+    const limit = substanceId ? getDailyLimitForDate(substanceId, dateStr) : null;
+    const used = substanceId ? getUsedAmount(substanceId, dateStr) : 0;
+    const currency = appData.settings.currency || '$';
 
     const dayPurchaseSpend = (appData.purchases || [])
-        .filter(p => p.date === dateStr)
-        .reduce((s, p) => s + (p.totalCost ?? p.cost ?? 0), 0);
-    let html = `<p><strong>${formatDate(dateStr)}</strong></p><p>Total uses: ${dayLogs.filter(isPersonalUseLog).reduce((s, l) => s + l.amount, 0)}</p><p>Purchases: ${appData.settings.currency}${dayPurchaseSpend.toFixed(2)}</p><p>Cravings: ${dayCravings.length}</p>`;
+        .filter(p => p.date === dateStr && (!substanceId || getPurchaseSubstanceId(p) === substanceId))
+        .reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+
+    let html = `<p><strong>${formatDate(dateStr)}</strong></p>`;
+    html += `<p>Personal use: ${formatHistoryAmount(used)}${sub ? ` ${sub.defaultUnit}` : ''}</p>`;
+    html += `<p>Purchases: ${currency}${dayPurchaseSpend.toFixed(2)}</p>`;
+    html += `<p>Cravings: ${dayCravings.length}</p>`;
 
     if (limit != null && sub) {
         const { emoji, label } = getTaperLimitStatus(used, limit);
         html += `<p>Taper (${sub.name}): ${used}/${limit} ${sub.defaultUnit} · ${emoji} ${label}</p>`;
     }
+
     dayLogs.forEach(log => {
-        const sub = getSubstance(log.substanceId);
+        const logSub = getSubstance(log.substanceId);
         const supplyLine = formatInventoryLinkDisplay(log);
         const label = isPersonalUseLog(log)
-            ? `${sub?.icon} ${log.amount} ${log.unit} ${sub?.name} at ${log.startTime || log.time || ''}`
-            : `${formatLogHistoryLabel(log, sub)} at ${log.startTime || log.time || ''}`;
+            ? `${logSub?.icon} ${log.amount} ${log.unit} ${logSub?.name} at ${log.startTime || log.time || ''}`
+            : `${formatLogHistoryLabel(log, logSub)} at ${log.startTime || log.time || ''}`;
         html += `<div class="list-item"><div>${label}<br><small>${supplyLine}</small></div></div>`;
     });
     dayCravings.forEach(c => {
-        const sub = getSubstance(c.substanceId);
-        html += `<div class="list-item"><div>${sub?.icon} Craving ${c.intensity}/10</div></div>`;
+        const cravingSub = getSubstance(c.substanceId);
+        html += `<div class="list-item"><div>${cravingSub?.icon} Craving ${c.intensity}/10</div></div>`;
     });
     container.innerHTML = html;
 }

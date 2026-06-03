@@ -321,6 +321,12 @@
                     <h2>Use Log</h2>
                 </div>
 
+                <div class="collapsible-section" data-section="useLogForm">
+                    <button type="button" class="section-toggle" onclick="toggleSection('useLogForm')">
+                        <span>Entry Form</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <form id="use-log-form" class="use-log-form">
                     <div class="use-log-entry-toggle" id="use-entry-type-group">
                         <button type="button" class="use-entry-toggle-btn type-toggle-btn active" data-type="quick" onclick="setUseLogType('quick')">
@@ -427,17 +433,27 @@
                         <button type="button" id="cancel-use-edit-btn" class="secondary-btn hidden" onclick="cancelUseEdit()">Cancel Edit</button>
                     </div>
                 </form>
-
-                <div class="recent-logs use-log-recent">
-                    <h3 class="use-log-section-title">Recent Use</h3>
-                    <div id="recent-use-list" class="use-recent-list"></div>
+                    </div>
                 </div>
 
-                <details class="bulk-actions-collapsible">
-                    <summary class="bulk-actions-summary">
+                <div class="collapsible-section" data-section="recentUse">
+                    <button type="button" class="section-toggle" onclick="toggleSection('recentUse')">
+                        <span>Recent Use</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="recent-logs use-log-recent">
+                    <div id="recent-use-list" class="use-recent-list"></div>
+                </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="bulkActions">
+                    <button type="button" class="section-toggle" onclick="toggleSection('bulkActions')">
                         <span>Bulk Actions</span>
-                        <span class="bulk-actions-summary-hint">Link sessions to supply</span>
-                    </summary>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                     <div class="bulk-actions-body">
                         <p class="settings-hint">FIFO link sessions to purchases by substance and date. Preview before applying.</p>
                         <div class="bulk-actions-row">
@@ -447,10 +463,16 @@
                             <button type="button" class="secondary-btn" id="manual-link-selected-btn" onclick="openManualBulkLinkModal()" disabled>📎 Manual Link Selected</button>
                         </div>
                     </div>
-                </details>
+                    </div>
+                </div>
 
+                <div class="collapsible-section" data-section="useHistory">
+                    <button type="button" class="section-toggle" onclick="toggleSection('useHistory')">
+                        <span>Use History</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <div class="use-history-section use-log-history">
-                    <h3 class="use-log-section-title">Use History</h3>
                     <div class="use-history-toolbar" id="use-history-toolbar">
                         <label class="use-history-select-all-label">
                             <input type="checkbox" id="use-history-select-all" aria-label="Select all visible sessions">
@@ -458,8 +480,11 @@
                         </label>
                         <button type="button" class="secondary-btn use-history-clear-btn" id="use-history-clear-selection">Clear</button>
                         <span class="use-history-selected-count" id="use-history-selected-count">0 selected</span>
+                        <button type="button" class="secondary-btn use-history-columns-btn" id="use-history-customize-columns">Customize Columns</button>
                     </div>
                     <div id="use-history-table-wrap"></div>
+                </div>
+                    </div>
                 </div>
             </section>
 
@@ -467,6 +492,12 @@
             <section id="stats-tab" class="tab">
                 <h2>Analytics</h2>
 
+                <div class="collapsible-section" data-section="statsDateRange">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsDateRange')">
+                        <span>Date Range Filter</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <div class="form-group">
                     <label for="stats-substance">Substance</label>
                     <select id="stats-substance" onchange="switchStatsSubstance(this.value)"></select>
@@ -499,6 +530,8 @@
                     </div>
                     <p class="stats-range-summary" id="stats-range-summary"></p>
                 </div>
+                    </div>
+                </div>
 
                 <div id="stats-all-view" class="hidden">
                     <div class="stats-section">
@@ -508,11 +541,25 @@
                 </div>
 
                 <div id="stats-single-view">
+                <div class="collapsible-section" data-section="statsUsageChart">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsUsageChart')">
+                        <span>Usage Chart</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <div class="stats-section">
                     <h3 id="usage-chart-title">Usage Per Day</h3>
                     <div id="cigarettes-per-day-chart" class="chart-container"></div>
                 </div>
+                    </div>
+                </div>
 
+                <div class="collapsible-section" data-section="statsUseStats">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsUseStats')">
+                        <span>Use Stats</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <div class="stats-section">
                     <h3>Usage Analytics</h3>
                     <div class="stats-grid">
@@ -601,12 +648,20 @@
                         <p class="stat-value" id="stats-taper-progress">—</p>
                     </div>
                 </div>
+                    </div>
+                </div>
 
                 <div class="stats-section">
                     <h3 id="spending-chart-title">Spending</h3>
                     <div id="spending-per-day-chart" class="chart-container"></div>
                 </div>
 
+                <div class="collapsible-section" data-section="statsBreakMetrics">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsBreakMetrics')">
+                        <span>Break Metrics</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <div class="stats-section" id="break-analytics-section">
                     <h3>Break Analytics</h3>
                     <div class="stats-grid">
@@ -637,6 +692,8 @@
                     <p class="settings-hint">Session date vs hours since previous session ended</p>
                     <div id="break-length-chart" class="chart-container break-length-chart"></div>
                 </div>
+                    </div>
+                </div>
 
                 <div class="stats-section hidden" id="stats-weekly-plan-section">
                     <h3>Weekly Plan Progress</h3>
@@ -665,6 +722,12 @@
                     <div id="stats-gift-senders" class="breakdown-list"></div>
                 </div>
 
+                <div class="collapsible-section" data-section="statsBuyMetrics">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsBuyMetrics')">
+                        <span>Buy Metrics</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <div class="stats-section" id="buy-break-analytics-section">
                     <h3>Buy Break Analytics</h3>
                     <div class="stats-grid">
@@ -690,6 +753,8 @@
                     <h4 class="stats-subheading">Buy Frequency Trend</h4>
                     <p class="settings-hint">Purchase date vs days since previous buy</p>
                     <div id="buy-break-frequency-chart" class="chart-container buy-break-frequency-chart"></div>
+                </div>
+                    </div>
                 </div>
 
                 <div class="stats-section">
@@ -719,6 +784,12 @@
                         <span>⏸</span> Taper paused — limits are not enforced until you resume.
                     </div>
 
+                    <div class="collapsible-section" data-section="taperTodayStatus">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperTodayStatus')">
+                            <span>Today's Taper Status</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
                     <!-- KPI strip -->
                     <div class="taper-kpi-row">
                         <div class="taper-kpi-tile" id="taper-kpi-daily">
@@ -800,27 +871,56 @@
                                 </div>
                                 <p id="taper-weekly-days-left" class="taper-panel-footer hidden">—</p>
                             </div>
+                        </div>
+                    </div>
+                        </div>
+                    </div>
 
-                            <!-- Weekly plan table -->
+                    <div class="collapsible-section" data-section="taperWeeklyPlan">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperWeeklyPlan')">
+                            <span>Weekly Plan</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
                             <div class="taper-panel" id="taper-weekly-plan-card">
-                                <div class="taper-panel-header">
-                                    <h3>Weekly Plan</h3>
-                                </div>
                                 <div id="taper-weekly-summary" class="taper-kpi-chips"></div>
                                 <div id="taper-weekly-table" class="taper-table-wrap"></div>
                             </div>
                         </div>
+                    </div>
 
-                        <aside class="taper-dash-side">
+                    <div class="collapsible-section" data-section="taperReductionPlan">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperReductionPlan')">
+                            <span>Reduction Plan</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
                             <div class="taper-panel" id="taper-reduction-card">
-                                <div class="taper-panel-header">
-                                    <h3>Reduction Targets</h3>
-                                </div>
                                 <div id="taper-reduction-readonly" class="taper-metric-grid"></div>
                                 <h4 class="taper-panel-subtitle">Projected</h4>
                                 <div id="taper-reduction-calculated" class="taper-metric-grid taper-metric-grid-compact"></div>
                             </div>
-                        </aside>
+                        </div>
+                    </div>
+
+                    <div class="collapsible-section" data-section="taperCalendarPreview">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperCalendarPreview')">
+                            <span>Taper Calendar Preview</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
+                            <div id="taper-calendar-preview" class="taper-preview-table-wrap"></div>
+                        </div>
+                    </div>
+
+                    <div class="collapsible-section" data-section="taperInsights">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperInsights')">
+                            <span>Taper Insights</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
+                            <div id="taper-insights" class="taper-insights-grid"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -837,13 +937,13 @@
                         <button type="button" class="taper-chip-btn" onclick="cancelTaperEdit()">← Back to dashboard</button>
                     </div>
                     <form id="taper-form" class="taper-form-compact">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="current-avg">Starting Daily Average</label>
-                                <input type="number" id="current-avg" min="0" step="0.1" required>
+                        <div class="form-row" id="taper-start-goal-row">
+                            <div class="form-group" id="taper-start-avg-group">
+                                <label for="current-avg">Starting Daily Average (optional)</label>
+                                <input type="number" id="current-avg" min="0" step="0.1">
                             </div>
-                            <div class="form-group">
-                                <label for="goal-avg">Goal Daily Average</label>
+                            <div class="form-group" id="goal-avg-group">
+                                <label for="goal-avg" id="goal-avg-label">Goal Daily Average</label>
                                 <input type="number" id="goal-avg" min="0" step="0.1" required>
                             </div>
                         </div>
@@ -858,7 +958,7 @@
                             </select>
                             <p class="field-hint" id="plan-type-hint">Reduce a set amount each week until you reach your goal.</p>
                         </div>
-                        <div class="form-row">
+                        <div class="form-row" id="taper-reduction-fields-row">
                             <div class="form-group" id="reduction-amount-group">
                                 <label for="reduction-amount">Reduction amount (per week)</label>
                                 <input type="number" id="reduction-amount" min="0" step="0.1" placeholder="e.g. 0.5">
@@ -869,29 +969,13 @@
                             </div>
                         </div>
                         <div id="manual-weekly-plan-section" class="manual-weekly-plan-section hidden">
+                            <p class="manual-weekly-intro">Set each week&rsquo;s max amount manually.</p>
+                            <p class="field-hint manual-weekly-example">Example: Week 1: 7g · Week 2: 6g · Week 3: 5g · Week 4: 4g · Week 5: 3g</p>
                             <h4>Weekly Targets</h4>
                             <div id="manual-weekly-targets-list" class="manual-weekly-targets-list"></div>
                             <div class="manual-weekly-targets-actions">
                                 <button type="button" class="secondary-btn" onclick="addManualWeeklyWeek()">+ Add Week</button>
                                 <button type="button" class="secondary-btn" onclick="removeManualWeeklyWeek()">Remove Week</button>
-                            </div>
-                            <div class="manual-weekly-autofill">
-                                <p class="field-hint">Linearly fill week goals from a start to end amount.</p>
-                                <div class="form-row">
-                                    <div class="form-group">
-                                        <label for="manual-autofill-start">Start (per week)</label>
-                                        <input type="number" id="manual-autofill-start" min="0" step="0.1" placeholder="6">
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="manual-autofill-end">End (per week)</label>
-                                        <input type="number" id="manual-autofill-end" min="0" step="0.1" placeholder="1">
-                                    </div>
-                                    <div class="form-group">
-                                        <label for="manual-autofill-weeks">Weeks</label>
-                                        <input type="number" id="manual-autofill-weeks" min="1" max="52" step="1" placeholder="5">
-                                    </div>
-                                </div>
-                                <button type="button" class="secondary-btn" onclick="autoFillManualWeeklyTargets()">Auto Fill Weekly Targets</button>
                             </div>
                             <h4>Goal Use Under</h4>
                             <p class="field-hint">Optional cap — stay under this amount in addition to weekly targets.</p>
@@ -909,21 +993,22 @@
                                 </div>
                             </div>
                         </div>
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="end-date">Target end date</label>
+                        <div class="form-row" id="taper-end-weekly-row">
+                            <div class="form-group" id="end-date-group">
+                                <label for="end-date" id="end-date-label">Target end date</label>
                                 <input type="date" id="end-date" required>
                             </div>
-                            <div class="form-group">
+                            <div class="form-group" id="weekly-max-group">
                                 <label for="weekly-max">Weekly Limit</label>
                                 <input type="number" id="weekly-max" min="0" step="0.1" placeholder="Optional">
                                 <p class="field-hint">e.g. 7g per week — auto-calculated if empty.</p>
                             </div>
                         </div>
-                        <div class="form-group">
+                        <div class="form-group" id="taper-notes-group">
                             <label for="taper-notes">Plan notes</label>
                             <textarea id="taper-notes" rows="2" placeholder="Personal reminders..."></textarea>
                         </div>
+                        <div id="taper-warn-toggles">
                         <div class="form-group toggle-row">
                             <label for="do-not-surpass-daily">Do not surpass daily limit</label>
                             <input type="checkbox" id="do-not-surpass-daily" checked>
@@ -931,6 +1016,7 @@
                         <div class="form-group toggle-row">
                             <label for="do-not-surpass-weekly">Do not surpass weekly limit</label>
                             <input type="checkbox" id="do-not-surpass-weekly">
+                        </div>
                         </div>
                         <div class="taper-form-actions">
                             <button type="button" class="secondary-btn hidden" id="taper-cancel-edit-btn" onclick="cancelTaperEdit()">Cancel Edit</button>
@@ -946,6 +1032,12 @@
                 <h2>Buy Tracker</h2>
                 <p class="settings-hint">Track any purchase — substances, supplies, or items you buy.</p>
 
+                <div class="collapsible-section" data-section="purchaseForm">
+                    <button type="button" class="section-toggle" onclick="toggleSection('purchaseForm')">
+                        <span>Purchase Form</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <form id="buy-form">
                     <div class="form-group">
                         <label for="buy-substance">Item / Substance</label>
@@ -1002,7 +1094,15 @@
                     <button type="submit" class="submit-btn" id="buy-submit-btn">Save Purchase</button>
                     <button type="button" class="secondary-btn hidden" id="cancel-buy-edit-btn" onclick="cancelBuyEdit()">Cancel Edit</button>
                 </form>
+                    </div>
+                </div>
 
+                <div class="collapsible-section" data-section="buyMetrics">
+                    <button type="button" class="section-toggle" onclick="toggleSection('buyMetrics')">
+                        <span>Buy Metrics</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <div class="buy-stats-section">
                     <h3>Supply Analytics</h3>
                     <div class="stats-grid buy-supply-duration-grid">
@@ -1034,15 +1134,33 @@
                         <div class="stat-card"><h3>Oldest Active Supply</h3><p class="stat-value stat-value-sm" id="buy-oldest-active-supply">—</p></div>
                         <div class="stat-card"><h3>Active Supplies</h3><p class="stat-value" id="buy-active-supplies-count">0</p></div>
                     </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="buySpendingTrend">
+                    <button type="button" class="section-toggle" onclick="toggleSection('buySpendingTrend')">
+                        <span>Spending Trend</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                     <div class="buy-trend-section">
                         <h4>Spending Trend (Last 7 Days)</h4>
                         <div id="buy-spending-trend" class="chart-container"></div>
                     </div>
+                    </div>
                 </div>
 
-                <div class="purchase-history">
-                    <h3>Purchase History</h3>
-                    <div id="buy-history-table-wrap"></div>
+                <div class="collapsible-section" data-section="purchaseHistory">
+                    <button type="button" class="section-toggle" onclick="toggleSection('purchaseHistory')">
+                        <span>Purchase History</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content" id="purchase-history-content">
+                        <div class="purchase-history-header">
+                            <button type="button" class="secondary-btn" id="purchase-history-customize-columns">Customize Columns</button>
+                        </div>
+                        <div id="purchase-history-list"></div>
+                    </div>
                 </div>
             </section>
 
@@ -1051,15 +1169,17 @@
                 <h2>History</h2>
 
                 <div class="form-group">
-                    <label for="calendar-substance">Taper colors for:</label>
-                    <select id="calendar-substance" onchange="renderCalendar()"></select>
+                    <label for="history-substance">Substance</label>
+                    <select id="history-substance" onchange="renderHistory()"></select>
                 </div>
 
-                <div class="calendar-legend">
-                    <span class="legend-item"><span class="legend-dot taper-under"></span> Under target</span>
-                    <span class="legend-item"><span class="legend-dot taper-close"></span> Close to limit</span>
-                    <span class="legend-item"><span class="legend-dot taper-over"></span> Over target</span>
-                    <span class="legend-item"><span class="legend-dot taper-none"></span> No target</span>
+                <div class="history-view-toggle">
+                    <span class="history-view-label">History View:</span>
+                    <div class="history-view-btns" role="tablist">
+                        <button type="button" class="history-view-btn" data-view="calendar" onclick="setHistoryView('calendar')">Calendar</button>
+                        <button type="button" class="history-view-btn" data-view="weekly" onclick="setHistoryView('weekly')">Weekly Summary</button>
+                        <button type="button" class="history-view-btn" data-view="monthly" onclick="setHistoryView('monthly')">Monthly Summary</button>
+                    </div>
                 </div>
 
                 <div class="calendar-nav">
@@ -1068,38 +1188,73 @@
                     <button class="nav-arrow" onclick="changeMonth(1)">›</button>
                 </div>
 
-                <div class="calendar-grid" id="calendar-grid"></div>
+                <div id="history-monthly-summary" class="history-monthly-summary"></div>
 
-                <div class="day-details">
-                    <h3>Selected Day Details</h3>
-                    <div id="day-details-content">
-                        <p style="color: var(--text-secondary); text-align: center;">Select a day to view details</p>
+                <div id="history-calendar-view" class="history-view-panel">
+                    <div class="calendar-legend">
+                        <span class="legend-item"><span class="legend-dot taper-under"></span> Under target</span>
+                        <span class="legend-item"><span class="legend-dot taper-close"></span> Close to limit</span>
+                        <span class="legend-item"><span class="legend-dot taper-over"></span> Over target</span>
+                        <span class="legend-item"><span class="legend-dot taper-none"></span> No target</span>
+                    </div>
+
+                    <div class="calendar-grid" id="calendar-grid"></div>
+
+                    <div id="history-weekly-totals" class="history-weekly-totals"></div>
+
+                    <div class="day-details">
+                        <h3>Selected Day Details</h3>
+                        <div id="day-details-content">
+                            <p style="color: var(--text-secondary); text-align: center;">Select a day to view details</p>
+                        </div>
                     </div>
                 </div>
+
+                <div id="history-weekly-view" class="history-view-panel hidden"></div>
+                <div id="history-monthly-view" class="history-view-panel hidden"></div>
             </section>
 
             <!-- Settings Tab -->
             <section id="settings-tab" class="tab">
                 <h2>Settings</h2>
 
+                <div class="collapsible-section" data-section="settingsSubstances">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsSubstances')">
+                        <span>Manage Substances</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <div class="settings-section">
-                    <h3>Manage Substances</h3>
                     <p class="settings-hint">Add custom substances, set icons, colors, units, and tracking options.</p>
                     <button type="button" class="submit-btn" onclick="openSubstanceEditor()">+ Add Substance</button>
                     <div id="substances-list" class="substances-list"></div>
                 </div>
+                    </div>
+                </div>
 
+                <div class="collapsible-section" data-section="settingsMainSubstance">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsMainSubstance')">
+                        <span>Main Substance</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <div class="settings-section">
-                    <h3>Main Substance</h3>
                     <p class="settings-hint">Set your main substance in <strong>Manage Substances</strong> (⭐ Set as Main). Control startup behavior below.</p>
                     <div class="form-group toggle-row">
                         <label for="open-on-main-substance">Always open app on Main Substance</label>
                         <input type="checkbox" id="open-on-main-substance" checked onchange="saveOpenOnMainSetting()">
                     </div>
                 </div>
+                    </div>
+                </div>
 
+                <div class="collapsible-section" data-section="settingsPreferences">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsPreferences')">
+                        <span>Preferences</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <div class="settings-section">
-                    <h3>Preferences</h3>
                     <div class="form-group">
                         <label for="currency">Currency Symbol</label>
                         <input type="text" id="currency" maxlength="3" onchange="saveSettings()">
@@ -1107,6 +1262,8 @@
                     <div class="form-group">
                         <label for="reminder-message">Reminder Message</label>
                         <textarea id="reminder-message" rows="2" onchange="saveSettings()" placeholder="Your personal reminder..."></textarea>
+                    </div>
+                </div>
                     </div>
                 </div>
 
@@ -1152,8 +1309,13 @@
                     <div id="reasons-list"></div>
                 </div>
 
+                <div class="collapsible-section" data-section="settingsBackup">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsBackup')">
+                        <span>Backup / Import / Export</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <div class="settings-section">
-                    <h3>Backup / Import / Export</h3>
                     <p id="settings-last-saved" class="last-saved-status">Last Saved: Never</p>
                     <p class="data-storage-note">Data is stored only in this browser (localStorage). No account or cloud sync.</p>
                     <input type="file" id="import-json-input" accept=".json,application/json" class="hidden" onchange="handleImportJsonFile(event)">
@@ -1162,6 +1324,8 @@
                         <button type="button" class="secondary-btn" onclick="triggerImportJsonBackup()">Import JSON Backup</button>
                         <button type="button" class="secondary-btn" onclick="exportDataCsv()">Export CSV</button>
                         <button type="button" class="danger-btn" onclick="clearAllData()">Clear All Data</button>
+                    </div>
+                </div>
                     </div>
                 </div>
             </section>
@@ -1332,6 +1496,20 @@
             <div class="modal-actions">
                 <button type="button" class="secondary-btn" onclick="closeManualBulkLinkModal()">Cancel</button>
                 <button type="button" class="submit-btn" id="manual-link-apply-btn" onclick="applyManualBulkLink()">Apply Link</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Column Settings Modal -->
+    <div id="column-settings-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <h2 id="column-settings-title">Customize Columns</h2>
+            <p class="settings-hint">Drag rows to reorder columns. Uncheck to hide a column.</p>
+            <ul id="column-settings-list" class="column-settings-list"></ul>
+            <div class="modal-actions column-settings-actions">
+                <button type="button" class="secondary-btn" id="column-settings-reset">Reset Columns</button>
+                <button type="button" class="secondary-btn" id="column-settings-close">Cancel</button>
+                <button type="button" class="submit-btn" id="column-settings-apply">Done</button>
             </div>
         </div>
     </div>
