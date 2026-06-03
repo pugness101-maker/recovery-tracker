@@ -1,0 +1,33 @@
+---
+description: Recovery Tracker uses browser localStorage only — no cloud databases
+alwaysApply: true
+---
+
+# Local-only data storage
+
+Do NOT use Supabase, Firebase, or any cloud database or backend for Recovery Tracker.
+
+## Persistence
+
+- **Primary storage**: `localStorage` key `recovery-tracker-v2`
+- **Last saved timestamp**: `localStorage` key `recovery-tracker-v2-last-saved`
+- Every data mutation must call `saveData(appData)` so changes persist across refresh and browser restarts
+- No account login, no sync service, no remote API for app data
+
+## Backups
+
+1. **Auto-save**: all log, purchase, substance, settings, and taper changes via `saveData`
+2. **JSON export/import**: backup and restore with validation; import offers merge or replace after user confirmation
+3. **CSV export**: optional downloadable export for logs and purchases (client-side only)
+
+## UI
+
+- Show **Last Saved: [date/time]** on Dashboard and Settings (updated whenever `saveData` runs)
+- Settings data management: Export JSON Backup, Import JSON Backup, Export CSV, Clear All Data
+
+## Import flow
+
+1. User selects a JSON file
+2. Validate structure (substances, logs, purchases, settings)
+3. User confirms merge or replace
+4. Call `refreshAppAfterDataChange()` to refresh all views
