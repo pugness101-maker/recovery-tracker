@@ -204,6 +204,18 @@
                     <p class="dns-status" id="dashboard-dns-status">—</p>
                     <p class="dns-status" id="dashboard-weekly-status">—</p>
                     <p class="dns-status" id="dashboard-taper-overall-status">—</p>
+                    <div id="dashboard-manual-weekly-card" class="manual-weekly-dashboard hidden">
+                        <div class="manual-weekly-dash-grid">
+                            <div class="dns-stat"><span class="dns-label">Current Week</span><span class="dns-value" id="dash-manual-week-num">—</span></div>
+                            <div class="dns-stat"><span class="dns-label">Target</span><span class="dns-value" id="dash-manual-week-target">—</span></div>
+                            <div class="dns-stat"><span class="dns-label">Actual</span><span class="dns-value" id="dash-manual-week-actual">—</span></div>
+                            <div class="dns-stat"><span class="dns-label">Remaining Allowed</span><span class="dns-value" id="dash-manual-week-remaining">—</span></div>
+                        </div>
+                        <div class="progress-bar-container dns-bar-container">
+                            <div class="progress-bar dns-bar" id="dash-manual-week-bar"><span class="progress-text" id="dash-manual-week-bar-text"></span></div>
+                        </div>
+                        <p class="dns-status" id="dash-manual-week-goal-status">—</p>
+                    </div>
                     <p class="dns-weekly hidden" id="dashboard-dns-weekly"></p>
                     <p class="dns-streak hidden" id="dashboard-dns-streak"></p>
                     <p class="dns-warning hidden" id="dashboard-dns-warning"></p>
@@ -247,6 +259,10 @@
                         <h3>Current Supply</h3>
                         <p class="stat-value" id="dash-supply-total">—</p>
                         <p class="stat-sub" id="dash-supply-current-bag">—</p>
+                        <p class="stat-sub" id="dash-supply-last-buy-date">Last buy date: —</p>
+                        <p class="stat-sub" id="dash-supply-since-last-buy">Time since last buy: —</p>
+                        <p class="stat-sub" id="dash-supply-avg-buy-break">Avg time between buys: —</p>
+                        <p class="stat-sub" id="dash-supply-est-next-buy">Est. next buy: —</p>
                         <p class="stat-sub" id="dash-supply-last-purchase">—</p>
                         <p class="stat-sub" id="dash-supply-days-left">—</p>
                     </div>
@@ -266,6 +282,34 @@
                     <div class="stat-card">
                         <h3>Cravings Resisted</h3>
                         <p class="stat-value" id="cravings-resisted">0</p>
+                    </div>
+                </div>
+
+                <div class="stats-section break-metrics-section hidden" id="break-metrics-section">
+                    <h3>Break Metrics</h3>
+                    <div class="stats-grid break-metrics-grid">
+                        <div class="stat-card">
+                            <h3>Current Break</h3>
+                            <p class="stat-value" id="dash-break-current">—</p>
+                            <p class="stat-sub">Gap before last session</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Longest Break</h3>
+                            <p class="stat-value" id="dash-break-longest">—</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Average Break</h3>
+                            <p class="stat-value" id="dash-break-average">—</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>30-Day Average</h3>
+                            <p class="stat-value" id="dash-break-avg-30">—</p>
+                        </div>
+                        <div class="stat-card highlight">
+                            <h3>Current Streak Without Use</h3>
+                            <p class="stat-value" id="dash-break-streak-no-use">—</p>
+                            <p class="stat-sub">Since last session ended</p>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -350,8 +394,27 @@
                     <div id="recent-use-list"></div>
                 </div>
 
+                <div class="bulk-actions-section">
+                    <h3>Bulk Actions</h3>
+                    <p class="settings-hint">FIFO link sessions to purchases by substance and date. Preview before applying.</p>
+                    <div class="bulk-actions-row">
+                        <button type="button" class="secondary-btn" onclick="startBulkLinkSessions('all')">🔗 Auto Link Sessions</button>
+                        <button type="button" class="secondary-btn" onclick="startBulkLinkSessions('unlinked_only')">Link Unlinked Only</button>
+                        <button type="button" class="secondary-btn" onclick="startBulkLinkSessions('clear')">Clear All Links</button>
+                        <button type="button" class="secondary-btn" id="manual-link-selected-btn" onclick="openManualBulkLinkModal()" disabled>📎 Manual Link Selected to Supply</button>
+                    </div>
+                </div>
+
                 <div class="use-history-section">
                     <h3>Use History</h3>
+                    <div class="use-history-toolbar" id="use-history-toolbar">
+                        <label class="use-history-select-all-label">
+                            <input type="checkbox" id="use-history-select-all" aria-label="Select all visible sessions">
+                            Select All Visible
+                        </label>
+                        <button type="button" class="secondary-btn" id="use-history-clear-selection">Clear Selection</button>
+                        <span class="use-history-selected-count" id="use-history-selected-count">Selected: 0 sessions</span>
+                    </div>
                     <div id="use-history-table-wrap"></div>
                 </div>
             </section>
@@ -392,8 +455,8 @@
                         <p class="stat-value" id="avg-per-day">0</p>
                     </div>
                     <div class="stat-card">
-                        <h3>Longest Time Between</h3>
-                        <p class="stat-value" id="longest-time-between">--</p>
+                        <h3>Longest Break Ever</h3>
+                        <p class="stat-value" id="longest-time-between">—</p>
                     </div>
                     <div class="stat-card">
                         <h3>Total Money Spent</h3>
@@ -436,6 +499,69 @@
                 <div class="stats-section">
                     <h3>Spending (Last 7 Days)</h3>
                     <div id="spending-per-day-chart" class="chart-container"></div>
+                </div>
+
+                <div class="stats-section" id="break-analytics-section">
+                    <h3>Break Analytics</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <h3>Longest Break Ever</h3>
+                            <p class="stat-value" id="stats-break-longest">—</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Average Break</h3>
+                            <p class="stat-value" id="stats-break-average">—</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Median Break</h3>
+                            <p class="stat-value" id="stats-break-median">—</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Shortest Break</h3>
+                            <p class="stat-value" id="stats-break-shortest">—</p>
+                        </div>
+                        <div class="stat-card highlight">
+                            <h3>Current Break</h3>
+                            <p class="stat-value" id="stats-break-current">—</p>
+                        </div>
+                    </div>
+                    <h4 class="stats-subheading">Break Trend (Last 10)</h4>
+                    <div id="break-trend-list" class="break-trend-list"></div>
+                    <h4 class="stats-subheading">Break Length Over Time</h4>
+                    <p class="settings-hint">Session date vs hours since previous session ended</p>
+                    <div id="break-length-chart" class="chart-container break-length-chart"></div>
+                </div>
+
+                <div class="stats-section hidden" id="stats-weekly-plan-section">
+                    <h3>Weekly Plan Progress</h3>
+                    <div id="stats-weekly-plan-table" class="taper-table-wrap"></div>
+                </div>
+
+                <div class="stats-section" id="buy-break-analytics-section">
+                    <h3>Buy Break Analytics</h3>
+                    <div class="stats-grid">
+                        <div class="stat-card">
+                            <h3>Longest Time Between Buys</h3>
+                            <p class="stat-value" id="stats-buy-break-longest">—</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Average Time Between Buys</h3>
+                            <p class="stat-value" id="stats-buy-break-average">—</p>
+                        </div>
+                        <div class="stat-card">
+                            <h3>Shortest Time Between Buys</h3>
+                            <p class="stat-value" id="stats-buy-break-shortest">—</p>
+                        </div>
+                        <div class="stat-card highlight">
+                            <h3>Time Since Last Buy</h3>
+                            <p class="stat-value" id="stats-buy-since-last">—</p>
+                        </div>
+                    </div>
+                    <h4 class="stats-subheading">Last 10 Buy Breaks</h4>
+                    <div id="buy-break-trend-list" class="break-trend-list"></div>
+                    <h4 class="stats-subheading">Buy Frequency Trend</h4>
+                    <p class="settings-hint">Purchase date vs days since previous buy</p>
+                    <div id="buy-break-frequency-chart" class="chart-container buy-break-frequency-chart"></div>
                 </div>
 
                 <div class="stats-section">
@@ -600,6 +726,7 @@
                                 <option value="reduce-percent">Reduce by percent</option>
                                 <option value="fixed">Fixed daily limit</option>
                                 <option value="step-weekly">Weekly step-down</option>
+                                <option value="manual-weekly">Manual weekly plan</option>
                             </select>
                             <p class="field-hint" id="plan-type-hint">Reduce a set amount each week until you reach your goal.</p>
                         </div>
@@ -611,6 +738,47 @@
                             <div class="form-group hidden" id="reduction-percent-group">
                                 <label for="reduction-percent">Reduction percent (per week)</label>
                                 <input type="number" id="reduction-percent" min="0" max="100" step="1" placeholder="e.g. 10">
+                            </div>
+                        </div>
+                        <div id="manual-weekly-plan-section" class="manual-weekly-plan-section hidden">
+                            <h4>Weekly Targets</h4>
+                            <div id="manual-weekly-targets-list" class="manual-weekly-targets-list"></div>
+                            <div class="manual-weekly-targets-actions">
+                                <button type="button" class="secondary-btn" onclick="addManualWeeklyWeek()">+ Add Week</button>
+                                <button type="button" class="secondary-btn" onclick="removeManualWeeklyWeek()">Remove Week</button>
+                            </div>
+                            <div class="manual-weekly-autofill">
+                                <p class="field-hint">Linearly fill week goals from a start to end amount.</p>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="manual-autofill-start">Start (per week)</label>
+                                        <input type="number" id="manual-autofill-start" min="0" step="0.1" placeholder="6">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="manual-autofill-end">End (per week)</label>
+                                        <input type="number" id="manual-autofill-end" min="0" step="0.1" placeholder="1">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="manual-autofill-weeks">Weeks</label>
+                                        <input type="number" id="manual-autofill-weeks" min="1" max="52" step="1" placeholder="5">
+                                    </div>
+                                </div>
+                                <button type="button" class="secondary-btn" onclick="autoFillManualWeeklyTargets()">Auto Fill Weekly Targets</button>
+                            </div>
+                            <h4>Goal Use Under</h4>
+                            <p class="field-hint">Optional cap — stay under this amount in addition to weekly targets.</p>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="goal-limit-amount">Use less than</label>
+                                    <input type="number" id="goal-limit-amount" min="0" step="0.1" placeholder="1">
+                                </div>
+                                <div class="form-group">
+                                    <label for="goal-limit-type">Period</label>
+                                    <select id="goal-limit-type">
+                                        <option value="daily">Daily</option>
+                                        <option value="weekly">Weekly</option>
+                                    </select>
+                                </div>
                             </div>
                         </div>
                         <div class="form-row">
@@ -717,7 +885,13 @@
                         <div class="stat-card"><h3>Purchases This Month</h3><p class="stat-value" id="buy-count-month">0</p></div>
                         <div class="stat-card"><h3>Avg Cost / Unit</h3><p class="stat-value" id="buy-avg-cost-unit">—</p></div>
                         <div class="stat-card"><h3>Last Purchase</h3><p class="stat-value stat-value-sm" id="buy-last-date">—</p></div>
+                        <div class="stat-card highlight"><h3>Time Since Last Buy</h3><p class="stat-value" id="buy-since-last">—</p></div>
+                        <div class="stat-card"><h3>Longest Buy Break</h3><p class="stat-value" id="buy-break-longest">—</p></div>
+                        <div class="stat-card"><h3>Average Buy Break</h3><p class="stat-value" id="buy-break-average">—</p></div>
+                        <div class="stat-card"><h3>Shortest Buy Break</h3><p class="stat-value" id="buy-break-shortest">—</p></div>
+                        <div class="stat-card"><h3>30-Day Avg Buy Break</h3><p class="stat-value" id="buy-break-avg-30">—</p></div>
                         <div class="stat-card"><h3>Est. Days Supply</h3><p class="stat-value" id="buy-days-supply">—</p></div>
+                        <div class="stat-card"><h3>Est. Next Buy</h3><p class="stat-value stat-value-sm" id="buy-est-next">—</p></div>
                     </div>
                     <div class="buy-trend-section">
                         <h4>Spending Trend (Last 7 Days)</h4>
@@ -727,7 +901,7 @@
 
                 <div class="purchase-history">
                     <h3>Purchase History</h3>
-                    <div id="buy-history-list"></div>
+                    <div id="buy-history-table-wrap"></div>
                 </div>
             </section>
 
@@ -969,6 +1143,55 @@
                     <button id="save-substance-btn" type="button" class="submit-btn">Save Substance</button>
                 </div>
             </form>
+        </div>
+    </div>
+
+    <!-- Bulk Link Preview Modal -->
+    <div id="bulk-link-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2 id="bulk-link-modal-title">Bulk Link Preview</h2>
+            <div id="bulk-link-summary" class="bulk-link-summary"></div>
+            <div class="modal-actions">
+                <button type="button" class="secondary-btn" onclick="closeBulkLinkModal()">Cancel</button>
+                <button type="button" class="submit-btn" onclick="applyBulkLinkPreview()">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual Bulk Link Modal -->
+    <div id="manual-bulk-link-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <h2>Manual Link Selected to Supply</h2>
+            <p class="settings-hint">Link checkbox-selected sessions to one purchase (or split across later purchases).</p>
+            <div class="manual-link-stats">
+                <p><strong>Selected sessions:</strong> <span id="manual-link-session-count">0</span></p>
+                <p><strong>Total selected amount:</strong> <span id="manual-link-total-amount">—</span></p>
+            </div>
+            <div class="form-group">
+                <label for="manual-link-substance">Substance</label>
+                <select id="manual-link-substance"></select>
+            </div>
+            <div class="form-group">
+                <label for="manual-link-purchase">Purchase / supply</label>
+                <select id="manual-link-purchase" required></select>
+            </div>
+            <div class="form-group toggle-row">
+                <label for="manual-link-reset">Reset selected sessions’ old links first</label>
+                <input type="checkbox" id="manual-link-reset" checked>
+            </div>
+            <div class="form-group toggle-row">
+                <label for="manual-link-overdraw">Allow overdraw supply</label>
+                <input type="checkbox" id="manual-link-overdraw">
+            </div>
+            <div class="form-group toggle-row">
+                <label for="manual-link-split">Split into next purchases if selected supply runs out</label>
+                <input type="checkbox" id="manual-link-split">
+            </div>
+            <div id="manual-link-preview" class="bulk-link-summary manual-link-preview"></div>
+            <div class="modal-actions">
+                <button type="button" class="secondary-btn" onclick="closeManualBulkLinkModal()">Cancel</button>
+                <button type="button" class="submit-btn" id="manual-link-apply-btn" onclick="applyManualBulkLink()">Apply Link</button>
+            </div>
         </div>
     </div>
 
