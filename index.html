@@ -143,7 +143,11 @@
                     <div class="dash-summary-card dash-summary-use">
                         <span class="dash-summary-label">Today's Use</span>
                         <span class="dash-summary-value" id="dash-today-total-use">0</span>
-                        <span class="dash-summary-sub" id="dash-today-session-duration">— session time</span>
+                        <div class="dash-use-details">
+                            <span class="dash-summary-sub" id="dash-today-session-count">0 sessions</span>
+                            <span class="dash-summary-sub" id="dash-today-duration">Duration: 0h 0m</span>
+                            <span class="dash-summary-sub" id="dash-today-avg-session">Avg/session: —</span>
+                        </div>
                     </div>
                     <div class="dash-summary-card dash-summary-supply">
                         <span class="dash-summary-label">Supply</span>
@@ -152,11 +156,6 @@
                     <div class="dash-summary-card dash-summary-since">
                         <span class="dash-summary-label">Since Last Use</span>
                         <span class="dash-summary-value" id="dash-time-since-last-use">—</span>
-                    </div>
-                    <div class="dash-summary-card dash-summary-limit">
-                        <span class="dash-summary-label">Daily Limit</span>
-                        <span class="dash-summary-value" id="dash-remaining-taper">—</span>
-                        <span class="dash-summary-sub" id="dash-daily-limit-status">—</span>
                     </div>
                 </div>
 
@@ -170,10 +169,6 @@
                         <span>⏱️</span>
                         <span>Session</span>
                     </button>
-                    <button class="quick-btn secondary" onclick="logCravingOnly()">
-                        <span>🎯</span>
-                        <span>Craving</span>
-                    </button>
                     <button class="quick-btn success" onclick="openBuyTrackerModal()">
                         <span>🛒</span>
                         <span>Buy</span>
@@ -184,53 +179,6 @@
                     </button>
                 </div>
 
-                <!-- Compact Taper -->
-                <div id="dns-section" class="dash-card dash-taper-card hidden">
-                    <div class="dash-card-head">
-                        <h3 class="dash-card-title">Taper Today <span class="dns-subtitle" id="dashboard-taper-substance-label"></span></h3>
-                        <p class="dash-taper-status" id="dashboard-taper-overall-status">—</p>
-                    </div>
-                    <div class="dash-taper-stats">
-                        <div class="dash-taper-stat">
-                            <span class="dns-label">Limit</span>
-                            <span class="dns-value" id="dashboard-dns-limit">—</span>
-                        </div>
-                        <div class="dash-taper-stat">
-                            <span class="dns-label">Used</span>
-                            <span class="dns-value" id="dashboard-dns-used">—</span>
-                        </div>
-                        <div class="dash-taper-stat">
-                            <span class="dns-label">Left</span>
-                            <span class="dns-value" id="dashboard-dns-remaining">—</span>
-                        </div>
-                    </div>
-                    <div class="progress-bar-container dns-bar-container">
-                        <div class="progress-bar dns-bar" id="dashboard-dns-bar">
-                            <span class="progress-text" id="dashboard-dns-bar-text"></span>
-                        </div>
-                    </div>
-                    <p class="dns-status dns-status-compact" id="dashboard-dns-status">—</p>
-                    <p class="dns-status dns-status-compact hidden" id="dashboard-taper-manual-note"></p>
-                    <!-- Legacy ids kept for JS compatibility (hidden) -->
-                    <span class="hidden" id="dashboard-dns-used-max"></span>
-                    <span class="hidden" id="dashboard-weekly-limit"></span>
-                    <span class="hidden" id="dashboard-weekly-used"></span>
-                    <span class="hidden" id="dashboard-weekly-remaining"></span>
-                    <span class="hidden" id="dashboard-weekly-status"></span>
-                    <span class="hidden" id="dashboard-weekly-bar"></span>
-                    <span class="hidden" id="dashboard-weekly-bar-text"></span>
-                    <span class="hidden" id="dash-daily-taper-limit"></span>
-                    <div id="dashboard-manual-weekly-card" class="hidden">
-                        <span id="dash-manual-week-num"></span>
-                        <span id="dash-manual-week-target"></span>
-                        <span id="dash-manual-week-actual"></span>
-                        <span id="dash-manual-week-remaining"></span>
-                        <span id="dash-manual-week-bar"></span>
-                        <span id="dash-manual-week-bar-text"></span>
-                        <span id="dash-manual-week-goal-status"></span>
-                    </div>
-                </div>
-
                 <!-- Recovery Summary -->
                 <div class="dash-card dash-recovery-card" id="break-metrics-section">
                     <h3 class="dash-card-title">Recovery</h3>
@@ -239,11 +187,6 @@
                             <span class="dash-recovery-label">Streak</span>
                             <span class="dash-recovery-value" id="recovery-streak-current">0 days</span>
                             <span class="dash-recovery-sub" id="recovery-streak-since">—</span>
-                        </div>
-                        <div class="dash-recovery-item">
-                            <span class="dash-recovery-label">Cravings Resisted</span>
-                            <span class="dash-recovery-value" id="cravings-resisted">0</span>
-                            <span class="dash-recovery-sub">today</span>
                         </div>
                         <div class="dash-recovery-item dash-recovery-breaks">
                             <span class="dash-recovery-label">Break Metrics</span>
@@ -300,12 +243,6 @@
                     <span class="hidden" id="dash-gift-net"></span>
                     <span class="hidden" id="dash-spent-today-buy"></span>
                     <span class="hidden" id="dash-last-purchase"></span>
-                </div>
-
-                <!-- Recent Activity -->
-                <div class="dash-card dash-activity-card">
-                    <h3 class="dash-card-title">Recent Activity</h3>
-                    <div id="dash-recent-activity" class="dash-activity-list"></div>
                 </div>
 
                 <!-- Legacy taper progress (hidden; full view on Taper tab) -->
@@ -366,7 +303,7 @@
                         </div>
 
                         <div class="use-log-datetime-grid">
-                            <div class="form-group use-log-compact">
+                            <div class="form-group use-log-compact use-date-field">
                                 <label for="use-date">Date</label>
                                 <input type="date" id="use-date" required>
                             </div>
@@ -374,7 +311,7 @@
                                 <label for="use-start-time">Start</label>
                                 <input type="time" id="use-start-time" required>
                             </div>
-                            <div class="form-group use-log-compact session-only-field hidden">
+                            <div class="form-group use-log-compact use-end-time-field hidden">
                                 <label for="use-end-time">End</label>
                                 <input type="time" id="use-end-time">
                             </div>
@@ -490,7 +427,8 @@
 
             <!-- Stats Tab -->
             <section id="stats-tab" class="tab">
-                <h2>Analytics</h2>
+                <h2>Stats</h2>
+                <p class="settings-hint">Spreadsheet-style analytics — summaries, trends, and color-coded status.</p>
 
                 <div class="collapsible-section" data-section="statsDateRange">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsDateRange')">
@@ -541,226 +479,129 @@
                 </div>
 
                 <div id="stats-single-view">
-                <div class="collapsible-section" data-section="statsUsageChart">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsUsageChart')">
-                        <span>Usage Chart</span>
+
+                <div class="collapsible-section" data-section="statsSummaryDashboard">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsSummaryDashboard')">
+                        <span>Summary Dashboard</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
-                <div class="stats-section">
-                    <h3 id="usage-chart-title">Usage Per Day</h3>
-                    <div id="cigarettes-per-day-chart" class="chart-container"></div>
-                </div>
+                        <div id="stats-summary-dashboard" class="sheet-summary-grid"></div>
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsUseStats">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsUseStats')">
-                        <span>Use Stats</span>
+                <div class="collapsible-section" data-section="statsMonthlySummary">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsMonthlySummary')">
+                        <span>Monthly Summary</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
-                <div class="stats-section">
-                    <h3>Usage Analytics</h3>
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <h3>Avg Duration</h3>
-                            <p class="stat-value" id="stats-avg-duration">—</p>
-                        </div>
-                        <div class="stat-card">
-                            <h3>Avg / Session</h3>
-                            <p class="stat-value" id="stats-avg-per-session">—</p>
-                        </div>
-                        <div class="stat-card">
-                            <h3>Avg / hr</h3>
-                            <p class="stat-value" id="stats-avg-per-hr">—</p>
-                        </div>
-                        <div class="stat-card">
-                            <h3>Session Count</h3>
-                            <p class="stat-value" id="stats-session-count">0</p>
-                        </div>
-                        <div class="stat-card">
-                            <h3>Total Duration</h3>
-                            <p class="stat-value" id="stats-total-duration">—</p>
-                        </div>
-                        <div class="stat-card">
-                            <h3>Longest Session</h3>
-                            <p class="stat-value" id="stats-longest-session">—</p>
-                        </div>
-                        <div class="stat-card">
-                            <h3>Shortest Session</h3>
-                            <p class="stat-value" id="stats-shortest-session">—</p>
-                        </div>
+                        <div id="stats-monthly-summary" class="sheet-table-wrap"></div>
                     </div>
                 </div>
 
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <h3>Total Used</h3>
-                        <p class="stat-value" id="total-week">0</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Total Sessions</h3>
-                        <p class="stat-value" id="total-month">0</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Avg Per Day</h3>
-                        <p class="stat-value" id="avg-per-day">0</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Longest Break Ever</h3>
-                        <p class="stat-value" id="longest-time-between">—</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Total Money Spent</h3>
-                        <p class="stat-value" id="total-spent">$0.00</p>
-                    </div>
-                    <div class="stat-card highlight">
-                        <h3>Estimated Money Saved</h3>
-                        <p class="stat-value" id="estimated-saved">$0.00</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Cost Per Week</h3>
-                        <p class="stat-value" id="cost-per-week">$0.00</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Cost Per Month</h3>
-                        <p class="stat-value" id="cost-per-month">$0.00</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Reduction from Taper Start</h3>
-                        <p class="stat-value" id="reduction-baseline">—</p>
-                    </div>
-                    <div class="stat-card highlight">
-                        <h3>Current Recovery Streak</h3>
-                        <p class="stat-value" id="stats-recovery-current">0 days</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Best Recovery Streak</h3>
-                        <p class="stat-value" id="stats-recovery-best">0 days</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Cravings Logged</h3>
-                        <p class="stat-value" id="stats-cravings-count">0</p>
-                    </div>
-                    <div class="stat-card">
-                        <h3>Taper Progress</h3>
-                        <p class="stat-value" id="stats-taper-progress">—</p>
-                    </div>
-                </div>
-                    </div>
-                </div>
-
-                <div class="stats-section">
-                    <h3 id="spending-chart-title">Spending</h3>
-                    <div id="spending-per-day-chart" class="chart-container"></div>
-                </div>
-
-                <div class="collapsible-section" data-section="statsBreakMetrics">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsBreakMetrics')">
-                        <span>Break Metrics</span>
+                <div class="collapsible-section" data-section="statsWeeklySummary">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsWeeklySummary')">
+                        <span>Weekly Summary</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
-                <div class="stats-section" id="break-analytics-section">
-                    <h3>Break Analytics</h3>
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <h3>Longest Break Ever</h3>
-                            <p class="stat-value" id="stats-break-longest">—</p>
-                        </div>
-                        <div class="stat-card">
-                            <h3>Average Break</h3>
-                            <p class="stat-value" id="stats-break-average">—</p>
-                        </div>
-                        <div class="stat-card">
-                            <h3>Median Break</h3>
-                            <p class="stat-value" id="stats-break-median">—</p>
-                        </div>
-                        <div class="stat-card">
-                            <h3>Shortest Break</h3>
-                            <p class="stat-value" id="stats-break-shortest">—</p>
-                        </div>
-                        <div class="stat-card highlight">
-                            <h3>Current Break</h3>
-                            <p class="stat-value" id="stats-break-current">—</p>
-                        </div>
-                    </div>
-                    <h4 class="stats-subheading">Break Trend (Last 10)</h4>
-                    <div id="break-trend-list" class="break-trend-list"></div>
-                    <h4 class="stats-subheading">Break Length Over Time</h4>
-                    <p class="settings-hint">Session date vs hours since previous session ended</p>
-                    <div id="break-length-chart" class="chart-container break-length-chart"></div>
-                </div>
+                        <div id="stats-weekly-summary" class="sheet-table-wrap"></div>
                     </div>
                 </div>
 
-                <div class="stats-section hidden" id="stats-weekly-plan-section">
-                    <h3>Weekly Plan Progress</h3>
-                    <div id="stats-weekly-plan-table" class="taper-table-wrap"></div>
-                </div>
-
-                <div class="stats-section" id="gift-analytics-section">
-                    <h3>Gift Analytics</h3>
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <h3>Total Given</h3>
-                            <p class="stat-value" id="stats-gift-given">—</p>
-                        </div>
-                        <div class="stat-card">
-                            <h3>Total Received</h3>
-                            <p class="stat-value" id="stats-gift-received">—</p>
-                        </div>
-                        <div class="stat-card highlight">
-                            <h3>Net Gifts</h3>
-                            <p class="stat-value" id="stats-gift-net">—</p>
-                        </div>
-                    </div>
-                    <h4 class="stats-subheading">Top Recipients</h4>
-                    <div id="stats-gift-recipients" class="breakdown-list"></div>
-                    <h4 class="stats-subheading">Top Senders</h4>
-                    <div id="stats-gift-senders" class="breakdown-list"></div>
-                </div>
-
-                <div class="collapsible-section" data-section="statsBuyMetrics">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsBuyMetrics')">
-                        <span>Buy Metrics</span>
+                <div class="collapsible-section" data-section="statsUseAnalytics">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsUseAnalytics')">
+                        <span>Use Analytics</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
-                <div class="stats-section" id="buy-break-analytics-section">
-                    <h3>Buy Break Analytics</h3>
-                    <div class="stats-grid">
-                        <div class="stat-card">
-                            <h3>Longest Time Between Buys</h3>
-                            <p class="stat-value" id="stats-buy-break-longest">—</p>
+                        <div class="stats-section">
+                            <h3 id="usage-chart-title">Usage Per Day</h3>
+                            <div id="cigarettes-per-day-chart" class="chart-container"></div>
                         </div>
-                        <div class="stat-card">
-                            <h3>Average Time Between Buys</h3>
-                            <p class="stat-value" id="stats-buy-break-average">—</p>
+                        <div class="stats-section use-stats-section">
+                            <div class="use-stats-header">
+                                <h3>Use Stats</h3>
+                                <button type="button" class="secondary-btn use-stats-edit-btn" id="use-stats-edit-btn">Edit Stats</button>
+                            </div>
+                            <div id="use-stats-cards-grid" class="use-stats-grid"></div>
                         </div>
-                        <div class="stat-card">
-                            <h3>Shortest Time Between Buys</h3>
-                            <p class="stat-value" id="stats-buy-break-shortest">—</p>
+                        <div class="stats-section" id="break-analytics-section">
+                            <h3>Break Analytics</h3>
+                            <div class="stats-grid">
+                                <div class="stat-card"><h3>Longest Break Ever</h3><p class="stat-value" id="stats-break-longest">—</p></div>
+                                <div class="stat-card"><h3>Average Break</h3><p class="stat-value" id="stats-break-average">—</p></div>
+                                <div class="stat-card"><h3>Median Break</h3><p class="stat-value" id="stats-break-median">—</p></div>
+                                <div class="stat-card"><h3>Shortest Break</h3><p class="stat-value" id="stats-break-shortest">—</p></div>
+                                <div class="stat-card highlight"><h3>Current Break</h3><p class="stat-value" id="stats-break-current">—</p></div>
+                            </div>
+                            <h4 class="stats-subheading">Break Trend (Last 10)</h4>
+                            <div id="break-trend-list" class="break-trend-list"></div>
+                            <h4 class="stats-subheading">Break Length Over Time</h4>
+                            <div id="break-length-chart" class="chart-container break-length-chart"></div>
                         </div>
-                        <div class="stat-card highlight">
-                            <h3>Time Since Last Buy</h3>
-                            <p class="stat-value" id="stats-buy-since-last">—</p>
+                        <div class="stats-section hidden" id="gift-analytics-section">
+                            <h3>Gift Analytics</h3>
+                            <div class="stats-grid">
+                                <div class="stat-card"><h3>Total Given</h3><p class="stat-value" id="stats-gift-given">—</p></div>
+                                <div class="stat-card"><h3>Total Received</h3><p class="stat-value" id="stats-gift-received">—</p></div>
+                                <div class="stat-card highlight"><h3>Net Gifts</h3><p class="stat-value" id="stats-gift-net">—</p></div>
+                            </div>
+                            <div id="stats-gift-recipients" class="breakdown-list"></div>
+                            <div id="stats-gift-senders" class="breakdown-list"></div>
                         </div>
-                    </div>
-                    <h4 class="stats-subheading">Last 10 Buy Breaks</h4>
-                    <div id="buy-break-trend-list" class="break-trend-list"></div>
-                    <h4 class="stats-subheading">Buy Frequency Trend</h4>
-                    <p class="settings-hint">Purchase date vs days since previous buy</p>
-                    <div id="buy-break-frequency-chart" class="chart-container buy-break-frequency-chart"></div>
-                </div>
+                        <span class="hidden" id="longest-time-between"></span>
                     </div>
                 </div>
 
-                <div class="stats-section">
-                    <h3>Top Triggers</h3>
-                    <div id="trigger-breakdown" class="breakdown-list"></div>
+                <div class="collapsible-section" data-section="statsBuyAnalytics">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsBuyAnalytics')">
+                        <span>Buy Analytics</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="stats-buy-analytics-cards" class="sheet-summary-grid"></div>
+                        <div class="stats-section">
+                            <h3 id="spending-chart-title">Spending</h3>
+                            <div id="spending-per-day-chart" class="chart-container"></div>
+                        </div>
+                        <div class="stats-section" id="buy-break-analytics-section">
+                            <h3>Buy Break Analytics</h3>
+                            <div class="stats-grid">
+                                <div class="stat-card"><h3>Longest Time Between Buys</h3><p class="stat-value" id="stats-buy-break-longest">—</p></div>
+                                <div class="stat-card"><h3>Average Time Between Buys</h3><p class="stat-value" id="stats-buy-break-average">—</p></div>
+                                <div class="stat-card"><h3>Shortest Time Between Buys</h3><p class="stat-value" id="stats-buy-break-shortest">—</p></div>
+                                <div class="stat-card highlight"><h3>Time Since Last Buy</h3><p class="stat-value" id="stats-buy-since-last">—</p></div>
+                            </div>
+                            <div id="buy-break-trend-list" class="break-trend-list"></div>
+                            <div id="buy-break-frequency-chart" class="chart-container buy-break-frequency-chart"></div>
+                        </div>
+                    </div>
                 </div>
+
+                <div class="collapsible-section" data-section="statsLimitGoal">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsLimitGoal')">
+                        <span>Limit / Goal Metrics</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="stats-limit-goal" class="sheet-summary-grid"></div>
+                        <div class="stats-grid">
+                            <div class="stat-card highlight"><h3>Current Recovery Streak</h3><p class="stat-value" id="stats-recovery-current">0 days</p></div>
+                            <div class="stat-card"><h3>Best Recovery Streak</h3><p class="stat-value" id="stats-recovery-best">0 days</p></div>
+                        </div>
+                        <span class="hidden" id="total-week"></span>
+                        <span class="hidden" id="total-month"></span>
+                        <span class="hidden" id="avg-per-day"></span>
+                        <span class="hidden" id="total-spent"></span>
+                        <span class="hidden" id="estimated-saved"></span>
+                        <span class="hidden" id="cost-per-week"></span>
+                        <span class="hidden" id="cost-per-month"></span>
+                        <span class="hidden" id="reduction-baseline"></span>
+                    </div>
+                </div>
+
                 </div>
             </section>
 
@@ -769,7 +610,7 @@
                 <div class="taper-page-header">
                     <div class="taper-page-title">
                         <h2>Taper</h2>
-                        <p class="taper-page-subtitle">Daily & weekly limits at a glance</p>
+                        <p class="taper-page-subtitle">Plan vs actual targets</p>
                     </div>
                     <div class="taper-toolbar">
                         <label for="taper-substance" class="taper-toolbar-label">Substance</label>
@@ -786,23 +627,27 @@
 
                     <div class="collapsible-section" data-section="taperTodayStatus">
                         <button type="button" class="section-toggle" onclick="toggleSection('taperTodayStatus')">
-                            <span>Today's Taper Status</span>
+                            <span>Active Taper Plan</span>
                             <span class="chevron">⌄</span>
                         </button>
                         <div class="section-content">
                     <!-- KPI strip -->
                     <div class="taper-kpi-row">
-                        <div class="taper-kpi-tile" id="taper-kpi-daily">
-                            <span class="taper-kpi-label">Today's target</span>
-                            <span class="taper-kpi-value" id="taper-kpi-daily-val">—</span>
-                        </div>
-                        <div class="taper-kpi-tile" id="taper-kpi-used">
+                        <div class="taper-kpi-tile" id="taper-kpi-used-today">
                             <span class="taper-kpi-label">Used Today</span>
-                            <span class="taper-kpi-value" id="taper-kpi-used-val">—</span>
+                            <span class="taper-kpi-value" id="taper-kpi-used-today-val">—</span>
                         </div>
-                        <div class="taper-kpi-tile taper-kpi-highlight" id="taper-kpi-remaining">
+                        <div class="taper-kpi-tile taper-kpi-highlight" id="taper-kpi-remaining-today">
                             <span class="taper-kpi-label">Remaining Today</span>
-                            <span class="taper-kpi-value" id="taper-kpi-remaining-val">—</span>
+                            <span class="taper-kpi-value" id="taper-kpi-remaining-today-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile" id="taper-kpi-used-week">
+                            <span class="taper-kpi-label">Used This Week</span>
+                            <span class="taper-kpi-value" id="taper-kpi-used-week-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile" id="taper-kpi-remaining-week">
+                            <span class="taper-kpi-label">Remaining This Week</span>
+                            <span class="taper-kpi-value" id="taper-kpi-remaining-week-val">—</span>
                         </div>
                         <div class="taper-kpi-tile" id="taper-kpi-status">
                             <span class="taper-kpi-label">Status</span>
@@ -814,9 +659,26 @@
                     <div class="taper-plan-strip" id="taper-plan-summary-card">
                         <div class="taper-plan-strip-main">
                             <span class="taper-plan-icon" id="taper-plan-icon">📉</span>
-                            <div>
+                            <div class="taper-plan-strip-copy">
                                 <p id="taper-plan-summary-text" class="taper-plan-strip-title">—</p>
-                                <p id="taper-plan-summary-dates" class="taper-plan-strip-meta">—</p>
+                                <div class="taper-plan-meta-grid">
+                                    <div class="taper-plan-meta-item">
+                                        <span>Start</span>
+                                        <strong id="taper-plan-start-date">—</strong>
+                                    </div>
+                                    <div class="taper-plan-meta-item">
+                                        <span>End</span>
+                                        <strong id="taper-plan-end-date">—</strong>
+                                    </div>
+                                    <div class="taper-plan-meta-item">
+                                        <span>Weeks</span>
+                                        <strong id="taper-plan-week-count">—</strong>
+                                    </div>
+                                    <div class="taper-plan-meta-item">
+                                        <span>Current week</span>
+                                        <strong id="taper-plan-current-week">—</strong>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                         <div class="taper-plan-strip-progress">
@@ -889,37 +751,24 @@
                         </div>
                     </div>
 
-                    <div class="collapsible-section" data-section="taperReductionPlan">
-                        <button type="button" class="section-toggle" onclick="toggleSection('taperReductionPlan')">
-                            <span>Reduction Plan</span>
+                    <div class="collapsible-section" data-section="taperByWeek">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperByWeek')">
+                            <span>Taper by Week</span>
                             <span class="chevron">⌄</span>
                         </button>
                         <div class="section-content">
-                            <div class="taper-panel" id="taper-reduction-card">
-                                <div id="taper-reduction-readonly" class="taper-metric-grid"></div>
-                                <h4 class="taper-panel-subtitle">Projected</h4>
-                                <div id="taper-reduction-calculated" class="taper-metric-grid taper-metric-grid-compact"></div>
-                            </div>
+                            <div id="taper-by-week-summary" class="taper-kpi-chips taper-by-week-summary"></div>
+                            <div id="taper-by-week-table" class="taper-table-wrap"></div>
                         </div>
                     </div>
 
-                    <div class="collapsible-section" data-section="taperCalendarPreview">
-                        <button type="button" class="section-toggle" onclick="toggleSection('taperCalendarPreview')">
-                            <span>Taper Calendar Preview</span>
+                    <div class="collapsible-section" data-section="taperWeeklyCalendar">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperWeeklyCalendar')">
+                            <span>Weekly Calendar</span>
                             <span class="chevron">⌄</span>
                         </button>
                         <div class="section-content">
-                            <div id="taper-calendar-preview" class="taper-preview-table-wrap"></div>
-                        </div>
-                    </div>
-
-                    <div class="collapsible-section" data-section="taperInsights">
-                        <button type="button" class="section-toggle" onclick="toggleSection('taperInsights')">
-                            <span>Taper Insights</span>
-                            <span class="chevron">⌄</span>
-                        </button>
-                        <div class="section-content">
-                            <div id="taper-insights" class="taper-insights-grid"></div>
+                            <div id="taper-weekly-calendar" class="taper-weekly-calendar"></div>
                         </div>
                     </div>
                 </div>
@@ -937,6 +786,16 @@
                         <button type="button" class="taper-chip-btn" onclick="cancelTaperEdit()">← Back to dashboard</button>
                     </div>
                     <form id="taper-form" class="taper-form-compact">
+                        <div class="form-row" id="taper-date-row">
+                            <div class="form-group" id="start-date-group">
+                                <label for="start-date">Start Date</label>
+                                <input type="date" id="start-date" required>
+                            </div>
+                            <div class="form-group" id="end-date-group">
+                                <label for="end-date" id="end-date-label">End Date</label>
+                                <input type="date" id="end-date" required>
+                            </div>
+                        </div>
                         <div class="form-row" id="taper-start-goal-row">
                             <div class="form-group" id="taper-start-avg-group">
                                 <label for="current-avg">Starting Daily Average (optional)</label>
@@ -977,27 +836,8 @@
                                 <button type="button" class="secondary-btn" onclick="addManualWeeklyWeek()">+ Add Week</button>
                                 <button type="button" class="secondary-btn" onclick="removeManualWeeklyWeek()">Remove Week</button>
                             </div>
-                            <h4>Goal Use Under</h4>
-                            <p class="field-hint">Optional cap — stay under this amount in addition to weekly targets.</p>
-                            <div class="form-row">
-                                <div class="form-group">
-                                    <label for="goal-limit-amount">Use less than</label>
-                                    <input type="number" id="goal-limit-amount" min="0" step="0.1" placeholder="1">
-                                </div>
-                                <div class="form-group">
-                                    <label for="goal-limit-type">Period</label>
-                                    <select id="goal-limit-type">
-                                        <option value="daily">Daily</option>
-                                        <option value="weekly">Weekly</option>
-                                    </select>
-                                </div>
-                            </div>
                         </div>
                         <div class="form-row" id="taper-end-weekly-row">
-                            <div class="form-group" id="end-date-group">
-                                <label for="end-date" id="end-date-label">Target end date</label>
-                                <input type="date" id="end-date" required>
-                            </div>
                             <div class="form-group" id="weekly-max-group">
                                 <label for="weekly-max">Weekly Limit</label>
                                 <input type="number" id="weekly-max" min="0" step="0.1" placeholder="Optional">
@@ -1043,39 +883,39 @@
                         <label for="buy-substance">Item / Substance</label>
                         <select id="buy-substance" required></select>
                     </div>
-                    <div class="form-row">
+                    <div class="form-row buy-form-date-qty">
                         <div class="form-group">
                             <label for="buy-date">Date</label>
                             <input type="date" id="buy-date" required>
                         </div>
                         <div class="form-group">
-                            <label for="buy-time">Time</label>
-                            <input type="time" id="buy-time" required>
-                        </div>
-                    </div>
-                    <div class="form-row">
-                        <div class="form-group">
                             <label for="buy-quantity">Quantity Bought</label>
                             <input type="number" id="buy-quantity" min="0.01" step="0.01" required>
                         </div>
+                    </div>
+                    <div class="form-row">
                         <div class="form-group">
                             <label for="buy-unit">Unit</label>
                             <select id="buy-unit" required></select>
                         </div>
-                    </div>
-                    <div class="form-row">
                         <div class="form-group">
                             <label for="buy-total-cost">Total Cost ($)</label>
                             <input type="number" id="buy-total-cost" step="0.01" min="0" required>
                         </div>
+                    </div>
+                    <div class="form-row">
                         <div class="form-group">
                             <label>Cost Per Unit</label>
                             <p id="buy-cost-per-unit-preview" class="buy-preview">—</p>
                         </div>
                     </div>
-                    <div class="form-group">
-                        <label for="buy-store">Store / Location</label>
-                        <input type="text" id="buy-store" placeholder="Where did you buy it?">
+                    <div class="form-group" id="buy-store-group">
+                        <label for="buy-store-select">Store / Location</label>
+                        <select id="buy-store-select"></select>
+                        <div class="form-group buy-store-new-group hidden" id="buy-store-new-group">
+                            <label for="buy-store-new">New Store / Location</label>
+                            <input type="text" id="buy-store-new" placeholder="Enter store or location name" autocomplete="off">
+                        </div>
                     </div>
                     <div class="form-group">
                         <label for="buy-payment">Payment Method (optional)</label>
@@ -1137,6 +977,16 @@
                     </div>
                 </div>
 
+                <div class="collapsible-section" data-section="buyWeeklySummary">
+                    <button type="button" class="section-toggle" onclick="toggleSection('buyWeeklySummary')">
+                        <span>Weekly Buy Summary</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="buy-weekly-summary" class="sheet-table-wrap"></div>
+                    </div>
+                </div>
+
                 <div class="collapsible-section" data-section="buySpendingTrend">
                     <button type="button" class="section-toggle" onclick="toggleSection('buySpendingTrend')">
                         <span>Spending Trend</span>
@@ -1162,56 +1012,6 @@
                         <div id="purchase-history-list"></div>
                     </div>
                 </div>
-            </section>
-
-            <!-- Calendar Tab -->
-            <section id="calendar-tab" class="tab">
-                <h2>History</h2>
-
-                <div class="form-group">
-                    <label for="history-substance">Substance</label>
-                    <select id="history-substance" onchange="renderHistory()"></select>
-                </div>
-
-                <div class="history-view-toggle">
-                    <span class="history-view-label">History View:</span>
-                    <div class="history-view-btns" role="tablist">
-                        <button type="button" class="history-view-btn" data-view="calendar" onclick="setHistoryView('calendar')">Calendar</button>
-                        <button type="button" class="history-view-btn" data-view="weekly" onclick="setHistoryView('weekly')">Weekly Summary</button>
-                        <button type="button" class="history-view-btn" data-view="monthly" onclick="setHistoryView('monthly')">Monthly Summary</button>
-                    </div>
-                </div>
-
-                <div class="calendar-nav">
-                    <button class="nav-arrow" onclick="changeMonth(-1)">‹</button>
-                    <h3 id="calendar-month">January 2024</h3>
-                    <button class="nav-arrow" onclick="changeMonth(1)">›</button>
-                </div>
-
-                <div id="history-monthly-summary" class="history-monthly-summary"></div>
-
-                <div id="history-calendar-view" class="history-view-panel">
-                    <div class="calendar-legend">
-                        <span class="legend-item"><span class="legend-dot taper-under"></span> Under target</span>
-                        <span class="legend-item"><span class="legend-dot taper-close"></span> Close to limit</span>
-                        <span class="legend-item"><span class="legend-dot taper-over"></span> Over target</span>
-                        <span class="legend-item"><span class="legend-dot taper-none"></span> No target</span>
-                    </div>
-
-                    <div class="calendar-grid" id="calendar-grid"></div>
-
-                    <div id="history-weekly-totals" class="history-weekly-totals"></div>
-
-                    <div class="day-details">
-                        <h3>Selected Day Details</h3>
-                        <div id="day-details-content">
-                            <p style="color: var(--text-secondary); text-align: center;">Select a day to view details</p>
-                        </div>
-                    </div>
-                </div>
-
-                <div id="history-weekly-view" class="history-view-panel hidden"></div>
-                <div id="history-monthly-view" class="history-view-panel hidden"></div>
             </section>
 
             <!-- Settings Tab -->
@@ -1255,10 +1055,6 @@
                     </button>
                     <div class="section-content">
                 <div class="settings-section">
-                    <div class="form-group">
-                        <label for="currency">Currency Symbol</label>
-                        <input type="text" id="currency" maxlength="3" onchange="saveSettings()">
-                    </div>
                     <div class="form-group">
                         <label for="reminder-message">Reminder Message</label>
                         <textarea id="reminder-message" rows="2" onchange="saveSettings()" placeholder="Your personal reminder..."></textarea>
@@ -1352,60 +1148,11 @@
                 <span>📉</span>
                 <span>Taper</span>
             </button>
-            <button class="nav-btn" data-tab="calendar-tab" onclick="switchTab('calendar-tab')">
-                <span>📅</span>
-                <span>History</span>
-            </button>
             <button class="nav-btn" data-tab="settings-tab" onclick="switchTab('settings-tab')">
                 <span>⚙️</span>
                 <span>Settings</span>
             </button>
         </nav>
-    </div>
-
-    <!-- Craving Modal -->
-    <div id="craving-modal" class="modal hidden">
-        <div class="modal-content">
-            <h2>Log Craving</h2>
-            <form id="craving-form">
-                <div class="form-group">
-                    <label for="craving-substance">Substance</label>
-                    <select id="craving-substance" required></select>
-                </div>
-                <div class="form-group">
-                    <label for="craving-intensity">Intensity (1-10)</label>
-                    <input type="range" id="craving-intensity" min="1" max="10" value="5">
-                    <div class="range-value">
-                        <span>1</span>
-                        <span id="intensity-value">5</span>
-                        <span>10</span>
-                    </div>
-                </div>
-                <div class="form-group">
-                    <label for="craving-trigger">Trigger</label>
-                    <select id="craving-trigger">
-                        <option value="">Select (optional)</option>
-                        <option value="Stress">Stress</option>
-                        <option value="Boredom">Boredom</option>
-                        <option value="Social">Social</option>
-                        <option value="Habit">Habit</option>
-                        <option value="After Meal">After Meal</option>
-                        <option value="With Coffee">With Coffee</option>
-                        <option value="With Alcohol">With Alcohol</option>
-                        <option value="Emotional">Emotional</option>
-                        <option value="Other">Other</option>
-                    </select>
-                </div>
-                <div class="form-group">
-                    <label for="craving-helped">What Helped?</label>
-                    <textarea id="craving-helped" rows="2" placeholder="What strategies helped?"></textarea>
-                </div>
-                <div class="form-row">
-                    <button type="button" class="secondary-btn" onclick="closeCravingModal()">Cancel</button>
-                    <button type="submit" class="submit-btn">Save</button>
-                </div>
-            </form>
-        </div>
     </div>
 
     <!-- Substance Editor Modal -->
@@ -1510,6 +1257,20 @@
                 <button type="button" class="secondary-btn" id="column-settings-reset">Reset Columns</button>
                 <button type="button" class="secondary-btn" id="column-settings-close">Cancel</button>
                 <button type="button" class="submit-btn" id="column-settings-apply">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Use Stats Settings Modal -->
+    <div id="use-stats-settings-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <h2>Edit Use Stats</h2>
+            <p class="settings-hint">Choose which stats appear and drag to reorder.</p>
+            <ul id="use-stats-settings-list" class="column-settings-list"></ul>
+            <div class="modal-actions column-settings-actions">
+                <button type="button" class="secondary-btn" id="use-stats-settings-reset">Reset to Default</button>
+                <button type="button" class="secondary-btn" id="use-stats-settings-close">Cancel</button>
+                <button type="button" class="submit-btn" id="use-stats-settings-apply">Done</button>
             </div>
         </div>
     </div>
