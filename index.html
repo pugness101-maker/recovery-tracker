@@ -12,7 +12,7 @@
             background: #121212;
             color: #ffffff;
             margin: 0;
-            padding: 20px;
+            padding: 0;
         }
         .app-container {
             max-width: 600px;
@@ -64,11 +64,15 @@
             display: flex;
             justify-content: space-around;
             position: fixed;
+            left: 50%;
+            transform: translateX(-50%);
             bottom: 0;
-            left: 0;
-            right: 0;
+            z-index: 9999;
+            width: 100%;
+            max-width: 600px;
             background: #1e1e1e;
-            padding: 10px;
+            padding: 8px 0;
+            padding-bottom: env(safe-area-inset-bottom);
             border-top: 1px solid #404040;
         }
         .nav-btn {
@@ -637,15 +641,11 @@
                             <span class="taper-kpi-label">Used Today</span>
                             <span class="taper-kpi-value" id="taper-kpi-used-today-val">—</span>
                         </div>
-                        <div class="taper-kpi-tile taper-kpi-highlight" id="taper-kpi-remaining-today">
-                            <span class="taper-kpi-label">Remaining Today</span>
-                            <span class="taper-kpi-value" id="taper-kpi-remaining-today-val">—</span>
-                        </div>
                         <div class="taper-kpi-tile" id="taper-kpi-used-week">
                             <span class="taper-kpi-label">Used This Week</span>
                             <span class="taper-kpi-value" id="taper-kpi-used-week-val">—</span>
                         </div>
-                        <div class="taper-kpi-tile" id="taper-kpi-remaining-week">
+                        <div class="taper-kpi-tile taper-kpi-highlight" id="taper-kpi-remaining-week">
                             <span class="taper-kpi-label">Remaining This Week</span>
                             <span class="taper-kpi-value" id="taper-kpi-remaining-week-val">—</span>
                         </div>
@@ -699,36 +699,19 @@
                                 <div class="taper-panel-header">
                                     <h3>Progress Tracking</h3>
                                 </div>
-                                <div class="taper-progress-split">
-                                    <div class="taper-progress-panel">
-                                        <div class="taper-progress-panel-head">
-                                            <span class="taper-panel-badge">Daily</span>
-                                            <span id="taper-today-status" class="taper-status-badge taper-status-under">—</span>
-                                        </div>
-                                        <div class="taper-mini-stats">
-                                            <div class="taper-mini-stat"><span>Target</span><strong id="taper-today-limit">—</strong></div>
-                                            <div class="taper-mini-stat"><span>Used</span><strong id="taper-today-used">—</strong></div>
-                                            <div class="taper-mini-stat"><span>Left</span><strong id="taper-today-remaining">—</strong></div>
-                                            <div class="taper-mini-stat"><span>%</span><strong id="taper-today-pct">—</strong></div>
-                                        </div>
-                                        <div class="progress-bar-container dns-bar-container taper-bar">
-                                            <div class="progress-bar dns-bar" id="taper-today-bar"><span class="progress-text" id="taper-today-bar-text"></span></div>
-                                        </div>
+                                <div class="taper-progress-panel taper-progress-weekly">
+                                    <div class="taper-progress-panel-head">
+                                        <span class="taper-panel-badge">Weekly</span>
+                                        <span id="taper-weekly-status" class="taper-status-badge">—</span>
                                     </div>
-                                    <div class="taper-progress-panel">
-                                        <div class="taper-progress-panel-head">
-                                            <span class="taper-panel-badge">Weekly</span>
-                                            <span id="taper-weekly-status" class="taper-status-badge">—</span>
-                                        </div>
-                                        <div class="taper-mini-stats">
-                                            <div class="taper-mini-stat"><span>Target</span><strong id="taper-weekly-max-val">—</strong></div>
-                                            <div class="taper-mini-stat"><span>Used</span><strong id="taper-weekly-used">—</strong></div>
-                                            <div class="taper-mini-stat"><span>Left</span><strong id="taper-weekly-remaining">—</strong></div>
-                                            <div class="taper-mini-stat"><span>%</span><strong id="taper-weekly-pct">—</strong></div>
-                                        </div>
-                                        <div class="progress-bar-container dns-bar-container taper-bar">
-                                            <div class="progress-bar dns-bar" id="taper-weekly-bar"><span class="progress-text" id="taper-weekly-bar-text"></span></div>
-                                        </div>
+                                    <div class="taper-mini-stats">
+                                        <div class="taper-mini-stat"><span>Weekly target</span><strong id="taper-weekly-max-val">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Weekly used</span><strong id="taper-weekly-used">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Weekly left</span><strong id="taper-weekly-remaining">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Weekly %</span><strong id="taper-weekly-pct">—</strong></div>
+                                    </div>
+                                    <div class="progress-bar-container dns-bar-container taper-bar">
+                                        <div class="progress-bar dns-bar" id="taper-weekly-bar"><span class="progress-text" id="taper-weekly-bar-text"></span></div>
                                     </div>
                                 </div>
                                 <p id="taper-weekly-days-left" class="taper-panel-footer hidden">—</p>
@@ -983,7 +966,17 @@
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
-                        <div id="buy-weekly-summary" class="sheet-table-wrap"></div>
+                        <div id="buy-weekly-summary" class="buy-weekly-summary-wrap sheet-table-wrap"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="buyMonthlySummary">
+                    <button type="button" class="section-toggle" onclick="toggleSection('buyMonthlySummary')">
+                        <span>Monthly Buy Summary</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="buy-monthly-summary" class="buy-monthly-summary-wrap sheet-table-wrap"></div>
                     </div>
                 </div>
 
@@ -1126,34 +1119,34 @@
                 </div>
             </section>
         </main>
-
-        <nav class="bottom-nav">
-            <button class="nav-btn active" data-tab="dashboard-tab" onclick="switchTab('dashboard-tab')">
-                <span>📊</span>
-                <span>Dashboard</span>
-            </button>
-            <button class="nav-btn" data-tab="use-log-tab" onclick="switchTab('use-log-tab')">
-                <span>📝</span>
-                <span>Use Log</span>
-            </button>
-            <button class="nav-btn" data-tab="buy-tracker-tab" onclick="switchTab('buy-tracker-tab')">
-                <span>🛒</span>
-                <span>Buy Tracker</span>
-            </button>
-            <button class="nav-btn" data-tab="stats-tab" onclick="switchTab('stats-tab')">
-                <span>📈</span>
-                <span>Stats</span>
-            </button>
-            <button class="nav-btn" data-tab="taper-tab" onclick="switchTab('taper-tab')">
-                <span>📉</span>
-                <span>Taper</span>
-            </button>
-            <button class="nav-btn" data-tab="settings-tab" onclick="switchTab('settings-tab')">
-                <span>⚙️</span>
-                <span>Settings</span>
-            </button>
-        </nav>
     </div>
+
+    <nav class="bottom-nav" aria-label="Main navigation">
+        <button class="nav-btn active" data-tab="dashboard-tab" onclick="switchTab('dashboard-tab')">
+            <span>📊</span>
+            <span>Dashboard</span>
+        </button>
+        <button class="nav-btn" data-tab="use-log-tab" onclick="switchTab('use-log-tab')">
+            <span>📝</span>
+            <span>Use Log</span>
+        </button>
+        <button class="nav-btn" data-tab="buy-tracker-tab" onclick="switchTab('buy-tracker-tab')">
+            <span>🛒</span>
+            <span>Buy Tracker</span>
+        </button>
+        <button class="nav-btn" data-tab="stats-tab" onclick="switchTab('stats-tab')">
+            <span>📈</span>
+            <span>Stats</span>
+        </button>
+        <button class="nav-btn" data-tab="taper-tab" onclick="switchTab('taper-tab')">
+            <span>📉</span>
+            <span>Taper</span>
+        </button>
+        <button class="nav-btn" data-tab="settings-tab" onclick="switchTab('settings-tab')">
+            <span>⚙️</span>
+            <span>Settings</span>
+        </button>
+    </nav>
 
     <!-- Substance Editor Modal -->
     <div id="substance-modal" class="modal hidden">

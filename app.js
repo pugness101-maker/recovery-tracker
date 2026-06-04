@@ -507,6 +507,7 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     taperByWeek: false,
     taperWeeklyCalendar: false,
     buyWeeklySummary: false,
+    buyMonthlySummary: false,
     settingsSubstances: false,
     settingsMainSubstance: true,
     settingsPreferences: true,
@@ -1821,12 +1822,26 @@ function normalizeTabId(tabId) {
     return document.getElementById(tabId) ? tabId : 'dashboard-tab';
 }
 
+let cachedNavButtons = null;
+
+function getNavButtons() {
+    if (!cachedNavButtons?.length) {
+        cachedNavButtons = [...document.querySelectorAll('.bottom-nav .nav-btn')];
+    }
+    return cachedNavButtons;
+}
+
+function setActiveNavTab(tabId) {
+    getNavButtons().forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.tab === tabId);
+    });
+}
+
 function switchTab(tabId) {
     tabId = normalizeTabId(tabId);
     document.querySelectorAll('.tab').forEach(tab => tab.classList.remove('active'));
-    document.querySelectorAll('.nav-btn').forEach(btn => btn.classList.remove('active'));
+    setActiveNavTab(tabId);
     document.getElementById(tabId)?.classList.add('active');
-    document.querySelector(`[data-tab="${tabId}"]`)?.classList.add('active');
 
     if (tabId === 'dashboard-tab') {
         applyMainSubstanceToViewSelectors();
@@ -1919,7 +1934,12 @@ function formatDurationHMS(hours) {
 
 function formatTaperMonthlyAmount(value, unit) {
     if (value == null || Number.isNaN(value)) return '—';
-    return `${Number(value.toFixed(1))} ${unit}`;
+    return formatTaperAmount(value, unit);
+}
+
+function formatTaperAmount(value, unit) {
+    if (value == null || Number.isNaN(value)) return '—';
+    return `${formatAmount(value)} ${unit || ''}`.trim();
 }
 
 function formatTaperMonthlyRate(value, unit, suffix) {
@@ -5555,6 +5575,7 @@ function renderBuyTrackerTab() {
     renderBuySpendingTrend(filterId);
     renderPurchaseHistory(filterId);
     renderBuyWeeklySummary(filterId);
+    renderBuyMonthlySummary(filterId);
     applyCollapsedSections();
 }
 
@@ -6330,14 +6351,72 @@ function renderSheetTable(headers, rows) {
     return html;
 }
 
+function formatSupplyDurationDays(days) {
+    if (days == null || !Number.isFinite(days) || days <= 0) return '—';
+    return `~${formatAmount(days, 1)} days`;
+}
+
+function formatBuySheetDate(dateStr) {
+    const d = parseLocalDate(dateStr);
+    if (!d) return dateStr || '—';
+    const month = d.getMonth() + 1;
+    const day = d.getDate();
+    const year = String(d.getFullYear()).slice(-2);
+    return `${month}/${day}/${year}`;
+}
+
+function getEffectiveDaysInMonth(monthStart, monthEnd, daysInMonth) {
+    const today = getLocalDateString();
+    if (today < monthStart || today > monthEnd) return daysInMonth;
+    let count = 0;
+    let d = monthStart;
+    while (d <= monthEnd && d <= today) {
+        count++;
+        d = addDaysToDateStr(d, 1);
+    }
+    return count || daysInMonth;
+}
+
+function getMonthUsageTotal(substanceId, monthStart, monthEnd) {
+    const today = getLocalDateString();
+    const end = monthEnd < today ? monthEnd : today;
+    if (end < monthStart) return 0;
+    let total = 0;
+    let d = monthStart;
+    while (d <= end) {
+        total += getUsedAmount(substanceId, d);
+        d = addDaysToDateStr(d, 1);
+    }
+    return total;
+}
+
+function formatSupplyDurationDaysHours(days) {
+    if (days == null || !Number.isFinite(days) || days <= 0) return '—';
+    const totalHours = Math.round(days * 24);
+    const wholeDays = Math.floor(totalHours / 24);
+    const hours = totalHours % 24;
+    const dayWord = wholeDays === 1 ? 'day' : 'days';
+    const hourWord = hours === 1 ? 'hr' : 'hrs';
+    if (wholeDays === 0) return `0 day, ${hours} ${hourWord}`;
+    if (hours === 0) return `${wholeDays} ${dayWord}, 0 ${hourWord}`;
+    return `${wholeDays} ${dayWord}, ${hours} ${hourWord}`;
+}
+
+function fmtSheetMoney(value, cur = getCurrencySymbol()) {
+    if (value == null || Number.isNaN(value)) return '—';
+    const num = parseFloat(value);
+    if (!Number.isFinite(num)) return '—';
+    return `${cur}${num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+}
+
 function fmtSheetAmount(value, unit) {
     if (value == null || Number.isNaN(value)) return '—';
-    return `${Number(parseFloat(value).toFixed(1))} ${unit}`;
+    return `${formatAmount(value)} ${unit}`;
 }
 
 function fmtSheetRate(value, unit, suffix) {
     if (value == null || Number.isNaN(value)) return '—';
-    return `${Number(parseFloat(value).toFixed(2))} ${unit}${suffix || ''}`;
+    return `${formatAmount(value)} ${unit}${suffix || ''}`;
 }
 
 function enrichMonthlySummaryWithBuyData(summary, substanceId) {
@@ -6386,23 +6465,44 @@ function calculateWeeklyTrackingSummary(substanceId, weekStart, weekEnd) {
     };
 }
 
+function getWeekMonthKey(weekStart) {
+    return weekStart.slice(0, 7);
+}
+
 function getWeeklyTrackingSummaries(substanceId, limit = 12) {
     const logs = getUseLogsForSubstance(substanceId, { sortAsc: true, personalUseOnly: true });
     if (!logs.length) return [];
     const weekSet = new Set();
     logs.forEach(log => weekSet.add(getWeekStartDateStr(log.date)));
     const allWeeksAsc = [...weekSet].sort();
-    let runningTotal = 0;
-    const runningByWeek = {};
+    const usageByWeek = {};
     allWeeksAsc.forEach(ws => {
         const we = addDaysToDateStr(ws, 6);
-        const summary = calculateWeeklyTrackingSummary(substanceId, ws, we);
-        runningTotal = roundTaperValue(runningTotal + summary.totalUsage);
-        runningByWeek[ws] = runningTotal;
+        usageByWeek[ws] = calculateWeeklyTrackingSummary(substanceId, ws, we).totalUsage;
     });
+
+    const weeksByMonth = {};
+    allWeeksAsc.forEach(ws => {
+        const monthKey = getWeekMonthKey(ws);
+        if (!weeksByMonth[monthKey]) weeksByMonth[monthKey] = [];
+        weeksByMonth[monthKey].push(ws);
+    });
+
+    const monthRunningByWeek = {};
+    Object.values(weeksByMonth).forEach(weeksInMonth => {
+        let suffix = 0;
+        for (let i = weeksInMonth.length - 1; i >= 0; i--) {
+            suffix = roundTaperValue(suffix + (parseFloat(usageByWeek[weeksInMonth[i]]) || 0));
+            monthRunningByWeek[weeksInMonth[i]] = suffix;
+        }
+    });
+
     return allWeeksAsc.slice(-limit).reverse().map(ws => {
         const we = addDaysToDateStr(ws, 6);
-        return { ...calculateWeeklyTrackingSummary(substanceId, ws, we), runningTotal: runningByWeek[ws] };
+        return {
+            ...calculateWeeklyTrackingSummary(substanceId, ws, we),
+            runningTotal: monthRunningByWeek[ws] ?? 0
+        };
     });
 }
 
@@ -6423,11 +6523,9 @@ function getBuyWeeklySummaries(substanceId, limit = 8) {
         const purchased = weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
         const cost = weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
         const costPerUnit = purchased > 0 ? cost / purchased : null;
-        const daysInWeek = 7;
-        const gPerDay = purchased / daysInWeek;
-        const avgDailyUse = getUsedAmount(substanceId, we) || 0;
-        const supplyDuration = avgDailyUse > 0 ? purchased / avgDailyUse : null;
-        const remaining = getTotalRemainingSupply(substanceId);
+        const weekUsed = getWeeklyUsed(substanceId, ws);
+        const gPerDay = weekUsed > 0 ? weekUsed / 7 : null;
+        const supplyDuration = gPerDay > 0 ? purchased / gPerDay : null;
         return {
             weekStart: ws,
             weekEnd: we,
@@ -6436,7 +6534,50 @@ function getBuyWeeklySummaries(substanceId, limit = 8) {
             costPerUnit,
             gPerDay,
             supplyDuration,
-            remaining,
+            unit,
+            cur
+        };
+    });
+}
+
+function getBuyMonthlySummaries(substanceId, limit = 12) {
+    const purchases = (appData.purchases || [])
+        .filter(p => getPurchaseSubstanceId(p) === substanceId);
+    if (!purchases.length) return [];
+
+    const monthSet = new Set();
+    purchases.forEach(p => {
+        if (p.date) monthSet.add(p.date.slice(0, 7));
+    });
+
+    const months = [...monthSet].sort().reverse().slice(0, limit);
+    const sub = getSubstance(substanceId);
+    const unit = sub?.defaultUnit || 'units';
+    const cur = getCurrencySymbol();
+
+    return months.map(monthKey => {
+        const [yearStr, monthStr] = monthKey.split('-');
+        const year = parseInt(yearStr, 10);
+        const monthIndex = parseInt(monthStr, 10) - 1;
+        const { monthStart, monthEnd, daysInMonth } = getTaperCalendarMonthBounds(year, monthIndex);
+        const monthPurchases = purchases.filter(p => p.date >= monthStart && p.date <= monthEnd);
+        const purchased = monthPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
+        const cost = monthPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+        const costPerUnit = purchased > 0 ? cost / purchased : null;
+        const effectiveDays = getEffectiveDaysInMonth(monthStart, monthEnd, daysInMonth);
+        const monthUsage = getMonthUsageTotal(substanceId, monthStart, monthEnd);
+        const avgDailyUse = effectiveDays > 0 && monthUsage > 0 ? monthUsage / effectiveDays : null;
+        const gPerDay = avgDailyUse;
+        const supplyDurationDays = avgDailyUse > 0 && purchased > 0 ? purchased / avgDailyUse : null;
+
+        return {
+            monthStart,
+            monthEnd,
+            purchased,
+            cost,
+            costPerUnit,
+            gPerDay,
+            supplyDurationDays,
             unit,
             cur
         };
@@ -6449,8 +6590,6 @@ function renderStatsSummaryDashboard(substanceId, useStats, bounds, unit, cur) {
     const sub = getSubstance(substanceId);
     const today = getLocalDateString();
     const todayStats = getTodayUseStats(substanceId);
-    const dailyLimit = getDailyLimitForDate(substanceId, today);
-    const dailyBadge = getUsageVsTargetBadge(todayStats.totalAmount, dailyLimit);
     const weekStart = getWeekStartDateStr(today);
     const weekUsed = getWeeklyUsed(substanceId, today);
     const weekGoal = getWeeklyLimit(substanceId, weekStart);
@@ -6466,15 +6605,14 @@ function renderStatsSummaryDashboard(substanceId, useStats, bounds, unit, cur) {
         : { level: 'none', label: '—' };
 
     container.innerHTML = [
-        renderSheetMetricCard('Today\'s use', `${todayStats.totalAmount.toFixed(1)} ${unit}`, dailyBadge),
-        renderSheetMetricCard('Daily limit', dailyLimit != null ? `${dailyLimit} ${unit}` : '—', dailyBadge),
-        renderSheetMetricCard('This week', `${weekUsed.toFixed(1)} ${unit}`, weeklyBadge),
-        renderSheetMetricCard('Weekly goal', weekGoal != null ? `${weekGoal} ${unit}` : '—', weeklyBadge),
-        renderSheetMetricCard('Range total', `${useStats.totalAmount.toFixed(1)} ${unit}`, null),
+        renderSheetMetricCard('Today\'s use', `${formatAmount(todayStats.totalAmount)} ${unit}`, null),
+        renderSheetMetricCard('This week', `${formatAmount(weekUsed)} ${unit}`, weeklyBadge),
+        renderSheetMetricCard('Weekly goal', weekGoal != null ? `${formatAmount(weekGoal)} ${unit}` : '—', weeklyBadge),
+        renderSheetMetricCard('Range total', `${formatAmount(useStats.totalAmount)} ${unit}`, null),
         renderSheetMetricCard('Sessions', String(useStats.sessionCount), null),
         renderSheetMetricCard('Use days', String(useStats.useDays), null),
-        renderSheetMetricCard('Use day %', `${useStats.useDayPct.toFixed(1)}%`, null),
-        renderSheetMetricCard('Remaining supply', remaining != null ? `${remaining.toFixed(1)} ${unit}` : '—', supplyBadge),
+        renderSheetMetricCard('Use day %', `${formatAmount(useStats.useDayPct, 1)}%`, null),
+        renderSheetMetricCard('Remaining supply', remaining != null ? `${formatAmount(remaining)} ${unit}` : '—', supplyBadge),
         renderSheetMetricCard('Range', `${formatDate(bounds.startDate)} – ${formatDate(bounds.endDate)}`, null)
     ].join('');
 }
@@ -6537,7 +6675,7 @@ function renderStatsWeeklySummary(substanceId) {
         container.innerHTML = '<p class="empty-hint">No weekly data yet.</p>';
         return;
     }
-    const headers = ['Week', 'Start', 'End', 'Usage', 'Running', 'Avg break', 'Sessions', 'Duration', 'Avg dur', 'g/sess', 'g/hr', 'Long break', 'Short break', 'Status'];
+    const headers = ['Week', 'Start', 'End', 'Usage', 'Month running', 'Avg break', 'Sessions', 'Duration', 'Avg dur', 'g/sess', 'g/hr', 'Long break', 'Short break', 'Status'];
     const rows = summaries.map(s => [
         `${formatDate(s.weekStart)}`,
         formatDate(s.weekStart),
@@ -6695,18 +6833,54 @@ function renderBuyWeeklySummary(substanceId) {
         container.innerHTML = '<p class="empty-hint">No purchases yet.</p>';
         return;
     }
-    const headers = ['Start', 'End', 'Purchased', 'Cost', 'Cost/unit', 'g/day', 'Supply dur', 'Remaining'];
-    const rows = summaries.map(s => [
-        formatDate(s.weekStart),
-        formatDate(s.weekEnd),
-        fmtSheetAmount(s.purchased, s.unit),
-        `${s.cur}${s.cost.toFixed(2)}`,
-        s.costPerUnit != null ? `${s.cur}${s.costPerUnit.toFixed(2)}` : '—',
-        fmtSheetRate(s.gPerDay, s.unit, '/day'),
-        s.supplyDuration != null ? `~${s.supplyDuration.toFixed(1)} days` : '—',
-        fmtSheetAmount(s.remaining, s.unit)
-    ]);
-    container.innerHTML = renderSheetTable(headers, rows);
+    const headers = ['Start Week', 'End Week', 'Purchased', 'Cost', 'Cost/unit', 'g/day', 'Supply Duration'];
+    let html = '<div class="table-scroll buy-weekly-table-scroll"><table class="sheet-table buy-weekly-table"><thead><tr>';
+    headers.forEach(h => { html += `<th>${h}</th>`; });
+    html += '</tr></thead><tbody>';
+    summaries.forEach(s => {
+        html += `<tr>
+            <td>${formatDate(s.weekStart)}</td>
+            <td>${formatDate(s.weekEnd)}</td>
+            <td>${fmtSheetAmount(s.purchased, s.unit)}</td>
+            <td>${fmtSheetMoney(s.cost, s.cur)}</td>
+            <td>${s.costPerUnit != null ? fmtSheetMoney(s.costPerUnit, s.cur) : '—'}</td>
+            <td>${s.gPerDay != null ? fmtSheetRate(s.gPerDay, s.unit, '/day') : '—'}</td>
+            <td>${formatSupplyDurationDays(s.supplyDuration)}</td>
+        </tr>`;
+    });
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
+}
+
+function renderBuyMonthlySummary(substanceId) {
+    const container = document.getElementById('buy-monthly-summary');
+    if (!container) return;
+    if (!substanceId) {
+        container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
+        return;
+    }
+    const summaries = getBuyMonthlySummaries(substanceId);
+    if (!summaries.length) {
+        container.innerHTML = '<p class="empty-hint">No purchases yet.</p>';
+        return;
+    }
+    const headers = ['Start Month', 'End Month', 'Purchased', 'Cost', 'Cost/g', 'g/day', 'Supply Duration'];
+    let html = '<div class="table-scroll buy-monthly-table-scroll"><table class="sheet-table buy-monthly-table"><thead><tr>';
+    headers.forEach(h => { html += `<th>${h}</th>`; });
+    html += '</tr></thead><tbody>';
+    summaries.forEach(s => {
+        html += `<tr>
+            <td>${formatBuySheetDate(s.monthStart)}</td>
+            <td>${formatBuySheetDate(s.monthEnd)}</td>
+            <td>${fmtSheetAmount(s.purchased, s.unit)}</td>
+            <td>${fmtSheetMoney(s.cost, s.cur)}</td>
+            <td>${s.costPerUnit != null ? fmtSheetMoney(s.costPerUnit, s.cur) : '—'}</td>
+            <td>${s.gPerDay != null ? formatAmount(s.gPerDay) : '—'}</td>
+            <td>${formatSupplyDurationDaysHours(s.supplyDurationDays)}</td>
+        </tr>`;
+    });
+    html += '</tbody></table></div>';
+    container.innerHTML = html;
 }
 
 function updateStats() {
@@ -7696,7 +7870,6 @@ function renderTaperKpiRow(substanceId) {
     const unit = sub.defaultUnit;
     const statusTiles = [
         'taper-kpi-used-today',
-        'taper-kpi-remaining-today',
         'taper-kpi-used-week',
         'taper-kpi-remaining-week',
         'taper-kpi-status'
@@ -7705,7 +7878,6 @@ function renderTaperKpiRow(substanceId) {
 
     if (plan.isPaused) {
         set('taper-kpi-used-today-val', '—');
-        set('taper-kpi-remaining-today-val', '—');
         set('taper-kpi-used-week-val', '—');
         set('taper-kpi-remaining-week-val', '—');
         set('taper-kpi-status-val', 'Paused');
@@ -7713,25 +7885,16 @@ function renderTaperKpiRow(substanceId) {
     }
 
     const today = getLocalDateString();
-    const dailyLimit = getDailyLimitForDate(substanceId, today);
     const usedToday = getUsedAmount(substanceId, today);
     const weeklyLimit = getWeeklyLimit(substanceId, today);
     const usedWeek = getUsedAmountForTaperWeek(substanceId, today);
 
-    set('taper-kpi-used-today-val', `${usedToday.toFixed(1)} ${unit}`);
-
-    if (dailyLimit != null) {
-        const remToday = Math.max(0, dailyLimit - usedToday);
-        set('taper-kpi-remaining-today-val', `${remToday.toFixed(1)} ${unit}`);
-    } else {
-        set('taper-kpi-remaining-today-val', '—');
-    }
-
-    set('taper-kpi-used-week-val', `${usedWeek.toFixed(1)} ${unit}`);
+    set('taper-kpi-used-today-val', formatTaperAmount(usedToday, unit));
+    set('taper-kpi-used-week-val', formatTaperAmount(usedWeek, unit));
 
     if (weeklyLimit != null) {
         const remWeek = Math.max(0, weeklyLimit - usedWeek);
-        set('taper-kpi-remaining-week-val', `${remWeek.toFixed(1)} ${unit}`);
+        set('taper-kpi-remaining-week-val', formatTaperAmount(remWeek, unit));
         const weeklyStatus = isManualWeeklyPlan(plan)
             ? getManualWeeklyStatus(usedWeek, weeklyLimit).status
             : getTaperLimitStatus(usedWeek, weeklyLimit).status;
@@ -7756,31 +7919,12 @@ function renderTaperProgressCard(substanceId) {
     const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
 
     if (plan.isPaused) {
-        setTaperStatusBadge(document.getElementById('taper-today-status'), 'close', 'Paused');
         setTaperStatusBadge(document.getElementById('taper-weekly-status'), 'close', 'Paused');
         return;
     }
 
-    const dailyLimit = getDailyLimitForDate(substanceId, today);
-    const usedToday = getUsedAmount(substanceId, today);
     const weeklyLimit = getWeeklyLimit(substanceId, today);
     const weeklyUsed = getUsedAmountForTaperWeek(substanceId, today);
-
-    if (dailyLimit != null) {
-        const rem = Math.max(0, dailyLimit - usedToday);
-        const pct = dailyLimit > 0 ? (usedToday / dailyLimit) * 100 : 0;
-        const dailyStatus = applyTaperProgressBar(
-            document.getElementById('taper-today-bar'),
-            document.getElementById('taper-today-bar-text'),
-            usedToday,
-            dailyLimit
-        );
-        set('taper-today-limit', `${dailyLimit} ${unit}`);
-        set('taper-today-used', `${usedToday} ${unit}`);
-        set('taper-today-remaining', `${rem.toFixed(1)} ${unit}`);
-        set('taper-today-pct', `${Math.round(pct)}%`);
-        setTaperStatusBadge(document.getElementById('taper-today-status'), dailyStatus, shortTaperStatus(dailyStatus));
-    }
 
     if (weeklyLimit != null) {
         const remW = Math.max(0, weeklyLimit - weeklyUsed);
@@ -7793,17 +7937,23 @@ function renderTaperProgressCard(substanceId) {
         );
         if (isManualWeeklyPlan(plan)) {
             const weekNum = getManualWeeklyWeekNumber(plan, today);
-            set('taper-weekly-max-val', `Week ${weekNum}: ${weeklyLimit} ${unit}`);
+            set('taper-weekly-max-val', `Week ${weekNum}: ${formatTaperAmount(weeklyLimit, unit)}`);
         } else {
-            set('taper-weekly-max-val', `${weeklyLimit} ${unit}`);
+            set('taper-weekly-max-val', formatTaperAmount(weeklyLimit, unit));
         }
-        set('taper-weekly-used', `${weeklyUsed} ${unit}`);
-        set('taper-weekly-remaining', `${remW.toFixed(1)} ${unit}`);
+        set('taper-weekly-used', formatTaperAmount(weeklyUsed, unit));
+        set('taper-weekly-remaining', formatTaperAmount(remW, unit));
         set('taper-weekly-pct', `${Math.round(pctW)}%`);
         const badgeStatus = isManualWeeklyPlan(plan)
             ? getManualWeeklyStatus(weeklyUsed, weeklyLimit).status
             : weeklyStatus;
         setTaperStatusBadge(document.getElementById('taper-weekly-status'), badgeStatus, shortTaperStatus(badgeStatus));
+    } else {
+        set('taper-weekly-max-val', '—');
+        set('taper-weekly-used', formatTaperAmount(weeklyUsed, unit));
+        set('taper-weekly-remaining', '—');
+        set('taper-weekly-pct', '—');
+        setTaperStatusBadge(document.getElementById('taper-weekly-status'), 'under', '—');
     }
 }
 
@@ -7888,9 +8038,9 @@ function renderTaperWeeklyPlan(substanceId) {
         summary.innerHTML = [
             taperChipStat('Week', sum.weekIndex || '—'),
             taperChipStat('Weeks Remaining', sum.weeksRemaining),
-            taperChipStat('Reduction done', `${sum.reductionCompleted.toFixed(1)}/${sum.totalReduction.toFixed(1)}`),
-            taperChipStat('Avg this week', `${sum.avgThis.toFixed(1)} ${unit}`),
-            taperChipStat('Avg last week', `${sum.avgLast.toFixed(1)} ${unit}`),
+            taperChipStat('Reduction done', `${formatAmount(sum.reductionCompleted)}/${formatAmount(sum.totalReduction)}`),
+            taperChipStat('Avg this week', formatTaperAmount(sum.avgThis, unit)),
+            taperChipStat('Avg last week', formatTaperAmount(sum.avgLast, unit)),
             taperChipStat('Change vs Last Week', changeStr),
             taperChipStat('Under weeks', sum.underWeeks),
             taperChipStat('Over weeks', sum.overWeeks)
@@ -7913,8 +8063,8 @@ function renderTaperWeeklyPlan(substanceId) {
             const rowClass = `manual-week-${w.status}`;
             html += `<tr class="${rowClass}">
                 <td>Week ${w.week ?? '—'}</td>
-                <td>${target} ${unit}</td>
-                <td>${w.actualUsed} ${unit}</td>
+                <td>${formatTaperAmount(target, unit)}</td>
+                <td>${formatTaperAmount(w.actualUsed, unit)}</td>
                 <td>${pct}%</td>
                 <td>${emoji} ${label.replace(' target', '')}</td>
             </tr>`;
@@ -7930,14 +8080,13 @@ function renderTaperWeeklyPlan(substanceId) {
     </tr></thead><tbody>`;
     plan.weeklyTargets.forEach(w => {
         const { emoji, label } = getTaperLimitStatus(w.actualUsed, w.weeklyMax);
-        const diffLabel = w.difference > 0 ? `+${w.difference}` : w.difference;
         html += `<tr class="taper-preview-${w.status}">
             <td>${formatDate(w.weekStart)}</td>
             <td>${formatDate(w.weekEnd)}</td>
-            <td>${w.dailyTarget} ${unit}</td>
-            <td>${w.weeklyMax} ${unit}</td>
-            <td>${w.actualUsed}</td>
-            <td>${diffLabel}</td>
+            <td>${formatTaperAmount(w.dailyTarget, unit)}</td>
+            <td>${formatTaperAmount(w.weeklyMax, unit)}</td>
+            <td>${formatTaperAmount(w.actualUsed, unit)}</td>
+            <td>${formatTaperWeekDiff(w.difference, unit)}</td>
             <td>${emoji} ${label === 'Over target' ? 'Over' : label === 'Close to target' ? 'Close' : 'Under'}</td>
         </tr>`;
     });
@@ -8260,11 +8409,11 @@ function getTaperByWeekStatus(used, planned) {
     return { status: 'under', label: 'Under target' };
 }
 
-function formatTaperWeekDiff(value) {
+function formatTaperWeekDiff(value, unit) {
     if (value == null || Number.isNaN(value)) return '—';
-    const rounded = roundTaperValue(value);
-    if (rounded > 0) return `+${rounded}`;
-    return String(rounded);
+    const rounded = formatAmount(roundTaperValue(value));
+    if (parseFloat(rounded) > 0) return `+${rounded}${unit ? ` ${unit}` : ''}`;
+    return `${rounded}${unit ? ` ${unit}` : ''}`;
 }
 
 function buildTaperByWeekData(substanceId) {
@@ -8344,9 +8493,9 @@ function renderTaperByWeek(substanceId) {
 
     const unit = sub.defaultUnit || 'units';
     summaryEl.innerHTML = [
-        taperChipStat('Total planned', `${data.totalPlanned} ${unit}`),
-        taperChipStat('Total used', `${data.totalUsed} ${unit}`),
-        taperChipStat('Remaining allowance', `${data.remainingAllowance} ${unit}`),
+        taperChipStat('Total planned', formatTaperAmount(data.totalPlanned, unit)),
+        taperChipStat('Total used', formatTaperAmount(data.totalUsed, unit)),
+        taperChipStat('Remaining allowance', formatTaperAmount(data.remainingAllowance, unit)),
         taperChipStat('Current week', data.currentWeek),
         taperChipStat('Weeks remaining', data.weeksRemaining)
     ].join('');
@@ -8368,12 +8517,12 @@ function renderTaperByWeek(substanceId) {
         html += `<tr class="taper-by-week-row taper-by-week-${row.status}${row.isCurrent ? ' taper-by-week-current' : ''}">
             <td>Week ${row.weekNum}</td>
             <td class="taper-by-week-dates">${dateRange}</td>
-            <td>${row.planned} ${unit}</td>
-            <td>${row.used} ${unit}</td>
-            <td>${formatTaperWeekDiff(row.diff)}</td>
-            <td>${row.runningPlanned} ${unit}</td>
-            <td>${row.runningUsed} ${unit}</td>
-            <td>${formatTaperWeekDiff(row.runningDiff)}</td>
+            <td>${formatTaperAmount(row.planned, unit)}</td>
+            <td>${formatTaperAmount(row.used, unit)}</td>
+            <td>${formatTaperWeekDiff(row.diff, unit)}</td>
+            <td>${formatTaperAmount(row.runningPlanned, unit)}</td>
+            <td>${formatTaperAmount(row.runningUsed, unit)}</td>
+            <td>${formatTaperWeekDiff(row.runningDiff, unit)}</td>
             <td><span class="taper-by-week-status taper-by-week-status-${row.status}">${row.statusLabel}</span></td>
         </tr>`;
     });
