@@ -388,6 +388,7 @@ function normalizeAppData(data) {
         if (resolvedSubstanceId) log.substanceId = resolvedSubstanceId;
         if (!Array.isArray(log.linkedPurchases)) log.linkedPurchases = [];
         syncLogPurchaseFields(log);
+        normalizeUseLogWellness(log);
         if (hasLinkedSupply(log)) {
             log.inventoryAffects = true;
             log.supplyUnlinked = false;
@@ -517,6 +518,7 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     taperWeeklyCalendar: false,
     buyWeeklySummary: false,
     buyMonthlySummary: false,
+    dashRecoveryInsights: false,
     settingsSubstances: false,
     settingsMainSubstance: true,
     settingsPreferences: true,
@@ -749,6 +751,7 @@ const USE_STATS_LABELS = {
 };
 
 let columnSettingsTableKey = null;
+let useLogDateFilter = 'all';
 
 function ensureTableColumnSettings(data) {
     if (!data.settings) data.settings = {};
@@ -2534,10 +2537,7 @@ function getUsedAmountForTaperWeek(substanceId, dateStr, excludeLogId = null, da
 }
 
 function shortWeeklyTaperStatus(status) {
-    if (status === 'over') return 'Over';
-    if (status === 'close') return 'On track';
-    if (status === 'under') return 'Under';
-    return '—';
+    return getRecoveryTaperStatusLabel(status);
 }
 
 function getUseEntries(data = appData) {
@@ -2729,7 +2729,7 @@ function setUseTransactionType(tx) {
         } else if (isAdjustment) {
             linkLabel.textContent = 'Remove from Inventory';
         } else {
-            linkLabel.textContent = 'Use From Purchase / Bag';
+            linkLabel.textContent = 'Use From Inventory';
         }
     }
 
@@ -2798,6 +2798,16 @@ function buildUseEntryFromForm() {
         giftPartyName: isGift ? (document.getElementById('use-gift-party')?.value?.trim() || '') : '',
         adjustmentDirection: isAdjustment ? getUseAdjustmentDirection() : undefined,
         notes: document.getElementById('use-notes')?.value || '',
+        mood: document.getElementById('use-mood')?.value?.trim() || '',
+        trigger: document.getElementById('use-trigger')?.value?.trim() || '',
+        cravingLevel: (() => {
+            const v = document.getElementById('use-craving')?.value;
+            return v === '' || v == null ? null : parseInt(v, 10);
+        })(),
+        stressLevel: (() => {
+            const v = document.getElementById('use-stress')?.value;
+            return v === '' || v == null ? null : parseInt(v, 10);
+        })(),
         purchaseId: inventoryAffects ? linkedPurchaseId : null,
         linkedPurchaseId: inventoryAffects ? linkedPurchaseId : null,
         linkedPurchases: [],
@@ -2806,12 +2816,27 @@ function buildUseEntryFromForm() {
     };
 }
 
+function normalizeUseLogWellness(log) {
+    if (!log) return;
+    const parseLevel = val => {
+        if (val == null || val === '') return null;
+        const n = parseInt(val, 10);
+        return Number.isFinite(n) ? Math.min(10, Math.max(1, n)) : null;
+    };
+    log.cravingLevel = parseLevel(log.cravingLevel ?? log.craving);
+    log.stressLevel = parseLevel(log.stressLevel);
+    if (log.mood != null && typeof log.mood !== 'string') log.mood = String(log.mood);
+    if (log.trigger != null && typeof log.trigger !== 'string') log.trigger = String(log.trigger);
+    if (log.mood == null) log.mood = '';
+    if (log.trigger == null) log.trigger = '';
+    delete log.craving;
+}
+
 function stripLegacyUseLogFields(entry) {
     if (!entry) return;
     delete entry.cost;
-    delete entry.trigger;
-    delete entry.cravingLevel;
     delete entry.location;
+    normalizeUseLogWellness(entry);
 }
 
 function resetUseFormAfterSave() {
@@ -3572,7 +3597,7 @@ function deductPurchaseAmount(purchaseId, amount) {
     if (amt > remaining + 0.0001) {
         return {
             ok: false,
-            error: `Only ${remaining.toFixed(2)} ${purchase.unit || 'units'} left in that bag.`
+            error: `Only ${formatAmount(remaining)} ${purchase.unit || 'units'} left in that inventory item.`
         };
     }
     purchase.remainingAmount = Math.max(0, remaining - amt);
@@ -3679,7 +3704,7 @@ function updateUsePurchaseLinkUI() {
     if (linkLabel) {
         if (addsInventory) linkLabel.textContent = 'Add to Inventory';
         else if (isAdjustment) linkLabel.textContent = 'Remove from Inventory';
-        else linkLabel.textContent = 'Use From Purchase / Bag';
+        else linkLabel.textContent = 'Use From Inventory';
     }
 
     if (manualWrap) manualWrap.classList.toggle('hidden', mode !== 'manual');
@@ -3882,6 +3907,10 @@ function editUseEntry(id) {
     setInputValue('use-amount', entry.amount != null ? entry.amount : '');
     setInputValue('use-count', getUseCount(entry));
     setInputValue('use-notes', entry.notes || '');
+    setInputValue('use-mood', entry.mood || '');
+    setInputValue('use-trigger', entry.trigger || '');
+    setInputValue('use-craving', entry.cravingLevel != null ? String(entry.cravingLevel) : '');
+    setInputValue('use-stress', entry.stressLevel != null ? String(entry.stressLevel) : '');
     setInputValue('use-gift-party', entry.giftPartyName || '');
 
     if (!hasLinkedSupply(entry) && !logInventoryAffects(entry)) {
@@ -4369,6 +4398,7 @@ function deleteUseEntry(id) {
 
 function renderUseLogTab() {
     updateUseTaperPreview();
+    renderUseLogTotals();
     renderRecentUseList();
     renderUseHistoryTable();
 }
@@ -4382,10 +4412,7 @@ function useHistorySelectionHas(id) {
 }
 
 function buildUseHistoryRows(substanceIdOverride = null) {
-    console.log('[use-history] logs', appData.logs?.length, 'useLogs', appData.useLogs?.length);
     const entries = getUseEntries();
-    console.log('[use-history] getUseEntries', entries.length);
-
     const filterId = substanceIdOverride ?? (isAllSubstancesView() ? null : currentSubstanceId);
     let substances = filterId ? [getSubstance(filterId)].filter(Boolean) : getLoggableSubstances();
 
@@ -4427,9 +4454,11 @@ function buildUseHistoryRows(substanceIdOverride = null) {
         enriched.forEach(entry => allRows.push({ entry, sub, avgRate }));
     }
 
+    allRows = allRows.filter(({ entry }) => logMatchesUseLogFilter(entry));
+
     allRows.sort((a, b) => {
-        const da = new Date(a.entry.startDatetime || a.entry.timestamp || 0);
-        const db = new Date(b.entry.startDatetime || b.entry.timestamp || 0);
+        const da = getLogDatetimeMs(a.entry);
+        const db = getLogDatetimeMs(b.entry);
         return db - da;
     });
     return allRows;
@@ -4834,7 +4863,10 @@ function renderRecentUseList() {
     const container = document.getElementById('recent-use-list');
     if (!container) return;
     container.innerHTML = '';
-    const recent = [...getUseEntries()].sort((a, b) => getLogDatetimeMs(b) - getLogDatetimeMs(a)).slice(0, 5);
+    const filterId = isAllSubstancesView() ? null : currentSubstanceId;
+    let list = [...getUseEntries()].filter(l => logMatchesUseLogFilter(l));
+    if (filterId) list = list.filter(l => logMatchesSubstance(l, filterId));
+    const recent = list.sort((a, b) => getLogDatetimeMs(b) - getLogDatetimeMs(a)).slice(0, 12);
     if (!recent.length) {
         container.innerHTML = '<p class="empty-hint">No use entries yet</p>';
         applyCollapsedSections();
@@ -4860,6 +4892,10 @@ function renderRecentUseList() {
                 ${enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}
                 ${countStr !== '' ? `<div class="use-recent-detail">${countStr} lines</div>` : ''}
                 ${log.notes ? `<div class="use-recent-notes">${log.notes}</div>` : ''}
+                ${log.mood ? `<div class="use-recent-detail">Mood: ${log.mood}</div>` : ''}
+                ${log.trigger ? `<div class="use-recent-detail">Trigger: ${log.trigger}</div>` : ''}
+                ${log.cravingLevel != null ? `<div class="use-recent-detail">Craving: ${log.cravingLevel}/10</div>` : ''}
+                ${log.stressLevel != null ? `<div class="use-recent-detail">Stress: ${log.stressLevel}/10</div>` : ''}
                 <div class="use-recent-supply">${formatInventoryLinkDisplay(log)}</div>
             </div>
             <div class="use-recent-actions">
@@ -5921,6 +5957,414 @@ function setupEventListeners() {
     document.getElementById('taper-substance')?.addEventListener('change', onTaperSubstanceChange);
 }
 
+// ——— Recovery-focused dashboard & use log helpers ———
+const RECOVERY_TAPER_LABELS = {
+    under: 'On track',
+    close: 'Near plan',
+    over: 'Above plan',
+    none: 'No plan'
+};
+
+function getRecoveryTaperStatusLabel(status) {
+    return RECOVERY_TAPER_LABELS[status] || '—';
+}
+
+function getMonthEndDateStr(dateStr) {
+    const d = parseLocalDate(dateStr);
+    if (!d) return dateStr || '';
+    return getLocalDateString(new Date(d.getFullYear(), d.getMonth() + 1, 0));
+}
+
+function getPersonalUseInRange(substanceId, startDate, endDate, data = appData) {
+    return getUseLogsForSubstance(substanceId, { sortAsc: true, personalUseOnly: true, data })
+        .filter(l => {
+            if (!l.date) return false;
+            if (startDate && l.date < startDate) return false;
+            if (endDate && l.date > endDate) return false;
+            return true;
+        });
+}
+
+function getMonthPersonalUseTotal(substanceId, dateStr = getLocalDateString()) {
+    const monthStart = getMonthStartDateStr(dateStr);
+    return getPersonalUseInRange(substanceId, monthStart, dateStr)
+        .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+}
+
+function getWeekPersonalUseTotal(substanceId, dateStr = getLocalDateString()) {
+    const weekStart = getWeekStartDateStr(dateStr);
+    return getPersonalUseInRange(substanceId, weekStart, dateStr)
+        .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+}
+
+function getMonthlyLimit(substanceId, dateStr = getLocalDateString()) {
+    const plan = appData.taperPlans[substanceId];
+    if (!plan || plan.isPaused) return null;
+    if (plan.monthlyMax != null && plan.monthlyMax > 0) {
+        return roundTaperValue(plan.monthlyMax);
+    }
+    const monthStart = getMonthStartDateStr(dateStr);
+    const monthEnd = getMonthEndDateStr(dateStr);
+    let weekSum = 0;
+    let hasWeek = false;
+    (plan.weeklyTargets || []).forEach(weekRow => {
+        if (weekRow.weekEnd >= monthStart && weekRow.weekStart <= monthEnd) {
+            const planned = getPlannedWeeklyTarget(plan, weekRow) ?? weekRow.weeklyMax ?? 0;
+            if (planned > 0) {
+                weekSum += planned;
+                hasWeek = true;
+            }
+        }
+    });
+    if (hasWeek && weekSum > 0) return roundTaperValue(weekSum);
+    const daily = getDailyLimitForDate(substanceId, dateStr);
+    if (daily == null) return null;
+    const start = parseLocalDate(monthStart);
+    const end = parseLocalDate(monthEnd);
+    const daysInMonth = start && end ? Math.max(1, Math.round((end - start) / 86400000) + 1) : 30;
+    return roundTaperValue(daily * daysInMonth);
+}
+
+function getMonthSpent(substanceId, dateStr = getLocalDateString()) {
+    const monthStart = getMonthStartDateStr(dateStr);
+    return (appData.purchases || [])
+        .filter(p => getPurchaseSubstanceId(p) === substanceId && p.date >= monthStart && p.date <= dateStr)
+        .reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+}
+
+function estimateLogCost(log) {
+    const pid = getLogPurchaseId(log);
+    if (!pid) return 0;
+    const purchase = findPurchase(pid);
+    if (!purchase) return 0;
+    const qty = parseFloat(getPurchaseQuantity(purchase)) || 0;
+    const cost = parseFloat(getPurchaseTotalCost(purchase)) || 0;
+    if (qty <= 0) return 0;
+    return ((parseFloat(log.amount) || 0) / qty) * cost;
+}
+
+function getUseLogFilterBounds(filter = useLogDateFilter) {
+    const today = getLocalDateString();
+    switch (filter) {
+        case 'today':
+            return { startDate: today, endDate: today };
+        case 'week': {
+            const weekStart = getWeekStartDateStr(today);
+            return { startDate: weekStart, endDate: today };
+        }
+        case 'month': {
+            return { startDate: getMonthStartDateStr(today), endDate: today };
+        }
+        default:
+            return { startDate: null, endDate: null };
+    }
+}
+
+function logMatchesUseLogFilter(log, filter = useLogDateFilter) {
+    if (!log?.date) return false;
+    const { startDate, endDate } = getUseLogFilterBounds(filter);
+    if (startDate && log.date < startDate) return false;
+    if (endDate && log.date > endDate) return false;
+    return true;
+}
+
+function setUseLogFilter(filter) {
+    useLogDateFilter = filter;
+    document.querySelectorAll('.use-log-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+    });
+    renderUseLogTab();
+}
+
+function getUseLogTotalsForView(substanceId = isAllSubstancesView() ? null : currentSubstanceId) {
+    const bounds = getUseLogFilterBounds();
+    let logs = getUseEntries().filter(l => logMatchesUseLogFilter(l) && isPersonalUseLog(l));
+    if (substanceId) {
+        logs = logs.filter(l => logMatchesSubstance(l, substanceId));
+    }
+    const totalGrams = logs.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+    const totalCost = logs.reduce((s, l) => s + estimateLogCost(l), 0);
+    return { totalGrams, totalCost, entryCount: logs.length };
+}
+
+function renderUseLogTotals() {
+    const container = document.getElementById('use-log-totals');
+    if (!container) return;
+    const sub = isAllSubstancesView() ? null : getSubstance(currentSubstanceId);
+    const unit = sub?.defaultUnit || 'units';
+    const { totalGrams, totalCost, entryCount } = getUseLogTotalsForView();
+    const cur = getCurrencySymbol();
+    container.innerHTML = `
+        <div class="use-log-totals-grid">
+            <div class="use-log-total-card"><span>Total amount</span><strong>${formatAmount(totalGrams)} ${unit}</strong></div>
+            <div class="use-log-total-card"><span>Est. cost</span><strong>${fmtSheetMoney(totalCost, cur)}</strong></div>
+            <div class="use-log-total-card"><span>Entries</span><strong>${entryCount}</strong></div>
+        </div>`;
+}
+
+function getNextBestAction(substanceId) {
+    if (!substanceId) {
+        return {
+            tone: 'steady',
+            title: 'Choose a substance',
+            message: 'Select a substance to see personalized recovery guidance.'
+        };
+    }
+    const today = getLocalDateString();
+    const weekUsed = getWeekPersonalUseTotal(substanceId, today);
+    const weekLimit = getWeeklyLimit(substanceId, today);
+    const todayUsed = getUsedAmount(substanceId, today);
+    const dailyLimit = getDailyLimitForDate(substanceId, today);
+    const monthUsed = getMonthPersonalUseTotal(substanceId, today);
+    const monthLimit = getMonthlyLimit(substanceId, today);
+
+    if (monthLimit != null && monthUsed > monthLimit) {
+        return {
+            tone: 'reset',
+            title: 'Room to adjust',
+            message: 'This month is above your monthly plan. That does not erase progress — consider a lighter day when you are ready.'
+        };
+    }
+    if (weekLimit != null && weekUsed > weekLimit) {
+        return {
+            tone: 'reset',
+            title: 'Gentle reset',
+            message: 'This week is above your weekly plan. One heavier day does not define you — a smaller day tomorrow can help you reset.'
+        };
+    }
+    if (dailyLimit != null && todayUsed > dailyLimit) {
+        return {
+            tone: 'reset',
+            title: 'Tomorrow is fresh',
+            message: 'Today went above your daily plan. Take a breath — try a lighter amount tomorrow if that feels right.'
+        };
+    }
+    if (weekLimit != null && weekUsed <= weekLimit * 0.75) {
+        return {
+            tone: 'encourage',
+            title: 'You are on track',
+            message: 'You are below your weekly plan so far. Notice what is helping you — small wins matter.'
+        };
+    }
+    if (dailyLimit != null && todayUsed > 0 && todayUsed <= dailyLimit * 0.8) {
+        return {
+            tone: 'encourage',
+            title: 'Steady day',
+            message: 'Today is within your daily plan. Keep logging honestly — awareness supports recovery.'
+        };
+    }
+    return {
+        tone: 'steady',
+        title: 'Stay curious',
+        message: 'Check in with mood and triggers when you log. Honest data helps you see patterns without judgment.'
+    };
+}
+
+function renderNextBestAction(substanceId) {
+    const card = document.getElementById('dash-next-action');
+    if (!card) return;
+    const action = getNextBestAction(substanceId);
+    card.className = `dash-card dash-next-action-card dash-next-action-${action.tone}`;
+    card.innerHTML = `
+        <h3 class="dash-card-title">Next Best Action</h3>
+        <p class="dash-next-action-title">${action.title}</p>
+        <p class="dash-next-action-message">${action.message}</p>`;
+}
+
+function renderDashboardSummaryCards(substanceId) {
+    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+    if (!substanceId || isAllSubstancesView()) {
+        ['dash-card-today', 'dash-card-week', 'dash-card-month', 'dash-card-spent', 'dash-card-streak', 'dash-card-month-cap']
+            .forEach(id => set(id, '—'));
+        return;
+    }
+    const sub = getSubstance(substanceId);
+    const unit = sub?.defaultUnit || 'units';
+    const today = getLocalDateString();
+    const todayUsed = getUsedAmount(substanceId, today);
+    const weekUsed = getWeekPersonalUseTotal(substanceId, today);
+    const monthUsed = getMonthPersonalUseTotal(substanceId, today);
+    const monthLimit = getMonthlyLimit(substanceId, today);
+    const monthRemaining = monthLimit != null ? Math.max(0, monthLimit - monthUsed) : null;
+    const streakDays = computeRecoveryStreakDays(substanceId).days;
+    const spent = getMonthSpent(substanceId, today);
+    const cur = getCurrencySymbol();
+
+    set('dash-card-today', `${formatAmount(todayUsed)} ${unit}`);
+    set('dash-card-week', `${formatAmount(weekUsed)} ${unit}`);
+    set('dash-card-month', `${formatAmount(monthUsed)} ${unit}`);
+    set('dash-card-spent', fmtSheetMoney(spent, cur));
+    set('dash-card-streak', streakDays ? `${streakDays} day${streakDays === 1 ? '' : 's'}` : '0 days');
+    set('dash-card-month-cap', monthRemaining != null ? `${formatAmount(monthRemaining)} ${unit}` : '—');
+}
+
+function renderMiniUsageChart(containerId, buckets, emptyHint = 'No data yet') {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+    if (!buckets.length) {
+        container.innerHTML = `<p class="empty-hint">${emptyHint}</p>`;
+        return;
+    }
+    const max = Math.max(...buckets.map(b => b.value), 0.01);
+    buckets.forEach(data => {
+        const bar = document.createElement('div');
+        bar.className = 'chart-bar chart-bar-insight';
+        bar.style.height = `${Math.max((data.value / max) * 100, 4)}%`;
+        bar.title = `${data.label}: ${formatAmount(data.value)}`;
+        bar.innerHTML = `<span class="chart-bar-value">${formatAmount(data.value)}</span><span class="chart-bar-label">${data.label}</span>`;
+        container.appendChild(bar);
+    });
+}
+
+function buildDailyUsageBuckets(substanceId, days = 7) {
+    const today = getLocalDateString();
+    const buckets = [];
+    for (let i = days - 1; i >= 0; i--) {
+        const dateStr = addDaysToDateStr(today, -i);
+        const d = parseLocalDate(dateStr);
+        const label = d ? d.toLocaleDateString('en-US', { weekday: 'short' }) : dateStr.slice(5);
+        buckets.push({
+            label,
+            value: getUsedAmount(substanceId, dateStr)
+        });
+    }
+    return buckets;
+}
+
+function buildWeeklyUsageBuckets(substanceId, weeks = 4) {
+    const today = getLocalDateString();
+    const buckets = [];
+    for (let i = weeks - 1; i >= 0; i--) {
+        const weekEnd = addDaysToDateStr(getWeekStartDateStr(today), -i * 7 + 6);
+        const weekStart = addDaysToDateStr(weekEnd, -6);
+        const used = getPersonalUseInRange(substanceId, weekStart, weekEnd)
+            .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+        buckets.push({ label: `W${weeks - i}`, value: used });
+    }
+    return buckets;
+}
+
+function buildMonthlyUsageBuckets(substanceId, months = 3) {
+    const today = new Date();
+    const buckets = [];
+    for (let i = months - 1; i >= 0; i--) {
+        const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
+        const monthStart = getLocalDateString(d);
+        const monthEnd = getMonthEndDateStr(monthStart);
+        const used = getMonthPersonalUseTotal(substanceId, monthEnd);
+        const label = d.toLocaleDateString('en-US', { month: 'short' });
+        buckets.push({ label, value: used });
+    }
+    return buckets;
+}
+
+function buildCostOverTimeBuckets(substanceId, days = 14) {
+    const today = getLocalDateString();
+    const buckets = [];
+    for (let i = days - 1; i >= 0; i--) {
+        const dateStr = addDaysToDateStr(today, -i);
+        const cost = (appData.purchases || [])
+            .filter(p => getPurchaseSubstanceId(p) === substanceId && p.date === dateStr)
+            .reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+        const d = parseLocalDate(dateStr);
+        buckets.push({
+            label: d ? `${d.getMonth() + 1}/${d.getDate()}` : dateStr.slice(5),
+            value: cost
+        });
+    }
+    return buckets;
+}
+
+function getRecoveryInsightStats(substanceId) {
+    const today = getLocalDateString();
+    const monthStart = getMonthStartDateStr(today);
+    const monthLogs = getPersonalUseInRange(substanceId, monthStart, today);
+    const daysInMonth = countDaysInRange(monthStart, today);
+    const totalMonth = monthLogs.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+    const avgDaily = daysInMonth > 0 ? totalMonth / daysInMonth : 0;
+    const byDay = new Map();
+    monthLogs.forEach(l => {
+        byDay.set(l.date, (byDay.get(l.date) || 0) + (parseFloat(l.amount) || 0));
+    });
+    let highestDay = '—';
+    let highestAmt = 0;
+    byDay.forEach((amt, date) => {
+        if (amt > highestAmt) {
+            highestAmt = amt;
+            highestDay = formatDate(date);
+        }
+    });
+    let noUseDays = 0;
+    let d = monthStart;
+    while (d <= today) {
+        if (!byDay.has(d) || byDay.get(d) <= 0) noUseDays++;
+        d = addDaysToDateStr(d, 1);
+    }
+    return { avgDaily, highestDay, highestAmt, noUseDays };
+}
+
+function renderDashboardRecoveryInsights(substanceId) {
+    const wrap = document.getElementById('dash-recovery-insights');
+    if (!wrap) return;
+    if (!substanceId || isAllSubstancesView()) {
+        wrap.innerHTML = '<p class="empty-hint">Select a substance to view recovery insights.</p>';
+        return;
+    }
+    const stats = getRecoveryInsightStats(substanceId);
+    const sub = getSubstance(substanceId);
+    const unit = sub?.defaultUnit || 'units';
+    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+    set('insight-avg-daily', `${formatAmount(stats.avgDaily)} ${unit}`);
+    set('insight-highest-day', stats.highestAmt > 0 ? `${stats.highestDay} (${formatAmount(stats.highestAmt)} ${unit})` : '—');
+    set('insight-no-use-days', String(stats.noUseDays));
+    renderMiniUsageChart('insight-chart-day', buildDailyUsageBuckets(substanceId, 7));
+    renderMiniUsageChart('insight-chart-week', buildWeeklyUsageBuckets(substanceId, 4));
+    renderMiniUsageChart('insight-chart-month', buildMonthlyUsageBuckets(substanceId, 3));
+    const costBuckets = buildCostOverTimeBuckets(substanceId, 14);
+    const costContainer = document.getElementById('insight-chart-cost');
+    if (costContainer) {
+        costContainer.innerHTML = '';
+        if (!costBuckets.some(b => b.value > 0)) {
+            costContainer.innerHTML = '<p class="empty-hint">No purchases in range</p>';
+        } else {
+            const max = Math.max(...costBuckets.map(b => b.value), 0.01);
+            const cur = getCurrencySymbol();
+            costBuckets.forEach(data => {
+                const bar = document.createElement('div');
+                bar.className = 'chart-bar chart-bar-insight chart-bar-spend';
+                bar.style.height = `${Math.max((data.value / max) * 100, 4)}%`;
+                bar.innerHTML = `<span class="chart-bar-value">${cur}${formatAmount(data.value)}</span><span class="chart-bar-label">${data.label}</span>`;
+                costContainer.appendChild(bar);
+            });
+        }
+    }
+}
+
+function updateInventoryLowWarning(substanceId) {
+    const el = document.getElementById('dash-inventory-warning');
+    if (!el) return;
+    if (!substanceId) {
+        el.classList.add('hidden');
+        return;
+    }
+    const remaining = getTotalRemainingSupply(substanceId);
+    const sub = getSubstance(substanceId);
+    const unit = sub?.defaultUnit || 'units';
+    const purchases = (appData.purchases || []).filter(p => getPurchaseSubstanceId(p) === substanceId);
+    const totalBought = purchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
+    const pct = totalBought > 0 && remaining != null ? remaining / totalBought : null;
+    if (pct != null && pct <= 0.15 && remaining > 0) {
+        el.textContent = `Low inventory: about ${formatAmount(remaining)} ${unit} remaining.`;
+        el.classList.remove('hidden');
+    } else if (remaining != null && remaining <= INVENTORY_EPS) {
+        el.textContent = 'Inventory is depleted — log a purchase when you restock.';
+        el.classList.remove('hidden');
+    } else {
+        el.classList.add('hidden');
+    }
+}
+
 // ——— Dashboard ———
 function updateDashboard() {
     const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
@@ -5965,6 +6409,12 @@ function updateDashboard() {
     updateQuickActions();
     updateDashboardMainDisplay();
     updateBreakMetricsDashboard();
+
+    const dashSubId = isAllSubstancesView() ? getMainSubstanceId() : currentSubstanceId;
+    renderDashboardSummaryCards(dashSubId);
+    renderNextBestAction(dashSubId);
+    renderDashboardRecoveryInsights(dashSubId);
+    updateInventoryLowWarning(dashSubId);
 }
 
 function formatBreakFromHours(hours) {
@@ -7473,15 +7923,15 @@ function getManualWeeklyWeekNumber(plan, dateStr) {
 
 function getManualWeeklyStatus(actual, target) {
     if (target == null || target <= 0) {
-        return { status: 'none', label: 'No target', emoji: '—' };
+        return { status: 'none', label: RECOVERY_TAPER_LABELS.none, emoji: '—' };
     }
     if (actual > target) {
-        return { status: 'over', label: 'Over target', emoji: '❌' };
+        return { status: 'over', label: RECOVERY_TAPER_LABELS.over, emoji: '↑' };
     }
     if (actual >= target * 0.9) {
-        return { status: 'close', label: 'Near target', emoji: '⚠️' };
+        return { status: 'close', label: RECOVERY_TAPER_LABELS.close, emoji: '~' };
     }
-    return { status: 'under', label: 'Under target', emoji: '✅' };
+    return { status: 'under', label: RECOVERY_TAPER_LABELS.under, emoji: '✓' };
 }
 
 function buildWeeklyTargetsFromManual(plan) {
@@ -7650,6 +8100,7 @@ function migrateTaperPlan(plan, substanceId, data) {
     }
 
     plan.weeklyMax = plan.weeklyMax ?? null;
+    if (plan.monthlyMax == null) plan.monthlyMax = null;
     plan.doNotSurpassDaily = plan.doNotSurpassDaily ?? plan.warnBeforeSurpass ?? true;
     plan.doNotSurpassWeekly = plan.doNotSurpassWeekly ?? false;
     plan.notes = plan.notes ?? plan.taperNotes ?? '';
@@ -7837,29 +8288,29 @@ function getWeeklyLimit(substanceId, dateStr) {
 
 function getTaperLimitStatus(used, limit) {
     if (limit == null || limit <= 0) {
-        return { status: 'none', label: 'No target', emoji: '—' };
+        return { status: 'none', label: RECOVERY_TAPER_LABELS.none, emoji: '—' };
     }
     if (used > limit) {
-        return { status: 'over', label: 'Over target', emoji: '🚫' };
+        return { status: 'over', label: RECOVERY_TAPER_LABELS.over, emoji: '↑' };
     }
     if (used >= limit * 0.8) {
-        return { status: 'close', label: 'Close to target', emoji: '⚠️' };
+        return { status: 'close', label: RECOVERY_TAPER_LABELS.close, emoji: '~' };
     }
-    return { status: 'under', label: 'Under target', emoji: '✅' };
+    return { status: 'under', label: RECOVERY_TAPER_LABELS.under, emoji: '✓' };
 }
 
 function getTaperDailyStatusText(status) {
-    if (status === 'over') return 'Over daily target';
-    if (status === 'close') return 'Close to daily target';
-    if (status === 'under') return 'Under daily target';
-    return 'No daily target';
+    if (status === 'over') return 'Above daily plan';
+    if (status === 'close') return 'Near daily plan';
+    if (status === 'under') return 'On track (daily)';
+    return 'No daily plan';
 }
 
 function getTaperWeeklyStatusText(status) {
-    if (status === 'over') return 'Over weekly target';
-    if (status === 'close') return 'Close to weekly target';
-    if (status === 'under') return 'Under weekly target';
-    return 'No weekly target';
+    if (status === 'over') return 'Above weekly plan';
+    if (status === 'close') return 'Near weekly plan';
+    if (status === 'under') return 'On track (weekly)';
+    return 'No weekly plan';
 }
 
 function applyTaperProgressBar(bar, barText, used, limit) {
@@ -7994,6 +8445,7 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
         reductionAmount: isManual ? 0 : (parseFloat(document.getElementById('reduction-amount')?.value) || 0),
         reductionPercent: isManual ? 0 : (parseFloat(document.getElementById('reduction-percent')?.value) || 0),
         weeklyMax: isManual ? null : (parseFloat(document.getElementById('weekly-max')?.value) || null),
+        monthlyMax: parseOptionalTaperNumber(document.getElementById('monthly-max')),
         doNotSurpassDaily: document.getElementById('do-not-surpass-daily')?.checked !== false,
         doNotSurpassWeekly: !!document.getElementById('do-not-surpass-weekly')?.checked,
         notes: document.getElementById('taper-notes')?.value || '',
@@ -8089,6 +8541,7 @@ function fillTaperFormFromPlan(plan) {
     setInputValue('reduction-percent', plan.reductionPercent ?? '');
     setInputValue('end-date', plan.endDate || '');
     setInputValue('weekly-max', plan.weeklyMax ?? '');
+    setInputValue('monthly-max', plan.monthlyMax ?? '');
     setInputValue('taper-notes', plan.notes || '');
     const dailyEl = document.getElementById('do-not-surpass-daily');
     const weeklyEl = document.getElementById('do-not-surpass-weekly');
@@ -8143,10 +8596,7 @@ function setTaperStatusBadge(el, status, shortLabel) {
 }
 
 function shortTaperStatus(status) {
-    if (status === 'over') return 'Over';
-    if (status === 'close') return 'Close';
-    if (status === 'under') return 'Under';
-    return '—';
+    return getRecoveryTaperStatusLabel(status);
 }
 
 function renderTaperKpiRow(substanceId) {
@@ -8219,8 +8669,19 @@ function renderTaperProgressCard(substanceId) {
     const weeklyLimit = getWeeklyLimit(substanceId, today);
     const weeklyUsed = getUsedAmountForTaperWeek(substanceId, today);
 
+    const dailyAllowed = getDailyLimitForDate(substanceId, today);
+    const monthLimit = getMonthlyLimit(substanceId, today);
+    const monthUsed = getMonthPersonalUseTotal(substanceId, today);
+    set('taper-daily-allowed-val', dailyAllowed != null ? formatTaperAmount(dailyAllowed, unit) : '—');
+    set('taper-monthly-cap-val', monthLimit != null ? formatTaperAmount(monthLimit, unit) : '—');
+    set('taper-monthly-used-val', formatTaperAmount(monthUsed, unit));
+    set('taper-monthly-remaining-val', monthLimit != null
+        ? formatTaperAmount(Math.max(0, monthLimit - monthUsed), unit)
+        : '—');
+
     if (weeklyLimit != null) {
         const remW = Math.max(0, weeklyLimit - weeklyUsed);
+        const diffW = roundTaperValue(weeklyUsed - weeklyLimit);
         const pctW = weeklyLimit > 0 ? (weeklyUsed / weeklyLimit) * 100 : 0;
         const weeklyStatus = applyTaperProgressBar(
             document.getElementById('taper-weekly-bar'),
@@ -8236,6 +8697,11 @@ function renderTaperProgressCard(substanceId) {
         }
         set('taper-weekly-used', formatTaperAmount(weeklyUsed, unit));
         set('taper-weekly-remaining', formatTaperAmount(remW, unit));
+        set('taper-weekly-over-under', diffW > 0
+            ? `${formatTaperAmount(diffW, unit)} above`
+            : diffW < 0
+                ? `${formatTaperAmount(Math.abs(diffW), unit)} below`
+                : 'On plan');
         set('taper-weekly-pct', `${Math.round(pctW)}%`);
         const badgeStatus = isManualWeeklyPlan(plan)
             ? getManualWeeklyStatus(weeklyUsed, weeklyLimit).status
@@ -8335,7 +8801,7 @@ function renderTaperWeeklyPlan(substanceId) {
             taperChipStat('Avg this week', formatTaperAmount(sum.avgThis, unit)),
             taperChipStat('Avg last week', formatTaperAmount(sum.avgLast, unit)),
             taperChipStat('Change vs Last Week', changeStr),
-            taperChipStat('Under weeks', sum.underWeeks),
+            taperChipStat('On-track weeks', sum.underWeeks),
             taperChipStat('Over weeks', sum.overWeeks)
         ].join('');
     }
@@ -8372,7 +8838,7 @@ function renderTaperWeeklyPlan(substanceId) {
         <th>Actual Used</th><th>Difference</th><th>Status</th>
     </tr></thead><tbody>`;
     plan.weeklyTargets.forEach(w => {
-        const { emoji, label } = getTaperLimitStatus(w.actualUsed, w.weeklyMax);
+        const { emoji, status } = getTaperLimitStatus(w.actualUsed, w.weeklyMax);
         html += `<tr class="taper-preview-${w.status}">
             <td>${formatDate(w.weekStart)}</td>
             <td>${formatDate(w.weekEnd)}</td>
@@ -8380,7 +8846,7 @@ function renderTaperWeeklyPlan(substanceId) {
             <td>${formatTaperAmount(w.weeklyMax, unit)}</td>
             <td>${formatTaperAmount(w.actualUsed, unit)}</td>
             <td>${formatTaperWeekDiff(w.difference, unit)}</td>
-            <td>${emoji} ${label === 'Over target' ? 'Over' : label === 'Close to target' ? 'Close' : 'Under'}</td>
+            <td>${emoji} ${getRecoveryTaperStatusLabel(status)}</td>
         </tr>`;
     });
     html += '</tbody></table>';
@@ -8694,12 +9160,12 @@ function getTaperByWeekStatus(used, planned) {
         return { status: 'none', label: '—' };
     }
     if (used > planned) {
-        return { status: 'over', label: 'Over target' };
+        return { status: 'over', label: RECOVERY_TAPER_LABELS.over };
     }
     if (used === planned) {
         return { status: 'on-track', label: 'On track' };
     }
-    return { status: 'under', label: 'Under target' };
+    return { status: 'under', label: RECOVERY_TAPER_LABELS.under };
 }
 
 function formatTaperWeekDiff(value, unit) {
@@ -9352,6 +9818,7 @@ if (typeof window !== 'undefined') {
         deleteSubstance,
         restoreLastAutoBackup,
         exportJsonBackup,
+        setUseLogFilter,
         startBulkLinkSessions,
         closeBulkLinkModal,
         applyBulkLinkPreview

@@ -142,26 +142,26 @@
 
                 <div id="substance-compare" class="substance-compare hidden"></div>
 
-                <!-- Summary hero cards -->
-                <div class="dash-summary-grid" id="dashboard-main-stats">
-                    <div class="dash-summary-card dash-summary-use">
-                        <span class="dash-summary-label">Today's Use</span>
-                        <span class="dash-summary-value" id="dash-today-total-use">0</span>
-                        <div class="dash-use-details">
-                            <span class="dash-summary-sub" id="dash-today-session-count">0 sessions</span>
-                            <span class="dash-summary-sub" id="dash-today-duration">Duration: 0h 0m</span>
-                            <span class="dash-summary-sub" id="dash-today-avg-session">Avg/session: —</span>
-                        </div>
-                    </div>
-                    <div class="dash-summary-card dash-summary-supply">
-                        <span class="dash-summary-label">Supply</span>
-                        <span class="dash-summary-value" id="dash-supply-total">—</span>
-                    </div>
-                    <div class="dash-summary-card dash-summary-since">
-                        <span class="dash-summary-label">Since Last Use</span>
-                        <span class="dash-summary-value" id="dash-time-since-last-use">—</span>
-                    </div>
+                <!-- Recovery summary cards -->
+                <div class="dash-recovery-metrics" id="dashboard-main-stats">
+                    <div class="dash-metric-card"><span class="dash-metric-label">Today Used</span><strong id="dash-card-today">0</strong></div>
+                    <div class="dash-metric-card"><span class="dash-metric-label">This Week Used</span><strong id="dash-card-week">0</strong></div>
+                    <div class="dash-metric-card"><span class="dash-metric-label">This Month Used</span><strong id="dash-card-month">0</strong></div>
+                    <div class="dash-metric-card"><span class="dash-metric-label">Spent This Month</span><strong id="dash-card-spent">$0</strong></div>
+                    <div class="dash-metric-card"><span class="dash-metric-label">Current Streak</span><strong id="dash-card-streak">0 days</strong></div>
+                    <div class="dash-metric-card"><span class="dash-metric-label">Remaining Monthly Cap</span><strong id="dash-card-month-cap">—</strong></div>
                 </div>
+                <p id="dash-inventory-warning" class="dash-inventory-warning hidden" role="status"></p>
+
+                <div id="dash-next-action" class="dash-card dash-next-action-card dash-next-action-steady"></div>
+
+                <!-- Legacy today detail (hidden, for JS compatibility) -->
+                <span class="hidden" id="dash-today-total-use"></span>
+                <span class="hidden" id="dash-today-session-count"></span>
+                <span class="hidden" id="dash-today-duration"></span>
+                <span class="hidden" id="dash-today-avg-session"></span>
+                <span class="hidden" id="dash-supply-total"></span>
+                <span class="hidden" id="dash-time-since-last-use"></span>
 
                 <!-- Quick Actions -->
                 <div class="quick-actions dash-quick-actions">
@@ -206,9 +206,43 @@
                     <span class="hidden" id="dash-break-streak-no-use"></span>
                 </div>
 
-                <!-- Compact Supply -->
+                <div class="collapsible-section" data-section="dashRecoveryInsights">
+                    <button type="button" class="section-toggle" onclick="toggleSection('dashRecoveryInsights')">
+                        <span>Recovery Insights</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="dash-recovery-insights" class="dash-insights-wrap">
+                            <div class="dash-insight-stats">
+                                <div class="dash-insight-stat"><span>Avg daily use</span><strong id="insight-avg-daily">—</strong></div>
+                                <div class="dash-insight-stat"><span>Highest-use day</span><strong id="insight-highest-day">—</strong></div>
+                                <div class="dash-insight-stat"><span>No-use days (month)</span><strong id="insight-no-use-days">—</strong></div>
+                            </div>
+                            <div class="dash-insight-charts">
+                                <div class="dash-insight-chart-block">
+                                    <h4>Usage by day</h4>
+                                    <div id="insight-chart-day" class="chart-container chart-container-sm"></div>
+                                </div>
+                                <div class="dash-insight-chart-block">
+                                    <h4>Usage by week</h4>
+                                    <div id="insight-chart-week" class="chart-container chart-container-sm"></div>
+                                </div>
+                                <div class="dash-insight-chart-block">
+                                    <h4>Usage by month</h4>
+                                    <div id="insight-chart-month" class="chart-container chart-container-sm"></div>
+                                </div>
+                                <div class="dash-insight-chart-block">
+                                    <h4>Cost over time</h4>
+                                    <div id="insight-chart-cost" class="chart-container chart-container-sm"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Current Inventory -->
                 <div class="dash-card dash-supply-card">
-                    <h3 class="dash-card-title">Current Supply</h3>
+                    <h3 class="dash-card-title">Current Inventory</h3>
                     <div class="dash-supply-rows">
                         <div class="dash-supply-row">
                             <span>Remaining</span>
@@ -257,6 +291,15 @@
                 <div class="use-log-page-header">
                     <h2>Use Log</h2>
                 </div>
+
+                <div class="use-log-filter-bar">
+                    <span class="use-log-filter-label">Show</span>
+                    <button type="button" class="use-log-filter-btn active" data-filter="all" onclick="setUseLogFilter('all')">All</button>
+                    <button type="button" class="use-log-filter-btn" data-filter="today" onclick="setUseLogFilter('today')">Today</button>
+                    <button type="button" class="use-log-filter-btn" data-filter="week" onclick="setUseLogFilter('week')">This Week</button>
+                    <button type="button" class="use-log-filter-btn" data-filter="month" onclick="setUseLogFilter('month')">This Month</button>
+                </div>
+                <div id="use-log-totals" class="use-log-totals"></div>
 
                 <div class="collapsible-section" data-section="useLogForm">
                     <button type="button" class="section-toggle" onclick="toggleSection('useLogForm')">
@@ -334,6 +377,24 @@
                             <input type="text" id="use-gift-party" placeholder="Name">
                         </div>
 
+                        <div class="form-group use-log-compact">
+                            <label for="use-mood">Mood (optional)</label>
+                            <input type="text" id="use-mood" placeholder="Calm, anxious, bored…">
+                        </div>
+                        <div class="form-group use-log-compact">
+                            <label for="use-trigger">Trigger (optional)</label>
+                            <input type="text" id="use-trigger" placeholder="Stress, social, habit…">
+                        </div>
+                        <div class="use-log-wellness-grid">
+                            <div class="form-group use-log-compact">
+                                <label for="use-craving">Craving (1–10)</label>
+                                <input type="number" id="use-craving" min="1" max="10" step="1" placeholder="—">
+                            </div>
+                            <div class="form-group use-log-compact">
+                                <label for="use-stress">Stress (1–10)</label>
+                                <input type="number" id="use-stress" min="1" max="10" step="1" placeholder="—">
+                            </div>
+                        </div>
                         <div class="form-group use-log-compact use-log-notes-group">
                             <label for="use-notes">Notes</label>
                             <textarea id="use-notes" rows="2" placeholder="Optional notes…"></textarea>
@@ -346,7 +407,7 @@
                         <summary class="use-log-advanced-summary">Advanced options</summary>
                         <div class="use-log-advanced-body">
                             <div class="form-group use-log-compact">
-                                <label for="use-purchase-link-mode" id="use-purchase-link-label">Use From Purchase / Bag</label>
+                                <label for="use-purchase-link-mode" id="use-purchase-link-label">Use From Inventory</label>
                                 <select id="use-purchase-link-mode" onchange="updateUsePurchaseLinkUI()">
                                     <option value="auto">Auto-select current supply</option>
                                     <option value="manual">Manual select purchase</option>
@@ -708,9 +769,14 @@
                                         <span id="taper-weekly-status" class="taper-status-badge">—</span>
                                     </div>
                                     <div class="taper-mini-stats">
+                                        <div class="taper-mini-stat"><span>Daily avg allowed</span><strong id="taper-daily-allowed-val">—</strong></div>
                                         <div class="taper-mini-stat"><span>Weekly target</span><strong id="taper-weekly-max-val">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Weekly used</span><strong id="taper-weekly-used">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Weekly left</span><strong id="taper-weekly-remaining">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Used this week</span><strong id="taper-weekly-used">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Remaining</span><strong id="taper-weekly-remaining">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Over / under</span><strong id="taper-weekly-over-under">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Monthly cap</span><strong id="taper-monthly-cap-val">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Used this month</span><strong id="taper-monthly-used-val">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Month remaining</span><strong id="taper-monthly-remaining-val">—</strong></div>
                                         <div class="taper-mini-stat"><span>Weekly %</span><strong id="taper-weekly-pct">—</strong></div>
                                     </div>
                                     <div class="progress-bar-container dns-bar-container taper-bar">
@@ -788,7 +854,7 @@
                                 <input type="number" id="current-avg" min="0" step="0.1">
                             </div>
                             <div class="form-group" id="goal-avg-group">
-                                <label for="goal-avg" id="goal-avg-label">Goal Daily Average</label>
+                                <label for="goal-avg" id="goal-avg-label">Daily average allowed</label>
                                 <input type="number" id="goal-avg" min="0" step="0.1" required>
                             </div>
                         </div>
@@ -825,9 +891,14 @@
                         </div>
                         <div class="form-row" id="taper-end-weekly-row">
                             <div class="form-group" id="weekly-max-group">
-                                <label for="weekly-max">Weekly Limit</label>
+                                <label for="weekly-max">Weekly target</label>
                                 <input type="number" id="weekly-max" min="0" step="0.1" placeholder="Optional">
-                                <p class="field-hint">e.g. 7g per week — auto-calculated if empty.</p>
+                                <p class="field-hint">Max amount for the current week.</p>
+                            </div>
+                            <div class="form-group" id="monthly-max-group">
+                                <label for="monthly-max">Monthly cap</label>
+                                <input type="number" id="monthly-max" min="0" step="0.1" placeholder="Optional">
+                                <p class="field-hint">Optional monthly limit for your taper plan.</p>
                             </div>
                         </div>
                         <div class="form-group" id="taper-notes-group">
@@ -855,12 +926,12 @@
 
             <!-- Buy Tracker Tab -->
             <section id="buy-tracker-tab" class="tab">
-                <h2>Buy Tracker</h2>
-                <p class="settings-hint">Track any purchase — substances, supplies, or items you buy.</p>
+                <h2>Inventory</h2>
+                <p class="settings-hint">Track inventory purchases — amount bought, remaining, cost, and notes.</p>
 
                 <div class="collapsible-section" data-section="purchaseForm">
                     <button type="button" class="section-toggle" onclick="toggleSection('purchaseForm')">
-                        <span>Purchase Form</span>
+                        <span>Add Inventory</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
@@ -1004,7 +1075,7 @@
 
                 <div class="collapsible-section" data-section="purchaseHistory">
                     <button type="button" class="section-toggle" onclick="toggleSection('purchaseHistory')">
-                        <span>Purchase History</span>
+                        <span>Inventory Purchase History</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content" id="purchase-history-content">
@@ -1172,7 +1243,7 @@
         </button>
         <button class="nav-btn" data-tab="buy-tracker-tab" onclick="switchTab('buy-tracker-tab')">
             <span>🛒</span>
-            <span>Buy Tracker</span>
+            <span>Inventory</span>
         </button>
         <button class="nav-btn" data-tab="stats-tab" onclick="switchTab('stats-tab')">
             <span>📈</span>
