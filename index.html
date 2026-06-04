@@ -249,11 +249,7 @@
                     <span class="hidden" id="dash-last-purchase"></span>
                 </div>
 
-                <!-- Legacy taper progress (hidden; full view on Taper tab) -->
-                <div class="progress-section hidden" aria-hidden="true">
-                    <div class="progress-bar" id="taper-progress"><span class="progress-text" id="progress-text"></span></div>
-                    <p class="progress-label" id="progress-label"></p>
-                </div>
+
             </section>
 
             <!-- Use Log Tab -->
@@ -264,7 +260,7 @@
 
                 <div class="collapsible-section" data-section="useLogForm">
                     <button type="button" class="section-toggle" onclick="toggleSection('useLogForm')">
-                        <span>Entry Form</span>
+                        <span>Quick Use / Session / Gift or Adjustment</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
@@ -500,6 +496,9 @@
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
+                        <div class="sheet-table-toolbar">
+                            <button type="button" class="secondary-btn table-columns-btn" id="stats-monthly-customize-columns">Customize Columns</button>
+                        </div>
                         <div id="stats-monthly-summary" class="sheet-table-wrap"></div>
                     </div>
                 </div>
@@ -510,6 +509,9 @@
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
+                        <div class="sheet-table-toolbar">
+                            <button type="button" class="secondary-btn table-columns-btn" id="stats-weekly-customize-columns">Customize Columns</button>
+                        </div>
                         <div id="stats-weekly-summary" class="sheet-table-wrap"></div>
                     </div>
                 </div>
@@ -566,6 +568,7 @@
                     </button>
                     <div class="section-content">
                         <div id="stats-buy-analytics-cards" class="sheet-summary-grid"></div>
+                        <div id="stats-buy-store-summary" class="sheet-table-wrap"></div>
                         <div class="stats-section">
                             <h3 id="spending-chart-title">Spending</h3>
                             <div id="spending-per-day-chart" class="chart-container"></div>
@@ -586,7 +589,7 @@
 
                 <div class="collapsible-section" data-section="statsLimitGoal">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsLimitGoal')">
-                        <span>Limit / Goal Metrics</span>
+                        <span>Taper Progress</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
@@ -760,12 +763,12 @@
                     <div class="taper-empty-icon">📉</div>
                     <h3>No taper plan yet</h3>
                     <p>Set starting and goal averages, pick a reduction style, and track progress week by week.</p>
-                    <button type="button" class="submit-btn" onclick="showTaperSetup()">Create Reduction Plan</button>
+                    <button type="button" class="submit-btn" onclick="showTaperSetup()">Create Taper Plan</button>
                 </div>
 
                 <div id="taper-setup" class="taper-editor-panel hidden">
                     <div class="taper-editor-header">
-                        <h3 id="taper-setup-title">Create Reduction Plan</h3>
+                        <h3 id="taper-setup-title">Create Taper Plan</h3>
                         <button type="button" class="taper-chip-btn" onclick="cancelTaperEdit()">← Back to dashboard</button>
                     </div>
                     <form id="taper-form" class="taper-form-compact">
@@ -966,6 +969,9 @@
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
+                        <div class="sheet-table-toolbar">
+                            <button type="button" class="secondary-btn table-columns-btn" id="buy-weekly-customize-columns">Customize Columns</button>
+                        </div>
                         <div id="buy-weekly-summary" class="buy-weekly-summary-wrap sheet-table-wrap"></div>
                     </div>
                 </div>
@@ -976,6 +982,9 @@
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
+                        <div class="sheet-table-toolbar">
+                            <button type="button" class="secondary-btn table-columns-btn" id="buy-monthly-customize-columns">Customize Columns</button>
+                        </div>
                         <div id="buy-monthly-summary" class="buy-monthly-summary-wrap sheet-table-wrap"></div>
                     </div>
                 </div>
@@ -1056,9 +1065,26 @@
                     </div>
                 </div>
 
-                <!-- Safety Features -->
+                <div class="collapsible-section" data-section="settingsStores">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsStores')">
+                        <span>Stores / Locations</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
                 <div class="settings-section">
-                    <h3>Emergency & Safety</h3>
+                    <p class="settings-hint">Saved from Buy Tracker purchases. Add new stores when logging a purchase.</p>
+                    <div id="settings-stores-list"></div>
+                </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="settingsEmergency">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsEmergency')">
+                        <span>Emergency & Safety</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section">
                     <div class="safety-warning">
                         <strong>⚠️ Emergency Contact</strong>
                         <p>If you experience overdose symptoms or severe withdrawal, call emergency services immediately.</p>
@@ -1066,7 +1092,6 @@
                     </div>
                 </div>
 
-                <!-- Support Contacts -->
                 <div class="settings-section">
                     <h3>Support Contacts</h3>
                     <form id="contact-form" onsubmit="handleAddContact(event)">
@@ -1085,7 +1110,6 @@
                     <div id="support-contacts-list"></div>
                 </div>
 
-                <!-- Reasons for Quitting -->
                 <div class="settings-section">
                     <h3>Reasons for Quitting</h3>
                     <form id="reason-form" onsubmit="handleAddReason(event)">
@@ -1097,23 +1121,39 @@
                     </form>
                     <div id="reasons-list"></div>
                 </div>
+                    </div>
+                </div>
 
                 <div class="collapsible-section" data-section="settingsBackup">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsBackup')">
-                        <span>Backup / Import / Export</span>
+                        <span>Data Backup</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
                 <div class="settings-section">
                     <p id="settings-last-saved" class="last-saved-status">Last Saved: Never</p>
-                    <p class="data-storage-note">Data is stored only in this browser (localStorage). No account or cloud sync.</p>
+                    <p class="last-saved-status">Last auto-backup: <span id="settings-auto-backup-date">Never</span></p>
+                    <p class="data-storage-note">Data is stored only in this browser (localStorage). A local backup is created automatically before import, reset, or migration.</p>
                     <input type="file" id="import-json-input" accept=".json,application/json" class="hidden" onchange="handleImportJsonFile(event)">
                     <div class="data-management-buttons">
                         <button type="button" class="secondary-btn" onclick="exportJsonBackup()">Export JSON Backup</button>
                         <button type="button" class="secondary-btn" onclick="triggerImportJsonBackup()">Import JSON Backup</button>
+                        <button type="button" class="secondary-btn" onclick="restoreLastAutoBackup()">Restore Last Backup</button>
                         <button type="button" class="secondary-btn" onclick="exportDataCsv()">Export CSV</button>
-                        <button type="button" class="danger-btn" onclick="clearAllData()">Clear All Data</button>
                     </div>
+                </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="settingsDangerZone">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsDangerZone')">
+                        <span>Danger Zone</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section danger-zone-section">
+                    <p class="settings-hint">Permanently delete all logs, substances, and settings. An automatic backup is created first.</p>
+                    <button type="button" class="danger-btn" onclick="clearAllData()">Clear All Data</button>
                 </div>
                     </div>
                 </div>

@@ -1139,9 +1139,11 @@ input[type="range"]::-webkit-slider-thumb {
 
 .use-history-actions-cell .secondary-btn,
 .use-history-actions-cell .delete-btn {
-    padding: 4px 8px;
-    font-size: 0.8rem;
+    padding: 3px 7px;
+    font-size: 0.72rem;
     margin-left: 4px;
+    min-height: unset;
+    line-height: 1.2;
 }
 
 /* Taper Plan */
@@ -4227,11 +4229,15 @@ body.locked .bottom-nav {
 
 @media (max-width: 639px) {
     .use-history-table-view {
-        display: none;
+        display: block;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        width: 100%;
+        max-width: 100%;
     }
 
     .use-history-cards {
-        display: block;
+        display: none;
     }
 }
 
@@ -4797,11 +4803,15 @@ body.locked .bottom-nav {
 
 @media (max-width: 639px) {
     .use-history-table-view {
-        display: none;
+        display: block;
+        overflow-x: auto;
+        -webkit-overflow-scrolling: touch;
+        width: 100%;
+        max-width: 100%;
     }
 
     .use-history-cards {
-        display: block;
+        display: none;
     }
 
     .use-log-datetime-grid {
@@ -4909,7 +4919,7 @@ body.locked .bottom-nav {
 .collapsible-section {
     background: var(--bg-card);
     border-radius: 14px;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
     border: 1px solid var(--border);
     overflow: hidden;
 }
@@ -4972,8 +4982,9 @@ body.locked .bottom-nav {
 .sheet-summary-grid {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 10px;
-    margin-bottom: 12px;
+    gap: 8px;
+    margin-bottom: 8px;
+    width: 100%;
 }
 
 .sheet-metric-card {
@@ -5119,6 +5130,16 @@ body.locked .bottom-nav {
     background: var(--bg-secondary);
     position: sticky;
     top: 0;
+    z-index: 1;
+}
+
+.sheet-table th:first-child,
+.sheet-table td:first-child {
+    position: sticky;
+    left: 0;
+    z-index: 2;
+    background: var(--bg-card);
+    box-shadow: 2px 0 6px rgba(0, 0, 0, 0.06);
 }
 
 .sheet-table tbody tr:hover td {
@@ -5186,9 +5207,52 @@ body.locked .bottom-nav {
 @media (max-width: 480px) {
     .sheet-summary-grid {
         grid-template-columns: repeat(2, 1fr);
+        gap: 6px;
     }
 
     .sheet-metric-value {
         font-size: 0.92rem;
     }
+}
+
+.sheet-table-toolbar {
+    display: flex;
+    justify-content: flex-end;
+    margin-bottom: 8px;
+    padding: 0 2px;
+}
+
+.sheet-table-toolbar .table-columns-btn {
+    padding: 6px 10px;
+    font-size: 0.78rem;
+}
+
+.settings-stores-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.settings-stores-list li {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 12px;
+    font-size: 0.9rem;
+}
+
+.danger-zone-section {
+    border: 1px solid rgba(244, 67, 54, 0.35);
+    border-radius: 12px;
+    padding: 12px;
+    background: rgba(244, 67, 54, 0.06);
+}
+
+.collapsible-section[data-section="statsWeeklySummary"] .section-content,
+.collapsible-section[data-section="statsMonthlySummary"] .section-content {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
 }
