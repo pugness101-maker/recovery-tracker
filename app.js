@@ -171,8 +171,6 @@ const defaultData = {
     cravings: [],
     settings: {
         currency: '$',
-        reminderMessage: '',
-        openOnMainSubstance: true,
         substanceSettings: getDefaultSubstanceSettings()
     },
     taperPlans: {},
@@ -301,7 +299,6 @@ function migrateFromV1(v1) {
         cravings,
         settings: {
             currency: '$',
-            reminderMessage: v1.settings?.reminderMessage || '',
             substanceSettings: { ...substanceSettings, ...settingsSubstance }
         },
         taperPlans,
@@ -488,11 +485,7 @@ function ensureAppDataSettings(data) {
     if (!data.settings.substanceSettings) {
         data.settings.substanceSettings = getDefaultSubstanceSettings();
     }
-    if (data.settings.openOnMainSubstance === undefined) {
-        data.settings.openOnMainSubstance = true;
-    }
     data.settings.currency = '$';
-    if (data.settings.reminderMessage === undefined) data.settings.reminderMessage = '';
     ensureTableColumnSettings(data);
     ensureUseStatsConfig(data);
     ensureCollapsedSections(data);
@@ -527,8 +520,6 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     buyMonthlySummary: false,
     dashRecoveryInsights: false,
     settingsSubstances: false,
-    settingsMainSubstance: true,
-    settingsPreferences: true,
     settingsStores: true,
     settingsEmergency: true,
     settingsBackup: true,
@@ -1361,15 +1352,9 @@ function getMainSubstanceId() {
     return getMainSubstance()?.id || null;
 }
 
-function shouldOpenOnMainSubstance() {
-    return appData.settings?.openOnMainSubstance !== false;
-}
-
 function resolveStartupSubstanceId() {
-    if (shouldOpenOnMainSubstance()) {
-        const mainId = getMainSubstanceId();
-        if (mainId) return mainId;
-    }
+    const mainId = getMainSubstanceId();
+    if (mainId) return mainId;
     return appData.substances.find(s => s.active)?.id || 'cigarettes';
 }
 
@@ -1391,7 +1376,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initializeApp() {
     setupEventListeners();
-    loadSettings();
     populateAllSubstanceDropdowns();
     syncSubstanceSelectors();
     syncTaperSubstanceToMain();
@@ -1424,7 +1408,6 @@ function refreshAppAfterDataChange() {
     recalculateAllBreaks();
     recalculateAllBuyBreaks();
     currentSubstanceId = resolveStartupSubstanceId();
-    loadSettings();
     populateAllSubstanceDropdowns();
     syncSubstanceSelectors();
     applyMainSubstanceToForms();
@@ -1466,8 +1449,9 @@ function setMainSubstance(id) {
     if (!sub.active) return alert('Only active substances can be set as main.');
     appData.substances.forEach(s => { s.isMain = s.id === id; });
     saveData(appData);
-    if (shouldOpenOnMainSubstance()) currentSubstanceId = id;
+    currentSubstanceId = id;
     populateAllSubstanceDropdowns();
+    applyMainSubstanceToViewSelectors();
     syncSubstanceSelectors();
     applyMainSubstanceToForms();
     renderSubstancesList();
@@ -1491,7 +1475,6 @@ function applyMainSubstanceToForms() {
 }
 
 function applyMainSubstanceToViewSelectors() {
-    if (!shouldOpenOnMainSubstance()) return;
     const mainId = getMainSubstanceId();
     if (!mainId) return;
     currentSubstanceId = mainId;
@@ -1565,7 +1548,7 @@ function populateAllSubstanceDropdowns() {
     const mainId = getMainSubstanceId();
     const active = getActiveSubstances();
     const taperSubs = sortSubstancesMainFirst(getTaperSubstances());
-    const viewDefault = shouldOpenOnMainSubstance() && mainId ? mainId : currentSubstanceId;
+    const viewDefault = mainId || currentSubstanceId;
 
     populateSelect('dashboard-substance', active, { includeAll: true, currentValue: viewDefault });
     populateSelect('stats-substance', active, { includeAll: true, currentValue: viewDefault });
@@ -2084,7 +2067,6 @@ function switchTab(tabId) {
     } else if (tabId === 'settings-tab') {
         applyMainSubstanceToViewSelectors();
         renderSubstancesList();
-        loadSettings();
     }
     applyCollapsedSections();
 }
@@ -9411,33 +9393,6 @@ function getCurrencySymbol() {
     return '$';
 }
 
-function loadSettings() {
-    const reminderEl = document.getElementById('reminder-message');
-    const openMainEl = document.getElementById('open-on-main-substance');
-    if (reminderEl) reminderEl.value = appData.settings.reminderMessage;
-    if (openMainEl) openMainEl.checked = appData.settings.openOnMainSubstance !== false;
-}
-
-function saveOpenOnMainSetting() {
-    appData.settings.openOnMainSubstance = document.getElementById('open-on-main-substance')?.checked !== false;
-    saveData(appData);
-    if (appData.settings.openOnMainSubstance) {
-        applyMainSubstanceToViewSelectors();
-        applyMainSubstanceToForms();
-        syncSubstanceSelectors();
-        updateDashboard();
-        updateDashboardMainDisplay();
-    }
-}
-
-function saveSettings() {
-    appData.settings.reminderMessage = document.getElementById('reminder-message')?.value || '';
-    appData.settings.currency = getCurrencySymbol();
-    saveData(appData);
-    updateDashboard();
-    updateStats();
-}
-
 function renderSupportContacts() {
     const container = document.getElementById('support-contacts-list');
     if (!container) return;
@@ -9596,9 +9551,7 @@ function cleanExportData(data) {
         taperPlans: data.taperPlans || {},
 
         settings: {
-            currency: '$',
-            reminderMessage: data.settings?.reminderMessage || '',
-            openOnMainSubstance: data.settings?.openOnMainSubstance !== false
+            currency: '$'
         },
 
         recoveryStreaks: data.recoveryStreaks || {},
