@@ -92,6 +92,13 @@ const SESSION_LONG_BREAK_HOURS = 12;
 const SUPPLY_LOW_REMAINING_PCT = 0.25;
 const INVENTORY_EPS = 0.0001;
 
+const RECOVERY_TAPER_LABELS = {
+    under: 'On track',
+    close: 'Near plan',
+    over: 'Above plan',
+    none: 'No plan'
+};
+
 function formatAmount(value, maxDecimals = 2) {
     const n = parseFloat(value);
     if (!Number.isFinite(n)) return '0';
@@ -5958,13 +5965,6 @@ function setupEventListeners() {
 }
 
 // ——— Recovery-focused dashboard & use log helpers ———
-const RECOVERY_TAPER_LABELS = {
-    under: 'On track',
-    close: 'Near plan',
-    over: 'Above plan',
-    none: 'No plan'
-};
-
 function getRecoveryTaperStatusLabel(status) {
     return RECOVERY_TAPER_LABELS[status] || '—';
 }
