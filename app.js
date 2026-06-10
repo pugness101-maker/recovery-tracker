@@ -2805,16 +2805,6 @@ function buildUseEntryFromForm() {
         giftPartyName: isGift ? (document.getElementById('use-gift-party')?.value?.trim() || '') : '',
         adjustmentDirection: isAdjustment ? getUseAdjustmentDirection() : undefined,
         notes: document.getElementById('use-notes')?.value || '',
-        mood: document.getElementById('use-mood')?.value?.trim() || '',
-        trigger: document.getElementById('use-trigger')?.value?.trim() || '',
-        cravingLevel: (() => {
-            const v = document.getElementById('use-craving')?.value;
-            return v === '' || v == null ? null : parseInt(v, 10);
-        })(),
-        stressLevel: (() => {
-            const v = document.getElementById('use-stress')?.value;
-            return v === '' || v == null ? null : parseInt(v, 10);
-        })(),
         purchaseId: inventoryAffects ? linkedPurchaseId : null,
         linkedPurchaseId: inventoryAffects ? linkedPurchaseId : null,
         linkedPurchases: [],
@@ -3914,10 +3904,6 @@ function editUseEntry(id) {
     setInputValue('use-amount', entry.amount != null ? entry.amount : '');
     setInputValue('use-count', getUseCount(entry));
     setInputValue('use-notes', entry.notes || '');
-    setInputValue('use-mood', entry.mood || '');
-    setInputValue('use-trigger', entry.trigger || '');
-    setInputValue('use-craving', entry.cravingLevel != null ? String(entry.cravingLevel) : '');
-    setInputValue('use-stress', entry.stressLevel != null ? String(entry.stressLevel) : '');
     setInputValue('use-gift-party', entry.giftPartyName || '');
 
     if (!hasLinkedSupply(entry) && !logInventoryAffects(entry)) {

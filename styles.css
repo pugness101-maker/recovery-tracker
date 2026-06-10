@@ -5437,12 +5437,6 @@ body.locked .bottom-nav {
     font-size: 0.95rem;
 }
 
-.use-log-wellness-grid {
-    display: grid;
-    grid-template-columns: 1fr 1fr;
-    gap: 10px;
-}
-
 @media (min-width: 480px) {
     .dash-insight-stats {
         grid-template-columns: repeat(3, 1fr);
