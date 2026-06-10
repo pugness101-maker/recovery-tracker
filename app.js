@@ -1200,12 +1200,15 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
             return `<td>${store || '—'}</td>`;
         case 'break':
             return `<td>${breakCell}</td>`;
-        case 'actions':
+        case 'actions': {
+            const pid = normalizePurchaseId(purchase.id);
+            const pidLit = purchaseIdLiteral(purchase.id);
             return `<td class="actions-cell purchase-history-actions-cell">
-                <button type="button" class="secondary-btn purchase-expand-btn" data-purchase-toggle="${purchase.id}" aria-expanded="${expanded ? 'true' : 'false'}" onclick="togglePurchaseLinkedLogs(${purchase.id})">${toggleLabel}</button>
-                <button type="button" class="secondary-btn" onclick="editPurchase(${purchase.id})">Edit</button>
-                <button type="button" class="delete-btn" onclick="deletePurchase(${purchase.id})">Delete</button>
+                <button type="button" class="secondary-btn purchase-expand-btn" data-purchase-toggle="${escapeAttr(pid)}" aria-expanded="${expanded ? 'true' : 'false'}" onclick="togglePurchaseLinkedLogs(${pidLit})">${toggleLabel}</button>
+                <button type="button" class="secondary-btn" onclick="editPurchase(${pidLit})">Edit</button>
+                <button type="button" class="delete-btn" onclick="deletePurchase(${pidLit})">Delete</button>
             </td>`;
+        }
         default:
             return '<td>—</td>';
     }
@@ -2493,6 +2496,19 @@ function findUseEntry(id) {
 function logIdEquals(a, b) {
     if (a == null || b == null) return false;
     return a === b || String(a) === String(b);
+}
+
+function purchaseIdEquals(a, b) {
+    if (a == null || b == null) return false;
+    return a === b || String(a) === String(b);
+}
+
+function normalizePurchaseId(id) {
+    return id == null ? '' : String(id);
+}
+
+function purchaseIdLiteral(id) {
+    return JSON.stringify(normalizePurchaseId(id));
 }
 
 function isSameTaperWeek(logDate, dateStr) {
@@ -5217,10 +5233,10 @@ function refreshBuyTrackerRelatedViews() {
 }
 
 function editPurchase(id) {
-    const purchase = (appData.purchases || []).find(p => p.id === id);
+    const purchase = findPurchase(id);
     if (!purchase) return;
 
-    editingPurchaseId = id;
+    editingPurchaseId = purchase.id;
     const substanceId = getPurchaseSubstanceId(purchase);
     const substanceSelect = document.getElementById('buy-substance');
     if (substanceSelect && substanceId && [...substanceSelect.options].some(o => o.value === substanceId)) {
@@ -5286,7 +5302,7 @@ function handleBuySubmit(e) {
     const payload = buildPurchaseFromForm();
 
     if (editingPurchaseId != null) {
-        const idx = appData.purchases.findIndex(p => p.id === editingPurchaseId);
+        const idx = appData.purchases.findIndex(p => purchaseIdEquals(p.id, editingPurchaseId));
         if (idx < 0) {
             alert('Could not find the purchase to update.');
             cancelBuyEdit();
@@ -5336,10 +5352,10 @@ function deletePurchase(id) {
         msg = `This purchase has ${linked.length} linked use ${linked.length === 1 ? 'entry' : 'entries'}. Delete anyway? Those uses will become unlinked.`;
     }
     if (!confirm(msg)) return;
-    if (editingPurchaseId === id) cancelBuyEdit();
+    if (purchaseIdEquals(editingPurchaseId, id)) cancelBuyEdit();
     linked.forEach(l => {
         if (l.linkedPurchases?.length) {
-            l.linkedPurchases = l.linkedPurchases.filter(a => a.purchaseId !== id && String(a.purchaseId) !== String(id));
+            l.linkedPurchases = l.linkedPurchases.filter(a => !purchaseIdEquals(a.purchaseId, id));
             if (l.linkedPurchases.length === 1) {
                 setLogPurchaseId(l, l.linkedPurchases[0].purchaseId);
             } else if (l.linkedPurchases.length === 0) {
@@ -5355,8 +5371,8 @@ function deletePurchase(id) {
         }
         l.updatedAt = new Date().toISOString();
     });
-    appData.purchases = (appData.purchases || []).filter(p => p.id !== id);
-    expandedPurchaseIds.delete(id);
+    appData.purchases = (appData.purchases || []).filter(p => !purchaseIdEquals(p.id, id));
+    expandedPurchaseIds.delete(normalizePurchaseId(id));
     saveData(appData);
     refreshBuyTrackerRelatedViews();
     refreshUseLogRelatedViews();
@@ -5673,12 +5689,14 @@ function renderPurchaseLinkedLogsPanel(purchase) {
 }
 
 function togglePurchaseLinkedLogs(purchaseId) {
-    const id = typeof purchaseId === 'string' ? parseInt(purchaseId, 10) : purchaseId;
+    const purchase = findPurchase(purchaseId);
+    const id = normalizePurchaseId(purchase?.id ?? purchaseId);
+    if (!id) return;
     if (expandedPurchaseIds.has(id)) expandedPurchaseIds.delete(id);
     else expandedPurchaseIds.add(id);
 
     const detail = document.getElementById(`purchase-detail-${id}`);
-    const btn = document.querySelector(`[data-purchase-toggle="${id}"]`);
+    const btn = document.querySelector(`[data-purchase-toggle="${String(id).replace(/"/g, '\\"')}"]`);
     const expanded = expandedPurchaseIds.has(id);
     if (detail) detail.classList.toggle('hidden', !expanded);
     if (btn) {
@@ -5830,13 +5848,7 @@ function renderPurchaseHistory(substanceId, containerId = null) {
         || document.getElementById('buy-history-table-wrap')
         || document.getElementById('purchase-history');
 
-    console.log('[purchase-history] purchases', appData.purchases?.length);
-    console.log('[purchase-history] container', container);
-
-    if (!container) {
-        console.error('[purchase-history] missing container');
-        return;
-    }
+    if (!container) return;
 
     if (!appData.purchases?.length) {
         container.innerHTML = '<p class="empty-hint">No purchases yet.</p>';
@@ -5878,7 +5890,8 @@ function renderPurchaseHistory(substanceId, containerId = null) {
         const metrics = getPurchaseSupplyMetrics(purchase);
         const supplyDurationLabel = metrics.supplyDurationLabel || 'Unused';
         const supplyDurationTooltip = escapeAttr(metrics.supplyDurationTooltip || '');
-        const expanded = expandedPurchaseIds.has(purchase.id);
+        const purchaseId = normalizePurchaseId(purchase.id);
+        const expanded = expandedPurchaseIds.has(purchaseId);
         const toggleLabel = expanded ? 'Hide Linked Logs' : 'View Linked Logs';
         const rowCtx = {
             purchase,
@@ -5904,7 +5917,7 @@ function renderPurchaseHistory(substanceId, containerId = null) {
             html += renderPurchaseHistoryBodyCell(colId, rowCtx);
         });
         html += '</tr>';
-        html += `<tr id="purchase-detail-${purchase.id}" class="purchase-linked-detail${expanded ? '' : ' hidden'}">
+        html += `<tr id="purchase-detail-${escapeAttr(purchaseId)}" class="purchase-linked-detail${expanded ? '' : ' hidden'}">
             <td colspan="${purchaseColumns.length}">${renderPurchaseLinkedLogsPanel(purchase)}</td>
         </tr>`;
     });
@@ -7507,7 +7520,9 @@ function renderTaperWeeklyCalendar(substanceId) {
         return;
     }
     syncTaperPlanData(substanceId);
-    const unit = sub.defaultUnit || 'units';
+    const unit = isManualWeeklyPlan(plan)
+        ? getManualWeeklyPlanUnit(plan, substanceId)
+        : (sub.defaultUnit || 'units');
     const enriched = buildEnrichedUseEntries(substanceId);
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     let html = '';
@@ -7889,8 +7904,206 @@ const TAPER_REDUCTION_LABELS = {
     'manual-weekly': 'Manual weekly plan'
 };
 
+const MANUAL_WEEKLY_UNIT_PRESETS = ['g', 'mg', 'ug', 'drinks', 'cigarettes', 'puffs', 'hits', 'pills'];
+
 function isManualWeeklyPlan(plan) {
     return plan?.reductionType === 'manual-weekly';
+}
+
+function getManualWeeklyMode(plan) {
+    return plan?.manualWeeklyMode === 'percent' ? 'percent' : 'amount';
+}
+
+function isManualWeeklyPercentMode(plan) {
+    return getManualWeeklyMode(plan) === 'percent';
+}
+
+function getManualWeeklyPlanUnit(plan, substanceId) {
+    const stored = plan?.manualWeeklyUnit;
+    if (stored && stored !== '__default__') return stored;
+    return getSubstance(substanceId)?.defaultUnit || 'units';
+}
+
+function getManualWeeklyModeFromForm() {
+    const active = document.querySelector('.manual-mode-btn.active');
+    return active?.dataset.mode === 'percent' ? 'percent' : 'amount';
+}
+
+function getManualWeeklyUnitFromForm(substanceId = getTaperSubstanceId()) {
+    const select = document.getElementById('manual-weekly-unit');
+    if (!select) return getSubstance(substanceId)?.defaultUnit || 'units';
+    if (select.value === '__custom__') {
+        return document.getElementById('manual-weekly-unit-custom')?.value?.trim()
+            || getSubstance(substanceId)?.defaultUnit
+            || 'units';
+    }
+    if (select.value === '__default__') {
+        return getSubstance(substanceId)?.defaultUnit || 'units';
+    }
+    return select.value;
+}
+
+function getManualWeeklyBaselineFromForm() {
+    return parseOptionalTaperNumber(document.getElementById('manual-weekly-baseline'));
+}
+
+function resolveManualWeekTargetAmount(entry, plan) {
+    if (getManualWeeklyMode(plan) === 'percent') {
+        const baseline = parseFloat(plan.manualWeeklyBaseline) || 0;
+        const pct = parseFloat(entry.targetPercent);
+        if (!Number.isFinite(pct) || baseline <= 0) return 0;
+        return roundTaperValue(baseline * (pct / 100));
+    }
+    return roundTaperValue(parseFloat(entry.targetAmount) || 0);
+}
+
+function formatManualWeeklyGoalCell(weekRow, plan, unit) {
+    const target = weekRow.targetAmount ?? weekRow.weeklyMax ?? 0;
+    const pct = weekRow.targetPercent;
+    if (isManualWeeklyPercentMode(plan) && pct != null && Number.isFinite(parseFloat(pct))) {
+        return `${pct}% (${formatTaperAmount(target, unit)})`;
+    }
+    return formatTaperAmount(target, unit);
+}
+
+function populateManualWeeklyUnitSelect(substanceId, selectedUnit) {
+    const select = document.getElementById('manual-weekly-unit');
+    const customInput = document.getElementById('manual-weekly-unit-custom');
+    if (!select) return;
+
+    const sub = getSubstance(substanceId);
+    const defaultUnit = sub?.defaultUnit || 'units';
+    const substanceUnits = sub?.units || [];
+    const options = new Set([defaultUnit, ...substanceUnits, ...MANUAL_WEEKLY_UNIT_PRESETS]);
+
+    select.innerHTML = '';
+    const defaultOpt = document.createElement('option');
+    defaultOpt.value = '__default__';
+    defaultOpt.textContent = `Use substance default (${defaultUnit})`;
+    select.appendChild(defaultOpt);
+
+    [...options].sort((a, b) => a.localeCompare(b)).forEach(unit => {
+        if (unit === defaultUnit) return;
+        const opt = document.createElement('option');
+        opt.value = unit;
+        opt.textContent = unit;
+        select.appendChild(opt);
+    });
+
+    const customOpt = document.createElement('option');
+    customOpt.value = '__custom__';
+    customOpt.textContent = 'Custom unit…';
+    select.appendChild(customOpt);
+
+    const isPreset = selectedUnit && [...options].has(selectedUnit);
+    if (!selectedUnit || selectedUnit === defaultUnit || selectedUnit === '__default__') {
+        select.value = '__default__';
+        customInput?.classList.add('hidden');
+        if (customInput) customInput.value = '';
+    } else if (isPreset) {
+        select.value = selectedUnit;
+        customInput?.classList.add('hidden');
+        if (customInput) customInput.value = '';
+    } else {
+        select.value = '__custom__';
+        customInput?.classList.remove('hidden');
+        if (customInput) customInput.value = selectedUnit;
+    }
+}
+
+function updateManualWeeklyModeUI(mode) {
+    const baselineGroup = document.getElementById('manual-weekly-baseline-group');
+    const intro = document.getElementById('manual-weekly-intro');
+    const example = document.getElementById('manual-weekly-example');
+    baselineGroup?.classList.toggle('hidden', mode !== 'percent');
+    document.querySelectorAll('.manual-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+    if (intro) {
+        intro.textContent = mode === 'percent'
+            ? 'Enter a baseline and weekly reduction percentages. Targets are calculated automatically.'
+            : 'Enter a weekly goal amount for each week.';
+    }
+    if (example) {
+        example.textContent = mode === 'percent'
+            ? 'Example: Baseline 70 cigarettes · Week 1: 100% · Week 2: 90% · Week 3: 80% · Week 4: 70%'
+            : 'Example: Week 1: 70 cigarettes · Week 2: 63 cigarettes · Week 3: 56 cigarettes';
+    }
+}
+
+function setManualWeeklyMode(mode, { skipRender = false } = {}) {
+    const nextMode = mode === 'percent' ? 'percent' : 'amount';
+    const prevMode = getManualWeeklyModeFromForm();
+    updateManualWeeklyModeUI(nextMode);
+
+    if (!skipRender && prevMode !== nextMode) {
+        let targets = collectManualWeeklyTargetsFromForm();
+        if (nextMode === 'percent') {
+            let baseline = getManualWeeklyBaselineFromForm();
+            if (!baseline && targets[0]?.targetAmount) baseline = parseFloat(targets[0].targetAmount) || 0;
+            if (baseline) setInputValue('manual-weekly-baseline', baseline);
+            targets = convertManualTargetsToPercent(targets, baseline);
+        } else {
+            const plan = {
+                manualWeeklyMode: 'percent',
+                manualWeeklyBaseline: getManualWeeklyBaselineFromForm()
+            };
+            targets = convertManualTargetsToAmount(targets, plan);
+        }
+        renderManualWeeklyTargetsEditor(targets);
+    } else if (!skipRender) {
+        renderManualWeeklyTargetsEditor(collectManualWeeklyTargetsFromForm());
+    }
+}
+
+function convertManualTargetsToPercent(targets, baseline) {
+    const base = parseFloat(baseline) || parseFloat(targets[0]?.targetAmount) || 0;
+    return targets.map((t, i) => {
+        const week = t.week ?? i + 1;
+        const amount = parseFloat(t.targetAmount);
+        let targetPercent = parseFloat(t.targetPercent);
+        if (!Number.isFinite(targetPercent)) {
+            if (base > 0 && Number.isFinite(amount)) {
+                targetPercent = Math.round((amount / base) * 100);
+            } else {
+                targetPercent = Math.max(0, 100 - i * 10);
+            }
+        }
+        return { week, targetPercent };
+    });
+}
+
+function convertManualTargetsToAmount(targets, plan) {
+    return targets.map((t, i) => ({
+        week: t.week ?? i + 1,
+        targetAmount: resolveManualWeekTargetAmount(t, plan)
+    }));
+}
+
+function onManualWeeklyUnitChange() {
+    const select = document.getElementById('manual-weekly-unit');
+    const customInput = document.getElementById('manual-weekly-unit-custom');
+    const isCustom = select?.value === '__custom__';
+    customInput?.classList.toggle('hidden', !isCustom);
+    renderManualWeeklyTargetsEditor(collectManualWeeklyTargetsFromForm());
+}
+
+function updateManualWeeklyComputedPreviews() {
+    const mode = getManualWeeklyModeFromForm();
+    if (mode !== 'percent') return;
+    const baseline = getManualWeeklyBaselineFromForm() || 0;
+    const unit = getManualWeeklyUnitFromForm();
+    document.querySelectorAll('.manual-week-row').forEach(row => {
+        const input = row.querySelector('.manual-week-percent-input');
+        const preview = row.querySelector('.manual-week-computed');
+        if (!input || !preview) return;
+        const pct = parseFloat(input.value) || 0;
+        const amt = baseline > 0 ? resolveManualWeekTargetAmount({ targetPercent: pct }, {
+            manualWeeklyMode: 'percent',
+            manualWeeklyBaseline: baseline
+        }) : 0;
+        preview.textContent = amt > 0 ? `(${formatTaperAmount(amt, unit)})` : '';
+    });
 }
 
 function getManualWeeklyWeekNumber(plan, dateStr) {
@@ -7925,13 +8138,17 @@ function buildWeeklyTargetsFromManual(plan) {
         const weekStart = cursor;
         let weekEnd = addDaysToDateStr(getWeekStartDateStr(cursor), 6);
         if (plan.endDate && weekEnd > plan.endDate) weekEnd = plan.endDate;
-        const targetAmount = roundTaperValue(parseFloat(entry.targetAmount) || 0);
+        const targetAmount = resolveManualWeekTargetAmount(entry, plan);
+        const targetPercent = entry.targetPercent != null && entry.targetPercent !== ''
+            ? parseFloat(entry.targetPercent)
+            : null;
 
         weeks.push({
             week: weekNum,
             weekStart,
             weekEnd,
             targetAmount,
+            targetPercent: Number.isFinite(targetPercent) ? targetPercent : null,
             dailyTarget: roundTaperValue(targetAmount / 7),
             weeklyMax: targetAmount,
             actualUsed: 0,
@@ -7955,35 +8172,82 @@ function computeManualPlanEndDate(plan) {
 function renderManualWeeklyTargetsEditor(targets) {
     const container = document.getElementById('manual-weekly-targets-list');
     if (!container) return;
-    const list = targets?.length ? targets : [{ week: 1, targetAmount: '' }];
+
+    const mode = getManualWeeklyModeFromForm();
+    const unit = getManualWeeklyUnitFromForm();
+    const baseline = getManualWeeklyBaselineFromForm() || 0;
+    const list = targets?.length
+        ? targets
+        : (mode === 'percent'
+            ? [{ week: 1, targetPercent: 100 }]
+            : [{ week: 1, targetAmount: '' }]);
+
     container.innerHTML = list.map((t, i) => {
         const weekNum = t.week ?? i + 1;
+        if (mode === 'percent') {
+            const pct = t.targetPercent ?? '';
+            const computed = baseline > 0 && pct !== ''
+                ? resolveManualWeekTargetAmount({ targetPercent: pct }, {
+                    manualWeeklyMode: 'percent',
+                    manualWeeklyBaseline: baseline
+                })
+                : 0;
+            const computedLabel = computed > 0 ? `(${formatTaperAmount(computed, unit)})` : '';
+            return `<div class="manual-week-row" data-week="${weekNum}">
+                <label>Week ${weekNum} Goal</label>
+                <input type="number" class="manual-week-percent-input" data-week="${weekNum}" min="0" max="1000" step="1" value="${pct}" placeholder="100" oninput="updateManualWeeklyComputedPreviews()">
+                <span class="manual-week-unit">%</span>
+                <span class="manual-week-computed">${computedLabel}</span>
+            </div>`;
+        }
         return `<div class="manual-week-row" data-week="${weekNum}">
             <label>Week ${weekNum} Goal</label>
             <input type="number" class="manual-week-target-input" data-week="${weekNum}" min="0" step="0.1" value="${t.targetAmount ?? ''}" placeholder="0">
+            <span class="manual-week-unit">${unit}</span>
         </div>`;
     }).join('');
 }
 
 function collectManualWeeklyTargetsFromForm() {
+    const mode = getManualWeeklyModeFromForm();
+    if (mode === 'percent') {
+        const inputs = document.querySelectorAll('.manual-week-percent-input');
+        const baseline = getManualWeeklyBaselineFromForm();
+        const plan = { manualWeeklyMode: 'percent', manualWeeklyBaseline: baseline };
+        return [...inputs].map((input, index) => {
+            const targetPercent = parseFloat(input.value);
+            const entry = {
+                week: parseInt(input.dataset.week, 10) || index + 1,
+                targetPercent: Number.isFinite(targetPercent) ? targetPercent : 0
+            };
+            entry.targetAmount = resolveManualWeekTargetAmount(entry, plan);
+            return entry;
+        });
+    }
+
     const inputs = document.querySelectorAll('.manual-week-target-input');
-    const targets = [];
-    inputs.forEach((input, index) => {
+    return [...inputs].map((input, index) => {
         const amount = parseFloat(input.value);
-        targets.push({
+        return {
             week: parseInt(input.dataset.week, 10) || index + 1,
             targetAmount: Number.isFinite(amount) ? amount : 0
-        });
+        };
     });
-    return targets;
 }
 
 function addManualWeeklyWeek() {
+    const mode = getManualWeeklyModeFromForm();
     const targets = collectManualWeeklyTargetsFromForm();
     const last = targets[targets.length - 1];
-    const lastAmt = parseFloat(last?.targetAmount);
-    const nextAmount = Number.isFinite(lastAmt) ? roundTaperValue(Math.max(0, lastAmt - 1)) : '';
-    targets.push({ week: targets.length + 1, targetAmount: nextAmount });
+    if (mode === 'percent') {
+        const lastPct = parseFloat(last?.targetPercent);
+        const nextPercent = Number.isFinite(lastPct) ? Math.max(0, lastPct - 10) : 90;
+        targets.push({ week: targets.length + 1, targetPercent: nextPercent });
+    } else {
+        const lastAmt = parseFloat(last?.targetAmount);
+        const nextAmount = Number.isFinite(lastAmt) ? roundTaperValue(Math.max(0, lastAmt - 1)) : '';
+        targets.push({ week: targets.length + 1, targetAmount: nextAmount });
+    }
     renderManualWeeklyTargetsEditor(targets);
 }
 
@@ -8092,15 +8356,47 @@ function migrateTaperPlan(plan, substanceId, data) {
     plan.taperNotes = plan.notes;
 
     if (isManualWeeklyPlan(plan)) {
+        if (!plan.manualWeeklyMode) plan.manualWeeklyMode = 'amount';
         if (!plan.manualWeeklyTargets?.length) {
             if (plan.weeklyTargets?.length) {
                 plan.manualWeeklyTargets = plan.weeklyTargets.map((w, i) => ({
                     week: w.week ?? i + 1,
-                    targetAmount: w.targetAmount ?? w.weeklyMax ?? roundTaperValue((w.dailyTarget || 0) * 7)
+                    targetAmount: w.targetAmount ?? w.weeklyMax ?? roundTaperValue((w.dailyTarget || 0) * 7),
+                    targetPercent: w.targetPercent ?? null
                 }));
             } else {
-                plan.manualWeeklyTargets = [{ week: 1, targetAmount: '' }];
+                plan.manualWeeklyTargets = plan.manualWeeklyMode === 'percent'
+                    ? [{ week: 1, targetPercent: 100 }]
+                    : [{ week: 1, targetAmount: '' }];
             }
+        }
+        if (isManualWeeklyPercentMode(plan)) {
+            if (plan.manualWeeklyBaseline == null || plan.manualWeeklyBaseline === '') {
+                const first = plan.manualWeeklyTargets[0];
+                if (first?.targetPercent && first?.targetAmount) {
+                    const pct = parseFloat(first.targetPercent);
+                    const amt = parseFloat(first.targetAmount);
+                    if (pct > 0 && Number.isFinite(amt)) {
+                        plan.manualWeeklyBaseline = roundTaperValue(amt / (pct / 100));
+                    }
+                }
+            }
+            plan.manualWeeklyTargets = plan.manualWeeklyTargets.map((entry, index) => {
+                const week = entry.week ?? index + 1;
+                const targetPercent = entry.targetPercent != null
+                    ? parseFloat(entry.targetPercent)
+                    : (plan.manualWeeklyBaseline > 0 && entry.targetAmount != null
+                        ? Math.round((parseFloat(entry.targetAmount) / plan.manualWeeklyBaseline) * 100)
+                        : null);
+                return {
+                    week,
+                    targetPercent: Number.isFinite(targetPercent) ? targetPercent : 100,
+                    targetAmount: resolveManualWeekTargetAmount(
+                        { targetPercent: Number.isFinite(targetPercent) ? targetPercent : 100 },
+                        plan
+                    )
+                };
+            });
         }
         plan.weeklyTargets = buildWeeklyTargetsFromManual(plan);
         if (!plan.endDate || plan.endDate < plan.startDate) {
@@ -8440,6 +8736,16 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
     };
 
     if (isManual) {
+        plan.manualWeeklyMode = getManualWeeklyModeFromForm();
+        plan.manualWeeklyUnit = (() => {
+            const select = document.getElementById('manual-weekly-unit');
+            if (!select) return null;
+            if (select.value === '__default__') return null;
+            return getManualWeeklyUnitFromForm(substanceId);
+        })();
+        plan.manualWeeklyBaseline = plan.manualWeeklyMode === 'percent'
+            ? getManualWeeklyBaselineFromForm()
+            : null;
         plan.manualWeeklyTargets = collectManualWeeklyTargetsFromForm();
         plan.endDate = plan.endDate || computeManualPlanEndDate(plan);
     }
@@ -8500,8 +8806,14 @@ function toggleTaperPlanTypeFields() {
     }
     if (endDateInput) endDateInput.required = !isManual;
 
-    if (isManual && !document.querySelector('.manual-week-target-input')) {
-        renderManualWeeklyTargetsEditor([{ week: 1, targetAmount: '' }]);
+    if (isManual) {
+        populateManualWeeklyUnitSelect(getTaperSubstanceId());
+        setManualWeeklyMode(getManualWeeklyModeFromForm() || 'amount', { skipRender: true });
+        if (!document.querySelector('.manual-week-target-input, .manual-week-percent-input')) {
+            renderManualWeeklyTargetsEditor(getManualWeeklyModeFromForm() === 'percent'
+                ? [{ week: 1, targetPercent: 100 }]
+                : [{ week: 1, targetAmount: '' }]);
+        }
     }
 
     const hints = {
@@ -8509,7 +8821,7 @@ function toggleTaperPlanTypeFields() {
         'reduce-percent': 'Reduce by a percentage of your daily average each week.',
         fixed: 'Keep the same daily limit until your target end date.',
         'step-weekly': 'Step down once per week (same as reduce by amount).',
-        'manual-weekly': 'Set each week\'s max amount manually.'
+        'manual-weekly': 'Set weekly goals by amount or percentage of a baseline.'
     };
     if (hint) hint.textContent = hints[type] || hints['reduce-amount'];
 }
@@ -8532,10 +8844,14 @@ function fillTaperFormFromPlan(plan) {
     const weeklyEl = document.getElementById('do-not-surpass-weekly');
     if (dailyEl) dailyEl.checked = plan.doNotSurpassDaily !== false;
     if (weeklyEl) weeklyEl.checked = !!plan.doNotSurpassWeekly;
+    toggleTaperPlanTypeFields();
     if (isManualWeeklyPlan(plan)) {
+        const substanceId = plan.substanceId || getTaperSubstanceId();
+        populateManualWeeklyUnitSelect(substanceId, plan.manualWeeklyUnit);
+        setManualWeeklyMode(plan.manualWeeklyMode || 'amount', { skipRender: true });
+        setInputValue('manual-weekly-baseline', plan.manualWeeklyBaseline ?? '');
         renderManualWeeklyTargetsEditor(plan.manualWeeklyTargets || []);
     }
-    toggleTaperPlanTypeFields();
 }
 
 function setDefaultTaperDates() {
@@ -8595,7 +8911,9 @@ function renderTaperKpiRow(substanceId) {
         const el = document.getElementById(id);
         if (el) el.textContent = text;
     };
-    const unit = sub.defaultUnit;
+    const unit = isManualWeeklyPlan(plan)
+        ? getManualWeeklyPlanUnit(plan, substanceId)
+        : sub.defaultUnit;
     const statusTiles = [
         'taper-kpi-used-today',
         'taper-kpi-used-week',
@@ -8617,7 +8935,7 @@ function renderTaperKpiRow(substanceId) {
     const weeklyLimit = getWeeklyLimit(substanceId, today);
     const usedWeek = getUsedAmountForTaperWeek(substanceId, today);
 
-    set('taper-kpi-used-today-val', formatTaperAmount(usedToday, unit));
+    set('taper-kpi-used-today-val', formatTaperAmount(usedToday, sub.defaultUnit));
     set('taper-kpi-used-week-val', formatTaperActualAmount(usedWeek, unit));
 
     if (weeklyLimit != null) {
@@ -8643,7 +8961,9 @@ function renderTaperProgressCard(substanceId) {
     if (!plan || !sub) return;
     syncTaperPlanData(substanceId);
     const today = getLocalDateString();
-    const unit = sub.defaultUnit;
+    const unit = isManualWeeklyPlan(plan)
+        ? getManualWeeklyPlanUnit(plan, substanceId)
+        : sub.defaultUnit;
     const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
 
     if (plan.isPaused) {
@@ -8656,10 +8976,10 @@ function renderTaperProgressCard(substanceId) {
 
     const monthLimit = getMonthlyLimit(substanceId, today);
     const monthUsed = getMonthPersonalUseTotal(substanceId, today);
-    set('taper-monthly-cap-val', monthLimit != null ? formatTaperAmount(monthLimit, unit) : '—');
-    set('taper-monthly-used-val', formatTaperAmount(monthUsed, unit));
+    set('taper-monthly-cap-val', monthLimit != null ? formatTaperAmount(monthLimit, sub.defaultUnit) : '—');
+    set('taper-monthly-used-val', formatTaperAmount(monthUsed, sub.defaultUnit));
     set('taper-monthly-remaining-val', monthLimit != null
-        ? formatTaperAmount(Math.max(0, monthLimit - monthUsed), unit)
+        ? formatTaperAmount(Math.max(0, monthLimit - monthUsed), sub.defaultUnit)
         : '—');
 
     if (weeklyLimit != null) {
@@ -8675,7 +8995,11 @@ function renderTaperProgressCard(substanceId) {
         );
         if (isManualWeeklyPlan(plan)) {
             const weekNum = getManualWeeklyWeekNumber(plan, today);
-            set('taper-weekly-max-val', `Week ${weekNum}: ${formatTaperAmount(weeklyLimit, unit)}`);
+            const weekRow = getCurrentManualWeekRow(plan, today);
+            const goalLabel = isManualWeeklyPercentMode(plan) && weekRow?.targetPercent != null
+                ? `${weekRow.targetPercent}% (${formatTaperAmount(weeklyLimit, unit)})`
+                : formatTaperAmount(weeklyLimit, unit);
+            set('taper-weekly-max-val', `Week ${weekNum}: ${goalLabel}`);
         } else {
             set('taper-weekly-max-val', formatTaperAmount(weeklyLimit, unit));
         }
@@ -8769,7 +9093,7 @@ function renderTaperWeeklyPlan(substanceId) {
     }
 
     syncTaperPlanData(substanceId);
-    const unit = sub.defaultUnit;
+    const unit = getManualWeeklyPlanUnit(plan, substanceId);
     const sum = getTaperWeeklySummary(plan, substanceId);
 
     if (summary) {
@@ -8803,7 +9127,7 @@ function renderTaperWeeklyPlan(substanceId) {
             const rowClass = `manual-week-${w.status}`;
             html += `<tr class="${rowClass}">
                 <td>Week ${w.week ?? '—'}</td>
-                <td>${formatTaperAmount(target, unit)}</td>
+                <td>${formatManualWeeklyGoalCell(w, plan, unit)}</td>
                 <td>${formatTaperActualAmount(w.actualUsed, unit)}</td>
                 <td>${formatTaperPercent(w.actualUsed, target)}</td>
                 <td>${emoji} ${label.replace(' target', '')}</td>
@@ -9056,10 +9380,20 @@ function handleTaperSubmit(e) {
     if (!startDate) return alert('Start date is required.');
 
     if (reductionType === 'manual-weekly') {
+        const mode = getManualWeeklyModeFromForm();
         const targets = collectManualWeeklyTargetsFromForm();
         if (!targets.length) return alert('Add at least one weekly target.');
-        const hasAmount = targets.some(t => (parseFloat(t.targetAmount) || 0) > 0);
-        if (!hasAmount) return alert('Enter at least one weekly target amount.');
+        if (mode === 'percent') {
+            const baseline = getManualWeeklyBaselineFromForm();
+            if (baseline == null || baseline <= 0) {
+                return alert('Enter a baseline amount for percentage mode.');
+            }
+            const hasPercent = targets.some(t => (parseFloat(t.targetPercent) || 0) > 0);
+            if (!hasPercent) return alert('Enter at least one weekly percentage.');
+        } else {
+            const hasAmount = targets.some(t => (parseFloat(t.targetAmount) || 0) > 0);
+            if (!hasAmount) return alert('Enter at least one weekly target amount.');
+        }
     } else {
         const endDate = document.getElementById('end-date')?.value;
         if (!endDate || new Date(endDate) <= new Date(startDate)) {
@@ -9231,7 +9565,9 @@ function renderTaperByWeek(substanceId) {
         return;
     }
 
-    const unit = sub.defaultUnit || 'units';
+    const unit = isManualWeeklyPlan(plan)
+        ? getManualWeeklyPlanUnit(plan, substanceId)
+        : (sub.defaultUnit || 'units');
     summaryEl.innerHTML = [
         taperChipStat('Total planned', formatTaperAmount(data.totalPlanned, unit)),
         taperChipStat('Total used', formatTaperActualAmount(data.totalUsed, unit)),

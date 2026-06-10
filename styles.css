@@ -2188,6 +2188,45 @@ input[type="range"]::-webkit-slider-thumb {
     border: 1px solid var(--border);
 }
 
+.manual-weekly-mode-toggle {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 12px;
+}
+
+.manual-mode-btn {
+    flex: 1;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.manual-mode-btn.active {
+    border-color: var(--accent);
+    background: rgba(76, 175, 80, 0.12);
+    color: var(--accent);
+}
+
+.manual-weekly-unit-group {
+    margin-bottom: 12px;
+}
+
+.manual-week-row .manual-week-unit {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.manual-week-row .manual-week-computed {
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    min-width: 5rem;
+}
+
 .manual-weekly-intro {
     margin: 0 0 4px;
     font-weight: 600;

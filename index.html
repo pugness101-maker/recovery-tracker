@@ -861,8 +861,21 @@
                             </div>
                         </div>
                         <div id="manual-weekly-plan-section" class="manual-weekly-plan-section hidden">
-                            <p class="manual-weekly-intro">Set each week&rsquo;s max amount manually.</p>
-                            <p class="field-hint manual-weekly-example">Example: Week 1: 7g · Week 2: 6g · Week 3: 5g · Week 4: 4g · Week 5: 3g</p>
+                            <div class="manual-weekly-mode-toggle" role="group" aria-label="Manual weekly planning mode">
+                                <button type="button" class="manual-mode-btn active" data-mode="amount" onclick="setManualWeeklyMode('amount')">Amount</button>
+                                <button type="button" class="manual-mode-btn" data-mode="percent" onclick="setManualWeeklyMode('percent')">Percent</button>
+                            </div>
+                            <div class="form-group manual-weekly-unit-group">
+                                <label for="manual-weekly-unit">Unit</label>
+                                <select id="manual-weekly-unit" onchange="onManualWeeklyUnitChange()"></select>
+                                <input type="text" id="manual-weekly-unit-custom" class="hidden" placeholder="Custom unit" oninput="updateManualWeeklyComputedPreviews()">
+                            </div>
+                            <div id="manual-weekly-baseline-group" class="form-group hidden">
+                                <label for="manual-weekly-baseline">Baseline amount (Week 1 = 100%)</label>
+                                <input type="number" id="manual-weekly-baseline" min="0" step="0.1" oninput="updateManualWeeklyComputedPreviews()">
+                            </div>
+                            <p class="manual-weekly-intro" id="manual-weekly-intro">Enter a weekly goal amount for each week.</p>
+                            <p class="field-hint manual-weekly-example" id="manual-weekly-example">Example: Week 1: 70 cigarettes · Week 2: 63 cigarettes · Week 3: 56 cigarettes</p>
                             <h4>Weekly Targets</h4>
                             <div id="manual-weekly-targets-list" class="manual-weekly-targets-list"></div>
                             <div class="manual-weekly-targets-actions">
