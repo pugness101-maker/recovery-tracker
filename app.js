@@ -2156,6 +2156,16 @@ function formatTaperAmount(value, unit) {
     return `${formatAmount(value)} ${unit || ''}`.trim();
 }
 
+function formatTaperActualAmount(value, unit) {
+    if (value == null || Number.isNaN(value)) return '—';
+    return `${formatAmount(value, 1)} ${unit || ''}`.trim();
+}
+
+function formatTaperPercent(actual, goal) {
+    if (goal == null || goal <= 0 || actual == null || Number.isNaN(actual)) return '—';
+    return `${Math.round((actual / goal) * 100)}%`;
+}
+
 function formatTaperMonthlyRate(value, unit, suffix) {
     if (value == null || Number.isNaN(value)) return '—';
     return `${Number(value.toFixed(2))} ${unit}${suffix}`;
@@ -6079,7 +6089,10 @@ function getNextBestAction(substanceId) {
         };
     }
     const today = getLocalDateString();
-    const weekUsed = getWeekPersonalUseTotal(substanceId, today);
+    const plan = appData.taperPlans?.[substanceId];
+    const weekUsed = plan && !plan.isPaused
+        ? getUsedAmountForTaperWeek(substanceId, today)
+        : getWeekPersonalUseTotal(substanceId, today);
     const weekLimit = getWeeklyLimit(substanceId, today);
     const todayUsed = getUsedAmount(substanceId, today);
     const dailyLimit = getDailyLimitForDate(substanceId, today);
@@ -7500,8 +7513,8 @@ function renderTaperWeeklyCalendar(substanceId) {
     let html = '';
     plan.weeklyTargets.forEach((weekRow, index) => {
         const planned = getPlannedWeeklyTarget(plan, weekRow);
-        const used = roundTaperValue(weekRow.actualUsed || 0);
-        const left = roundTaperValue(planned - used);
+        const used = roundTaperActual(weekRow.actualUsed || 0);
+        const left = roundTaperActual(planned - used);
         const { status, label } = getTaperByWeekStatus(used, planned);
         const calStart = getWeekStartDateStr(weekRow.weekStart);
         const days = [];
@@ -8014,6 +8027,10 @@ function roundTaperValue(n) {
     return Math.round((parseFloat(n) || 0) * 2) / 2;
 }
 
+function roundTaperActual(n) {
+    return Math.round((parseFloat(n) || 0) * 10) / 10;
+}
+
 function migrateTaperPlan(plan, substanceId, data) {
     if (!plan) return;
     const now = new Date().toISOString();
@@ -8194,14 +8211,14 @@ function syncTaperPlanData(substanceId, data = appData) {
             actual += getUsedAmount(substanceId, d, null, data);
             d = addDaysToDateStr(d, 1);
         }
-        w.actualUsed = roundTaperValue(actual);
+        w.actualUsed = roundTaperActual(actual);
         const target = isManualWeeklyPlan(plan)
             ? (w.targetAmount ?? w.weeklyMax)
             : w.weeklyMax;
-        w.difference = roundTaperValue(actual - target);
+        w.difference = roundTaperActual(w.actualUsed - target);
         w.status = isManualWeeklyPlan(plan)
-            ? getManualWeeklyStatus(actual, target).status
-            : getTaperLimitStatus(actual, target).status;
+            ? getManualWeeklyStatus(w.actualUsed, target).status
+            : getTaperLimitStatus(w.actualUsed, target).status;
     });
 
     expandDailyTargetsFromWeekly(plan);
@@ -8281,14 +8298,14 @@ function getTaperWeeklyStatusText(status) {
     return 'No weekly plan';
 }
 
-function applyTaperProgressBar(bar, barText, used, limit) {
-    if (!bar) return;
-    const { status } = getTaperLimitStatus(used, limit);
+function applyTaperProgressBar(bar, barText, used, limit, getStatus = getTaperLimitStatus) {
+    if (!bar) return 'none';
+    const { status } = getStatus(used, limit);
     const pct = limit > 0 ? (used / limit) * 100 : 0;
     bar.style.width = `${Math.min(100, Math.max(pct, used > 0 ? 4 : 0))}%`;
     bar.classList.remove('dns-under', 'dns-close', 'dns-over');
     bar.classList.add(`dns-${status}`);
-    if (barText) barText.textContent = `${Math.round(pct)}%`;
+    if (barText) barText.textContent = formatTaperPercent(used, limit);
     return status;
 }
 
@@ -8601,7 +8618,7 @@ function renderTaperKpiRow(substanceId) {
     const usedWeek = getUsedAmountForTaperWeek(substanceId, today);
 
     set('taper-kpi-used-today-val', formatTaperAmount(usedToday, unit));
-    set('taper-kpi-used-week-val', formatTaperAmount(usedWeek, unit));
+    set('taper-kpi-used-week-val', formatTaperActualAmount(usedWeek, unit));
 
     if (weeklyLimit != null) {
         const remWeek = Math.max(0, weeklyLimit - usedWeek);
@@ -8637,10 +8654,8 @@ function renderTaperProgressCard(substanceId) {
     const weeklyLimit = getWeeklyLimit(substanceId, today);
     const weeklyUsed = getUsedAmountForTaperWeek(substanceId, today);
 
-    const dailyAllowed = getDailyLimitForDate(substanceId, today);
     const monthLimit = getMonthlyLimit(substanceId, today);
     const monthUsed = getMonthPersonalUseTotal(substanceId, today);
-    set('taper-daily-allowed-val', dailyAllowed != null ? formatTaperAmount(dailyAllowed, unit) : '—');
     set('taper-monthly-cap-val', monthLimit != null ? formatTaperAmount(monthLimit, unit) : '—');
     set('taper-monthly-used-val', formatTaperAmount(monthUsed, unit));
     set('taper-monthly-remaining-val', monthLimit != null
@@ -8649,13 +8664,14 @@ function renderTaperProgressCard(substanceId) {
 
     if (weeklyLimit != null) {
         const remW = Math.max(0, weeklyLimit - weeklyUsed);
-        const diffW = roundTaperValue(weeklyUsed - weeklyLimit);
-        const pctW = weeklyLimit > 0 ? (weeklyUsed / weeklyLimit) * 100 : 0;
+        const diffW = roundTaperActual(weeklyUsed - weeklyLimit);
+        const weeklyStatusFn = isManualWeeklyPlan(plan) ? getManualWeeklyStatus : getTaperLimitStatus;
         const weeklyStatus = applyTaperProgressBar(
             document.getElementById('taper-weekly-bar'),
             document.getElementById('taper-weekly-bar-text'),
             weeklyUsed,
-            weeklyLimit
+            weeklyLimit,
+            weeklyStatusFn
         );
         if (isManualWeeklyPlan(plan)) {
             const weekNum = getManualWeeklyWeekNumber(plan, today);
@@ -8663,17 +8679,15 @@ function renderTaperProgressCard(substanceId) {
         } else {
             set('taper-weekly-max-val', formatTaperAmount(weeklyLimit, unit));
         }
-        set('taper-weekly-used', formatTaperAmount(weeklyUsed, unit));
-        set('taper-weekly-remaining', formatTaperAmount(remW, unit));
+        set('taper-weekly-used', formatTaperActualAmount(weeklyUsed, unit));
+        set('taper-weekly-remaining', formatTaperActualAmount(remW, unit));
         set('taper-weekly-over-under', diffW > 0
-            ? `${formatTaperAmount(diffW, unit)} above`
+            ? `${formatTaperActualAmount(diffW, unit)} above`
             : diffW < 0
-                ? `${formatTaperAmount(Math.abs(diffW), unit)} below`
+                ? `${formatTaperActualAmount(Math.abs(diffW), unit)} below`
                 : 'On plan');
-        set('taper-weekly-pct', `${Math.round(pctW)}%`);
-        const badgeStatus = isManualWeeklyPlan(plan)
-            ? getManualWeeklyStatus(weeklyUsed, weeklyLimit).status
-            : weeklyStatus;
+        set('taper-weekly-pct', formatTaperPercent(weeklyUsed, weeklyLimit));
+        const badgeStatus = weeklyStatus;
         setTaperStatusBadge(document.getElementById('taper-weekly-status'), badgeStatus, shortTaperStatus(badgeStatus));
     } else {
         set('taper-weekly-max-val', '—');
@@ -8785,14 +8799,13 @@ function renderTaperWeeklyPlan(substanceId) {
         </tr></thead><tbody>`;
         plan.weeklyTargets.forEach(w => {
             const target = w.targetAmount ?? w.weeklyMax ?? 0;
-            const pct = target > 0 ? Math.round((w.actualUsed / target) * 100) : 0;
             const { emoji, label } = getManualWeeklyStatus(w.actualUsed, target);
             const rowClass = `manual-week-${w.status}`;
             html += `<tr class="${rowClass}">
                 <td>Week ${w.week ?? '—'}</td>
                 <td>${formatTaperAmount(target, unit)}</td>
-                <td>${formatTaperAmount(w.actualUsed, unit)}</td>
-                <td>${pct}%</td>
+                <td>${formatTaperActualAmount(w.actualUsed, unit)}</td>
+                <td>${formatTaperPercent(w.actualUsed, target)}</td>
                 <td>${emoji} ${label.replace(' target', '')}</td>
             </tr>`;
         });
@@ -8812,7 +8825,7 @@ function renderTaperWeeklyPlan(substanceId) {
             <td>${formatDate(w.weekEnd)}</td>
             <td>${formatTaperAmount(w.dailyTarget, unit)}</td>
             <td>${formatTaperAmount(w.weeklyMax, unit)}</td>
-            <td>${formatTaperAmount(w.actualUsed, unit)}</td>
+            <td>${formatTaperActualAmount(w.actualUsed, unit)}</td>
             <td>${formatTaperWeekDiff(w.difference, unit)}</td>
             <td>${emoji} ${getRecoveryTaperStatusLabel(status)}</td>
         </tr>`;
@@ -9138,7 +9151,7 @@ function getTaperByWeekStatus(used, planned) {
 
 function formatTaperWeekDiff(value, unit) {
     if (value == null || Number.isNaN(value)) return '—';
-    const rounded = formatAmount(roundTaperValue(value));
+    const rounded = formatAmount(roundTaperActual(value), 1);
     if (parseFloat(rounded) > 0) return `+${rounded}${unit ? ` ${unit}` : ''}`;
     return `${rounded}${unit ? ` ${unit}` : ''}`;
 }
@@ -9154,11 +9167,11 @@ function buildTaperByWeekData(substanceId) {
 
     const rows = plan.weeklyTargets.map((weekRow, index) => {
         const planned = getPlannedWeeklyTarget(plan, weekRow);
-        const used = roundTaperValue(weekRow.actualUsed || 0);
-        const diff = roundTaperValue(used - planned);
+        const used = roundTaperActual(weekRow.actualUsed || 0);
+        const diff = roundTaperActual(used - planned);
         runningPlanned = roundTaperValue(runningPlanned + planned);
-        runningUsed = roundTaperValue(runningUsed + used);
-        const runningDiff = roundTaperValue(runningPlanned - runningUsed);
+        runningUsed = roundTaperActual(runningUsed + used);
+        const runningDiff = roundTaperActual(runningPlanned - runningUsed);
         const { status, label } = getTaperByWeekStatus(used, planned);
         const weekNum = weekRow.week ?? index + 1;
         const isCurrent = today >= weekRow.weekStart && today <= weekRow.weekEnd;
@@ -9185,8 +9198,8 @@ function buildTaperByWeekData(substanceId) {
         ? Math.max(0, rows.length - currentWeek)
         : rows.filter(r => r.weekStart > today).length;
     const totalPlanned = roundTaperValue(rows.reduce((sum, r) => sum + r.planned, 0));
-    const totalUsed = roundTaperValue(rows.reduce((sum, r) => sum + r.used, 0));
-    const remainingAllowance = roundTaperValue(totalPlanned - totalUsed);
+    const totalUsed = roundTaperActual(rows.reduce((sum, r) => sum + r.used, 0));
+    const remainingAllowance = roundTaperActual(totalPlanned - totalUsed);
 
     return {
         rows,
@@ -9221,7 +9234,7 @@ function renderTaperByWeek(substanceId) {
     const unit = sub.defaultUnit || 'units';
     summaryEl.innerHTML = [
         taperChipStat('Total planned', formatTaperAmount(data.totalPlanned, unit)),
-        taperChipStat('Total used', formatTaperAmount(data.totalUsed, unit)),
+        taperChipStat('Total used', formatTaperActualAmount(data.totalUsed, unit)),
         taperChipStat('Remaining allowance', formatTaperAmount(data.remainingAllowance, unit)),
         taperChipStat('Current week', data.currentWeek),
         taperChipStat('Weeks remaining', data.weeksRemaining)
@@ -9245,10 +9258,10 @@ function renderTaperByWeek(substanceId) {
             <td>Week ${row.weekNum}</td>
             <td class="taper-by-week-dates">${dateRange}</td>
             <td>${formatTaperAmount(row.planned, unit)}</td>
-            <td>${formatTaperAmount(row.used, unit)}</td>
+            <td>${formatTaperActualAmount(row.used, unit)}</td>
             <td>${formatTaperWeekDiff(row.diff, unit)}</td>
             <td>${formatTaperAmount(row.runningPlanned, unit)}</td>
-            <td>${formatTaperAmount(row.runningUsed, unit)}</td>
+            <td>${formatTaperActualAmount(row.runningUsed, unit)}</td>
             <td>${formatTaperWeekDiff(row.runningDiff, unit)}</td>
             <td><span class="taper-by-week-status taper-by-week-status-${row.status}">${row.statusLabel}</span></td>
         </tr>`;
