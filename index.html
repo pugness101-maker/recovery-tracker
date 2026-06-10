@@ -331,6 +331,15 @@
                         <input type="hidden" id="use-transaction-type" value="use">
                     </div>
 
+                    <div class="use-log-field-block hidden" id="use-log-mode-group">
+                        <span class="use-log-field-label">Log Mode</span>
+                        <div class="use-mode-pills" role="group" aria-label="Log mode">
+                            <button type="button" class="use-mode-pill active" data-mode="amount" onclick="setUseLogMode('amount')">Amount</button>
+                            <button type="button" class="use-mode-pill" data-mode="percent_remaining" onclick="setUseLogMode('percent_remaining')">Log by % remaining</button>
+                        </div>
+                        <input type="hidden" id="use-log-mode" value="amount">
+                    </div>
+
                     <div class="use-log-field-block hidden" id="use-adjustment-direction-group">
                         <span class="use-log-field-label">Adjustment</span>
                         <div class="use-adj-pills" role="group" aria-label="Adjustment direction">
@@ -361,7 +370,7 @@
                         </div>
                         <p id="use-duration-preview" class="use-duration-preview hidden">Duration: —</p>
 
-                        <div class="use-log-amount-grid">
+                        <div class="use-log-amount-grid" id="use-amount-mode-group">
                             <div class="form-group use-log-compact">
                                 <label for="use-amount" id="use-amount-label">Amount</label>
                                 <input type="number" id="use-amount" min="0" step="0.01" value="1" required>
@@ -370,6 +379,18 @@
                                 <label for="use-unit">Unit</label>
                                 <select id="use-unit" required></select>
                             </div>
+                        </div>
+
+                        <div id="use-percent-remaining-group" class="use-percent-remaining-group hidden">
+                            <div class="form-group use-log-compact">
+                                <label for="use-percent-purchase">Vape / Inventory Item</label>
+                                <select id="use-percent-purchase"></select>
+                            </div>
+                            <div class="form-group use-log-compact">
+                                <label for="use-percent-left">Current % left</label>
+                                <input type="number" id="use-percent-left" min="0" max="100" step="0.1" placeholder="e.g. 85">
+                            </div>
+                            <p id="use-percent-preview" class="use-supply-preview">—</p>
                         </div>
 
                         <div class="form-group use-log-compact hidden" id="use-gift-party-group">

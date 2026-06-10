@@ -49,7 +49,7 @@ function getDefaultSubstances() {
             name: 'Vape/Nicotine',
             icon: '💨',
             color: '#42a5f5',
-            units: ['puffs', 'hits', 'pods', 'ml'],
+            units: ['puffs', 'hits', 'pods', 'disposable', 'ml'],
             defaultUnit: 'puffs',
             costTrackingEnabled: true,
             taperTrackingEnabled: true
@@ -91,6 +91,7 @@ const SESSION_SHORT_BREAK_HOURS = 2;
 const SESSION_LONG_BREAK_HOURS = 12;
 const SUPPLY_LOW_REMAINING_PCT = 0.25;
 const INVENTORY_EPS = 0.0001;
+const PERCENT_REMAINING_UNITS = new Set(['puffs', 'pods', 'disposable']);
 
 const RECOVERY_TAPER_LABELS = {
     under: 'On track',
@@ -1187,7 +1188,7 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
         case 'bought':
             return `<td>${formatAmount(bought)}${unit}</td>`;
         case 'remaining':
-            return `<td>${formatAmount(remaining)}${unit}</td>`;
+            return `<td>${formatPurchaseRemainingDisplay(purchase)}</td>`;
         case 'usedPct':
             return `<td>${pctUsed}%</td>`;
         case 'supplyDuration':
@@ -1588,6 +1589,7 @@ function updateUseUnitDropdown() {
         unitSelect.appendChild(option);
     });
     if (sub?.defaultUnit) unitSelect.value = sub.defaultUnit;
+    updateUseLogModeUI();
 }
 
 function updateBuyUnitDropdown() {
@@ -2747,6 +2749,12 @@ function formatLogHistoryLabel(entry, sub) {
         const dir = getAdjustmentDirection(entry) === 'remove' ? '−' : '+';
         return `📦 Inventory ${dir}${amount}${unit}`;
     }
+    if (entry.logMode === 'percent_remaining' && entry.percentRemaining != null) {
+        const pctLabel = Number.isInteger(entry.percentRemaining)
+            ? entry.percentRemaining
+            : parseFloat(entry.percentRemaining).toFixed(1);
+        return `💨 ${pctLabel}% left — ${amount}${unit} used ${sub?.name || 'Unknown'}`;
+    }
     const typeLabel = getUseLogType(entry) === 'session' ? '⏱️ Session' : '⚡ Quick Use';
     return `${typeLabel} ${sub?.icon || ''} ${amount} ${unit} ${sub?.name || 'Unknown'}`;
 }
@@ -2792,8 +2800,13 @@ function setUseTransactionType(tx) {
 
     document.querySelector('.use-log-core-card')?.classList.toggle('gift-adjustment-mode', isNonUse);
 
-    if (isNonUse) setUseLogType('quick');
-    else updateUseEndTimeVisibility();
+    if (isNonUse) {
+        setUseLogType('quick');
+        setUseLogMode('amount');
+    } else {
+        updateUseEndTimeVisibility();
+    }
+    updateUseLogModeUI();
     updateUseTaperPreview();
     updateUsePurchaseLinkUI();
 }
@@ -2826,20 +2839,40 @@ function getUseCreatedAt(entry) {
     return entry.createdAt || entry.timestamp || new Date().toISOString();
 }
 
-function buildUseEntryFromForm() {
+function buildUseEntryFromForm(percentCalc = null) {
     const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
     const isGift = transactionType === 'gift_given' || transactionType === 'gift_received';
     const isAdjustment = transactionType === 'inventory_adjustment';
     const type = (isGift || isAdjustment) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
     const substanceId = document.getElementById('use-substance')?.value;
-    const amount = parseFloat(document.getElementById('use-amount')?.value);
-    const unit = document.getElementById('use-unit')?.value;
     const date = document.getElementById('use-date')?.value;
     const startTime = document.getElementById('use-start-time')?.value || '12:00';
     const endTime = document.getElementById('use-end-time')?.value;
-    const linkMode = getUsePurchaseLinkMode();
-    const linkedPurchaseId = resolveLinkedPurchaseId(substanceId, transactionType);
-    const inventoryAffects = linkMode !== 'none' && linkedPurchaseId != null;
+    const percentMode = getUseLogMode() === 'percent_remaining' && useFormSupportsPercentRemaining();
+
+    let amount;
+    let unit;
+    let linkedPurchaseId;
+    let inventoryAffects;
+    let logMode = 'amount';
+    let percentRemaining;
+    let previousRemainingBeforeLog;
+
+    if (percentMode && percentCalc) {
+        amount = percentCalc.isCorrection ? 0 : Math.max(0, percentCalc.used);
+        unit = percentCalc.unit;
+        linkedPurchaseId = percentCalc.purchaseId;
+        inventoryAffects = true;
+        logMode = 'percent_remaining';
+        percentRemaining = percentCalc.percentLeft;
+        previousRemainingBeforeLog = percentCalc.previousRemaining;
+    } else {
+        amount = parseFloat(document.getElementById('use-amount')?.value);
+        unit = document.getElementById('use-unit')?.value;
+        const linkMode = getUsePurchaseLinkMode();
+        linkedPurchaseId = resolveLinkedPurchaseId(substanceId, transactionType);
+        inventoryAffects = linkMode !== 'none' && linkedPurchaseId != null;
+    }
 
     return {
         type,
@@ -2847,6 +2880,9 @@ function buildUseEntryFromForm() {
         substanceId,
         amount: Number.isFinite(amount) ? amount : 0,
         unit: unit || 'units',
+        logMode,
+        percentRemaining: percentRemaining != null ? percentRemaining : undefined,
+        previousRemainingBeforeLog: previousRemainingBeforeLog != null ? previousRemainingBeforeLog : undefined,
         date,
         startTime,
         time: startTime,
@@ -2899,6 +2935,7 @@ function resetUseFormAfterSave() {
     setUsePurchaseLinkMode('auto');
     setUseTransactionType('use');
     setUseAdjustmentDirection('add');
+    setUseLogMode('amount');
 }
 
 function refreshUseLogRelatedViews() {
@@ -3321,13 +3358,210 @@ function getPurchaseSupplyStatus(purchase) {
     return { key: 'ok', label: '✅ In supply', className: 'supply-ok' };
 }
 
+function isPercentRemainingUnit(unit) {
+    return PERCENT_REMAINING_UNITS.has((unit || '').toLowerCase());
+}
+
+function getPurchasePercentRemaining(purchase) {
+    const bought = getPurchaseQuantityBought(purchase);
+    if (bought <= 0) return 0;
+    const remaining = getPurchaseRemainingAmount(purchase);
+    return Math.round((remaining / bought) * 1000) / 10;
+}
+
+function formatPercentRemainingLabel(remaining, bought) {
+    if (bought <= 0) return '';
+    const pct = Math.round((remaining / bought) * 1000) / 10;
+    const label = Number.isInteger(pct) ? String(pct) : pct.toFixed(1);
+    return `${label}% left`;
+}
+
+function formatPurchaseRemainingDisplay(purchase) {
+    const remaining = getPurchaseRemainingAmount(purchase);
+    const bought = getPurchaseQuantityBought(purchase);
+    const unit = purchase.unit || 'units';
+    const base = `${formatAmount(remaining)}${unit}`;
+    if (!isPercentRemainingUnit(unit) || bought <= 0) return base;
+    return `${base} (${formatPercentRemainingLabel(remaining, bought)})`;
+}
+
 function formatPurchaseOptionLabel(purchase) {
     const remaining = getPurchaseRemainingAmount(purchase);
     const bought = getPurchaseQuantityBought(purchase);
     const unit = purchase.unit || 'units';
     const store = purchase.store || purchase.location || '';
     const storePart = store ? ` — ${store}` : '';
-    return `${formatDate(purchase.date)} — ${formatAmount(bought)}${unit} bought — ${formatAmount(remaining)}${unit} left${storePart}`;
+    const pctPart = isPercentRemainingUnit(unit) && bought > 0
+        ? ` (${formatPercentRemainingLabel(remaining, bought)})`
+        : '';
+    return `${formatDate(purchase.date)} — ${formatAmount(bought)}${unit} bought — ${formatAmount(remaining)}${unit} left${pctPart}${storePart}`;
+}
+
+function getUseLogMode() {
+    return document.getElementById('use-log-mode')?.value || 'amount';
+}
+
+function setUseLogMode(mode) {
+    const hidden = document.getElementById('use-log-mode');
+    if (hidden) hidden.value = mode;
+    document.querySelectorAll('.use-mode-pill').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+    });
+    updateUseLogModeUI();
+}
+
+function useFormSupportsPercentRemaining() {
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    if (tx !== 'use') return false;
+    const unit = document.getElementById('use-unit')?.value || '';
+    return isPercentRemainingUnit(unit);
+}
+
+function getPercentRemainingPurchasesForSubstance(substanceId) {
+    let list = getActivePurchasesForSubstance(substanceId);
+    if (editingUseId) {
+        const entry = findUseEntry(editingUseId);
+        const linkedId = getLogPurchaseId(entry);
+        if (linkedId) {
+            const linked = findPurchase(linkedId);
+            if (linked && !list.some(p => purchaseIdEquals(p.id, linked.id))) {
+                list = [linked, ...list];
+            }
+        }
+    }
+    return list.filter(p => isPercentRemainingUnit(p.unit));
+}
+
+function populateUsePercentPurchaseDropdown(substanceId) {
+    const select = document.getElementById('use-percent-purchase');
+    if (!select) return;
+    const currentVal = select.value;
+    select.innerHTML = '<option value="">Select inventory item…</option>';
+    if (!substanceId) return;
+    getPercentRemainingPurchasesForSubstance(substanceId).forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = String(p.id);
+        opt.textContent = formatPurchaseOptionLabel(p);
+        select.appendChild(opt);
+    });
+    if (currentVal && [...select.options].some(o => o.value === currentVal || String(o.value) === String(currentVal))) {
+        select.value = [...select.options].find(o => o.value === currentVal || String(o.value) === String(currentVal)).value;
+    }
+}
+
+function computePercentRemainingUsage(purchaseId, percentLeft) {
+    const purchase = findPurchase(purchaseId);
+    if (!purchase) return { error: 'Select a vape or inventory item.' };
+    if (!Number.isFinite(percentLeft) || percentLeft < 0 || percentLeft > 100) {
+        return { error: 'Enter a valid percent left (0–100).' };
+    }
+    const bought = getPurchaseQuantityBought(purchase);
+    if (bought <= 0) return { error: 'Selected item has no quantity bought.' };
+    const previousRemaining = getPurchaseRemainingAmount(purchase);
+    const currentRemaining = bought * (percentLeft / 100);
+    const used = previousRemaining - currentRemaining;
+    const previousPercentLeft = bought > 0 ? (previousRemaining / bought) * 100 : 0;
+    const unit = purchase.unit || 'units';
+    return {
+        purchase,
+        purchaseId: purchase.id,
+        percentLeft,
+        previousPercentLeft,
+        previousRemaining,
+        currentRemaining,
+        used,
+        unit,
+        isCorrection: used < -INVENTORY_EPS
+    };
+}
+
+function previewPercentRemainingUsageFromForm() {
+    const substanceId = document.getElementById('use-substance')?.value;
+    const purchaseId = parsePurchaseSelectId(document.getElementById('use-percent-purchase')?.value);
+    const percentLeft = parseFloat(document.getElementById('use-percent-left')?.value);
+    if (!substanceId || !purchaseId || !Number.isFinite(percentLeft)) return null;
+    return computePercentRemainingUsage(purchaseId, percentLeft);
+}
+
+function updateUsePercentRemainingUI() {
+    const preview = document.getElementById('use-percent-preview');
+    const substanceId = document.getElementById('use-substance')?.value;
+    populateUsePercentPurchaseDropdown(substanceId);
+    if (!preview) return;
+    const calc = previewPercentRemainingUsageFromForm();
+    if (!calc || calc.error) {
+        preview.textContent = calc?.error || 'Select an item and enter the current percent left.';
+        return;
+    }
+    const { used, currentRemaining, unit, percentLeft, previousPercentLeft, isCorrection } = calc;
+    if (isCorrection) {
+        const addedBack = Math.abs(used);
+        preview.textContent = `Correction: ${formatPercentRemainingLabel(currentRemaining, getPurchaseQuantityBought(calc.purchase))} — adds ${formatAmount(addedBack)}${unit} back (was ${previousPercentLeft.toFixed(1)}% left).`;
+        return;
+    }
+    if (used <= INVENTORY_EPS) {
+        preview.textContent = `No usage — remaining stays at ${formatAmount(currentRemaining)}${unit} (${percentLeft}%).`;
+        return;
+    }
+    preview.textContent = `Will log ${formatAmount(used)}${unit} used → ${formatAmount(currentRemaining)}${unit} remaining (${percentLeft}% left).`;
+}
+
+function updateUseLogModeUI() {
+    const supports = useFormSupportsPercentRemaining();
+    const modeGroup = document.getElementById('use-log-mode-group');
+    const amountGroup = document.getElementById('use-amount-mode-group');
+    const percentGroup = document.getElementById('use-percent-remaining-group');
+    const advancedSection = document.getElementById('use-advanced-section');
+    const amountInput = document.getElementById('use-amount');
+    const percentInput = document.getElementById('use-percent-left');
+    const percentPurchase = document.getElementById('use-percent-purchase');
+    const mode = getUseLogMode();
+    const percentMode = supports && mode === 'percent_remaining';
+
+    modeGroup?.classList.toggle('hidden', !supports);
+    if (!supports && mode === 'percent_remaining') {
+        const hidden = document.getElementById('use-log-mode');
+        if (hidden) hidden.value = 'amount';
+        document.querySelectorAll('.use-mode-pill').forEach(btn => {
+            btn.classList.toggle('active', btn.dataset.mode === 'amount');
+        });
+    }
+
+    amountGroup?.classList.toggle('hidden', percentMode);
+    percentGroup?.classList.toggle('hidden', !percentMode);
+    advancedSection?.classList.toggle('hidden', percentMode);
+
+    if (amountInput) amountInput.required = !percentMode;
+    if (percentInput) percentInput.required = percentMode;
+    if (percentPurchase) percentPurchase.required = percentMode;
+
+    if (percentMode) {
+        populateUsePercentPurchaseDropdown(document.getElementById('use-substance')?.value);
+        updateUsePercentRemainingUI();
+    }
+}
+
+function getUseFormEffectiveAmount() {
+    if (getUseLogMode() === 'percent_remaining' && useFormSupportsPercentRemaining()) {
+        const calc = previewPercentRemainingUsageFromForm();
+        if (!calc || calc.error || calc.isCorrection) return 0;
+        return Math.max(0, calc.used);
+    }
+    return parseFloat(document.getElementById('use-amount')?.value) || 0;
+}
+
+function applyPercentRemainingInventory(calc) {
+    const purchase = calc.purchase;
+    if (!purchase) return { ok: false, error: 'Purchase not found.' };
+    const bought = getPurchaseQuantityBought(purchase);
+    const targetRemaining = Math.max(0, Math.min(bought, calc.currentRemaining));
+    if (calc.isCorrection || calc.used <= INVENTORY_EPS) {
+        purchase.remainingAmount = targetRemaining;
+        finalizePurchaseRemainingState(purchase);
+        purchase.updatedAt = new Date().toISOString();
+        return { ok: true };
+    }
+    return deductPurchaseAmount(purchase.id, calc.used);
 }
 
 function formatLinkedPurchaseDisplay(log) {
@@ -3389,6 +3623,16 @@ function restoreLogInventoryEffect(log, data = appData) {
     if (!hasLinkedSupply(log)) return;
 
     const purchases = data.purchases || [];
+    if (log.logMode === 'percent_remaining' && log.previousRemainingBeforeLog != null) {
+        const pid = getLogPurchaseId(log);
+        const purchase = findPurchaseInData(pid, { purchases });
+        if (purchase) {
+            purchase.remainingAmount = log.previousRemainingBeforeLog;
+            finalizePurchaseRemainingState(purchase);
+            purchase.updatedAt = new Date().toISOString();
+        }
+        return;
+    }
     const applyRestore = (purchase, amt) => {
         if (!purchase || amt <= 0) return;
         if (isGiftReceivedLog(log) || inventoryAdjustmentAdds(log)) {
@@ -3951,12 +4195,29 @@ function editUseEntry(id) {
     setInputValue('use-date', entry.date || '');
     setInputValue('use-start-time', entry.startTime || entry.time || '12:00');
     setInputValue('use-end-time', entry.endTime || '');
-    setInputValue('use-amount', entry.amount != null ? entry.amount : '');
+    if (entry.logMode === 'percent_remaining' && entry.percentRemaining != null && isPercentRemainingUnit(unit)) {
+        setUseLogMode('percent_remaining');
+        updateUseLogModeUI();
+        populateUsePercentPurchaseDropdown(substanceId);
+        const percentSelect = document.getElementById('use-percent-purchase');
+        const linkedId = getLogPurchaseId(entry);
+        if (percentSelect && linkedId != null) {
+            const match = [...percentSelect.options].find(o => String(o.value) === String(linkedId));
+            if (match) percentSelect.value = match.value;
+        }
+        setInputValue('use-percent-left', entry.percentRemaining);
+        updateUsePercentRemainingUI();
+    } else {
+        setUseLogMode('amount');
+        setInputValue('use-amount', entry.amount != null ? entry.amount : '');
+    }
     setInputValue('use-count', getUseCount(entry));
     setInputValue('use-notes', entry.notes || '');
     setInputValue('use-gift-party', entry.giftPartyName || '');
 
-    if (!hasLinkedSupply(entry) && !logInventoryAffects(entry)) {
+    if (entry.logMode === 'percent_remaining') {
+        setUsePurchaseLinkMode('manual');
+    } else if (!hasLinkedSupply(entry) && !logInventoryAffects(entry)) {
         setUsePurchaseLinkMode('none');
     } else if (hasLinkedSupply(entry)) {
         setUsePurchaseLinkMode('manual');
@@ -3996,6 +4257,7 @@ function cancelUseEdit() {
     setUsePurchaseLinkMode('auto');
     setUseTransactionType('use');
     setUseAdjustmentDirection('add');
+    setUseLogMode('amount');
 }
 
 function getUseLogsForSubstance(substanceId, { sortAsc = true, personalUseOnly = false, data = appData } = {}) {
@@ -4160,17 +4422,27 @@ function setupUseLogForm() {
         updateUseTaperPreview();
         updateUsePurchaseLinkUI();
     });
+    document.getElementById('use-unit')?.addEventListener('change', () => {
+        updateUseLogModeUI();
+        updateUseTaperPreview();
+    });
     ['use-amount', 'use-date'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', () => {
             updateUseTaperPreview();
             updateUsePurchaseLinkUI();
         });
     });
+    document.getElementById('use-percent-left')?.addEventListener('input', () => {
+        updateUsePercentRemainingUI();
+        updateUseTaperPreview();
+    });
+    document.getElementById('use-percent-purchase')?.addEventListener('change', updateUsePercentRemainingUI);
     document.getElementById('use-purchase-link-mode')?.addEventListener('change', updateUsePurchaseLinkUI);
     document.getElementById('use-purchase-select')?.addEventListener('change', updateUsePurchaseLinkUI);
     document.getElementById('use-start-time')?.addEventListener('change', computeUseFormDuration);
     document.getElementById('use-end-time')?.addEventListener('change', computeUseFormDuration);
     setUseLogType(document.getElementById('use-type')?.value || 'quick');
+    updateUseLogModeUI();
     updateUsePurchaseLinkUI();
 }
 
@@ -4202,7 +4474,7 @@ function updateUseTaperPreview() {
         return;
     }
     const substanceId = document.getElementById('use-substance')?.value;
-    const amount = parseFloat(document.getElementById('use-amount')?.value) || 0;
+    const amount = getUseFormEffectiveAmount();
     const entryDate = document.getElementById('use-date')?.value
         || getLocalDateString();
     if (!substanceId) {
@@ -4352,11 +4624,27 @@ function getUseUpdateSuccessMessage(entry) {
 
 function handleUseLogSubmit(e) {
     e.preventDefault();
-    const payload = buildUseEntryFromForm();
+
+    let percentCalc = null;
+    if (getUseLogMode() === 'percent_remaining' && useFormSupportsPercentRemaining()) {
+        const purchaseId = parsePurchaseSelectId(document.getElementById('use-percent-purchase')?.value);
+        const percentLeft = parseFloat(document.getElementById('use-percent-left')?.value);
+        percentCalc = computePercentRemainingUsage(purchaseId, percentLeft);
+        if (percentCalc.error) return alert(percentCalc.error);
+        if (percentCalc.isCorrection) {
+            const addedBack = formatAmount(Math.abs(percentCalc.used));
+            const unit = percentCalc.unit;
+            const msg = `Percent left increased (${percentCalc.previousPercentLeft.toFixed(1)}% → ${percentCalc.percentLeft}%). This corrects inventory by adding ${addedBack}${unit} back with no use logged. Continue?`;
+            if (!confirm(msg)) return;
+        }
+    }
+
+    const payload = buildUseEntryFromForm(percentCalc);
     const { substanceId, amount, type, transactionType } = payload;
     const isPersonalUse = isPersonalUseLog({ transactionType });
     const eventTimestamp = getUseEventTimestamp(payload.date, payload.startTime);
     const now = new Date().toISOString();
+    const usePercentInventory = percentCalc && payload.inventoryAffects;
 
     if (!confirmTaperBeforeLog(substanceId, amount, type === 'quick', editingUseId, transactionType, payload.date)) return;
 
@@ -4388,7 +4676,12 @@ function handleUseLogSubmit(e) {
         delete updated.substance;
         delete updated.lines;
 
-        const inv = applyLogInventoryEffect(updated);
+        let inv;
+        if (usePercentInventory) {
+            inv = applyPercentRemainingInventory(percentCalc);
+        } else {
+            inv = applyLogInventoryEffect(updated);
+        }
         if (!inv.ok) {
             applyExistingLogLinks(priorState, appData.purchases || []);
             Object.assign(existing, priorState);
@@ -4416,7 +4709,12 @@ function handleUseLogSubmit(e) {
     };
     stripLegacyUseLogFields(log);
 
-    const inv = applyLogInventoryEffect(log);
+    let inv;
+    if (usePercentInventory) {
+        inv = applyPercentRemainingInventory(percentCalc);
+    } else {
+        inv = applyLogInventoryEffect(log);
+    }
     if (!inv.ok) return alert(inv.error);
 
     if (!Array.isArray(appData.logs)) appData.logs = [];
