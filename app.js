@@ -1202,11 +1202,10 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
             return `<td>${breakCell}</td>`;
         case 'actions': {
             const pid = normalizePurchaseId(purchase.id);
-            const pidLit = purchaseIdLiteral(purchase.id);
             return `<td class="actions-cell purchase-history-actions-cell">
-                <button type="button" class="secondary-btn purchase-expand-btn" data-purchase-toggle="${escapeAttr(pid)}" aria-expanded="${expanded ? 'true' : 'false'}" onclick="togglePurchaseLinkedLogs(${pidLit})">${toggleLabel}</button>
-                <button type="button" class="secondary-btn" onclick="editPurchase(${pidLit})">Edit</button>
-                <button type="button" class="delete-btn" onclick="deletePurchase(${pidLit})">Delete</button>
+                <button type="button" class="secondary-btn purchase-expand-btn" data-purchase-toggle="${escapeAttr(pid)}" data-toggle-purchase-logs="${escapeAttr(pid)}" aria-expanded="${expanded ? 'true' : 'false'}">${toggleLabel}</button>
+                <button type="button" class="secondary-btn" data-edit-purchase="${escapeAttr(pid)}">Edit</button>
+                <button type="button" class="delete-btn" data-delete-purchase="${escapeAttr(pid)}">Delete</button>
             </td>`;
         }
         default:
@@ -2509,6 +2508,49 @@ function normalizePurchaseId(id) {
 
 function purchaseIdLiteral(id) {
     return JSON.stringify(normalizePurchaseId(id));
+}
+
+function ensureSubstanceInBuyDropdown(substanceId, purchase) {
+    const select = document.getElementById('buy-substance');
+    if (!select || !substanceId) return;
+    if ([...select.options].some(o => o.value === substanceId)) {
+        select.value = substanceId;
+        return;
+    }
+    const sub = getSubstance(substanceId);
+    if (sub) {
+        select.appendChild(buildSubstanceOption(sub));
+    } else {
+        const opt = document.createElement('option');
+        opt.value = substanceId;
+        opt.textContent = purchase?.substanceName || substanceId;
+        select.appendChild(opt);
+    }
+    select.value = substanceId;
+}
+
+function setupPurchaseHistoryActions() {
+    if (document.documentElement.dataset.purchaseHistoryActionsBound === '1') return;
+    document.documentElement.dataset.purchaseHistoryActionsBound = '1';
+    document.addEventListener('click', (e) => {
+        const editBtn = e.target.closest('[data-edit-purchase]');
+        if (editBtn) {
+            e.preventDefault();
+            editPurchase(editBtn.getAttribute('data-edit-purchase'));
+            return;
+        }
+        const deleteBtn = e.target.closest('[data-delete-purchase]');
+        if (deleteBtn) {
+            e.preventDefault();
+            deletePurchase(deleteBtn.getAttribute('data-delete-purchase'));
+            return;
+        }
+        const toggleBtn = e.target.closest('[data-toggle-purchase-logs]');
+        if (toggleBtn) {
+            e.preventDefault();
+            togglePurchaseLinkedLogs(toggleBtn.getAttribute('data-toggle-purchase-logs'));
+        }
+    });
 }
 
 function isSameTaperWeek(logDate, dateStr) {
@@ -5234,14 +5276,16 @@ function refreshBuyTrackerRelatedViews() {
 
 function editPurchase(id) {
     const purchase = findPurchase(id);
-    if (!purchase) return;
+    if (!purchase) {
+        console.error('[inventory] purchase not found for edit:', id);
+        return;
+    }
 
     editingPurchaseId = purchase.id;
+    switchTab('buy-tracker-tab');
+
     const substanceId = getPurchaseSubstanceId(purchase);
-    const substanceSelect = document.getElementById('buy-substance');
-    if (substanceSelect && substanceId && [...substanceSelect.options].some(o => o.value === substanceId)) {
-        substanceSelect.value = substanceId;
-    }
+    ensureSubstanceInBuyDropdown(substanceId, purchase);
     updateBuyUnitDropdown();
 
     const unit = purchase.unit || 'units';
@@ -5266,8 +5310,6 @@ function editPurchase(id) {
     setBuyFormSubmitLabel('Update Purchase');
     document.getElementById('cancel-buy-edit-btn')?.classList.remove('hidden');
     updateBuyCostPerUnitPreview();
-
-    switchTab('buy-tracker-tab');
     document.getElementById('buy-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -5312,12 +5354,13 @@ function handleBuySubmit(e) {
         appData.purchases[idx] = {
             ...existing,
             ...payload,
-            id: editingPurchaseId,
+            id: existing.id,
             substanceId: payload.substanceId,
             createdAt: existing.createdAt || new Date().toISOString(),
             updatedAt: new Date().toISOString()
         };
         applyPurchaseQuantityEdit(appData.purchases[idx], payload.quantityBought ?? payload.quantity ?? 0);
+        migratePurchaseInventory(appData.purchases[idx], appData.logs || [], appData);
         delete appData.purchases[idx].substance;
         delete appData.purchases[idx].item;
         delete appData.purchases[idx].cost;
@@ -5941,6 +5984,7 @@ function getDashboardBuyInfo(substanceId) {
 
 // ——— Event listeners ———
 function setupEventListeners() {
+    setupPurchaseHistoryActions();
     setupManualBulkLinkListeners();
     setupColumnSettingsModal();
     setupUseStatsSettingsModal();
@@ -10109,6 +10153,9 @@ if (typeof window !== 'undefined') {
         setUseLogFilter,
         startBulkLinkSessions,
         closeBulkLinkModal,
-        applyBulkLinkPreview
+        applyBulkLinkPreview,
+        editPurchase,
+        deletePurchase,
+        togglePurchaseLinkedLogs
     });
 }
