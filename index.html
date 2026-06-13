@@ -945,14 +945,19 @@
                             <label for="buy-date">Date</label>
                             <input type="date" id="buy-date" required>
                         </div>
-                        <div class="form-group">
+                        <div class="form-group" id="buy-time-group">
                             <label for="buy-time">Time</label>
                             <input type="time" id="buy-time" value="12:00">
                         </div>
                         <div class="form-group">
-                            <label for="buy-quantity">Quantity Bought</label>
+                            <label for="buy-quantity" id="buy-quantity-label">Quantity Bought</label>
                             <input type="number" id="buy-quantity" min="0.01" step="0.01" required>
                         </div>
+                    </div>
+                    <div id="buy-vape-percent-group" class="form-group hidden">
+                        <label for="buy-percent-bought">Percent bought at</label>
+                        <input type="number" id="buy-percent-bought" min="0" max="100" step="0.1" value="100">
+                        <p id="buy-vape-start-preview" class="buy-preview">—</p>
                     </div>
                     <div id="buy-vape-started-group" class="form-row hidden">
                         <div class="form-group">
