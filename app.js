@@ -36,7 +36,8 @@ const SUBSTANCE_NAME_ALIASES = {
     'xannax': 'xannax',
     'mdma': 'molly',
     'ecstasy': 'molly',
-    'acid': 'lsd'
+    'acid': 'lsd',
+    'alchocol': 'alcohol'
 };
 
 function normalizeSubstanceName(name) {
@@ -254,6 +255,78 @@ function formatSecondaryCountDisplay(substanceId, count, data = appData) {
     const label = getSubstanceSecondaryCountLabel(substanceId, data);
     if (!label || count === '' || count == null || count === 0) return '';
     return `${count} ${label}`;
+}
+
+function getSubstanceDisplayName(sub, data = appData) {
+    if (!sub) return 'Unknown';
+    const resolved = typeof sub === 'string' ? getSubstance(sub, data) : sub;
+    if (!resolved) return typeof sub === 'string' ? sub : 'Unknown';
+    const catalog = DEFAULT_SUBSTANCE_CATALOG.find(e => e.id === resolved.id);
+    if (catalog) return catalog.name;
+    const n = normalizeSubstanceName(resolved.name);
+    if (n === 'lsd' || n === 'acid') return 'LSD';
+    if (n === 'alcohol' || n === 'alchocol') return 'Alcohol';
+    return resolved.name || resolved.id;
+}
+
+function reassignSubstanceIdInData(data, fromId, toId) {
+    if (!fromId || !toId || fromId === toId) return;
+    (data.logs || []).forEach(log => {
+        if (getUseSubstanceId(log) === fromId) log.substanceId = toId;
+    });
+    (data.purchases || []).forEach(purchase => {
+        if (getPurchaseSubstanceId(purchase) === fromId) purchase.substanceId = toId;
+    });
+    if (data.taperPlans?.[fromId]) {
+        if (!data.taperPlans[toId]) data.taperPlans[toId] = data.taperPlans[fromId];
+        delete data.taperPlans[fromId];
+    }
+    if (data.recoveryStreaks?.[fromId]) {
+        if (!data.recoveryStreaks[toId]) data.recoveryStreaks[toId] = data.recoveryStreaks[fromId];
+        delete data.recoveryStreaks[fromId];
+    }
+    if (data.settings?.substanceSettings?.[fromId]) {
+        if (!data.settings.substanceSettings[toId]) {
+            data.settings.substanceSettings[toId] = data.settings.substanceSettings[fromId];
+        }
+        delete data.settings.substanceSettings[fromId];
+    }
+}
+
+function migrateSubstanceNameDedupe(data) {
+    if (!Array.isArray(data.substances)) data.substances = [];
+    ensureAppDataMigrations(data);
+    if (data.migrations.substanceNameDedupeV1) return;
+
+    data.substances.forEach(sub => {
+        if (!sub || typeof sub !== 'object') return;
+        const n = normalizeSubstanceName(sub.name);
+        if (n === 'lsd' || n === 'acid') sub.name = 'LSD';
+        if (n === 'alcohol' || n === 'alchocol') sub.name = 'Alcohol';
+    });
+
+    const groups = new Map();
+    data.substances.forEach(sub => {
+        const key = normalizeSubstanceName(sub.name);
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(sub);
+    });
+
+    const removeIds = new Set();
+    groups.forEach((subs, key) => {
+        if (subs.length <= 1) return;
+        const catalog = DEFAULT_SUBSTANCE_CATALOG.find(e => normalizeSubstanceName(e.name) === key);
+        const keep = subs.find(s => s.id === catalog?.id) || subs[0];
+        subs.forEach(sub => {
+            if (sub.id === keep.id) return;
+            reassignSubstanceIdInData(data, sub.id, keep.id);
+            removeIds.add(sub.id);
+        });
+    });
+    if (removeIds.size) {
+        data.substances = data.substances.filter(s => !removeIds.has(s.id));
+    }
+    data.migrations.substanceNameDedupeV1 = true;
 }
 
 function migrateSubstanceTrackingModes(data) {
@@ -1172,6 +1245,7 @@ function normalizeAppData(data) {
     ensureDefaultSubstances(data);
     ensureDefaultSubstanceSettings(data);
     migrateSubstanceTrackingModes(data);
+    migrateSubstanceNameDedupe(data);
     migrateInventorySubstanceFields(data);
     normalizeMainSubstances(data);
     migrateTaperPlansSafely(data);
@@ -2488,8 +2562,8 @@ function getSubstanceName(id) {
     return getSubstance(id)?.name || 'Unknown';
 }
 
-function getActiveSubstances() {
-    return sortSubstancesMainFirst(appData.substances.filter(s => s.active));
+function getActiveSubstances(data = appData) {
+    return sortSubstancesMainFirst((data.substances || []).filter(s => s.active));
 }
 
 function setMainSubstance(id) {
@@ -2675,8 +2749,15 @@ function updateBuyUnitDropdown() {
 }
 
 function updateQuickActions() {
-    const sub = isAllSubstancesView() ? getMainSubstance() : getSubstance(currentSubstanceId);
     const logBtn = document.getElementById('quick-log-btn');
+    if (isAllSubstancesView()) {
+        if (logBtn) {
+            logBtn.querySelector('.quick-icon').textContent = '📊';
+            logBtn.querySelector('.quick-label').textContent = 'Quick Use (pick substance)';
+        }
+        return;
+    }
+    const sub = getSubstance(currentSubstanceId);
     if (logBtn && sub) {
         logBtn.querySelector('.quick-icon').textContent = sub.icon;
         logBtn.querySelector('.quick-label').textContent = 'Quick Use';
@@ -6242,9 +6323,25 @@ function updateUsePurchaseLinkUI() {
 }
 
 function updateCurrentSupplyDashboard() {
-    const mainId = getMainSubstanceId() || (!isAllSubstancesView() ? currentSubstanceId : null);
     const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
-    if (!mainId) {
+    const titleEl = document.getElementById('dash-supply-card-title');
+    const standardRows = document.getElementById('dash-supply-rows-standard');
+    const allContainer = document.getElementById('dash-supply-all-substances');
+
+    if (isAllSubstancesView()) {
+        if (titleEl) titleEl.textContent = 'Current Inventory by Substance';
+        standardRows?.classList.add('hidden');
+        allContainer?.classList.remove('hidden');
+        renderAllSubstancesInventoryDashboard(allContainer);
+        return;
+    }
+
+    if (titleEl) titleEl.textContent = 'Current Inventory';
+    standardRows?.classList.remove('hidden');
+    allContainer?.classList.add('hidden');
+
+    const substanceId = currentSubstanceId;
+    if (!substanceId || substanceId === DASHBOARD_ALL) {
         set('dash-supply-total', '—');
         set('dash-supply-remaining', '—');
         set('dash-supply-days-left', '—');
@@ -6253,14 +6350,14 @@ function updateCurrentSupplyDashboard() {
         set('dash-supply-since-last-use', '—');
         return;
     }
-    const sub = getSubstance(mainId);
-    const unit = sub?.defaultUnit || 'units';
-    const totalRemaining = getTotalRemainingSupply(mainId);
+    const sub = getSubstance(substanceId);
+    const unit = getSubstanceDisplayUnit(substanceId);
+    const totalRemaining = getTotalRemainingSupply(substanceId);
     const purchases = (appData.purchases || [])
-        .filter(p => getPurchaseSubstanceId(p) === mainId)
+        .filter(p => getPurchaseSubstanceId(p) === substanceId)
         .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
     const lastPurchase = purchases[0] || null;
-    const dailyAvg = getAverageDailyUse(mainId);
+    const dailyAvg = getAverageDailyUse(substanceId);
 
     const remainingLabel = `${totalRemaining.toFixed(1)} ${unit}`;
     set('dash-supply-total', remainingLabel);
@@ -6279,7 +6376,7 @@ function updateCurrentSupplyDashboard() {
         set('dash-supply-last-buy-date', '—');
     }
 
-    const currentBag = getOldestActivePurchase(mainId);
+    const currentBag = getOldestActivePurchase(substanceId);
     if (currentBag) {
         const bagMetrics = getPurchaseSupplyMetrics(currentBag);
         set('dash-supply-last-used', bagMetrics.lastSupplyUseAt
@@ -6662,11 +6759,12 @@ function computeUseFormDuration() {
 }
 
 function getQuickLogSubstanceId() {
-    return getMainSubstanceId() || currentSubstanceId;
+    return pickSubstanceForQuickAction('Quick Use — choose substance');
 }
 
 function logOneUse() {
     const substanceId = getQuickLogSubstanceId();
+    if (!substanceId) return;
     const sub = getSubstance(substanceId);
     if (!sub) return alert('Add an active substance first.');
     if (isVapeTrackingMode(substanceId)) {
@@ -6725,7 +6823,7 @@ function logOneUse() {
 function openUseLogSession() {
     switchTab('use-log-tab');
     setUseLogType('session');
-    const id = getQuickLogSubstanceId();
+    const id = pickSubstanceForQuickAction('Session — choose substance');
     if (id) setInputValue('use-substance', id);
     setDefaultUseLogDateTime();
     updateUseUnitDropdown();
@@ -8205,8 +8303,12 @@ function handleBuySubmit(e) {
 
 function openBuyTrackerModal() {
     switchTab('buy-tracker-tab');
-    const id = getMainSubstanceId();
-    if (id) setInputValue('buy-substance', id);
+    if (!isAllSubstancesView()) {
+        const id = currentSubstanceId && currentSubstanceId !== DASHBOARD_ALL
+            ? currentSubstanceId
+            : getMainSubstanceId();
+        if (id) setInputValue('buy-substance', id);
+    }
     setDefaultBuyDateTime();
     populateBuyStoreDropdown();
     updateBuyUnitDropdown();
@@ -9084,7 +9186,172 @@ function renderUseLogTotals() {
         </div>`;
 }
 
+function getSubstanceDisplayUnit(substanceId, data = appData) {
+    const sub = getSubstance(substanceId, data);
+    return sub?.defaultUnit || getSubstancePrimaryUnit(substanceId, data) || 'units';
+}
+
+function getSubstanceUsageAmountForDate(substanceId, dateStr, data = appData) {
+    try {
+        return getStatsUsageOnDate(substanceId, dateStr, data);
+    } catch (_) {
+        return getUsedAmount(substanceId, dateStr, null, data);
+    }
+}
+
+function getSubstanceUsageAmountForRange(substanceId, startDate, endDate, data = appData) {
+    try {
+        return getStatsUsageInRange(substanceId, startDate, endDate, data);
+    } catch (_) {
+        return getPersonalUseInRange(substanceId, startDate, endDate, data)
+            .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+    }
+}
+
+function buildAllSubstancesUsageEntries(startDate, endDate, data = appData) {
+    const end = endDate || startDate;
+    return getActiveSubstances(data).map(sub => ({
+        id: sub.id,
+        name: getSubstanceDisplayName(sub, data),
+        icon: sub.icon,
+        unit: getSubstanceDisplayUnit(sub.id, data),
+        amount: startDate === end
+            ? getSubstanceUsageAmountForDate(sub.id, startDate, data)
+            : getSubstanceUsageAmountForRange(sub.id, startDate, end, data)
+    })).sort((a, b) => b.amount - a.amount || a.name.localeCompare(b.name));
+}
+
+function formatGroupedUsageCompact(entries, maxItems = 3) {
+    if (!entries.length) return '0';
+    const visible = entries.slice(0, maxItems).map(e => `${e.name} ${formatAmount(e.amount)} ${e.unit}`);
+    const more = entries.length > maxItems ? ` · +${entries.length - maxItems} more` : '';
+    return visible.join(' · ') + more;
+}
+
+function getAllSubstancesMonthSpent(dateStr = getLocalDateString(), data = appData) {
+    const monthStart = getMonthStartDateStr(dateStr);
+    return (data.purchases || [])
+        .filter(p => p.date >= monthStart && p.date <= dateStr)
+        .reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+}
+
+function getAllSubstancesBestStreak(data = appData) {
+    let best = { days: 0, name: '' };
+    getActiveSubstances(data).forEach(sub => {
+        const { days } = computeRecoveryStreakDays(sub.id);
+        if (days > best.days) best = { days, name: getSubstanceDisplayName(sub, data) };
+    });
+    return best;
+}
+
+function getAllSubstancesLowInventoryWarnings(data = appData) {
+    const warnings = [];
+    getActiveSubstances(data).forEach(sub => {
+        const remaining = getTotalRemainingSupply(sub.id);
+        const unit = getSubstanceDisplayUnit(sub.id, data);
+        const name = getSubstanceDisplayName(sub, data);
+        const purchases = (data.purchases || []).filter(p => getPurchaseSubstanceId(p) === sub.id);
+        if (!purchases.length) return;
+        const totalBought = purchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
+        const pct = totalBought > 0 && remaining != null ? remaining / totalBought : null;
+        if (pct != null && pct <= 0.15 && remaining > INVENTORY_EPS) {
+            warnings.push(`Low inventory: ${name} about ${formatAmount(remaining)} ${unit} remaining.`);
+        } else if (remaining != null && remaining <= INVENTORY_EPS) {
+            warnings.push(`${name} inventory is depleted.`);
+        }
+    });
+    return warnings;
+}
+
+function setDashboardMetricLabel(metricId, labelText) {
+    const metric = document.getElementById(metricId);
+    const label = metric?.closest('.dash-metric-card')?.querySelector('.dash-metric-label');
+    if (label) label.textContent = labelText;
+}
+
+function renderAllSubstancesInventoryDashboard(container) {
+    if (!container) return;
+    const subs = getActiveSubstances();
+    if (!subs.length) {
+        container.innerHTML = '<p class="empty-hint">No active substances.</p>';
+        return;
+    }
+
+    const supplyLines = [];
+    const lowLines = [];
+    const recentLines = [];
+
+    subs.forEach(sub => {
+        const name = getSubstanceDisplayName(sub);
+        const unit = getSubstanceDisplayUnit(sub.id);
+        const remaining = getTotalRemainingSupply(sub.id);
+        supplyLines.push(`<li><strong>${name}</strong> · ${formatAmount(remaining)} ${unit}</li>`);
+
+        const purchases = (appData.purchases || [])
+            .filter(p => getPurchaseSubstanceId(p) === sub.id)
+            .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
+        const totalBought = purchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
+        const pct = totalBought > 0 && remaining != null ? remaining / totalBought : null;
+        if (pct != null && pct <= 0.15 && remaining > INVENTORY_EPS) {
+            lowLines.push(`<li>Low inventory: ${name} about ${formatAmount(remaining)} ${unit} remaining.</li>`);
+        } else if (purchases.length && remaining != null && remaining <= INVENTORY_EPS) {
+            lowLines.push(`<li>${name} inventory is depleted.</li>`);
+        }
+
+        if (purchases[0]) {
+            const store = purchases[0].store || purchases[0].location || '';
+            recentLines.push(`<li><strong>${name}</strong> · ${formatDate(purchases[0].date)}${store ? ` · ${store}` : ''}</li>`);
+        }
+    });
+
+    container.innerHTML = `
+        <div class="dash-supply-all-section">
+            <h4 class="dash-supply-all-heading">In supply</h4>
+            <ul class="dash-supply-all-list">${supplyLines.join('')}</ul>
+        </div>
+        ${lowLines.length ? `<div class="dash-supply-all-section"><h4 class="dash-supply-all-heading">Low / depleted</h4><ul class="dash-supply-all-list dash-supply-all-low">${lowLines.join('')}</ul></div>` : ''}
+        ${recentLines.length ? `<div class="dash-supply-all-section"><h4 class="dash-supply-all-heading">Recent purchases</h4><ul class="dash-supply-all-list">${recentLines.join('')}</ul></div>` : ''}`;
+}
+
+function pickSubstanceForQuickAction(actionLabel) {
+    const subs = getActiveSubstances();
+    if (!subs.length) {
+        alert('Add an active substance first.');
+        return null;
+    }
+    if (!isAllSubstancesView()) {
+        return currentSubstanceId && currentSubstanceId !== DASHBOARD_ALL ? currentSubstanceId : getMainSubstanceId();
+    }
+    if (subs.length === 1) return subs[0].id;
+    const lines = subs.map((s, i) => `${i + 1}. ${getSubstanceDisplayName(s)}`).join('\n');
+    const choice = prompt(`${actionLabel}\n\n${lines}\n\nEnter number (1-${subs.length}):`);
+    if (choice == null || choice.trim() === '') return null;
+    const idx = parseInt(choice, 10) - 1;
+    if (!Number.isFinite(idx) || idx < 0 || idx >= subs.length) {
+        alert('Invalid selection.');
+        return null;
+    }
+    return subs[idx].id;
+}
+
 function getNextBestAction(substanceId) {
+    if (isAllSubstancesView()) {
+        const today = getLocalDateString();
+        const entries = buildAllSubstancesUsageEntries(today, today);
+        const top = entries.find(e => e.amount > 0);
+        if (top) {
+            return {
+                tone: 'steady',
+                title: 'All substances',
+                message: `Highest use today: ${top.name} ${formatAmount(top.amount)} ${top.unit}. Select a single substance for detailed taper/recovery insights.`
+            };
+        }
+        return {
+            tone: 'steady',
+            title: 'All substances',
+            message: 'Select a single substance for detailed taper/recovery insights.'
+        };
+    }
     if (!substanceId) {
         return {
             tone: 'steady',
@@ -9158,7 +9425,36 @@ function renderNextBestAction(substanceId) {
 
 function renderDashboardSummaryCards(substanceId) {
     const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
-    if (!substanceId || isAllSubstancesView()) {
+    if (isAllSubstancesView()) {
+        const today = getLocalDateString();
+        const weekStart = getWeekStartDateStr(today);
+        const monthStart = getMonthStartDateStr(today);
+        const todayEntries = buildAllSubstancesUsageEntries(today, today);
+        const weekEntries = buildAllSubstancesUsageEntries(weekStart, today);
+        const monthEntries = buildAllSubstancesUsageEntries(monthStart, today);
+        const cur = getCurrencySymbol();
+
+        set('dash-card-today', todayEntries.length
+            ? formatGroupedUsageCompact(todayEntries, todayEntries.length)
+            : '0');
+        set('dash-card-week', weekEntries.length
+            ? formatGroupedUsageCompact(weekEntries, 3)
+            : '0');
+        set('dash-card-month', monthEntries.length
+            ? formatGroupedUsageCompact(monthEntries, 3)
+            : '0');
+        set('dash-card-spent', fmtSheetMoney(getAllSubstancesMonthSpent(today), cur));
+        const best = getAllSubstancesBestStreak();
+        set('dash-card-streak', best.days
+            ? `${best.days} day${best.days === 1 ? '' : 's'} (${best.name})`
+            : '0 days');
+        set('dash-card-month-cap', '—');
+        setDashboardMetricLabel('dash-card-month-cap', 'Select one substance for cap');
+        return;
+    }
+
+    setDashboardMetricLabel('dash-card-month-cap', 'Remaining Monthly Cap');
+    if (!substanceId) {
         ['dash-card-today', 'dash-card-week', 'dash-card-month', 'dash-card-spent', 'dash-card-streak', 'dash-card-month-cap']
             .forEach(id => set(id, '—'));
         return;
@@ -9298,7 +9594,25 @@ function getRecoveryInsightStats(substanceId) {
 function renderDashboardRecoveryInsights(substanceId) {
     const wrap = document.getElementById('dash-recovery-insights');
     if (!wrap) return;
-    if (!substanceId || isAllSubstancesView()) {
+    if (isAllSubstancesView()) {
+        const today = getLocalDateString();
+        const entries = buildAllSubstancesUsageEntries(today, today);
+        const top = entries.find(e => e.amount > 0);
+        const insight = top
+            ? `Highest use today: ${top.name} ${formatAmount(top.amount)} ${top.unit}.`
+            : 'No personal use logged today across substances.';
+        wrap.innerHTML = `<p class="dash-all-insight">${insight}</p><p class="settings-hint">Select a single substance for detailed taper/recovery insights.</p>`;
+        ['insight-avg-daily', 'insight-highest-day', 'insight-no-use-days'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = '—';
+        });
+        ['insight-chart-day', 'insight-chart-week', 'insight-chart-month', 'insight-chart-cost'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '';
+        });
+        return;
+    }
+    if (!substanceId) {
         wrap.innerHTML = '<p class="empty-hint">Select a substance to view recovery insights.</p>';
         return;
     }
@@ -9335,21 +9649,32 @@ function renderDashboardRecoveryInsights(substanceId) {
 function updateInventoryLowWarning(substanceId) {
     const el = document.getElementById('dash-inventory-warning');
     if (!el) return;
+    if (isAllSubstancesView()) {
+        const warnings = getAllSubstancesLowInventoryWarnings();
+        if (warnings.length) {
+            el.textContent = warnings.join(' ');
+            el.classList.remove('hidden');
+        } else {
+            el.classList.add('hidden');
+        }
+        return;
+    }
     if (!substanceId) {
         el.classList.add('hidden');
         return;
     }
     const remaining = getTotalRemainingSupply(substanceId);
     const sub = getSubstance(substanceId);
-    const unit = sub?.defaultUnit || 'units';
+    const unit = getSubstanceDisplayUnit(substanceId);
+    const name = getSubstanceDisplayName(sub);
     const purchases = (appData.purchases || []).filter(p => getPurchaseSubstanceId(p) === substanceId);
     const totalBought = purchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
     const pct = totalBought > 0 && remaining != null ? remaining / totalBought : null;
     if (pct != null && pct <= 0.15 && remaining > 0) {
-        el.textContent = `Low inventory: about ${formatAmount(remaining)} ${unit} remaining.`;
+        el.textContent = `Low inventory: ${name} about ${formatAmount(remaining)} ${unit} remaining.`;
         el.classList.remove('hidden');
     } else if (remaining != null && remaining <= INVENTORY_EPS) {
-        el.textContent = 'Inventory is depleted — log a purchase when you restock.';
+        el.textContent = `${name} inventory is depleted — log a purchase when you restock.`;
         el.classList.remove('hidden');
     } else {
         el.classList.add('hidden');
@@ -9389,8 +9714,9 @@ function updateDashboard() {
     if (!isAllSubstancesView()) {
         updateRecoveryStreakDisplay(currentSubstanceId);
     } else {
-        set('recovery-streak-current', '—');
-        set('recovery-streak-since', 'All substances');
+        const best = getAllSubstancesBestStreak();
+        set('recovery-streak-current', best.days ? `${best.days} day${best.days === 1 ? '' : 's'}` : '0 days');
+        set('recovery-streak-since', best.name ? `Best streak: ${best.name}` : 'All substances');
         const bestEl = document.getElementById('recovery-streak-best');
         if (bestEl) bestEl.textContent = '—';
     }
@@ -9401,7 +9727,7 @@ function updateDashboard() {
     updateDashboardMainDisplay();
     updateBreakMetricsDashboard();
 
-    const dashSubId = isAllSubstancesView() ? getMainSubstanceId() : currentSubstanceId;
+    const dashSubId = isAllSubstancesView() ? null : currentSubstanceId;
     renderDashboardSummaryCards(dashSubId);
     renderNextBestAction(dashSubId);
     renderDashboardRecoveryInsights(dashSubId);
@@ -9539,9 +9865,14 @@ function renderBuyBreakFrequencyChart(metrics) {
 
 function updateDashboardMainDisplay() {
     const el = document.getElementById('dashboard-main-substance');
+    const viewingEl = document.getElementById('dashboard-viewing-label');
     const main = getMainSubstance();
-    if (!el) return;
-    el.textContent = main ? `Main: ${main.icon} ${main.name}` : 'Main: —';
+    if (el) el.textContent = main ? `Main: ${getSubstanceDisplayName(main)}` : 'Main: —';
+    if (viewingEl) {
+        viewingEl.textContent = isAllSubstancesView()
+            ? 'Viewing: All Substances'
+            : `Viewing: ${getSubstanceDisplayName(getSubstance(currentSubstanceId))}`;
+    }
 }
 
 function renderSubstanceCompare() {
@@ -9561,16 +9892,17 @@ function renderSubstanceCompare() {
     grid.className = 'compare-grid';
 
     getActiveSubstances().forEach(sub => {
-        const logs = appData.logs.filter(l => l.date === today && l.substanceId === sub.id && isPersonalUseLog(l));
-        const amount = logs.reduce((s, l) => s + l.amount, 0);
+        const amount = getSubstanceUsageAmountForDate(sub.id, today);
+        const unit = getSubstanceDisplayUnit(sub.id);
+        const name = getSubstanceDisplayName(sub);
         const spent = getSubstancePurchaseSpend(sub.id, p => p.date === today);
         const { days } = computeRecoveryStreakDays(sub.id);
         const card = document.createElement('div');
         card.className = 'compare-card';
         card.style.borderTopColor = sub.color;
         card.innerHTML = `
-            <div class="compare-header">${sub.icon} ${sub.name}</div>
-            <div class="compare-stat"><span>Uses</span><strong>${amount} ${sub.defaultUnit}</strong></div>
+            <div class="compare-header">${sub.icon} ${name}</div>
+            <div class="compare-stat"><span>Uses</span><strong>${formatAmount(amount)} ${unit}</strong></div>
             ${sub.costTrackingEnabled ? `<div class="compare-stat"><span>Spent</span><strong>${getCurrencySymbol()}${spent.toFixed(2)}</strong></div>` : ''}
             <div class="compare-stat"><span>Streak</span><strong>${days}d</strong></div>
         `;

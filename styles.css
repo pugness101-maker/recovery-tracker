@@ -225,6 +225,62 @@ h3 {
     color: var(--text-secondary);
 }
 
+.dash-header-meta {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+}
+
+.dash-viewing-label {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.dash-supply-all {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+}
+
+.dash-supply-all-section {
+    border-top: 1px solid var(--border);
+    padding-top: 10px;
+}
+
+.dash-supply-all-section:first-child {
+    border-top: none;
+    padding-top: 0;
+}
+
+.dash-supply-all-heading {
+    margin: 0 0 8px;
+    font-size: 0.78rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+    color: var(--text-secondary);
+}
+
+.dash-supply-all-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 0.85rem;
+}
+
+.dash-supply-all-low {
+    color: var(--warning, #e65100);
+}
+
+.dash-all-insight {
+    margin: 0 0 8px;
+    font-size: 0.92rem;
+}
+
 .dash-substance-field {
     margin-bottom: 0;
 }
@@ -5568,8 +5624,9 @@ body.purchase-history-col-resizing {
 }
 
 .dash-metric-card strong {
-    font-size: 1.05rem;
-    line-height: 1.2;
+    font-size: 0.92rem;
+    line-height: 1.35;
+    word-break: break-word;
 }
 
 .dash-inventory-warning {

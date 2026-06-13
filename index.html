@@ -132,7 +132,10 @@
                 <header class="dash-header">
                     <div class="dash-header-top">
                         <h2 class="dash-title">Dashboard</h2>
-                        <p class="dash-main-substance" id="dashboard-main-substance">Main: —</p>
+                        <div class="dash-header-meta">
+                            <p class="dash-main-substance" id="dashboard-main-substance">Main: —</p>
+                            <p class="dash-viewing-label" id="dashboard-viewing-label"></p>
+                        </div>
                     </div>
                     <div class="form-group dash-substance-field">
                         <label for="dashboard-substance">Viewing</label>
@@ -242,8 +245,8 @@
 
                 <!-- Current Inventory -->
                 <div class="dash-card dash-supply-card">
-                    <h3 class="dash-card-title">Current Inventory</h3>
-                    <div class="dash-supply-rows">
+                    <h3 class="dash-card-title" id="dash-supply-card-title">Current Inventory</h3>
+                    <div class="dash-supply-rows" id="dash-supply-rows-standard">
                         <div class="dash-supply-row">
                             <span>Remaining</span>
                             <strong id="dash-supply-remaining">—</strong>
@@ -265,6 +268,7 @@
                             <strong id="dash-supply-since-last-use">—</strong>
                         </div>
                     </div>
+                    <div id="dash-supply-all-substances" class="dash-supply-all hidden"></div>
                     <!-- Legacy supply ids (hidden, for JS that may reference them) -->
                     <span class="hidden" id="dash-supply-current-bag"></span>
                     <span class="hidden" id="dash-supply-since-last-buy"></span>
