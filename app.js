@@ -5,16 +5,151 @@ const LAST_SAVED_KEY = 'recovery-tracker-v2-last-saved';
 const AUTO_BACKUP_KEY = 'recovery-tracker-v2-auto-backup';
 const DASHBOARD_ALL = 'all';
 
-const SUBSTANCE_ICONS = ['🚬', '💨', '🍺', '🌿', '💊', '☕', '🍬', '💉', '🎯', '⚡', '🧪', '📦', '🔥', '❄️', '💧', '🌸'];
+const SUBSTANCE_ICONS = ['🚬', '💨', '🍺', '🌿', '💊', '☕', '🍬', '💉', '🎯', '⚡', '🧪', '📦', '🔥', '❄️', '💧', '🌸', '🌀'];
 const SUBSTANCE_COLORS = ['#4caf50', '#42a5f5', '#ffb74d', '#66bb6a', '#ab47bc', '#ef5350', '#78909c', '#26a69a', '#ff7043', '#5c6bc0'];
 
 const V1_NAME_TO_ID = {
     'Cigarettes': 'cigarettes',
     'Vapes/Nicotine': 'vape-nicotine',
     'Vape/Nicotine': 'vape-nicotine',
+    'Coke': 'coke',
     'Alcohol': 'alcohol',
-    'Weed/THC': 'weed-thc'
+    'Weed/THC': 'weed-thc',
+    'Caffeine': 'caffeine',
+    'LSD': 'lsd',
+    'Molly': 'molly',
+    'Xannax': 'xannax',
+    'Ketamine': 'ketamine'
 };
+
+const SUBSTANCE_NAME_ALIASES = {
+    'vapes/nicotine': 'vape/nicotine',
+    'vape nicotine': 'vape/nicotine',
+    'nicotine': 'vape/nicotine',
+    'cocaine': 'coke',
+    'weed': 'weed/thc',
+    'thc': 'weed/thc',
+    'marijuana': 'weed/thc',
+    'cigs': 'cigarettes',
+    'cigarette': 'cigarettes',
+    'xanax': 'xannax',
+    'xannax': 'xannax',
+    'mdma': 'molly',
+    'ecstasy': 'molly',
+    'acid': 'lsd'
+};
+
+function normalizeSubstanceName(name) {
+    if (name == null || name === '') return '';
+    const normalized = String(name).trim().toLowerCase().replace(/\s+/g, ' ');
+    return SUBSTANCE_NAME_ALIASES[normalized] || normalized;
+}
+
+const DEFAULT_SUBSTANCE_CATALOG = [
+    {
+        id: 'vape-nicotine',
+        name: 'Vape/Nicotine',
+        icon: '💨',
+        color: '#42a5f5',
+        units: ['puffs', 'hits', 'pods', 'disposable', 'ml'],
+        defaultUnit: 'puffs',
+        costTrackingEnabled: true,
+        taperTrackingEnabled: true,
+        isMain: true
+    },
+    {
+        id: 'coke',
+        name: 'Coke',
+        icon: '❄️',
+        color: '#90caf9',
+        units: ['grams', 'lines', 'bumps'],
+        defaultUnit: 'grams',
+        costTrackingEnabled: true,
+        taperTrackingEnabled: true
+    },
+    {
+        id: 'alcohol',
+        name: 'Alcohol',
+        icon: '🍺',
+        color: '#ffb74d',
+        units: ['drinks', 'beers', 'shots', 'ounces'],
+        defaultUnit: 'drinks',
+        costTrackingEnabled: true,
+        taperTrackingEnabled: true
+    },
+    {
+        id: 'weed-thc',
+        name: 'Weed/THC',
+        icon: '🌿',
+        color: '#66bb6a',
+        units: ['grams', 'joints', 'bowls', 'hits', 'edibles'],
+        defaultUnit: 'grams',
+        costTrackingEnabled: true,
+        taperTrackingEnabled: true
+    },
+    {
+        id: 'caffeine',
+        name: 'Caffeine',
+        icon: '☕',
+        color: '#8d6e63',
+        units: ['mg', 'cups', 'drinks', 'pills'],
+        defaultUnit: 'mg',
+        costTrackingEnabled: true,
+        taperTrackingEnabled: true
+    },
+    {
+        id: 'lsd',
+        name: 'LSD',
+        icon: '🧪',
+        color: '#7e57c2',
+        units: ['tabs', 'ug', 'hits'],
+        defaultUnit: 'tabs',
+        costTrackingEnabled: true,
+        taperTrackingEnabled: true
+    },
+    {
+        id: 'molly',
+        name: 'Molly',
+        icon: '💊',
+        color: '#ec407a',
+        units: ['mg', 'pills', 'grams'],
+        defaultUnit: 'mg',
+        costTrackingEnabled: true,
+        taperTrackingEnabled: true
+    },
+    {
+        id: 'xannax',
+        name: 'Xannax',
+        icon: '💊',
+        color: '#5c6bc0',
+        units: ['mg', 'pills', 'bars'],
+        defaultUnit: 'mg',
+        costTrackingEnabled: true,
+        taperTrackingEnabled: true
+    },
+    {
+        id: 'ketamine',
+        name: 'Ketamine',
+        icon: '🌀',
+        color: '#26c6da',
+        units: ['mg', 'bumps', 'lines'],
+        defaultUnit: 'mg',
+        costTrackingEnabled: true,
+        taperTrackingEnabled: true
+    },
+    {
+        id: 'cigarettes',
+        name: 'Cigarettes',
+        icon: '🚬',
+        color: '#78909c',
+        units: ['cigarettes', 'packs'],
+        defaultUnit: 'cigarettes',
+        costTrackingEnabled: true,
+        taperTrackingEnabled: true
+    }
+];
+
+const DEFAULT_SUBSTANCE_IDS = DEFAULT_SUBSTANCE_CATALOG.map(s => s.id);
 
 function createSubstance(opts) {
     return {
@@ -32,58 +167,95 @@ function createSubstance(opts) {
 }
 
 function getDefaultSubstances() {
-    return [
-        createSubstance({
-            id: 'cigarettes',
-            name: 'Cigarettes',
-            icon: '🚬',
-            color: '#78909c',
-            units: ['cigarettes', 'packs'],
-            defaultUnit: 'cigarettes',
-            costTrackingEnabled: true,
-            taperTrackingEnabled: true,
-            isMain: true
-        }),
-        createSubstance({
-            id: 'vape-nicotine',
-            name: 'Vape/Nicotine',
-            icon: '💨',
-            color: '#42a5f5',
-            units: ['puffs', 'hits', 'pods', 'disposable', 'ml'],
-            defaultUnit: 'puffs',
-            costTrackingEnabled: true,
-            taperTrackingEnabled: true
-        }),
-        createSubstance({
-            id: 'alcohol',
-            name: 'Alcohol',
-            icon: '🍺',
-            color: '#ffb74d',
-            units: ['drinks', 'beers', 'shots', 'ounces'],
-            defaultUnit: 'drinks',
-            costTrackingEnabled: true,
-            taperTrackingEnabled: true
-        }),
-        createSubstance({
-            id: 'weed-thc',
-            name: 'Weed/THC',
-            icon: '🌿',
-            color: '#66bb6a',
-            units: ['grams', 'joints', 'bowls', 'hits', 'edibles'],
-            defaultUnit: 'grams',
-            costTrackingEnabled: true,
-            taperTrackingEnabled: true
-        })
-    ];
+    return DEFAULT_SUBSTANCE_CATALOG.map(entry => createSubstance({ ...entry }));
 }
 
 function getDefaultSubstanceSettings() {
     return {
-        cigarettes: { packPrice: 10, unitsPerPack: 20, baseline: 20, quitGoal: '' },
         'vape-nicotine': { packPrice: 20, unitsPerPack: 200, baseline: 20, quitGoal: '' },
+        coke: { packPrice: 80, unitsPerPack: 1, baseline: 0.5, quitGoal: '' },
         alcohol: { packPrice: 15, unitsPerPack: 6, baseline: 2, quitGoal: '' },
-        'weed-thc': { packPrice: 50, unitsPerPack: 28, baseline: 1, quitGoal: '' }
+        'weed-thc': { packPrice: 50, unitsPerPack: 28, baseline: 1, quitGoal: '' },
+        caffeine: { packPrice: 5, unitsPerPack: 30, baseline: 200, quitGoal: '' },
+        lsd: { packPrice: 15, unitsPerPack: 10, baseline: 1, quitGoal: '' },
+        molly: { packPrice: 25, unitsPerPack: 1, baseline: 100, quitGoal: '' },
+        xannax: { packPrice: 10, unitsPerPack: 30, baseline: 1, quitGoal: '' },
+        ketamine: { packPrice: 60, unitsPerPack: 1, baseline: 50, quitGoal: '' },
+        cigarettes: { packPrice: 10, unitsPerPack: 20, baseline: 20, quitGoal: '' }
     };
+}
+
+function findSubstanceByNormalizedName(substances, name) {
+    const target = normalizeSubstanceName(name);
+    if (!target) return null;
+    return substances.find(s => normalizeSubstanceName(s.name) === target) || null;
+}
+
+function getSubstanceCatalogIndex(substance) {
+    if (!substance) return Number.MAX_SAFE_INTEGER;
+    const byId = DEFAULT_SUBSTANCE_IDS.indexOf(substance.id);
+    if (byId >= 0) return byId;
+    const byName = DEFAULT_SUBSTANCE_CATALOG.findIndex(
+        entry => normalizeSubstanceName(entry.name) === normalizeSubstanceName(substance.name)
+    );
+    return byName >= 0 ? byName : Number.MAX_SAFE_INTEGER;
+}
+
+function ensureDefaultSubstanceSettings(data) {
+    ensureAppDataSettings(data);
+    const defaults = getDefaultSubstanceSettings();
+    Object.entries(defaults).forEach(([id, settings]) => {
+        if (!data.settings.substanceSettings[id]) {
+            data.settings.substanceSettings[id] = { ...settings };
+        }
+    });
+}
+
+function ensureDefaultSubstances(data) {
+    if (!Array.isArray(data.substances)) data.substances = [];
+
+    if (!data.substances.length) {
+        data.substances = getDefaultSubstances();
+        return;
+    }
+
+    const defaults = getDefaultSubstances();
+    defaults.forEach(def => {
+        const existsById = data.substances.some(s => s.id === def.id);
+        const existsByName = findSubstanceByNormalizedName(data.substances, def.name);
+        if (existsById || existsByName) return;
+        data.substances.push(createSubstance({ ...def, isMain: false }));
+    });
+
+    reorderSubstancesCatalogFirst(data);
+}
+
+function reorderSubstancesCatalogFirst(data) {
+    if (!Array.isArray(data.substances) || !data.substances.length) return;
+
+    const byId = new Map(data.substances.map(s => [s.id, s]));
+    const byNorm = new Map();
+    data.substances.forEach(s => {
+        const key = normalizeSubstanceName(s.name);
+        if (!byNorm.has(key)) byNorm.set(key, s);
+    });
+
+    const ordered = [];
+    const used = new Set();
+
+    DEFAULT_SUBSTANCE_CATALOG.forEach(def => {
+        const match = byId.get(def.id) || byNorm.get(normalizeSubstanceName(def.name));
+        if (match && !used.has(match.id)) {
+            ordered.push(match);
+            used.add(match.id);
+        }
+    });
+
+    data.substances.forEach(s => {
+        if (!used.has(s.id)) ordered.push(s);
+    });
+
+    data.substances = ordered;
 }
 
 const SESSION_RATE_HIGH_MULTIPLIER = 1.5;
@@ -93,7 +265,7 @@ const SUPPLY_LOW_REMAINING_PCT = 0.25;
 const INVENTORY_EPS = 0.0001;
 const PERCENT_REMAINING_UNITS = new Set(['puffs', 'pods', 'disposable']);
 const VAPE_NICOTINE_ID = 'vape-nicotine';
-const DEFAULT_MAIN_SUBSTANCE_ID = 'cigarettes';
+const DEFAULT_MAIN_SUBSTANCE_ID = 'vape-nicotine';
 
 const TAPER_RELAPSE_NOTE = 'Going over your limit doesn\'t erase your progress. Every day is a new chance—no shame, just data.';
 const TAPER_STANDARD_REDUCTION_TYPES = ['reduce-amount', 'reduce-percent', 'fixed', 'manual-weekly'];
@@ -592,6 +764,8 @@ function normalizeAppData(data) {
 
     ensureAppDataSettings(data);
     ensureAppDataMigrations(data);
+    ensureDefaultSubstances(data);
+    ensureDefaultSubstanceSettings(data);
     normalizeMainSubstances(data);
     migrateTaperPlansSafely(data);
     recalculateAllBreaksForData(data);
@@ -1377,7 +1551,9 @@ function normalizeMainSubstances(data) {
     }
     let main = active.find(s => s.isMain);
     if (!main) {
-        main = active[0];
+        main = active.find(s => s.id === DEFAULT_MAIN_SUBSTANCE_ID)
+            || findSubstanceByNormalizedName(active, 'Vape/Nicotine')
+            || active[0];
         main.isMain = true;
     }
     data.substances.forEach(s => {
@@ -1519,6 +1695,8 @@ function sortSubstancesMainFirst(list) {
     return [...list].sort((a, b) => {
         if (a.isMain !== b.isMain) return a.isMain ? -1 : 1;
         if (a.active !== b.active) return a.active ? -1 : 1;
+        const catalogDiff = getSubstanceCatalogIndex(a) - getSubstanceCatalogIndex(b);
+        if (catalogDiff !== 0) return catalogDiff;
         return a.name.localeCompare(b.name);
     });
 }
