@@ -1311,7 +1311,20 @@ const TABLE_COLUMN_DEFAULTS = {
     },
     purchaseHistory: {
         order: ['date', 'substance', 'bought', 'remaining', 'usedPct', 'supplyDuration', 'supply', 'cost', 'store', 'break', 'actions'],
-        hidden: []
+        hidden: [],
+        widths: {
+            date: 'M',
+            substance: 'M',
+            bought: 'L',
+            remaining: 'M',
+            usedPct: 'M',
+            supplyDuration: 'M',
+            supply: 'L',
+            cost: 'M',
+            store: 'M',
+            break: 'M',
+            actions: 'XL'
+        }
     },
     statsWeekly: {
         order: ['week', 'start', 'end', 'usage', 'monthRunning', 'avgBreak', 'sessions', 'duration', 'avgDur', 'gPerSession', 'gPerHour', 'longBreak', 'shortBreak', 'status'],
@@ -1429,6 +1442,24 @@ const TABLE_COLUMNS_REQUIRED = {
     purchaseHistory: ['actions']
 };
 
+const PURCHASE_HISTORY_WIDTH_MAP = {
+    S: 80,
+    M: 120,
+    L: 180,
+    XL: 260
+};
+
+const PURCHASE_HISTORY_ACTIONS_WIDTH_MAP = {
+    S: 220,
+    M: 320,
+    L: 420,
+    XL: 520
+};
+
+const PURCHASE_HISTORY_COLUMN_WIDTH_DEFAULTS = TABLE_COLUMN_DEFAULTS.purchaseHistory.widths;
+
+const PURCHASE_HISTORY_WIDTH_TIERS = ['S', 'M', 'L', 'XL'];
+
 const USE_STATS_DEFAULTS = {
     order: [
         'totalUsage', 'sessionCount', 'avgPerSession', 'avgPerHr', 'totalDuration', 'avgDuration',
@@ -1499,7 +1530,17 @@ function ensureTableColumnSettings(data) {
         const hidden = Array.isArray(stored.hidden)
             ? stored.hidden.filter(id => defaults.order.includes(id) && !(TABLE_COLUMNS_REQUIRED[tableKey] || []).includes(id))
             : [];
-        data.settings.tableColumns[tableKey] = { order, hidden };
+        if (tableKey === 'purchaseHistory') {
+            const defaultWidths = { ...PURCHASE_HISTORY_COLUMN_WIDTH_DEFAULTS };
+            const storedWidths = stored.widths && typeof stored.widths === 'object' ? stored.widths : {};
+            const widths = { ...defaultWidths };
+            defaults.order.forEach(id => {
+                if (storedWidths[id] != null) widths[id] = storedWidths[id];
+            });
+            data.settings.tableColumns[tableKey] = { order, hidden, widths };
+        } else {
+            data.settings.tableColumns[tableKey] = { order, hidden };
+        }
     });
 }
 
@@ -1739,14 +1780,134 @@ function renderColumnSettingsList(tableKey) {
         const disabled = required.has(colId) ? 'disabled checked' : (checked ? 'checked' : '');
         const reqNote = required.has(colId) ? ' <span class="column-required-tag">(required)</span>' : '';
         const label = getTableColumnLabelForSubstance(tableKey, colId, currentSubstanceId);
-        return `<li class="column-settings-item" draggable="true" data-col-id="${colId}">
+        const widthControl = tableKey === 'purchaseHistory'
+            ? renderPurchaseHistoryColumnWidthControl(colId)
+            : '';
+        return `<li class="column-settings-item${tableKey === 'purchaseHistory' ? ' column-settings-item-with-width' : ''}" draggable="true" data-col-id="${colId}">
             <span class="column-drag-handle" draggable="true" aria-hidden="true">☰</span>
             <label class="column-settings-label">
                 <input type="checkbox" class="column-settings-visible" data-col-id="${colId}" ${disabled}>
                 ${label}${reqNote}
             </label>
+            ${widthControl}
         </li>`;
     }).join('');
+}
+
+function renderPurchaseHistoryColumnWidthControl(colId) {
+    const setting = getPurchaseHistoryColumnWidthSetting(colId);
+    const isCustomPx = typeof setting === 'number' && setting > 0;
+    const selectValue = isCustomPx
+        ? findNearestPurchaseHistoryWidthTier(colId, setting)
+        : (PURCHASE_HISTORY_WIDTH_TIERS.includes(setting) ? setting : 'M');
+    const options = PURCHASE_HISTORY_WIDTH_TIERS.map(tier =>
+        `<option value="${tier}"${selectValue === tier ? ' selected' : ''}>${tier}</option>`
+    ).join('');
+    const customHint = isCustomPx
+        ? `<span class="column-settings-width-hint">${Math.round(setting)}px</span>`
+        : '';
+    return `<div class="column-settings-width">
+        <label class="column-settings-width-label" for="column-width-${colId}">Width</label>
+        <select id="column-width-${colId}" class="column-settings-width-select" data-col-id="${colId}" onchange="this.dataset.widthDirty='1'">${options}</select>
+        ${customHint}
+    </div>`;
+}
+
+function getPurchaseHistoryColumnWidthSetting(colId) {
+    const config = getTableColumnConfig('purchaseHistory');
+    const widths = config.widths || PURCHASE_HISTORY_COLUMN_WIDTH_DEFAULTS;
+    if (widths[colId] != null) return widths[colId];
+    return PURCHASE_HISTORY_COLUMN_WIDTH_DEFAULTS[colId] || 'M';
+}
+
+function getPurchaseHistoryColumnWidthPx(colId, widthSetting) {
+    if (typeof widthSetting === 'number' && Number.isFinite(widthSetting) && widthSetting > 0) {
+        return Math.round(widthSetting);
+    }
+    if (typeof widthSetting === 'string' && /^\d+(\.\d+)?px$/.test(widthSetting)) {
+        return Math.round(parseFloat(widthSetting));
+    }
+    const map = colId === 'actions' ? PURCHASE_HISTORY_ACTIONS_WIDTH_MAP : PURCHASE_HISTORY_WIDTH_MAP;
+    const key = PURCHASE_HISTORY_WIDTH_TIERS.includes(widthSetting) ? widthSetting : 'M';
+    return map[key] || map.M;
+}
+
+function findNearestPurchaseHistoryWidthTier(colId, px) {
+    const map = colId === 'actions' ? PURCHASE_HISTORY_ACTIONS_WIDTH_MAP : PURCHASE_HISTORY_WIDTH_MAP;
+    let nearest = 'M';
+    let nearestDiff = Number.POSITIVE_INFINITY;
+    PURCHASE_HISTORY_WIDTH_TIERS.forEach(tier => {
+        const diff = Math.abs(map[tier] - px);
+        if (diff < nearestDiff) {
+            nearestDiff = diff;
+            nearest = tier;
+        }
+    });
+    return nearest;
+}
+
+function getPurchaseHistoryColumnWidthsMap() {
+    const config = getTableColumnConfig('purchaseHistory');
+    return { ...(config.widths || PURCHASE_HISTORY_COLUMN_WIDTH_DEFAULTS) };
+}
+
+function savePurchaseHistoryColumnWidth(colId, px) {
+    const config = getTableColumnConfig('purchaseHistory');
+    const widths = getPurchaseHistoryColumnWidthsMap();
+    widths[colId] = Math.max(colId === 'actions' ? 180 : 60, Math.round(px));
+    saveTableColumnConfig('purchaseHistory', { ...config, widths });
+}
+
+function buildPurchaseHistoryColgroup(columnIds) {
+    const widths = getPurchaseHistoryColumnWidthsMap();
+    let html = '<colgroup>';
+    columnIds.forEach(colId => {
+        const px = getPurchaseHistoryColumnWidthPx(colId, widths[colId]);
+        html += `<col data-col="${colId}" style="width:${px}px;min-width:${px}px">`;
+    });
+    html += '</colgroup>';
+    return html;
+}
+
+function setupPurchaseHistoryColumnResize() {
+    if (document.documentElement.dataset.purchaseHistoryColResizeBound === '1') return;
+    document.documentElement.dataset.purchaseHistoryColResizeBound = '1';
+
+    let active = null;
+
+    document.addEventListener('mousedown', e => {
+        const handle = e.target.closest('.purchase-history-col-resize');
+        if (!handle) return;
+        e.preventDefault();
+        const colId = handle.dataset.colResize;
+        const table = handle.closest('table.purchase-history-table');
+        const col = table?.querySelector(`colgroup col[data-col="${colId}"]`);
+        if (!table || !col) return;
+        const startWidth = col.getBoundingClientRect().width || getPurchaseHistoryColumnWidthPx(colId, getPurchaseHistoryColumnWidthSetting(colId));
+        active = { colId, col, table, startX: e.clientX, startWidth };
+        document.body.classList.add('purchase-history-col-resizing');
+    });
+
+    document.addEventListener('mousemove', e => {
+        if (!active) return;
+        e.preventDefault();
+        const minW = active.colId === 'actions' ? 180 : 60;
+        const newWidth = Math.max(minW, Math.round(active.startWidth + (e.clientX - active.startX)));
+        active.col.style.width = `${newWidth}px`;
+        active.col.style.minWidth = `${newWidth}px`;
+        const total = [...active.table.querySelectorAll('colgroup col')].reduce((sum, c) => {
+            return sum + (parseInt(c.style.width, 10) || c.getBoundingClientRect().width || 0);
+        }, 0);
+        active.table.style.minWidth = `${Math.max(total, 320)}px`;
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!active) return;
+        const px = parseInt(active.col.style.width, 10) || active.startWidth;
+        savePurchaseHistoryColumnWidth(active.colId, px);
+        document.body.classList.remove('purchase-history-col-resizing');
+        active = null;
+    });
 }
 
 function readColumnSettingsFromModal(tableKey) {
@@ -1760,7 +1921,19 @@ function readColumnSettingsFromModal(tableKey) {
             hidden.push(input.dataset.colId);
         }
     });
-    return { order, hidden };
+    const result = { order, hidden };
+    if (tableKey === 'purchaseHistory') {
+        const widths = getPurchaseHistoryColumnWidthsMap();
+        list.querySelectorAll('.column-settings-width-select').forEach(select => {
+            const colId = select.dataset.colId;
+            if (!colId) return;
+            if (select.dataset.widthDirty === '1' || typeof widths[colId] !== 'number') {
+                widths[colId] = select.value;
+            }
+        });
+        result.widths = widths;
+    }
+    return result;
 }
 
 function refreshTableAfterColumnChange(tableKey) {
@@ -1872,6 +2045,8 @@ function setupColumnSettingsModal() {
         else target.before(dragItem);
         target.classList.remove('column-settings-drop-target');
     });
+
+    setupPurchaseHistoryColumnResize();
 }
 
 function renderUseHistoryHeaderCell(colId) {
@@ -1928,33 +2103,27 @@ function getPurchaseHistoryColumnLabel(colId) {
 }
 
 function getPurchaseHistoryTableMinWidth(columns) {
+    const widths = getPurchaseHistoryColumnWidthsMap();
     let min = 0;
     columns.forEach(colId => {
-        if (colId === 'date') min += 120;
-        else if (colId === 'actions') min += 420;
-        else if (colId === 'bought') min += 220;
-        else if (['supply', 'supplyDuration', 'remaining'].includes(colId)) min += 180;
-        else min += 96;
+        min += getPurchaseHistoryColumnWidthPx(colId, widths[colId]);
     });
-    return Math.max(min, 640);
+    return Math.max(min, 320);
 }
 
-function phTh(colId) {
+function renderPurchaseHistoryHeaderCell(colId) {
     const label = getPurchaseHistoryColumnLabel(colId);
+    const resize = `<span class="purchase-history-col-resize" data-col-resize="${colId}" role="separator" aria-orientation="vertical" aria-label="Resize ${escapeAttr(label)} column"></span>`;
     if (colId === 'actions') {
-        return `<th class="actions-cell" data-col="${colId}">${label}</th>`;
+        return `<th class="actions-cell" data-col="${colId}"><span class="purchase-history-th-label">${label}</span>${resize}</th>`;
     }
-    return `<th data-col="${colId}">${label}</th>`;
+    return `<th data-col="${colId}"><span class="purchase-history-th-label">${label}</span>${resize}</th>`;
 }
 
 function phTd(colId, content, className = '') {
     const label = getPurchaseHistoryColumnLabel(colId);
     const cls = className ? ` class="${className}"` : '';
     return `<td${cls} data-col="${colId}" data-label="${escapeAttr(label)}">${content}</td>`;
-}
-
-function renderPurchaseHistoryHeaderCell(colId) {
-    return phTh(colId);
 }
 
 function renderPurchaseBoughtMetaInner(purchase) {
@@ -8681,7 +8850,8 @@ function renderPurchaseHistory(substanceId, containerId = null) {
     const cur = getCurrencySymbol();
     const purchaseColumns = getEffectiveColumnOrder('purchaseHistory');
     const tableMinWidth = getPurchaseHistoryTableMinWidth(purchaseColumns);
-    let html = `<div class="table-scroll purchase-history-scroll"><table class="session-table history-table purchase-history-table inventory-history-table" style="min-width:${tableMinWidth}px"><thead><tr class="inventory-history-header">`;
+    const colgroup = buildPurchaseHistoryColgroup(purchaseColumns);
+    let html = `<div class="table-scroll purchase-history-scroll"><table class="session-table history-table purchase-history-table inventory-history-table" style="min-width:${tableMinWidth}px;table-layout:fixed">${colgroup}<thead><tr class="inventory-history-header">`;
     purchaseColumns.forEach(colId => {
         html += renderPurchaseHistoryHeaderCell(colId);
     });

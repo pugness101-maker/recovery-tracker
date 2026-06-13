@@ -4969,6 +4969,44 @@ body.locked .bottom-nav {
     color: var(--text-secondary);
 }
 
+.column-settings-item-with-width {
+    flex-wrap: wrap;
+}
+
+.column-settings-item-with-width .column-settings-label {
+    flex: 1 1 160px;
+}
+
+.column-settings-width {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    flex: 0 0 auto;
+}
+
+.column-settings-width-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.column-settings-width-select {
+    min-width: 64px;
+    padding: 4px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 0.8rem;
+}
+
+.column-settings-width-hint {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
 .column-settings-actions {
     justify-content: flex-end;
 }
@@ -5194,7 +5232,7 @@ body.locked .bottom-nav {
 
 .purchase-history-table.inventory-history-table {
     width: 100%;
-    table-layout: auto;
+    table-layout: fixed;
     min-width: 0;
 }
 
@@ -5203,41 +5241,52 @@ body.locked .bottom-nav {
     white-space: normal;
     vertical-align: top;
     padding: 10px 8px;
+    overflow-wrap: anywhere;
+}
+
+.purchase-history-table.inventory-history-table th {
+    position: relative;
 }
 
 .purchase-history-table.inventory-history-table [data-col="date"] {
-    min-width: 110px;
-    width: 120px;
     white-space: nowrap;
 }
 
-.purchase-history-table.inventory-history-table [data-col="supply"] {
-    min-width: 220px;
+.purchase-history-th-label {
+    display: inline-block;
+    padding-right: 10px;
 }
 
-.purchase-history-table.inventory-history-table [data-col="supplyDuration"] {
-    min-width: 140px;
+.purchase-history-col-resize {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 10px;
+    height: 100%;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
 }
 
-.purchase-history-table.inventory-history-table [data-col="bought"],
-.purchase-history-table.inventory-history-table [data-col="remaining"] {
-    min-width: 220px;
+.purchase-history-col-resize::after {
+    content: '';
+    position: absolute;
+    top: 20%;
+    bottom: 20%;
+    right: 3px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--border);
 }
 
-.purchase-history-table.inventory-history-table [data-col="substance"] {
-    min-width: 120px;
+.purchase-history-col-resize:hover::after,
+body.purchase-history-col-resizing .purchase-history-col-resize::after {
+    background: var(--accent);
 }
 
-.purchase-history-table.inventory-history-table [data-col="cost"],
-.purchase-history-table.inventory-history-table [data-col="store"],
-.purchase-history-table.inventory-history-table [data-col="break"],
-.purchase-history-table.inventory-history-table [data-col="usedPct"] {
-    min-width: 96px;
-}
-
-.purchase-history-table.inventory-history-table [data-col="actions"] {
-    min-width: 420px;
-    width: 420px;
+body.purchase-history-col-resizing {
+    cursor: col-resize;
+    user-select: none;
 }
 
 .purchase-history-table.inventory-history-table th.actions-cell,
