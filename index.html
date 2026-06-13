@@ -320,7 +320,7 @@
                         <input type="hidden" id="use-type" value="quick">
                     </div>
 
-                    <div class="use-log-field-block">
+                    <div class="use-log-field-block" id="use-transaction-type-block">
                         <span class="use-log-field-label">Transaction Type</span>
                         <div class="use-tx-pills" role="group" aria-label="Transaction type">
                             <button type="button" class="use-tx-pill active" data-tx="use" onclick="setUseTransactionType('use')">Personal Use</button>
@@ -345,17 +345,21 @@
                             <select id="use-substance" required></select>
                         </div>
 
-                        <div class="use-log-datetime-grid">
+                        <div class="use-log-datetime-grid" id="use-datetime-grid">
                             <div class="form-group use-log-compact use-date-field">
-                                <label for="use-date">Date</label>
+                                <label for="use-date" id="use-date-label">Date</label>
                                 <input type="date" id="use-date" required>
                             </div>
                             <div class="form-group use-log-compact">
-                                <label for="use-start-time">Start</label>
+                                <label for="use-start-time" id="use-start-time-label">Start</label>
                                 <input type="time" id="use-start-time" required>
                             </div>
-                            <div class="form-group use-log-compact use-end-time-field hidden">
-                                <label for="use-end-time">End</label>
+                            <div class="form-group use-log-compact use-end-date-field hidden" id="use-end-date-group">
+                                <label for="use-end-date">End date</label>
+                                <input type="date" id="use-end-date">
+                            </div>
+                            <div class="form-group use-log-compact use-end-time-field hidden" id="use-end-time-group">
+                                <label for="use-end-time">End time</label>
                                 <input type="time" id="use-end-time">
                             </div>
                         </div>
