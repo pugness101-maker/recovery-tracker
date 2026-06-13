@@ -93,6 +93,135 @@ const SUPPLY_LOW_REMAINING_PCT = 0.25;
 const INVENTORY_EPS = 0.0001;
 const PERCENT_REMAINING_UNITS = new Set(['puffs', 'pods', 'disposable']);
 const VAPE_NICOTINE_ID = 'vape-nicotine';
+const DEFAULT_MAIN_SUBSTANCE_ID = 'cigarettes';
+
+const TAPER_RELAPSE_NOTE = 'Going over your limit doesn\'t erase your progress. Every day is a new chance—no shame, just data.';
+const TAPER_STANDARD_REDUCTION_TYPES = ['reduce-amount', 'reduce-percent', 'fixed', 'manual-weekly'];
+const TAPER_VAPE_REDUCTION_TYPES = ['reduce-puffs', 'reduce-buying', 'reduce-nicotine', 'manual-weekly'];
+const TAPER_REDUCTION_LABELS = {
+    'reduce-amount': 'Reduce by amount',
+    'reduce-percent': 'Reduce by percent',
+    fixed: 'Fixed daily limit',
+    'manual-weekly': 'Manual weekly plan',
+    'reduce-puffs': 'Reduce by puffs',
+    'reduce-buying': 'Reduce buying',
+    'reduce-nicotine': 'Reduce nicotine strength'
+};
+const TAPER_LEGACY_REDUCTION_ALIASES = {
+    'step-weekly': '__legacy_step__',
+    'weekly-step-down': '__legacy_step__',
+    weeklyStepDown: '__legacy_step__',
+    stepDown: '__legacy_step__',
+    'reduce-by-amount': 'reduce-amount',
+    reduceByAmount: 'reduce-amount',
+    'reduce-by-percent': 'reduce-percent',
+    reduceByPercent: 'reduce-percent',
+    'reduce-by-puffs': 'reduce-puffs',
+    reduceByPuffs: 'reduce-puffs',
+    'reduce-buying': 'reduce-buying',
+    reduceBuying: 'reduce-buying',
+    'reduce-nicotine': 'reduce-nicotine',
+    reduceNicotine: 'reduce-nicotine',
+    'manual-weekly': 'manual-weekly',
+    manualWeekly: 'manual-weekly'
+};
+
+function normalizeTaperReductionTypeValue(type) {
+    if (type == null || type === '') return type;
+    return TAPER_LEGACY_REDUCTION_ALIASES[type] ?? type;
+}
+
+function isReducePuffsPlan(plan) {
+    return plan?.reductionType === 'reduce-puffs';
+}
+
+function isReduceBuyingPlan(plan) {
+    return plan?.reductionType === 'reduce-buying';
+}
+
+function isReduceNicotinePlan(plan) {
+    return plan?.reductionType === 'reduce-nicotine';
+}
+
+function isVapeSpecificTaperPlan(plan) {
+    return isReducePuffsPlan(plan) || isReduceBuyingPlan(plan) || isReduceNicotinePlan(plan);
+}
+
+function getPuffReductionMode(plan) {
+    return plan?.puffReductionMode === 'percent' ? 'percent' : 'amount';
+}
+
+function migrateLegacyTaperReductionType(plan, substanceId) {
+    if (!plan) return;
+
+    let type = normalizeTaperReductionTypeValue(plan.reductionType)
+        || normalizeTaperReductionTypeValue(plan.planType);
+
+    if (type === '__legacy_step__' || type === 'step-weekly') {
+        plan.reductionType = substanceId === VAPE_NICOTINE_ID ? 'reduce-puffs' : 'reduce-amount';
+        if (substanceId === VAPE_NICOTINE_ID) {
+            plan.puffReductionMode = plan.puffReductionMode || 'amount';
+        }
+        return;
+    }
+
+    plan.reductionType = type
+        || (substanceId === VAPE_NICOTINE_ID ? 'reduce-puffs' : 'reduce-amount');
+
+    if (substanceId === VAPE_NICOTINE_ID) {
+        if (['reduce-amount', 'reduce-percent', 'fixed'].includes(plan.reductionType)) {
+            const previousType = plan.reductionType;
+            plan.reductionType = 'reduce-puffs';
+            if (!plan.puffReductionMode) {
+                plan.puffReductionMode = previousType === 'reduce-percent' ? 'percent' : 'amount';
+            }
+        } else if (!TAPER_VAPE_REDUCTION_TYPES.includes(plan.reductionType)) {
+            plan.reductionType = 'reduce-puffs';
+            plan.puffReductionMode = plan.puffReductionMode || 'amount';
+        }
+    } else if (['reduce-puffs', 'reduce-buying', 'reduce-nicotine'].includes(plan.reductionType)) {
+        plan.reductionType = 'reduce-amount';
+    }
+}
+
+function repairTaperPlanDefaults(plan, substanceId) {
+    if (!plan) return;
+    const now = new Date().toISOString();
+    plan.substanceId = substanceId;
+    plan.startDate = plan.startDate || now.slice(0, 10);
+    plan.reductionType = substanceId === VAPE_NICOTINE_ID ? 'reduce-puffs' : 'reduce-amount';
+    plan.isPaused = !!plan.isPaused;
+    plan.createdAt = plan.createdAt || now;
+    plan.updatedAt = now;
+    plan.goalDailyAverage = plan.goalDailyAverage ?? 0;
+    plan.weeklyTargets = Array.isArray(plan.weeklyTargets) ? plan.weeklyTargets : [];
+    plan.manualWeeklyTargets = Array.isArray(plan.manualWeeklyTargets) ? plan.manualWeeklyTargets : [];
+}
+
+function migrateTaperPlansSafely(data) {
+    if (!data.taperPlans || typeof data.taperPlans !== 'object') {
+        data.taperPlans = {};
+        return;
+    }
+    Object.entries(data.taperPlans).forEach(([substanceId, plan]) => {
+        if (!plan || typeof plan !== 'object') {
+            delete data.taperPlans[substanceId];
+            return;
+        }
+        try {
+            migrateTaperPlan(plan, substanceId, data);
+        } catch (err) {
+            console.warn('Taper plan migration failed for', substanceId, err);
+            try {
+                repairTaperPlanDefaults(plan, substanceId);
+                migrateTaperPlan(plan, substanceId, data);
+            } catch (repairErr) {
+                console.warn('Taper plan repair failed for', substanceId, repairErr);
+                delete data.taperPlans[substanceId];
+            }
+        }
+    });
+}
 
 const RECOVERY_TAPER_LABELS = {
     under: 'On track',
@@ -464,9 +593,7 @@ function normalizeAppData(data) {
     ensureAppDataSettings(data);
     ensureAppDataMigrations(data);
     normalizeMainSubstances(data);
-    Object.entries(data.taperPlans || {}).forEach(([substanceId, plan]) => {
-        migrateTaperPlan(plan, substanceId, data);
-    });
+    migrateTaperPlansSafely(data);
     recalculateAllBreaksForData(data);
     recalculateAllBuyBreaksForData(data);
     delete data.supportContacts;
@@ -1372,17 +1499,20 @@ function setInputValue(id, value) {
 }
 
 function getMainSubstance() {
+    if (!appData?.substances?.length) return null;
     return appData.substances.find(s => s.active && s.isMain) || getActiveSubstances()[0] || null;
 }
 
 function getMainSubstanceId() {
-    return getMainSubstance()?.id || null;
+    if (!appData?.substances?.length) return DEFAULT_MAIN_SUBSTANCE_ID;
+    return getMainSubstance()?.id || DEFAULT_MAIN_SUBSTANCE_ID;
 }
 
 function resolveStartupSubstanceId() {
+    if (!appData?.substances?.length) return DEFAULT_MAIN_SUBSTANCE_ID;
     const mainId = getMainSubstanceId();
     if (mainId) return mainId;
-    return appData.substances.find(s => s.active)?.id || 'cigarettes';
+    return appData.substances.find(s => s.active)?.id || DEFAULT_MAIN_SUBSTANCE_ID;
 }
 
 function sortSubstancesMainFirst(list) {
@@ -1392,6 +1522,26 @@ function sortSubstancesMainFirst(list) {
         return a.name.localeCompare(b.name);
     });
 }
+
+let appData;
+try {
+    appData = loadData();
+} catch (error) {
+    console.error('Failed to load app data, using defaults:', error);
+    appData = typeof structuredClone === 'function'
+        ? structuredClone(defaultData)
+        : JSON.parse(JSON.stringify(defaultData));
+    try {
+        appData = normalizeAppData(appData);
+    } catch (normalizeError) {
+        console.error('Failed to normalize default app data:', normalizeError);
+    }
+}
+
+let currentSubstanceId = resolveStartupSubstanceId();
+let statsDateRangePreset = 'last-7';
+let statsCustomStartDate = '';
+let statsCustomEndDate = '';
 
 document.addEventListener('DOMContentLoaded', () => {
     try {
@@ -3350,12 +3500,6 @@ function migratePurchaseInventory(purchase, logs, data) {
     if (!purchase.createdAt) purchase.createdAt = new Date().toISOString();
     if (!purchase.updatedAt) purchase.updatedAt = purchase.createdAt;
 }
-
-let appData = loadData();
-let currentSubstanceId = resolveStartupSubstanceId();
-let statsDateRangePreset = 'last-7';
-let statsCustomStartDate = '';
-let statsCustomEndDate = '';
 
 function findPurchase(id, data = appData) {
     return findPurchaseInData(id, data);
@@ -9337,61 +9481,8 @@ function updateLongestTimeBetween() {
 }
 
 // ——— Taper / Do Not Surpass ———
-const TAPER_RELAPSE_NOTE = 'Going over your limit doesn\'t erase your progress. Every day is a new chance—no shame, just data.';
-const TAPER_STANDARD_REDUCTION_TYPES = ['reduce-amount', 'reduce-percent', 'fixed', 'manual-weekly'];
-const TAPER_VAPE_REDUCTION_TYPES = ['reduce-puffs', 'reduce-buying', 'reduce-nicotine', 'manual-weekly'];
-const TAPER_REDUCTION_LABELS = {
-    'reduce-amount': 'Reduce by amount',
-    'reduce-percent': 'Reduce by percent',
-    fixed: 'Fixed daily limit',
-    'manual-weekly': 'Manual weekly plan',
-    'reduce-puffs': 'Reduce by puffs',
-    'reduce-buying': 'Reduce buying',
-    'reduce-nicotine': 'Reduce nicotine strength'
-};
-
 function getTaperReductionTypesForSubstance(substanceId) {
     return isVapeNicotineSubstanceId(substanceId) ? TAPER_VAPE_REDUCTION_TYPES : TAPER_STANDARD_REDUCTION_TYPES;
-}
-
-function isReducePuffsPlan(plan) {
-    return plan?.reductionType === 'reduce-puffs';
-}
-
-function isReduceBuyingPlan(plan) {
-    return plan?.reductionType === 'reduce-buying';
-}
-
-function isReduceNicotinePlan(plan) {
-    return plan?.reductionType === 'reduce-nicotine';
-}
-
-function isVapeSpecificTaperPlan(plan) {
-    return isReducePuffsPlan(plan) || isReduceBuyingPlan(plan) || isReduceNicotinePlan(plan);
-}
-
-function getPuffReductionMode(plan) {
-    return plan?.puffReductionMode === 'percent' ? 'percent' : 'amount';
-}
-
-function migrateLegacyTaperReductionType(plan, substanceId) {
-    if (plan.reductionType === 'step-weekly') {
-        plan.reductionType = 'reduce-amount';
-    }
-    if (isVapeNicotineSubstanceId(substanceId)) {
-        if (['reduce-amount', 'reduce-percent', 'fixed'].includes(plan.reductionType)) {
-            const previousType = plan.reductionType;
-            plan.reductionType = 'reduce-puffs';
-            if (!plan.puffReductionMode) {
-                plan.puffReductionMode = previousType === 'reduce-percent' ? 'percent' : 'amount';
-            }
-        } else if (!TAPER_VAPE_REDUCTION_TYPES.includes(plan.reductionType)) {
-            plan.reductionType = 'reduce-puffs';
-            plan.puffReductionMode = plan.puffReductionMode || 'amount';
-        }
-    } else if (['reduce-puffs', 'reduce-buying', 'reduce-nicotine'].includes(plan.reductionType)) {
-        plan.reductionType = 'reduce-amount';
-    }
 }
 
 function getVapeBaselinePuffsPerDay(substanceId, data = appData) {
