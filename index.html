@@ -1131,52 +1131,6 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="settingsEmergency">
-                    <button type="button" class="section-toggle" onclick="toggleSection('settingsEmergency')">
-                        <span>Emergency & Safety</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                <div class="settings-section">
-                    <div class="safety-warning">
-                        <strong>⚠️ Emergency Contact</strong>
-                        <p>If you experience overdose symptoms or severe withdrawal, call emergency services immediately.</p>
-                        <a href="tel:911" class="emergency-link">📞 Call 911</a>
-                    </div>
-                </div>
-
-                <div class="settings-section">
-                    <h3>Support Contacts</h3>
-                    <form id="contact-form" onsubmit="handleAddContact(event)">
-                        <div class="form-row">
-                            <div class="form-group">
-                                <label for="contact-name">Name</label>
-                                <input type="text" id="contact-name" required>
-                            </div>
-                            <div class="form-group">
-                                <label for="contact-phone">Phone</label>
-                                <input type="tel" id="contact-phone" required>
-                            </div>
-                        </div>
-                        <button type="submit" class="submit-btn">Add Contact</button>
-                    </form>
-                    <div id="support-contacts-list"></div>
-                </div>
-
-                <div class="settings-section">
-                    <h3>Reasons for Quitting</h3>
-                    <form id="reason-form" onsubmit="handleAddReason(event)">
-                        <div class="form-group">
-                            <label for="reason">Add Your Why</label>
-                            <input type="text" id="reason" placeholder="Why do you want to quit?" required>
-                        </div>
-                        <button type="submit" class="submit-btn">Add Reason</button>
-                    </form>
-                    <div id="reasons-list"></div>
-                </div>
-                    </div>
-                </div>
-
                 <div class="collapsible-section" data-section="settingsBackup">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsBackup')">
                         <span>Data Backup</span>

@@ -176,8 +176,6 @@ const defaultData = {
     },
     taperPlans: {},
     recoveryStreaks: {},
-    supportContacts: [],
-    reasons: [],
     privacy: {
         enabled: false,
         pinHash: '',
@@ -304,8 +302,6 @@ function migrateFromV1(v1) {
         },
         taperPlans,
         recoveryStreaks,
-        supportContacts: v1.supportContacts || [],
-        reasons: v1.reasons || [],
         privacy: v1.privacy || { ...defaultData.privacy }
     };
 }
@@ -472,6 +468,8 @@ function normalizeAppData(data) {
     });
     recalculateAllBreaksForData(data);
     recalculateAllBuyBreaksForData(data);
+    delete data.supportContacts;
+    delete data.reasons;
     return data;
 }
 
@@ -522,7 +520,6 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     dashRecoveryInsights: false,
     settingsSubstances: false,
     settingsStores: true,
-    settingsEmergency: true,
     settingsBackup: true,
     settingsDangerZone: true
 };
@@ -561,6 +558,7 @@ function ensureCollapsedSections(data) {
     if (stored.taperCalendarPreview !== undefined && stored.taperWeeklyCalendar === undefined) {
         stored.taperWeeklyCalendar = stored.taperCalendarPreview;
     }
+    delete stored.settingsEmergency;
 }
 
 function toggleSection(sectionKey) {
@@ -1385,8 +1383,6 @@ function initializeApp() {
     updateDashboard();
     renderRecentUseList();
     refreshTaperDashboard();
-    renderSupportContacts();
-    renderReasons();
     renderSubstancesList();
     renderStoresList();
     setupBuyTrackerForm();
@@ -1426,8 +1422,6 @@ function refreshAppAfterDataChange() {
     refreshTaperDashboard();
     renderSubstancesList();
     renderStoresList();
-    renderSupportContacts();
-    renderReasons();
     refreshAllRecoveryStreaks();
 }
 
@@ -9960,75 +9954,6 @@ function getCurrencySymbol() {
     return '$';
 }
 
-function renderSupportContacts() {
-    const container = document.getElementById('support-contacts-list');
-    if (!container) return;
-    container.innerHTML = '';
-    if (!appData.supportContacts.length) {
-        container.innerHTML = '<p class="empty-hint">No contacts added</p>';
-        return;
-    }
-    appData.supportContacts.forEach((contact, index) => {
-        const item = document.createElement('div');
-        item.className = 'list-item';
-        item.innerHTML = `<div><strong>${contact.name}</strong><br><a href="tel:${contact.phone}">${contact.phone}</a></div><button class="delete-btn" onclick="deleteContact(${index})">Remove</button>`;
-        container.appendChild(item);
-    });
-}
-
-function handleAddContact(e) {
-    e.preventDefault();
-    const name = document.getElementById('contact-name')?.value?.trim();
-    const phone = document.getElementById('contact-phone')?.value?.trim();
-    if (!name || !phone) return;
-    appData.supportContacts.push({ id: Date.now(), name, phone });
-    saveData(appData);
-    e.target.reset();
-    renderSupportContacts();
-}
-
-function deleteContact(index) {
-    if (confirm('Remove this contact?')) {
-        appData.supportContacts.splice(index, 1);
-        saveData(appData);
-        renderSupportContacts();
-    }
-}
-
-function renderReasons() {
-    const container = document.getElementById('reasons-list');
-    if (!container) return;
-    container.innerHTML = '';
-    if (!appData.reasons.length) {
-        container.innerHTML = '<p class="empty-hint">No reasons added yet</p>';
-        return;
-    }
-    appData.reasons.forEach((reason, index) => {
-        const item = document.createElement('div');
-        item.className = 'list-item';
-        item.innerHTML = `<div>💪 ${reason}</div><button class="delete-btn" onclick="deleteReason(${index})">Remove</button>`;
-        container.appendChild(item);
-    });
-}
-
-function handleAddReason(e) {
-    e.preventDefault();
-    const reason = document.getElementById('reason')?.value?.trim();
-    if (!reason) return;
-    appData.reasons.push(reason);
-    saveData(appData);
-    e.target.reset();
-    renderReasons();
-}
-
-function deleteReason(index) {
-    if (confirm('Remove this reason?')) {
-        appData.reasons.splice(index, 1);
-        saveData(appData);
-        renderReasons();
-    }
-}
-
 function formatDate(dateStr) {
     return formatLocalDate(dateStr);
 }
@@ -10122,8 +10047,6 @@ function cleanExportData(data) {
         },
 
         recoveryStreaks: data.recoveryStreaks || {},
-        supportContacts: data.supportContacts || [],
-        reasons: data.reasons || [],
         migrations: data.migrations || {}
     };
 }
@@ -10215,7 +10138,6 @@ function mergeImportedData(current, imported) {
     merged.logs = mergeArrayById(merged.logs, imported.logs);
     merged.purchases = mergeArrayById(merged.purchases, imported.purchases);
     merged.cravings = mergeArrayById(merged.cravings || [], imported.cravings || []);
-    merged.supportContacts = mergeArrayById(merged.supportContacts || [], imported.supportContacts || []);
     merged.settings = {
         ...merged.settings,
         ...imported.settings,
@@ -10226,10 +10148,6 @@ function mergeImportedData(current, imported) {
     };
     merged.taperPlans = { ...(merged.taperPlans || {}), ...(imported.taperPlans || {}) };
     merged.recoveryStreaks = { ...(merged.recoveryStreaks || {}), ...(imported.recoveryStreaks || {}) };
-    if (Array.isArray(imported.reasons)) {
-        const reasonSet = new Set([...(merged.reasons || []), ...imported.reasons]);
-        merged.reasons = [...reasonSet];
-    }
     if (imported.privacy && typeof imported.privacy === 'object') {
         merged.privacy = { ...merged.privacy, ...imported.privacy };
     }

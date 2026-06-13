@@ -88,43 +88,6 @@ header h1 {
     color: #ff8a80;
 }
 
-.safety-warning {
-    background: rgba(255, 152, 0, 0.15);
-    border: 2px solid var(--warning);
-    border-radius: 12px;
-    padding: 16px;
-    margin-bottom: 16px;
-}
-
-.safety-warning strong {
-    display: block;
-    margin-bottom: 8px;
-    color: var(--warning);
-    font-size: 1rem;
-}
-
-.safety-warning p {
-    margin: 8px 0;
-    font-size: 0.9rem;
-    color: var(--text-secondary);
-}
-
-.emergency-link {
-    display: inline-block;
-    background: var(--warning);
-    color: var(--bg-dark);
-    padding: 10px 20px;
-    border-radius: 8px;
-    text-decoration: none;
-    font-weight: bold;
-    margin-top: 8px;
-    transition: opacity 0.2s;
-}
-
-.emergency-link:hover {
-    opacity: 0.9;
-}
-
 .tab {
     display: none;
 }
