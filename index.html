@@ -331,15 +331,6 @@
                         <input type="hidden" id="use-transaction-type" value="use">
                     </div>
 
-                    <div class="use-log-field-block hidden" id="use-log-mode-group">
-                        <span class="use-log-field-label">Log Mode</span>
-                        <div class="use-mode-pills" role="group" aria-label="Log mode">
-                            <button type="button" class="use-mode-pill active" data-mode="amount" onclick="setUseLogMode('amount')">Amount</button>
-                            <button type="button" class="use-mode-pill" data-mode="percent_remaining" onclick="setUseLogMode('percent_remaining')">Log by % remaining</button>
-                        </div>
-                        <input type="hidden" id="use-log-mode" value="amount">
-                    </div>
-
                     <div class="use-log-field-block hidden" id="use-adjustment-direction-group">
                         <span class="use-log-field-label">Adjustment</span>
                         <div class="use-adj-pills" role="group" aria-label="Adjustment direction">
@@ -381,16 +372,12 @@
                             </div>
                         </div>
 
-                        <div id="use-percent-remaining-group" class="use-percent-remaining-group hidden">
+                        <div id="use-vape-fields-group" class="use-vape-fields-group hidden">
                             <div class="form-group use-log-compact">
-                                <label for="use-percent-purchase">Vape / Inventory Item</label>
-                                <select id="use-percent-purchase"></select>
+                                <label for="use-percent-after">Current % left after this use (optional)</label>
+                                <input type="number" id="use-percent-after" min="0" max="100" step="0.1" placeholder="e.g. 85">
                             </div>
-                            <div class="form-group use-log-compact">
-                                <label for="use-percent-left">Current % left</label>
-                                <input type="number" id="use-percent-left" min="0" max="100" step="0.1" placeholder="e.g. 85">
-                            </div>
-                            <p id="use-percent-preview" class="use-supply-preview">—</p>
+                            <p id="use-vape-preview" class="use-supply-preview">—</p>
                         </div>
 
                         <div class="form-group use-log-compact hidden" id="use-gift-party-group">
@@ -420,7 +407,7 @@
                                 <select id="use-purchase-select"></select>
                             </div>
                             <p id="use-purchase-preview" class="use-supply-preview hidden">—</p>
-                            <div class="form-group use-log-compact">
+                            <div class="form-group use-log-compact" id="use-count-group">
                                 <label for="use-count">Count (lines/hits/drinks)</label>
                                 <input type="number" id="use-count" min="0" step="1" placeholder="Optional">
                             </div>
@@ -959,8 +946,22 @@
                             <input type="date" id="buy-date" required>
                         </div>
                         <div class="form-group">
+                            <label for="buy-time">Time</label>
+                            <input type="time" id="buy-time" value="12:00">
+                        </div>
+                        <div class="form-group">
                             <label for="buy-quantity">Quantity Bought</label>
                             <input type="number" id="buy-quantity" min="0.01" step="0.01" required>
+                        </div>
+                    </div>
+                    <div id="buy-vape-started-group" class="form-row hidden">
+                        <div class="form-group">
+                            <label for="buy-started-date">Started Using (date)</label>
+                            <input type="date" id="buy-started-date">
+                        </div>
+                        <div class="form-group">
+                            <label for="buy-started-time">Started Using (time)</label>
+                            <input type="time" id="buy-started-time">
                         </div>
                     </div>
                     <div class="form-row">

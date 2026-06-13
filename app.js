@@ -92,6 +92,7 @@ const SESSION_LONG_BREAK_HOURS = 12;
 const SUPPLY_LOW_REMAINING_PCT = 0.25;
 const INVENTORY_EPS = 0.0001;
 const PERCENT_REMAINING_UNITS = new Set(['puffs', 'pods', 'disposable']);
+const VAPE_NICOTINE_ID = 'vape-nicotine';
 
 const RECOVERY_TAPER_LABELS = {
     under: 'On track',
@@ -470,6 +471,7 @@ function normalizeAppData(data) {
     recalculateAllBuyBreaksForData(data);
     delete data.supportContacts;
     delete data.reasons;
+    migrateVapeDataV1(data);
     return data;
 }
 
@@ -1201,8 +1203,12 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
             return `<td>${breakCell}</td>`;
         case 'actions': {
             const pid = normalizePurchaseId(purchase.id);
+            const markEmptyBtn = isVapePuffPurchase(purchase) && remaining > INVENTORY_EPS
+                ? `<button type="button" class="secondary-btn" data-mark-vape-empty="${escapeAttr(pid)}">Mark empty / 0%</button>`
+                : '';
             return `<td class="actions-cell purchase-history-actions-cell">
                 <button type="button" class="secondary-btn purchase-expand-btn" data-purchase-toggle="${escapeAttr(pid)}" data-toggle-purchase-logs="${escapeAttr(pid)}" aria-expanded="${expanded ? 'true' : 'false'}">${toggleLabel}</button>
+                ${markEmptyBtn}
                 <button type="button" class="secondary-btn" data-edit-purchase="${escapeAttr(pid)}">Edit</button>
                 <button type="button" class="delete-btn" data-delete-purchase="${escapeAttr(pid)}">Delete</button>
             </td>`;
@@ -1582,7 +1588,7 @@ function updateUseUnitDropdown() {
         unitSelect.appendChild(option);
     });
     if (sub?.defaultUnit) unitSelect.value = sub.defaultUnit;
-    updateUseLogModeUI();
+    updateVapeUseFormUI();
 }
 
 function updateBuyUnitDropdown() {
@@ -1599,6 +1605,7 @@ function updateBuyUnitDropdown() {
         unitSelect.appendChild(option);
     });
     if (sub?.defaultUnit) unitSelect.value = sub.defaultUnit;
+    updateBuyVapeFieldsVisibility();
 }
 
 function updateQuickActions() {
@@ -2544,6 +2551,12 @@ function setupPurchaseHistoryActions() {
         if (toggleBtn) {
             e.preventDefault();
             togglePurchaseLinkedLogs(toggleBtn.getAttribute('data-toggle-purchase-logs'));
+            return;
+        }
+        const markEmptyBtn = e.target.closest('[data-mark-vape-empty]');
+        if (markEmptyBtn) {
+            e.preventDefault();
+            markVapePurchaseEmpty(markEmptyBtn.getAttribute('data-mark-vape-empty'));
         }
     });
 }
@@ -2742,11 +2755,8 @@ function formatLogHistoryLabel(entry, sub) {
         const dir = getAdjustmentDirection(entry) === 'remove' ? '−' : '+';
         return `📦 Inventory ${dir}${amount}${unit}`;
     }
-    if (entry.logMode === 'percent_remaining' && entry.percentRemaining != null) {
-        const pctLabel = Number.isInteger(entry.percentRemaining)
-            ? entry.percentRemaining
-            : parseFloat(entry.percentRemaining).toFixed(1);
-        return `💨 ${pctLabel}% left — ${amount}${unit} used ${sub?.name || 'Unknown'}`;
+    if (isVapeUseLog(entry)) {
+        return formatVapeUseSummary(entry, sub);
     }
     const typeLabel = getUseLogType(entry) === 'session' ? '⏱️ Session' : '⚡ Quick Use';
     return `${typeLabel} ${sub?.icon || ''} ${amount} ${unit} ${sub?.name || 'Unknown'}`;
@@ -2795,11 +2805,10 @@ function setUseTransactionType(tx) {
 
     if (isNonUse) {
         setUseLogType('quick');
-        setUseLogMode('amount');
     } else {
         updateUseEndTimeVisibility();
     }
-    updateUseLogModeUI();
+    updateVapeUseFormUI();
     updateUsePurchaseLinkUI();
 }
 
@@ -2831,7 +2840,7 @@ function getUseCreatedAt(entry) {
     return entry.createdAt || entry.timestamp || new Date().toISOString();
 }
 
-function buildUseEntryFromForm(percentCalc = null) {
+function buildUseEntryFromForm(vapeCalc = null) {
     const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
     const isGift = transactionType === 'gift_given' || transactionType === 'gift_received';
     const isAdjustment = transactionType === 'inventory_adjustment';
@@ -2840,7 +2849,7 @@ function buildUseEntryFromForm(percentCalc = null) {
     const date = document.getElementById('use-date')?.value;
     const startTime = document.getElementById('use-start-time')?.value || '12:00';
     const endTime = document.getElementById('use-end-time')?.value;
-    const percentMode = getUseLogMode() === 'percent_remaining' && useFormSupportsPercentRemaining();
+    const isVapeUse = isVapeNicotineSubstanceId(substanceId) && transactionType === 'use';
 
     let amount;
     let unit;
@@ -2850,14 +2859,14 @@ function buildUseEntryFromForm(percentCalc = null) {
     let percentRemaining;
     let previousRemainingBeforeLog;
 
-    if (percentMode && percentCalc) {
-        amount = percentCalc.isCorrection ? 0 : Math.max(0, percentCalc.used);
-        unit = percentCalc.unit;
-        linkedPurchaseId = percentCalc.purchaseId;
-        inventoryAffects = true;
-        logMode = 'percent_remaining';
-        percentRemaining = percentCalc.percentLeft;
-        previousRemainingBeforeLog = percentCalc.previousRemaining;
+    if (isVapeUse && vapeCalc && !vapeCalc.error) {
+        amount = vapeCalc.puffsUsed;
+        unit = 'puffs';
+        linkedPurchaseId = vapeCalc.purchaseId;
+        inventoryAffects = getUsePurchaseLinkMode() !== 'none' && !!linkedPurchaseId;
+        logMode = 'vape_puffs';
+        percentRemaining = vapeCalc.percentAfter;
+        previousRemainingBeforeLog = vapeCalc.previousRemaining;
     } else {
         amount = parseFloat(document.getElementById('use-amount')?.value);
         unit = document.getElementById('use-unit')?.value;
@@ -2926,7 +2935,7 @@ function resetUseFormAfterSave() {
     setUsePurchaseLinkMode('auto');
     setUseTransactionType('use');
     setUseAdjustmentDirection('add');
-    setUseLogMode('amount');
+    updateVapeUseFormUI();
 }
 
 function refreshUseLogRelatedViews() {
@@ -3367,6 +3376,384 @@ function formatPercentRemainingLabel(remaining, bought) {
     return `${label}% left`;
 }
 
+function isVapeNicotineSubstanceId(substanceId) {
+    return substanceId === VAPE_NICOTINE_ID;
+}
+
+function isVapeNicotineSubstance(sub) {
+    return sub?.id === VAPE_NICOTINE_ID;
+}
+
+function isVapePuffUnit(unit) {
+    return isPercentRemainingUnit(unit);
+}
+
+function isVapePuffPurchase(purchase) {
+    return isVapeNicotineSubstanceId(getPurchaseSubstanceId(purchase)) && isVapePuffUnit(purchase?.unit);
+}
+
+function isVapeUseLog(log) {
+    return isPersonalUseLog(log)
+        && isVapeNicotineSubstanceId(getUseSubstanceId(log))
+        && (log.logMode === 'vape_puffs' || log.logMode === 'percent_remaining' || isVapePuffUnit(log.unit));
+}
+
+function shouldShowUseCountForSubstance(substanceId) {
+    return !isVapeNicotineSubstanceId(substanceId);
+}
+
+function getPurchaseDatetimeIso(purchase) {
+    const dt = parseLocalDateTime(purchase?.date, purchase?.time || '12:00');
+    return dt && !Number.isNaN(dt.getTime()) ? dt.toISOString() : new Date().toISOString();
+}
+
+function parsePurchaseStartedAt(purchase) {
+    if (purchase?.startedAt) {
+        const d = new Date(purchase.startedAt);
+        if (!Number.isNaN(d.getTime())) return d;
+    }
+    return parseLocalDateTime(purchase?.date, purchase?.time || '12:00');
+}
+
+function ensureVapePurchaseStartedAt(purchase, logEntry = null) {
+    if (!isVapePuffPurchase(purchase) || purchase.startedAt) return;
+    if (logEntry) {
+        purchase.startedAt = getUseEventTimestamp(logEntry.date, logEntry.startTime || logEntry.time);
+    } else {
+        purchase.startedAt = getPurchaseDatetimeIso(purchase);
+    }
+}
+
+function formatVapeDuration(ms) {
+    if (ms == null || ms < 0 || Number.isNaN(ms)) return '—';
+    const days = Math.floor(ms / 86400000);
+    const hours = Math.floor((ms % 86400000) / 3600000);
+    const minutes = Math.floor((ms % 3600000) / 60000);
+    if (days >= 1) return `${days} day${days === 1 ? '' : 's'} ${hours} hr${hours === 1 ? '' : 's'}`;
+    return `${hours} hr${hours === 1 ? '' : 's'} ${minutes} min${minutes === 1 ? '' : 's'}`;
+}
+
+function getVapePurchaseLifecycleMetrics(purchase) {
+    if (!isVapePuffPurchase(purchase)) return null;
+    const bought = getPurchaseQuantityBought(purchase);
+    const remaining = getPurchaseRemainingAmount(purchase);
+    const totalUsed = Math.max(0, bought - remaining);
+    const started = parsePurchaseStartedAt(purchase);
+    const finished = purchase.finishedAt ? new Date(purchase.finishedAt) : null;
+    let durationMs = null;
+    if (started && finished && !Number.isNaN(started.getTime()) && !Number.isNaN(finished.getTime())) {
+        durationMs = Math.max(0, finished.getTime() - started.getTime());
+    }
+    const durationDays = durationMs != null ? durationMs / 86400000 : null;
+    return {
+        started,
+        finished,
+        durationMs,
+        durationLabel: durationMs != null ? formatVapeDuration(durationMs) : '—',
+        totalUsed,
+        avgPuffsPerDay: durationDays != null && durationDays >= 1 ? totalUsed / durationDays : null,
+        avgPuffsPerHour: durationMs != null && durationDays != null && durationDays < 2 && durationMs > 0
+            ? totalUsed / (durationMs / 3600000)
+            : null
+    };
+}
+
+function reconcileVapePurchaseLifecycle(purchase, data = appData) {
+    if (!isVapePuffPurchase(purchase)) return;
+    ensureVapePurchaseStartedAt(purchase);
+    const remaining = getPurchaseRemainingAmount(purchase);
+    if (remaining <= INVENTORY_EPS) {
+        purchase.remainingAmount = 0;
+        purchase.isDepleted = true;
+        if (!purchase.finishedAt) {
+            const logs = getLogsForPurchase(purchase.id, data)
+                .filter(l => isPersonalUseLog(l) && !l.needsReview)
+                .sort((a, b) => getLogDatetimeMs(a) - getLogDatetimeMs(b));
+            const finishLog = logs.find(l => l.percentRemaining != null && parseFloat(l.percentRemaining) <= INVENTORY_EPS)
+                || logs[logs.length - 1];
+            if (finishLog) {
+                purchase.finishedAt = getUseEventTimestamp(finishLog.date, finishLog.startTime || finishLog.time);
+            }
+        }
+    } else {
+        purchase.isDepleted = false;
+        purchase.finishedAt = null;
+    }
+    purchase.updatedAt = new Date().toISOString();
+}
+
+function computeVapeUseFromForm(options = {}) {
+    const substanceId = document.getElementById('use-substance')?.value;
+    if (!isVapeNicotineSubstanceId(substanceId)) return null;
+
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    if (tx !== 'use') return null;
+
+    const linkMode = getUsePurchaseLinkMode();
+    const purchaseId = linkMode === 'none' ? null : resolveLinkedPurchaseId(substanceId, tx);
+    const purchase = purchaseId ? findPurchase(purchaseId) : null;
+    const totalPuffs = purchase ? getPurchaseQuantityBought(purchase) : null;
+
+    let previousRemaining = purchase ? getPurchaseRemainingAmount(purchase) : null;
+    if (options.editingId && purchase && options.previousRemainingBeforeLog != null) {
+        previousRemaining = options.previousRemainingBeforeLog;
+    }
+
+    const percentRaw = document.getElementById('use-percent-after')?.value;
+    const puffsRaw = document.getElementById('use-amount')?.value;
+    const hasPercent = percentRaw !== '' && percentRaw != null && Number.isFinite(parseFloat(percentRaw));
+    const hasPuffs = puffsRaw !== '' && puffsRaw != null && Number.isFinite(parseFloat(puffsRaw));
+
+    if (hasPercent) {
+        const percentAfter = parseFloat(percentRaw);
+        if (percentAfter < 0 || percentAfter > 100) {
+            return { error: 'Enter a valid percent left (0–100).' };
+        }
+        if (!purchase) return { error: 'Select a vape inventory item to use % left after this use.' };
+        const currentRemaining = Math.max(0, Math.min(totalPuffs, totalPuffs * (percentAfter / 100)));
+        const puffsUsed = Math.max(0, previousRemaining - currentRemaining);
+        return {
+            purchase,
+            purchaseId: purchase.id,
+            puffsUsed,
+            currentRemaining,
+            percentAfter,
+            previousRemaining,
+            totalPuffs,
+            fromPercent: true
+        };
+    }
+
+    if (!hasPuffs) return { error: 'Enter puffs used or current % left after this use.' };
+    const puffsUsed = Math.max(0, parseFloat(puffsRaw));
+    let currentRemaining = previousRemaining != null
+        ? Math.max(0, previousRemaining - puffsUsed)
+        : null;
+    if (purchase && totalPuffs > 0 && currentRemaining != null) {
+        currentRemaining = Math.max(0, Math.min(totalPuffs, currentRemaining));
+    }
+    const percentAfter = purchase && totalPuffs > 0 && currentRemaining != null
+        ? Math.round((currentRemaining / totalPuffs) * 1000) / 10
+        : null;
+    return {
+        purchase,
+        purchaseId: purchase?.id || null,
+        puffsUsed,
+        currentRemaining,
+        percentAfter,
+        previousRemaining,
+        totalPuffs,
+        fromPercent: false
+    };
+}
+
+function updateVapeUsePreview() {
+    const preview = document.getElementById('use-vape-preview');
+    if (!preview) return;
+    const substanceId = document.getElementById('use-substance')?.value;
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    if (!isVapeNicotineSubstanceId(substanceId) || tx !== 'use') {
+        preview.textContent = '—';
+        return;
+    }
+    const editingEntry = editingUseId ? findUseEntry(editingUseId) : null;
+    const calc = computeVapeUseFromForm({
+        editingId: editingUseId,
+        previousRemainingBeforeLog: editingEntry?.previousRemainingBeforeLog
+    });
+    if (!calc || calc.error) {
+        preview.textContent = calc?.error || 'Enter puffs used or optional % left after this use.';
+        return;
+    }
+    if (calc.purchase && calc.currentRemaining != null) {
+        const pct = calc.percentAfter != null ? calc.percentAfter : getPurchasePercentRemaining(calc.purchase);
+        preview.textContent = `Will log ${formatAmount(calc.puffsUsed)} puffs used → ${formatAmount(calc.currentRemaining)} puffs remaining (${pct}% left).`;
+        return;
+    }
+    preview.textContent = `Will log ${formatAmount(calc.puffsUsed)} puffs used.`;
+}
+
+function updateVapeUseFormUI() {
+    const substanceId = document.getElementById('use-substance')?.value;
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    const isVapeUse = isVapeNicotineSubstanceId(substanceId) && tx === 'use';
+    const vapeGroup = document.getElementById('use-vape-fields-group');
+    const amountLabel = document.getElementById('use-amount-label');
+    const amountInput = document.getElementById('use-amount');
+    const unitSelect = document.getElementById('use-unit');
+    const countGroup = document.getElementById('use-count-group');
+
+    vapeGroup?.classList.toggle('hidden', !isVapeUse);
+    if (amountLabel) amountLabel.textContent = isVapeUse ? 'Puffs used' : 'Amount';
+    if (amountInput) {
+        amountInput.step = isVapeUse ? '1' : '0.01';
+        amountInput.min = '0';
+    }
+    if (isVapeUse && unitSelect) {
+        if (![...unitSelect.options].some(o => o.value === 'puffs')) {
+            const option = document.createElement('option');
+            option.value = 'puffs';
+            option.textContent = 'puffs';
+            unitSelect.appendChild(option);
+        }
+        unitSelect.value = 'puffs';
+        unitSelect.disabled = true;
+    } else if (unitSelect) {
+        unitSelect.disabled = false;
+    }
+    countGroup?.classList.toggle('hidden', !shouldShowUseCountForSubstance(substanceId));
+    if (isVapeUse) updateVapeUsePreview();
+}
+
+function applyVapeUseInventory(calc, logEntry) {
+    const purchase = calc.purchase;
+    if (!purchase) return { ok: false, error: 'Purchase not found.' };
+    const bought = getPurchaseQuantityBought(purchase);
+    purchase.remainingAmount = Math.max(0, Math.min(bought, calc.currentRemaining));
+    ensureVapePurchaseStartedAt(purchase, logEntry);
+    if (purchase.remainingAmount <= INVENTORY_EPS) {
+        purchase.remainingAmount = 0;
+        purchase.isDepleted = true;
+        purchase.finishedAt = getUseEventTimestamp(logEntry.date, logEntry.startTime || logEntry.time);
+    } else {
+        purchase.isDepleted = false;
+        purchase.finishedAt = null;
+    }
+    purchase.updatedAt = new Date().toISOString();
+    return { ok: true };
+}
+
+function formatVapeUseSummary(log, sub) {
+    const parts = [];
+    const amount = parseFloat(log.amount);
+    if (log.needsReview) {
+        parts.push('Needs review');
+    } else if (Number.isFinite(amount)) {
+        parts.push(`${formatAmount(amount)} puffs used`);
+    }
+    if (log.percentRemaining != null && !log.needsReview) {
+        const pct = Number.isInteger(log.percentRemaining)
+            ? log.percentRemaining
+            : parseFloat(log.percentRemaining).toFixed(1);
+        parts.push(`${pct}% left after`);
+    }
+    return parts.join(' · ') || `${sub?.name || 'Vape'} use`;
+}
+
+function formatVapeLinkedPurchaseLine(log) {
+    const pid = getLogPurchaseId(log);
+    if (!pid) return '';
+    const purchase = findPurchase(pid);
+    if (!purchase) return '';
+    const store = purchase.store || purchase.location || purchase.notes || '';
+    return `Linked: ${formatDate(purchase.date)} purchase${store ? ` · ${store}` : ''}`;
+}
+
+function migrateVapeDataV1(data) {
+    if (data.migrations?.vapePuffsV1) return;
+    (data.purchases || []).forEach(purchase => {
+        if (!isVapePuffPurchase(purchase)) return;
+        if (!purchase.startedAt) purchase.startedAt = getPurchaseDatetimeIso(purchase);
+        if (!purchase.time) purchase.time = '12:00';
+        reconcileVapePurchaseLifecycle(purchase, data);
+    });
+    (data.logs || []).forEach(log => {
+        if (!isVapeNicotineSubstanceId(getUseSubstanceId(log)) || !isPersonalUseLog(log)) return;
+        if (log.logMode === 'percent_remaining' || log.amountUnit === '%') {
+            log.logMode = 'vape_puffs';
+            log.unit = 'puffs';
+            delete log.amountUnit;
+            const pid = getLogPurchaseId(log);
+            const purchase = pid ? findPurchaseInData(pid, data) : null;
+            const bought = purchase ? getPurchaseQuantityBought(purchase) : null;
+            const amount = parseFloat(log.amount) || 0;
+            if (amount <= INVENTORY_EPS && log.previousRemainingBeforeLog != null && log.percentRemaining != null && bought > 0) {
+                const afterRemaining = bought * (parseFloat(log.percentRemaining) / 100);
+                const inferred = log.previousRemainingBeforeLog - afterRemaining;
+                if (inferred > INVENTORY_EPS) log.amount = inferred;
+                else log.needsReview = true;
+            } else if (amount <= INVENTORY_EPS) {
+                log.needsReview = true;
+            }
+            if (bought > 0 && amount >= bought * 0.95 && parseFloat(log.percentRemaining) === 0) {
+                log.needsReview = true;
+            }
+        }
+        if (isVapeUseLog(log) && log.unit !== 'puffs') log.unit = 'puffs';
+    });
+    (data.purchases || []).forEach(purchase => {
+        if (isVapePuffPurchase(purchase)) reconcileVapePurchaseLifecycle(purchase, data);
+    });
+    if (!data.migrations) data.migrations = {};
+    data.migrations.vapePuffsV1 = true;
+}
+
+function markVapePurchaseEmpty(purchaseId) {
+    const purchase = findPurchase(purchaseId);
+    if (!purchase || !isVapePuffPurchase(purchase)) return;
+    const remaining = getPurchaseRemainingAmount(purchase);
+    if (remaining <= INVENTORY_EPS) return alert('This vape is already empty.');
+
+    const dateStr = prompt('Finish date (YYYY-MM-DD):', getLocalDateString());
+    if (dateStr == null) return;
+    const timeStr = prompt('Finish time (HH:MM):', getLocalTimeString()) || '12:00';
+    const finishIso = getUseEventTimestamp(dateStr, timeStr);
+
+    const logRemaining = confirm(
+        `Mark this vape empty on ${formatDate(dateStr)} at ${timeStr}?\n\nOK = also log ${formatAmount(remaining)} puffs used\nCancel = mark empty without a use log`
+    );
+
+    if (logRemaining) {
+        const log = {
+            id: Date.now(),
+            type: 'quick',
+            transactionType: 'use',
+            substanceId: getPurchaseSubstanceId(purchase),
+            amount: remaining,
+            unit: 'puffs',
+            logMode: 'vape_puffs',
+            percentRemaining: 0,
+            previousRemainingBeforeLog: remaining,
+            date: dateStr,
+            startTime: timeStr,
+            time: timeStr,
+            notes: 'Marked empty',
+            purchaseId: purchase.id,
+            linkedPurchaseId: purchase.id,
+            linkedPurchases: [],
+            inventoryAffects: true,
+            supplyUnlinked: false,
+            timestamp: finishIso,
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString()
+        };
+        stripLegacyUseLogFields(log);
+        const calc = {
+            purchase,
+            purchaseId: purchase.id,
+            puffsUsed: remaining,
+            currentRemaining: 0,
+            percentAfter: 0,
+            previousRemaining: remaining,
+            totalPuffs: getPurchaseQuantityBought(purchase)
+        };
+        const inv = applyVapeUseInventory(calc, log);
+        if (!inv.ok) return alert(inv.error);
+        if (!Array.isArray(appData.logs)) appData.logs = [];
+        appData.logs.push(log);
+    } else {
+        purchase.remainingAmount = 0;
+        purchase.isDepleted = true;
+        purchase.finishedAt = finishIso;
+        purchase.updatedAt = new Date().toISOString();
+    }
+
+    saveData(appData);
+    refreshUseLogRelatedViews();
+    refreshBuyTrackerRelatedViews();
+    alert(logRemaining ? 'Vape marked empty and use logged.' : 'Vape marked empty.');
+}
+
 function formatPurchaseRemainingDisplay(purchase) {
     const remaining = getPurchaseRemainingAmount(purchase);
     const bought = getPurchaseQuantityBought(purchase);
@@ -3388,171 +3775,22 @@ function formatPurchaseOptionLabel(purchase) {
     return `${formatDate(purchase.date)} — ${formatAmount(bought)}${unit} bought — ${formatAmount(remaining)}${unit} left${pctPart}${storePart}`;
 }
 
-function getUseLogMode() {
-    return document.getElementById('use-log-mode')?.value || 'amount';
-}
-
-function setUseLogMode(mode) {
-    const hidden = document.getElementById('use-log-mode');
-    if (hidden) hidden.value = mode;
-    document.querySelectorAll('.use-mode-pill').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.mode === mode);
-    });
-    updateUseLogModeUI();
-}
-
-function useFormSupportsPercentRemaining() {
-    const tx = document.getElementById('use-transaction-type')?.value || 'use';
-    if (tx !== 'use') return false;
-    const unit = document.getElementById('use-unit')?.value || '';
-    return isPercentRemainingUnit(unit);
-}
-
-function getPercentRemainingPurchasesForSubstance(substanceId) {
-    let list = getActivePurchasesForSubstance(substanceId);
-    if (editingUseId) {
-        const entry = findUseEntry(editingUseId);
-        const linkedId = getLogPurchaseId(entry);
-        if (linkedId) {
-            const linked = findPurchase(linkedId);
-            if (linked && !list.some(p => purchaseIdEquals(p.id, linked.id))) {
-                list = [linked, ...list];
-            }
-        }
-    }
-    return list.filter(p => isPercentRemainingUnit(p.unit));
-}
-
-function populateUsePercentPurchaseDropdown(substanceId) {
-    const select = document.getElementById('use-percent-purchase');
-    if (!select) return;
-    const currentVal = select.value;
-    select.innerHTML = '<option value="">Select inventory item…</option>';
-    if (!substanceId) return;
-    getPercentRemainingPurchasesForSubstance(substanceId).forEach(p => {
-        const opt = document.createElement('option');
-        opt.value = String(p.id);
-        opt.textContent = formatPurchaseOptionLabel(p);
-        select.appendChild(opt);
-    });
-    if (currentVal && [...select.options].some(o => o.value === currentVal || String(o.value) === String(currentVal))) {
-        select.value = [...select.options].find(o => o.value === currentVal || String(o.value) === String(currentVal)).value;
-    }
-}
-
-function computePercentRemainingUsage(purchaseId, percentLeft) {
-    const purchase = findPurchase(purchaseId);
-    if (!purchase) return { error: 'Select a vape or inventory item.' };
-    if (!Number.isFinite(percentLeft) || percentLeft < 0 || percentLeft > 100) {
-        return { error: 'Enter a valid percent left (0–100).' };
-    }
-    const bought = getPurchaseQuantityBought(purchase);
-    if (bought <= 0) return { error: 'Selected item has no quantity bought.' };
-    const previousRemaining = getPurchaseRemainingAmount(purchase);
-    const currentRemaining = bought * (percentLeft / 100);
-    const used = previousRemaining - currentRemaining;
-    const previousPercentLeft = bought > 0 ? (previousRemaining / bought) * 100 : 0;
-    const unit = purchase.unit || 'units';
-    return {
-        purchase,
-        purchaseId: purchase.id,
-        percentLeft,
-        previousPercentLeft,
-        previousRemaining,
-        currentRemaining,
-        used,
-        unit,
-        isCorrection: used < -INVENTORY_EPS
-    };
-}
-
-function previewPercentRemainingUsageFromForm() {
-    const substanceId = document.getElementById('use-substance')?.value;
-    const purchaseId = parsePurchaseSelectId(document.getElementById('use-percent-purchase')?.value);
-    const percentLeft = parseFloat(document.getElementById('use-percent-left')?.value);
-    if (!substanceId || !purchaseId || !Number.isFinite(percentLeft)) return null;
-    return computePercentRemainingUsage(purchaseId, percentLeft);
-}
-
-function updateUsePercentRemainingUI() {
-    const preview = document.getElementById('use-percent-preview');
-    const substanceId = document.getElementById('use-substance')?.value;
-    populateUsePercentPurchaseDropdown(substanceId);
-    if (!preview) return;
-    const calc = previewPercentRemainingUsageFromForm();
-    if (!calc || calc.error) {
-        preview.textContent = calc?.error || 'Select an item and enter the current percent left.';
-        return;
-    }
-    const { used, currentRemaining, unit, percentLeft, previousPercentLeft, isCorrection } = calc;
-    if (isCorrection) {
-        const addedBack = Math.abs(used);
-        preview.textContent = `Correction: ${formatPercentRemainingLabel(currentRemaining, getPurchaseQuantityBought(calc.purchase))} — adds ${formatAmount(addedBack)}${unit} back (was ${previousPercentLeft.toFixed(1)}% left).`;
-        return;
-    }
-    if (used <= INVENTORY_EPS) {
-        preview.textContent = `No usage — remaining stays at ${formatAmount(currentRemaining)}${unit} (${percentLeft}%).`;
-        return;
-    }
-    preview.textContent = `Will log ${formatAmount(used)}${unit} used → ${formatAmount(currentRemaining)}${unit} remaining (${percentLeft}% left).`;
-}
-
 function updateUseLogModeUI() {
-    const supports = useFormSupportsPercentRemaining();
-    const modeGroup = document.getElementById('use-log-mode-group');
-    const amountGroup = document.getElementById('use-amount-mode-group');
-    const percentGroup = document.getElementById('use-percent-remaining-group');
-    const advancedSection = document.getElementById('use-advanced-section');
-    const amountInput = document.getElementById('use-amount');
-    const percentInput = document.getElementById('use-percent-left');
-    const percentPurchase = document.getElementById('use-percent-purchase');
-    const mode = getUseLogMode();
-    const percentMode = supports && mode === 'percent_remaining';
-
-    modeGroup?.classList.toggle('hidden', !supports);
-    if (!supports && mode === 'percent_remaining') {
-        const hidden = document.getElementById('use-log-mode');
-        if (hidden) hidden.value = 'amount';
-        document.querySelectorAll('.use-mode-pill').forEach(btn => {
-            btn.classList.toggle('active', btn.dataset.mode === 'amount');
-        });
-    }
-
-    amountGroup?.classList.toggle('hidden', percentMode);
-    percentGroup?.classList.toggle('hidden', !percentMode);
-    advancedSection?.classList.toggle('hidden', percentMode);
-
-    if (amountInput) amountInput.required = !percentMode;
-    if (percentInput) percentInput.required = percentMode;
-    if (percentPurchase) percentPurchase.required = percentMode;
-
-    if (percentMode) {
-        populateUsePercentPurchaseDropdown(document.getElementById('use-substance')?.value);
-        updateUsePercentRemainingUI();
-    }
+    updateVapeUseFormUI();
 }
 
 function getUseFormEffectiveAmount() {
-    if (getUseLogMode() === 'percent_remaining' && useFormSupportsPercentRemaining()) {
-        const calc = previewPercentRemainingUsageFromForm();
-        if (!calc || calc.error || calc.isCorrection) return 0;
-        return Math.max(0, calc.used);
+    const substanceId = document.getElementById('use-substance')?.value;
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    if (isVapeNicotineSubstanceId(substanceId) && tx === 'use') {
+        const editingEntry = editingUseId ? findUseEntry(editingUseId) : null;
+        const calc = computeVapeUseFromForm({
+            editingId: editingUseId,
+            previousRemainingBeforeLog: editingEntry?.previousRemainingBeforeLog
+        });
+        if (calc && !calc.error) return calc.puffsUsed;
     }
     return parseFloat(document.getElementById('use-amount')?.value) || 0;
-}
-
-function applyPercentRemainingInventory(calc) {
-    const purchase = calc.purchase;
-    if (!purchase) return { ok: false, error: 'Purchase not found.' };
-    const bought = getPurchaseQuantityBought(purchase);
-    const targetRemaining = Math.max(0, Math.min(bought, calc.currentRemaining));
-    if (calc.isCorrection || calc.used <= INVENTORY_EPS) {
-        purchase.remainingAmount = targetRemaining;
-        finalizePurchaseRemainingState(purchase);
-        purchase.updatedAt = new Date().toISOString();
-        return { ok: true };
-    }
-    return deductPurchaseAmount(purchase.id, calc.used);
 }
 
 function formatLinkedPurchaseDisplay(log) {
@@ -3614,13 +3852,16 @@ function restoreLogInventoryEffect(log, data = appData) {
     if (!hasLinkedSupply(log)) return;
 
     const purchases = data.purchases || [];
-    if (log.logMode === 'percent_remaining' && log.previousRemainingBeforeLog != null) {
-        const pid = getLogPurchaseId(log);
-        const purchase = findPurchaseInData(pid, { purchases });
-        if (purchase) {
-            purchase.remainingAmount = log.previousRemainingBeforeLog;
-            finalizePurchaseRemainingState(purchase);
-            purchase.updatedAt = new Date().toISOString();
+    if (log.logMode === 'vape_puffs' || log.logMode === 'percent_remaining') {
+        if (log.previousRemainingBeforeLog != null) {
+            const pid = getLogPurchaseId(log);
+            const purchase = findPurchaseInData(pid, { purchases });
+            if (purchase) {
+                purchase.remainingAmount = log.previousRemainingBeforeLog;
+                finalizePurchaseRemainingState(purchase);
+                reconcileVapePurchaseLifecycle(purchase, data);
+                purchase.updatedAt = new Date().toISOString();
+            }
         }
         return;
     }
@@ -4186,28 +4427,21 @@ function editUseEntry(id) {
     setInputValue('use-date', entry.date || '');
     setInputValue('use-start-time', entry.startTime || entry.time || '12:00');
     setInputValue('use-end-time', entry.endTime || '');
-    if (entry.logMode === 'percent_remaining' && entry.percentRemaining != null && isPercentRemainingUnit(unit)) {
-        setUseLogMode('percent_remaining');
-        updateUseLogModeUI();
-        populateUsePercentPurchaseDropdown(substanceId);
-        const percentSelect = document.getElementById('use-percent-purchase');
-        const linkedId = getLogPurchaseId(entry);
-        if (percentSelect && linkedId != null) {
-            const match = [...percentSelect.options].find(o => String(o.value) === String(linkedId));
-            if (match) percentSelect.value = match.value;
-        }
-        setInputValue('use-percent-left', entry.percentRemaining);
-        updateUsePercentRemainingUI();
-    } else {
-        setUseLogMode('amount');
+    if (isVapeUseLog(entry)) {
+        updateVapeUseFormUI();
         setInputValue('use-amount', entry.amount != null ? entry.amount : '');
+        setInputValue('use-percent-after', entry.percentRemaining != null ? entry.percentRemaining : '');
+        updateVapeUsePreview();
+    } else {
+        setInputValue('use-amount', entry.amount != null ? entry.amount : '');
+        setInputValue('use-percent-after', '');
     }
     setInputValue('use-count', getUseCount(entry));
     setInputValue('use-notes', entry.notes || '');
     setInputValue('use-gift-party', entry.giftPartyName || '');
 
-    if (entry.logMode === 'percent_remaining') {
-        setUsePurchaseLinkMode('manual');
+    if (isVapeUseLog(entry)) {
+        setUsePurchaseLinkMode(hasLinkedSupply(entry) ? 'manual' : 'none');
     } else if (!hasLinkedSupply(entry) && !logInventoryAffects(entry)) {
         setUsePurchaseLinkMode('none');
     } else if (hasLinkedSupply(entry)) {
@@ -4245,7 +4479,7 @@ function cancelUseEdit() {
     setUsePurchaseLinkMode('auto');
     setUseTransactionType('use');
     setUseAdjustmentDirection('add');
-    setUseLogMode('amount');
+    updateVapeUseFormUI();
 }
 
 function getUseLogsForSubstance(substanceId, { sortAsc = true, personalUseOnly = false, data = appData } = {}) {
@@ -4409,23 +4643,26 @@ function setupUseLogForm() {
         updateUsePurchaseLinkUI();
     });
     document.getElementById('use-unit')?.addEventListener('change', () => {
-        updateUseLogModeUI();
+        updateVapeUseFormUI();
     });
-    ['use-amount', 'use-date'].forEach(id => {
+    ['use-amount', 'use-date', 'use-percent-after'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', () => {
             updateUsePurchaseLinkUI();
+            updateVapeUsePreview();
         });
     });
-    document.getElementById('use-percent-left')?.addEventListener('input', () => {
-        updateUsePercentRemainingUI();
+    document.getElementById('use-purchase-link-mode')?.addEventListener('change', () => {
+        updateUsePurchaseLinkUI();
+        updateVapeUsePreview();
     });
-    document.getElementById('use-percent-purchase')?.addEventListener('change', updateUsePercentRemainingUI);
-    document.getElementById('use-purchase-link-mode')?.addEventListener('change', updateUsePurchaseLinkUI);
-    document.getElementById('use-purchase-select')?.addEventListener('change', updateUsePurchaseLinkUI);
+    document.getElementById('use-purchase-select')?.addEventListener('change', () => {
+        updateUsePurchaseLinkUI();
+        updateVapeUsePreview();
+    });
     document.getElementById('use-start-time')?.addEventListener('change', computeUseFormDuration);
     document.getElementById('use-end-time')?.addEventListener('change', computeUseFormDuration);
     setUseLogType(document.getElementById('use-type')?.value || 'quick');
-    updateUseLogModeUI();
+    updateVapeUseFormUI();
     updateUsePurchaseLinkUI();
 }
 
@@ -4543,26 +4780,47 @@ function getUseUpdateSuccessMessage(entry) {
 function handleUseLogSubmit(e) {
     e.preventDefault();
 
-    let percentCalc = null;
-    if (getUseLogMode() === 'percent_remaining' && useFormSupportsPercentRemaining()) {
-        const purchaseId = parsePurchaseSelectId(document.getElementById('use-percent-purchase')?.value);
-        const percentLeft = parseFloat(document.getElementById('use-percent-left')?.value);
-        percentCalc = computePercentRemainingUsage(purchaseId, percentLeft);
-        if (percentCalc.error) return alert(percentCalc.error);
-        if (percentCalc.isCorrection) {
-            const addedBack = formatAmount(Math.abs(percentCalc.used));
-            const unit = percentCalc.unit;
-            const msg = `Percent left increased (${percentCalc.previousPercentLeft.toFixed(1)}% → ${percentCalc.percentLeft}%). This corrects inventory by adding ${addedBack}${unit} back with no use logged. Continue?`;
-            if (!confirm(msg)) return;
+    const substanceIdPreview = document.getElementById('use-substance')?.value;
+    const txPreview = document.getElementById('use-transaction-type')?.value || 'use';
+    const isVapeUse = isVapeNicotineSubstanceId(substanceIdPreview) && txPreview === 'use';
+    let vapeCalc = null;
+
+    if (isVapeUse) {
+        const editingEntry = editingUseId ? findUseEntry(editingUseId) : null;
+        vapeCalc = computeVapeUseFromForm({
+            editingId: editingUseId,
+            previousRemainingBeforeLog: editingEntry?.previousRemainingBeforeLog
+        });
+        if (vapeCalc?.error) return alert(vapeCalc.error);
+        const puffsRaw = document.getElementById('use-amount')?.value;
+        const percentRaw = document.getElementById('use-percent-after')?.value;
+        const userEnteredZero = puffsRaw === '0' || parseFloat(puffsRaw) === 0;
+        const hasPercent = percentRaw !== '' && percentRaw != null;
+        if (vapeCalc.puffsUsed <= INVENTORY_EPS && !(userEnteredZero && !hasPercent)) {
+            if (editingUseId) {
+                const existing = findUseEntry(editingUseId);
+                const sameAmount = existing
+                    && Math.abs((parseFloat(existing.amount) || 0) - vapeCalc.puffsUsed) < 0.001;
+                const samePct = existing
+                    && String(existing.percentRemaining ?? '') === String(vapeCalc.percentAfter ?? '');
+                if (!sameAmount && !samePct) {
+                    return alert('Enter puffs used or optional % left after this use.');
+                }
+            } else {
+                return alert('Enter puffs used or optional % left after this use.');
+            }
+        }
+        if (getUsePurchaseLinkMode() !== 'none' && vapeCalc.purchaseId && vapeCalc.puffsUsed > vapeCalc.previousRemaining + INVENTORY_EPS) {
+            return alert(`Only ${formatAmount(vapeCalc.previousRemaining)} puffs left in that vape.`);
         }
     }
 
-    const payload = buildUseEntryFromForm(percentCalc);
+    const payload = buildUseEntryFromForm(vapeCalc);
     const { substanceId, amount, type, transactionType } = payload;
     const isPersonalUse = isPersonalUseLog({ transactionType });
     const eventTimestamp = getUseEventTimestamp(payload.date, payload.startTime);
     const now = new Date().toISOString();
-    const usePercentInventory = percentCalc && payload.inventoryAffects;
+    const useVapeInventory = isVapeUse && vapeCalc?.purchase && payload.inventoryAffects;
 
     if (!confirmTaperBeforeLog(substanceId, amount, type === 'quick', editingUseId, transactionType, payload.date)) return;
 
@@ -4595,8 +4853,8 @@ function handleUseLogSubmit(e) {
         delete updated.lines;
 
         let inv;
-        if (usePercentInventory) {
-            inv = applyPercentRemainingInventory(percentCalc);
+        if (useVapeInventory) {
+            inv = applyVapeUseInventory(vapeCalc, updated);
         } else {
             inv = applyLogInventoryEffect(updated);
         }
@@ -4625,8 +4883,8 @@ function handleUseLogSubmit(e) {
     stripLegacyUseLogFields(log);
 
     let inv;
-    if (usePercentInventory) {
-        inv = applyPercentRemainingInventory(percentCalc);
+    if (useVapeInventory) {
+        inv = applyVapeUseInventory(vapeCalc, log);
     } else {
         inv = applyLogInventoryEffect(log);
     }
@@ -5082,7 +5340,9 @@ function renderUseHistoryCard(entry, sub, avgRate) {
     const timeRange = entry.endTime
         ? `${entry.startTime || entry.time || '—'} – ${entry.endTime}`
         : (entry.startTime || entry.time || '—');
-    const countStr = entry.count || '—';
+    const isVape = isVapeUseLog(entry);
+    const countStr = isVape ? '—' : (entry.count || '—');
+    const amountDisplay = isVape ? formatVapeUseSummary(entry, sub) : `${entry.amount} ${entry.unit}`;
     const warningClass = warnings.length ? ` ${warnings.join(' ')}` : '';
 
     return `<article class="use-history-card${warningClass}" data-log-id="${entry.id}">
@@ -5093,7 +5353,7 @@ function renderUseHistoryCard(entry, sub, avgRate) {
             <div class="use-history-card-main">
                 <div class="use-history-card-title-row">
                     ${renderUseLogBadge(entry)}
-                    <span class="use-history-card-amount">${entry.amount} ${entry.unit}</span>
+                    <span class="use-history-card-amount">${amountDisplay}</span>
                 </div>
                 <div class="use-history-card-meta">${sub.icon} ${sub.name} · ${formatDate(entry.date)} · ${timeRange}</div>
             </div>
@@ -5103,7 +5363,7 @@ function renderUseHistoryCard(entry, sub, avgRate) {
             <div><dt>Count</dt><dd>${countStr}</dd></div>
             <div><dt>Rate</dt><dd>${rateStr}</dd></div>
             <div><dt>Break</dt><dd>${entry.breakText || '—'}</dd></div>
-            <div class="use-history-card-supply"><dt>Supply</dt><dd>${formatInventoryLinkDisplay(entry)}</dd></div>
+            <div class="use-history-card-supply"><dt>Supply</dt><dd>${isVape ? formatVapeLinkedPurchaseLine(entry) || formatInventoryLinkDisplay(entry) : formatInventoryLinkDisplay(entry)}</dd></div>
             ${entry.notes ? `<div class="use-history-card-notes"><dt>Notes</dt><dd>${entry.notes}</dd></div>` : ''}
         </dl>
         <div class="use-history-card-actions">
@@ -5130,27 +5390,32 @@ function renderRecentUseList() {
         const substanceId = getUseSubstanceId(log);
         const sub = getSubstance(substanceId);
         const enriched = enrichUseEntry(log, null);
+        const isVape = isVapeUseLog(log);
         const countStr = getUseCount(log);
         const timeRange = log.endTime
             ? `${log.startTime || log.time || ''}–${log.endTime}`
             : (log.startTime || log.time || '');
+        const amountDisplay = isVape
+            ? formatVapeUseSummary(log, sub)
+            : `${log.amount != null ? formatAmount(log.amount) : '—'} ${log.unit || ''}`;
+        const linkedLine = isVape ? formatVapeLinkedPurchaseLine(log) : formatInventoryLinkDisplay(log);
         const item = document.createElement('div');
         item.className = 'use-recent-card';
         item.innerHTML = `
             <div class="use-recent-main">
                 <div class="use-recent-top">
                     ${renderUseLogBadge(log)}
-                    <span class="use-recent-amount">${log.amount != null ? formatAmount(log.amount) : '—'} ${log.unit || ''}</span>
+                    <span class="use-recent-amount">${amountDisplay}</span>
                 </div>
                 <div class="use-recent-sub">${sub?.icon || ''} ${sub?.name || 'Unknown'} · ${formatDate(log.date || '')}${timeRange ? ` · ${timeRange}` : ''}</div>
                 ${enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}
-                ${countStr !== '' ? `<div class="use-recent-detail">${countStr} lines</div>` : ''}
+                ${!isVape && countStr !== '' ? `<div class="use-recent-detail">${countStr} lines</div>` : ''}
                 ${log.notes ? `<div class="use-recent-notes">${log.notes}</div>` : ''}
                 ${log.mood ? `<div class="use-recent-detail">Mood: ${log.mood}</div>` : ''}
                 ${log.trigger ? `<div class="use-recent-detail">Trigger: ${log.trigger}</div>` : ''}
                 ${log.cravingLevel != null ? `<div class="use-recent-detail">Craving: ${log.cravingLevel}/10</div>` : ''}
                 ${log.stressLevel != null ? `<div class="use-recent-detail">Stress: ${log.stressLevel}/10</div>` : ''}
-                <div class="use-recent-supply">${formatInventoryLinkDisplay(log)}</div>
+                <div class="use-recent-supply">${linkedLine}</div>
             </div>
             <div class="use-recent-actions">
                 <button type="button" class="secondary-btn" onclick="editUseEntry(${log.id})">Edit</button>
@@ -5399,8 +5664,35 @@ function onBuyStoreSelectChange() {
 }
 
 function setDefaultBuyDateTime() {
+    const now = new Date();
+    const dateStr = getLocalDateString(now);
+    const timeStr = getLocalTimeString(now);
     const dateEl = document.getElementById('buy-date');
-    if (dateEl) dateEl.value = getLocalDateString();
+    if (dateEl) dateEl.value = dateStr;
+    const timeEl = document.getElementById('buy-time');
+    if (timeEl) timeEl.value = timeStr;
+    const startedDateEl = document.getElementById('buy-started-date');
+    const startedTimeEl = document.getElementById('buy-started-time');
+    if (startedDateEl) startedDateEl.value = dateStr;
+    if (startedTimeEl) startedTimeEl.value = timeStr;
+}
+
+function getBuyFormStartedAtIso() {
+    const substanceId = document.getElementById('buy-substance')?.value;
+    if (!isVapeNicotineSubstanceId(substanceId)) return undefined;
+    const startedDate = document.getElementById('buy-started-date')?.value
+        || document.getElementById('buy-date')?.value;
+    const startedTime = document.getElementById('buy-started-time')?.value
+        || document.getElementById('buy-time')?.value
+        || '12:00';
+    if (!startedDate) return undefined;
+    return getUseEventTimestamp(startedDate, startedTime);
+}
+
+function updateBuyVapeFieldsVisibility() {
+    const substanceId = document.getElementById('buy-substance')?.value;
+    const group = document.getElementById('buy-vape-started-group');
+    group?.classList.toggle('hidden', !isVapeNicotineSubstanceId(substanceId));
 }
 
 function setBuyFormSubmitLabel(text) {
@@ -5414,11 +5706,20 @@ function setupBuyTrackerForm() {
     form.addEventListener('submit', handleBuySubmit);
     setDefaultBuyDateTime();
     populateBuyStoreDropdown();
+    updateBuyVapeFieldsVisibility();
     ['buy-quantity', 'buy-total-cost'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', updateBuyCostPerUnitPreview);
     });
     document.getElementById('buy-substance')?.addEventListener('change', updateBuyUnitDropdown);
     document.getElementById('buy-store-select')?.addEventListener('change', onBuyStoreSelectChange);
+    document.getElementById('buy-date')?.addEventListener('change', () => {
+        const startedDate = document.getElementById('buy-started-date');
+        if (startedDate && !startedDate.value) startedDate.value = document.getElementById('buy-date')?.value || '';
+    });
+    document.getElementById('buy-time')?.addEventListener('change', () => {
+        const startedTime = document.getElementById('buy-started-time');
+        if (startedTime && !startedTime.value) startedTime.value = document.getElementById('buy-time')?.value || '12:00';
+    });
 }
 
 function buildPurchaseFromForm() {
@@ -5431,6 +5732,7 @@ function buildPurchaseFromForm() {
         substanceId,
         substanceName: sub?.name || '',
         date: document.getElementById('buy-date')?.value,
+        time: document.getElementById('buy-time')?.value || '12:00',
         quantityBought: qty,
         quantity: qty,
         unit: document.getElementById('buy-unit')?.value || 'units',
@@ -5438,19 +5740,26 @@ function buildPurchaseFromForm() {
         costPerUnit: qty > 0 ? (Number.isFinite(totalCost) ? totalCost : 0) / qty : 0,
         store: getBuyFormStoreValue(),
         paymentMethod: document.getElementById('buy-payment')?.value || '',
-        notes: document.getElementById('buy-notes')?.value || ''
+        notes: document.getElementById('buy-notes')?.value || '',
+        startedAt: getBuyFormStartedAtIso()
     };
 }
 
 function finalizeNewPurchaseRecord(payload) {
     const now = new Date().toISOString();
-    return {
+    const record = {
         ...payload,
         remainingAmount: payload.quantityBought ?? payload.quantity ?? 0,
         isDepleted: false,
         createdAt: now,
         updatedAt: now
     };
+    if (payload.startedAt) {
+        record.startedAt = payload.startedAt;
+    } else if (isVapeNicotineSubstanceId(payload.substanceId) && isVapePuffUnit(payload.unit)) {
+        record.startedAt = getPurchaseDatetimeIso(record);
+    }
+    return record;
 }
 
 function applyPurchaseQuantityEdit(existing, newQty) {
@@ -5512,6 +5821,18 @@ function editPurchase(id) {
     }
 
     setInputValue('buy-date', purchase.date || '');
+    setInputValue('buy-time', purchase.time || '12:00');
+    if (purchase.startedAt) {
+        const started = new Date(purchase.startedAt);
+        if (!Number.isNaN(started.getTime())) {
+            setInputValue('buy-started-date', getLocalDateString(started));
+            setInputValue('buy-started-time', getLocalTimeString(started));
+        }
+    } else {
+        setInputValue('buy-started-date', purchase.date || '');
+        setInputValue('buy-started-time', purchase.time || '12:00');
+    }
+    updateBuyVapeFieldsVisibility();
     setInputValue('buy-quantity', getPurchaseQuantity(purchase));
     setInputValue('buy-total-cost', getPurchaseTotalCost(purchase));
     setBuyStoreFieldValue(purchase.store || purchase.location || '');
@@ -5567,11 +5888,16 @@ function handleBuySubmit(e) {
             ...payload,
             id: existing.id,
             substanceId: payload.substanceId,
+            startedAt: payload.startedAt || existing.startedAt,
+            finishedAt: existing.finishedAt,
             createdAt: existing.createdAt || new Date().toISOString(),
             updatedAt: new Date().toISOString()
         };
         applyPurchaseQuantityEdit(appData.purchases[idx], payload.quantityBought ?? payload.quantity ?? 0);
         migratePurchaseInventory(appData.purchases[idx], appData.logs || [], appData);
+        if (isVapePuffPurchase(appData.purchases[idx])) {
+            reconcileVapePurchaseLifecycle(appData.purchases[idx]);
+        }
         delete appData.purchases[idx].substance;
         delete appData.purchases[idx].item;
         delete appData.purchases[idx].cost;
@@ -5583,7 +5909,9 @@ function handleBuySubmit(e) {
         return;
     }
 
-    appData.purchases.push({ ...finalizeNewPurchaseRecord(payload), id: generateUniqueId('purchase') });
+    const newPurchase = { ...finalizeNewPurchaseRecord(payload), id: generateUniqueId('purchase') };
+    if (isVapePuffPurchase(newPurchase)) reconcileVapePurchaseLifecycle(newPurchase);
+    appData.purchases.push(newPurchase);
     saveData(appData);
     resetBuyFormAfterSave();
     refreshBuyTrackerRelatedViews();
@@ -5639,8 +5967,8 @@ function logMatchesPurchase(log, purchaseId) {
         && log.linkedPurchases.some(lp => lp.purchaseId === purchaseId || String(lp.purchaseId) === String(purchaseId));
 }
 
-function getLogsForPurchase(purchaseId) {
-    return getUseEntries().filter(log => logMatchesPurchase(log, purchaseId));
+function getLogsForPurchase(purchaseId, data = appData) {
+    return getUseEntries(data).filter(log => logMatchesPurchase(log, purchaseId));
 }
 
 function getAmountUsedFromPurchase(log, purchaseId) {
@@ -5856,19 +6184,49 @@ function getTransactionTypeShortLabel(log) {
     return 'Use';
 }
 
+function renderVapePurchaseLifecycleHtml(purchase) {
+    if (!isVapePuffPurchase(purchase)) return '';
+    const metrics = getVapePurchaseLifecycleMetrics(purchase);
+    if (!metrics) return '';
+    const avgDay = metrics.avgPuffsPerDay != null
+        ? `${formatAmount(metrics.avgPuffsPerDay)} puffs/day`
+        : '—';
+    const avgHour = metrics.avgPuffsPerHour != null
+        ? `${formatAmount(metrics.avgPuffsPerHour)} puffs/hr`
+        : '—';
+    return `
+        <div class="purchase-vape-lifecycle">
+            <div class="purchase-supply-stat"><span>Started</span><strong>${metrics.started ? formatDatetimeLong(metrics.started) : '—'}</strong></div>
+            <div class="purchase-supply-stat"><span>Finished</span><strong>${metrics.finished ? formatDatetimeLong(metrics.finished) : '—'}</strong></div>
+            <div class="purchase-supply-stat"><span>Lasted</span><strong>${metrics.durationLabel}</strong></div>
+            <div class="purchase-supply-stat"><span>Avg puffs/day</span><strong>${avgDay}</strong></div>
+            <div class="purchase-supply-stat"><span>Avg puffs/hr</span><strong>${avgHour}</strong></div>
+        </div>`;
+}
+
 function renderPurchaseLinkedLogSummaryLine(log, purchaseId, unit) {
     const enriched = enrichUseEntry(log, null);
     const amount = getAmountUsedFromPurchase(log, purchaseId);
     const startTime = log.startTime || log.time || '';
     const endTime = log.endTime || '';
     const timeRange = endTime ? `${startTime}–${endTime}` : startTime;
-    const count = getUseCount(log);
     const parts = [
         `${formatDate(log.date)} ${timeRange}`.trim(),
-        `${amount}${unit}`
+        isVapeUseLog(log) ? `${formatAmount(amount)} puffs` : `${amount}${unit}`
     ];
-    if (count !== '' && count != null) parts.push(`${count} lines`);
-    else if (enriched.durationHours) parts.push(formatDurationHours(enriched.durationHours));
+    if (isVapeUseLog(log)) {
+        if (log.needsReview) parts.push('Needs review');
+        else if (log.percentRemaining != null) {
+            const pct = Number.isInteger(log.percentRemaining)
+                ? log.percentRemaining
+                : parseFloat(log.percentRemaining).toFixed(1);
+            parts.push(`${pct}% left after`);
+        }
+    } else {
+        const count = getUseCount(log);
+        if (count !== '' && count != null) parts.push(`${count} lines`);
+        else if (enriched.durationHours) parts.push(formatDurationHours(enriched.durationHours));
+    }
     return parts.join(' · ');
 }
 
@@ -5891,7 +6249,8 @@ function renderPurchaseLinkedLogsPanel(purchase) {
             <div class="purchase-supply-stat"><span>Last use</span><strong>${metrics.lastSupplyUseAt ? formatDatetimeLong(metrics.lastSupplyUseAt) : 'Never'}</strong></div>
             <div class="purchase-supply-stat"><span>Time since last use</span><strong>${metrics.timeSinceLastSupplyUse != null ? formatTimeSinceMs(metrics.timeSinceLastSupplyUse) : '—'}</strong></div>
             <div class="purchase-supply-stat"><span>Buy → first use</span><strong>${metrics.timeFromBuyToFirstUse != null ? formatTimeSinceMs(metrics.timeFromBuyToFirstUse) : '—'}</strong></div>
-        </div>`;
+        </div>
+        ${renderVapePurchaseLifecycleHtml(purchase)}`;
 
     if (!metrics.logs.length) {
         return `<div class="purchase-linked-panel">
@@ -9997,6 +10356,10 @@ function cleanExportData(data) {
             endTime: l.endTime || '',
             amount: Number(l.amount || 0),
             unit: l.unit || 'units',
+            logMode: l.logMode || 'amount',
+            percentRemaining: l.percentRemaining ?? null,
+            previousRemainingBeforeLog: l.previousRemainingBeforeLog ?? null,
+            needsReview: !!l.needsReview,
             count: Number(l.count || 0),
             giftPartyName: l.giftPartyName || '',
             adjustmentDirection: l.adjustmentDirection || null,
@@ -10031,6 +10394,8 @@ function cleanExportData(data) {
             notes: p.notes || '',
             remainingAmount: Number(p.remainingAmount ?? p.quantityBought ?? p.quantity ?? 0),
             isDepleted: !!p.isDepleted,
+            startedAt: p.startedAt || null,
+            finishedAt: p.finishedAt || null,
             ...(p.buyBreakMinutes != null ? {
                 buyBreakMinutes: p.buyBreakMinutes,
                 buyBreakHours: p.buyBreakHours,
