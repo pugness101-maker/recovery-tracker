@@ -45,12 +45,16 @@ function normalizeSubstanceName(name) {
     return SUBSTANCE_NAME_ALIASES[normalized] || normalized;
 }
 
+const VAPE_NICOTINE_ID = 'vape-nicotine';
+
 const DEFAULT_SUBSTANCE_CATALOG = [
     {
         id: 'vape-nicotine',
         name: 'Vape/Nicotine',
         icon: '💨',
         color: '#42a5f5',
+        trackingMode: 'vape',
+        primaryUnit: 'puffs',
         units: ['puffs', 'hits', 'pods', 'disposable', 'ml'],
         defaultUnit: 'puffs',
         costTrackingEnabled: true,
@@ -62,8 +66,11 @@ const DEFAULT_SUBSTANCE_CATALOG = [
         name: 'Coke',
         icon: '❄️',
         color: '#90caf9',
-        units: ['grams', 'lines', 'bumps'],
-        defaultUnit: 'grams',
+        trackingMode: 'powder',
+        primaryUnit: 'g',
+        secondaryCountLabel: 'lines',
+        units: ['g', 'grams', 'lines', 'bumps'],
+        defaultUnit: 'g',
         costTrackingEnabled: true,
         taperTrackingEnabled: true
     },
@@ -72,6 +79,8 @@ const DEFAULT_SUBSTANCE_CATALOG = [
         name: 'Alcohol',
         icon: '🍺',
         color: '#ffb74d',
+        trackingMode: 'alcohol',
+        primaryUnit: 'drinks',
         units: ['drinks', 'beers', 'shots', 'ounces'],
         defaultUnit: 'drinks',
         costTrackingEnabled: true,
@@ -82,8 +91,10 @@ const DEFAULT_SUBSTANCE_CATALOG = [
         name: 'Weed/THC',
         icon: '🌿',
         color: '#66bb6a',
-        units: ['grams', 'joints', 'bowls', 'hits', 'edibles'],
-        defaultUnit: 'grams',
+        trackingMode: 'weed',
+        primaryUnit: 'hits',
+        units: ['hits', 'grams', 'joints', 'bowls', 'edibles'],
+        defaultUnit: 'hits',
         costTrackingEnabled: true,
         taperTrackingEnabled: true
     },
@@ -92,6 +103,8 @@ const DEFAULT_SUBSTANCE_CATALOG = [
         name: 'Caffeine',
         icon: '☕',
         color: '#8d6e63',
+        trackingMode: 'caffeine',
+        primaryUnit: 'mg',
         units: ['mg', 'cups', 'drinks', 'pills'],
         defaultUnit: 'mg',
         costTrackingEnabled: true,
@@ -102,6 +115,8 @@ const DEFAULT_SUBSTANCE_CATALOG = [
         name: 'LSD',
         icon: '🧪',
         color: '#7e57c2',
+        trackingMode: 'dose',
+        primaryUnit: 'tabs',
         units: ['tabs', 'ug', 'hits'],
         defaultUnit: 'tabs',
         costTrackingEnabled: true,
@@ -112,6 +127,8 @@ const DEFAULT_SUBSTANCE_CATALOG = [
         name: 'Molly',
         icon: '💊',
         color: '#ec407a',
+        trackingMode: 'dose',
+        primaryUnit: 'mg',
         units: ['mg', 'pills', 'grams'],
         defaultUnit: 'mg',
         costTrackingEnabled: true,
@@ -122,6 +139,8 @@ const DEFAULT_SUBSTANCE_CATALOG = [
         name: 'Xannax',
         icon: '💊',
         color: '#5c6bc0',
+        trackingMode: 'dose',
+        primaryUnit: 'mg',
         units: ['mg', 'pills', 'bars'],
         defaultUnit: 'mg',
         costTrackingEnabled: true,
@@ -132,8 +151,10 @@ const DEFAULT_SUBSTANCE_CATALOG = [
         name: 'Ketamine',
         icon: '🌀',
         color: '#26c6da',
-        units: ['mg', 'bumps', 'lines'],
-        defaultUnit: 'mg',
+        trackingMode: 'powder',
+        primaryUnit: 'g',
+        units: ['g', 'mg', 'bumps', 'lines'],
+        defaultUnit: 'g',
         costTrackingEnabled: true,
         taperTrackingEnabled: true
     },
@@ -142,6 +163,8 @@ const DEFAULT_SUBSTANCE_CATALOG = [
         name: 'Cigarettes',
         icon: '🚬',
         color: '#78909c',
+        trackingMode: 'cigarettes',
+        primaryUnit: 'cigarettes',
         units: ['cigarettes', 'packs'],
         defaultUnit: 'cigarettes',
         costTrackingEnabled: true,
@@ -151,14 +174,154 @@ const DEFAULT_SUBSTANCE_CATALOG = [
 
 const DEFAULT_SUBSTANCE_IDS = DEFAULT_SUBSTANCE_CATALOG.map(s => s.id);
 
+const SUBSTANCE_TRACKING_DEFAULTS = Object.fromEntries(
+    DEFAULT_SUBSTANCE_CATALOG.map(entry => [entry.id, {
+        trackingMode: entry.trackingMode,
+        primaryUnit: entry.primaryUnit,
+        secondaryCountLabel: entry.secondaryCountLabel ?? null
+    }])
+);
+
+function getSubstanceTrackingDefaults(substanceId) {
+    return SUBSTANCE_TRACKING_DEFAULTS[substanceId] || {};
+}
+
+function inferTrackingModeFromSubstance(sub) {
+    if (!sub) return 'standard';
+    if (sub.id === 'coke' || normalizeSubstanceName(sub.name) === 'coke') return 'powder';
+    const idDefaults = getSubstanceTrackingDefaults(sub.id);
+    if (idDefaults.trackingMode) return idDefaults.trackingMode;
+    const name = normalizeSubstanceName(sub.name);
+    if (name === 'vape/nicotine' || (name.includes('vape') && name.includes('nicotine'))) return 'vape';
+    if (name.includes('cigarette')) return 'cigarettes';
+    if (name === 'coke' || name.includes('cocaine')) return 'powder';
+    return 'standard';
+}
+
+function getSubstanceTrackingMode(substanceId, data = appData) {
+    if (!substanceId) return 'standard';
+    if (substanceId === 'coke') return 'powder';
+    const sub = typeof getSubstance === 'function' ? getSubstance(substanceId, data) : null;
+    if (sub) {
+        if (sub.id === 'coke' || normalizeSubstanceName(sub.name) === 'coke') return 'powder';
+        if (sub.trackingMode) return sub.trackingMode;
+        return inferTrackingModeFromSubstance(sub);
+    }
+    return getSubstanceTrackingDefaults(substanceId).trackingMode || 'standard';
+}
+
+function isVapeTrackingMode(substanceId, data = appData) {
+    if (!substanceId || substanceId === 'coke') return false;
+    return getSubstanceTrackingMode(substanceId, data) === 'vape';
+}
+
+function isPowderTrackingMode(substanceId, data = appData) {
+    return getSubstanceTrackingMode(substanceId, data) === 'powder';
+}
+
+function isVapeTaperSubstanceId(substanceId, data = appData) {
+    return isVapeTrackingMode(substanceId, data);
+}
+
+function getSubstancePrimaryUnit(substanceId, data = appData) {
+    const sub = typeof getSubstance === 'function' ? getSubstance(substanceId, data) : null;
+    return sub?.primaryUnit
+        || getSubstanceTrackingDefaults(substanceId).primaryUnit
+        || sub?.defaultUnit
+        || 'units';
+}
+
+function getSubstanceSecondaryCountLabel(substanceId, data = appData) {
+    const sub = typeof getSubstance === 'function' ? getSubstance(substanceId, data) : null;
+    return sub?.secondaryCountLabel
+        ?? getSubstanceTrackingDefaults(substanceId).secondaryCountLabel
+        ?? null;
+}
+
+function formatSecondaryCountDisplay(substanceId, count, data = appData) {
+    const label = getSubstanceSecondaryCountLabel(substanceId, data);
+    if (!label || count === '' || count == null || count === 0) return '';
+    return `${count} ${label}`;
+}
+
+function migrateSubstanceTrackingModes(data) {
+    if (!Array.isArray(data.substances)) data.substances = [];
+
+    data.substances.forEach(sub => {
+        if (!sub || typeof sub !== 'object') return;
+        const defaults = getSubstanceTrackingDefaults(sub.id);
+        if (!sub.trackingMode) sub.trackingMode = inferTrackingModeFromSubstance(sub);
+        if (sub.id === 'coke' || normalizeSubstanceName(sub.name) === 'coke') {
+            sub.trackingMode = 'powder';
+            sub.primaryUnit = sub.primaryUnit || 'g';
+            sub.secondaryCountLabel = sub.secondaryCountLabel || 'lines';
+        }
+        if (sub.trackingMode === 'vape' && sub.id !== VAPE_NICOTINE_ID) {
+            const name = normalizeSubstanceName(sub.name);
+            if (name !== 'vape/nicotine' && !(name.includes('vape') && name.includes('nicotine'))) {
+                sub.trackingMode = inferTrackingModeFromSubstance({ ...sub, trackingMode: null });
+            }
+        }
+        if (!sub.primaryUnit) {
+            sub.primaryUnit = defaults.primaryUnit || sub.defaultUnit || sub.units?.[0] || 'units';
+        }
+        if (sub.secondaryCountLabel == null && defaults.secondaryCountLabel) {
+            sub.secondaryCountLabel = defaults.secondaryCountLabel;
+        }
+        if (defaults.primaryUnit && (!sub.defaultUnit || sub.defaultUnit === 'units')) {
+            sub.defaultUnit = defaults.primaryUnit;
+        }
+        if (sub.trackingMode === 'vape' && sub.defaultUnit !== 'puffs') {
+            sub.defaultUnit = 'puffs';
+            sub.primaryUnit = 'puffs';
+        }
+    });
+
+    (data.logs || []).forEach(log => {
+        if (!log || typeof log !== 'object') return;
+        const substanceId = getUseSubstanceId(log);
+        const mode = getSubstanceTrackingMode(substanceId, data);
+        if (!log.trackingMode) log.trackingMode = mode;
+        if (mode === 'vape' && isPersonalUseLog(log)) {
+            if (log.percentLeftAfter != null || log.percentRemaining != null || log.logMode === 'percent_remaining') {
+                log.logMode = log.logMode || 'percent_remaining';
+                log.trackingMode = 'vape';
+            }
+        } else if (mode !== 'vape' && log.trackingMode === 'vape') {
+            log.trackingMode = mode;
+        }
+        if (mode !== 'vape' && (log.logMode === 'percent_remaining' || log.logMode === 'vape_puffs')) {
+            log.logMode = 'standard';
+        }
+        if (substanceId === 'coke' && log.unit === 'grams') {
+            log.unit = 'g';
+        }
+    });
+
+    (data.purchases || []).forEach(purchase => {
+        if (!purchase || typeof purchase !== 'object') return;
+        const substanceId = getPurchaseSubstanceId(purchase);
+        const mode = getSubstanceTrackingMode(substanceId, data);
+        if (!purchase.trackingMode) purchase.trackingMode = mode;
+        if (mode !== 'vape' && purchase.trackingMode === 'vape') {
+            purchase.trackingMode = mode;
+        }
+    });
+}
+
 function createSubstance(opts) {
+    const defaults = getSubstanceTrackingDefaults(opts.id);
+    const primaryUnit = opts.primaryUnit || defaults.primaryUnit || opts.defaultUnit || opts.units?.[0] || 'units';
     return {
         id: opts.id,
         name: opts.name,
         icon: opts.icon || '📦',
         color: opts.color || '#4caf50',
+        trackingMode: opts.trackingMode || defaults.trackingMode || 'standard',
+        primaryUnit,
+        secondaryCountLabel: opts.secondaryCountLabel ?? defaults.secondaryCountLabel ?? null,
         units: opts.units || ['units'],
-        defaultUnit: opts.defaultUnit || opts.units?.[0] || 'units',
+        defaultUnit: opts.defaultUnit || primaryUnit,
         costTrackingEnabled: opts.costTrackingEnabled !== false,
         taperTrackingEnabled: opts.taperTrackingEnabled !== false,
         active: opts.active !== false,
@@ -264,8 +427,7 @@ const SESSION_LONG_BREAK_HOURS = 12;
 const SUPPLY_LOW_REMAINING_PCT = 0.25;
 const INVENTORY_EPS = 0.0001;
 const PERCENT_REMAINING_UNITS = new Set(['puffs', 'pods', 'disposable']);
-const VAPE_NICOTINE_ID = 'vape-nicotine';
-const DEFAULT_MAIN_SUBSTANCE_ID = 'vape-nicotine';
+const DEFAULT_MAIN_SUBSTANCE_ID = VAPE_NICOTINE_ID;
 
 const TAPER_RELAPSE_NOTE = 'Going over your limit doesn\'t erase your progress. Every day is a new chance—no shame, just data.';
 const TAPER_STANDARD_REDUCTION_TYPES = ['reduce-amount', 'reduce-percent', 'fixed', 'manual-weekly'];
@@ -330,17 +492,17 @@ function migrateLegacyTaperReductionType(plan, substanceId) {
         || normalizeTaperReductionTypeValue(plan.planType);
 
     if (type === '__legacy_step__' || type === 'step-weekly') {
-        plan.reductionType = substanceId === VAPE_NICOTINE_ID ? 'reduce-puffs' : 'reduce-amount';
-        if (substanceId === VAPE_NICOTINE_ID) {
+        plan.reductionType = isVapeTaperSubstanceId(substanceId) ? 'reduce-puffs' : 'reduce-amount';
+        if (isVapeTaperSubstanceId(substanceId)) {
             plan.puffReductionMode = plan.puffReductionMode || 'amount';
         }
         return;
     }
 
     plan.reductionType = type
-        || (substanceId === VAPE_NICOTINE_ID ? 'reduce-puffs' : 'reduce-amount');
+        || (isVapeTaperSubstanceId(substanceId) ? 'reduce-puffs' : 'reduce-amount');
 
-    if (substanceId === VAPE_NICOTINE_ID) {
+    if (isVapeTaperSubstanceId(substanceId)) {
         if (['reduce-amount', 'reduce-percent', 'fixed'].includes(plan.reductionType)) {
             const previousType = plan.reductionType;
             plan.reductionType = 'reduce-puffs';
@@ -361,7 +523,9 @@ function repairTaperPlanDefaults(plan, substanceId) {
     const now = new Date().toISOString();
     plan.substanceId = substanceId;
     plan.startDate = plan.startDate || now.slice(0, 10);
-    plan.reductionType = substanceId === VAPE_NICOTINE_ID ? 'reduce-puffs' : 'reduce-amount';
+    plan.reductionType = substanceId === VAPE_NICOTINE_ID || isVapeTaperSubstanceId(substanceId)
+        ? 'reduce-puffs'
+        : 'reduce-amount';
     plan.isPaused = !!plan.isPaused;
     plan.createdAt = plan.createdAt || now;
     plan.updatedAt = now;
@@ -766,6 +930,7 @@ function normalizeAppData(data) {
     ensureAppDataMigrations(data);
     ensureDefaultSubstances(data);
     ensureDefaultSubstanceSettings(data);
+    migrateSubstanceTrackingModes(data);
     normalizeMainSubstances(data);
     migrateTaperPlansSafely(data);
     recalculateAllBreaksForData(data);
@@ -1937,7 +2102,26 @@ function updateUseUnitDropdown() {
         unitSelect.appendChild(option);
     });
     if (sub?.defaultUnit) unitSelect.value = sub.defaultUnit;
+    updateSubstanceTrackingFormUI();
     updateVapeUseFormUI();
+}
+
+function updateSubstanceTrackingFormUI() {
+    const substanceId = document.getElementById('use-substance')?.value;
+    const amountLabel = document.getElementById('use-amount-label');
+    const countLabel = document.querySelector('#use-count-group label');
+    const primaryUnit = getSubstancePrimaryUnit(substanceId);
+    const countFieldLabel = getSubstanceSecondaryCountLabel(substanceId);
+    if (amountLabel) {
+        amountLabel.textContent = primaryUnit && primaryUnit !== 'units'
+            ? `Amount (${primaryUnit})`
+            : 'Amount';
+    }
+    if (countLabel) {
+        countLabel.textContent = countFieldLabel
+            ? `${countFieldLabel.charAt(0).toUpperCase()}${countFieldLabel.slice(1)} (optional)`
+            : 'Count (optional)';
+    }
 }
 
 function updateBuyUnitDropdown() {
@@ -3187,7 +3371,7 @@ function buildUseEntryFromForm(vapeCalc = null) {
     const date = document.getElementById('use-date')?.value;
     const startTime = document.getElementById('use-start-time')?.value || '12:00';
     const endTime = document.getElementById('use-end-time')?.value;
-    const isVapeUse = isVapeNicotineSubstanceId(substanceId) && transactionType === 'use';
+    const isVapeUse = isVapeTrackingMode(substanceId) && transactionType === 'use';
 
     let amount;
     let unit;
@@ -3236,6 +3420,8 @@ function buildUseEntryFromForm(vapeCalc = null) {
         supplyUnlinked: !inventoryAffects,
         inventoryAffects
     };
+
+    base.trackingMode = getSubstanceTrackingMode(substanceId);
 
     if (isVapeUse && vapeCalc && !vapeCalc.error) {
         base.isEstimated = !!vapeCalc.isEstimated;
@@ -3754,20 +3940,21 @@ function formatPercentRemainingLabel(remaining, bought) {
     return `${label}% left`;
 }
 
-function isVapeNicotineSubstanceId(substanceId) {
-    return substanceId === VAPE_NICOTINE_ID;
+function isVapeNicotineSubstanceId(substanceId, data = appData) {
+    return isVapeTrackingMode(substanceId, data);
 }
 
-function isVapeNicotineSubstance(sub) {
-    return sub?.id === VAPE_NICOTINE_ID;
+function isVapeNicotineSubstance(sub, data = appData) {
+    return sub?.id ? isVapeTrackingMode(sub.id, data) : false;
 }
 
 function isVapePuffUnit(unit) {
     return isPercentRemainingUnit(unit);
 }
 
-function isVapePuffPurchase(purchase) {
-    return isVapeNicotineSubstanceId(getPurchaseSubstanceId(purchase)) && isVapePuffUnit(purchase?.unit);
+function isVapePuffPurchase(purchase, data = appData) {
+    const substanceId = getPurchaseSubstanceId(purchase);
+    return isVapeTrackingMode(substanceId, data) && isVapePuffUnit(purchase?.unit);
 }
 
 function getVapeFullPuffCount(purchase) {
@@ -3898,14 +4085,20 @@ function parseVapeNicotineFieldsFromForm() {
     return { eLiquidCapacityMl, nicotineMgPerMl, totalNicotineMg };
 }
 
-function isVapeUseLog(log) {
-    return isPersonalUseLog(log)
-        && isVapeNicotineSubstanceId(getUseSubstanceId(log))
-        && (log.logMode === 'vape_puffs' || log.logMode === 'percent_remaining' || isVapePuffUnit(log.unit));
+function isVapeUseLog(log, data = appData) {
+    if (!isPersonalUseLog(log)) return false;
+    const substanceId = getUseSubstanceId(log);
+    if (!isVapeTrackingMode(substanceId, data)) return false;
+    return log.logMode === 'vape_puffs'
+        || log.logMode === 'percent_remaining'
+        || log.trackingMode === 'vape'
+        || isVapePuffUnit(log.unit)
+        || log.percentLeftAfter != null
+        || log.percentRemaining != null;
 }
 
-function shouldShowUseCountForSubstance(substanceId) {
-    return !isVapeNicotineSubstanceId(substanceId);
+function shouldShowUseCountForSubstance(substanceId, data = appData) {
+    return Boolean(getSubstanceSecondaryCountLabel(substanceId, data));
 }
 
 function getPurchaseDatetimeIso(purchase) {
@@ -4377,7 +4570,7 @@ function updateVapeUsePreview() {
 function updateVapeUseFormUI() {
     const substanceId = document.getElementById('use-substance')?.value;
     const tx = document.getElementById('use-transaction-type')?.value || 'use';
-    const isVapeUse = isVapeNicotineSubstanceId(substanceId) && tx === 'use';
+    const isVapeUse = isVapeTrackingMode(substanceId) && tx === 'use';
     const vapeGroup = document.getElementById('use-vape-fields-group');
     const amountGroup = document.getElementById('use-amount-mode-group');
     const amountInput = document.getElementById('use-amount');
@@ -6223,7 +6416,7 @@ function renderRecentUseList() {
                 <div class="use-recent-sub">${sub?.icon || ''} ${sub?.name || 'Unknown'} · ${formatDate(log.date || '')}${timeRange ? ` · ${timeRange}` : ''}</div>
                 ${vapeDetailHtml}
                 ${enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}
-                ${!isVape && countStr !== '' && countStr != null && countStr !== 0 ? `<div class="use-recent-detail">${countStr} lines</div>` : ''}
+                ${!isVape && formatSecondaryCountDisplay(substanceId, countStr) ? `<div class="use-recent-detail">${formatSecondaryCountDisplay(substanceId, countStr)}</div>` : ''}
                 ${log.notes ? `<div class="use-recent-notes">${log.notes}</div>` : ''}
                 ${log.mood ? `<div class="use-recent-detail">Mood: ${log.mood}</div>` : ''}
                 ${log.trigger ? `<div class="use-recent-detail">Trigger: ${log.trigger}</div>` : ''}
@@ -6532,13 +6725,20 @@ function updateBuyVapeFieldsPreview() {
 
 function updateBuyVapeFieldsVisibility() {
     const substanceId = document.getElementById('buy-substance')?.value;
-    const isVape = isVapeNicotineSubstanceId(substanceId);
+    const isVape = isVapeTrackingMode(substanceId);
     document.getElementById('buy-vape-started-group')?.classList.toggle('hidden', !isVape);
     document.getElementById('buy-vape-percent-group')?.classList.toggle('hidden', !isVape);
     document.getElementById('buy-vape-liquid-group')?.classList.toggle('hidden', !isVape);
     document.getElementById('buy-time-group')?.classList.toggle('hidden', isVape);
     const qtyLabel = document.getElementById('buy-quantity-label');
-    if (qtyLabel) qtyLabel.textContent = isVape ? 'Puff count at 100%' : 'Quantity Bought';
+    const primaryUnit = getSubstancePrimaryUnit(substanceId);
+    if (qtyLabel) {
+        qtyLabel.textContent = isVape
+            ? 'Puff count at 100%'
+            : (primaryUnit && primaryUnit !== 'units'
+                ? `Quantity (${primaryUnit})`
+                : 'Quantity Bought');
+    }
     if (isVape) updateBuyVapeFieldsPreview();
 }
 
@@ -6583,10 +6783,11 @@ function buildPurchaseFromForm() {
     const sub = getSubstance(substanceId);
     const qty = Number.isFinite(quantity) ? quantity : 0;
     const unit = document.getElementById('buy-unit')?.value || 'units';
-    const isVape = isVapeNicotineSubstanceId(substanceId) && isVapePuffUnit(unit);
+    const isVape = isVapeTrackingMode(substanceId) && isVapePuffUnit(unit);
     const payload = {
         substanceId,
         substanceName: sub?.name || '',
+        trackingMode: getSubstanceTrackingMode(substanceId),
         date: document.getElementById('buy-date')?.value,
         time: isVape ? '12:00' : (document.getElementById('buy-time')?.value || '12:00'),
         quantityBought: qty,
@@ -6618,7 +6819,7 @@ function buildPurchaseFromForm() {
 
 function finalizeNewPurchaseRecord(payload) {
     const now = new Date().toISOString();
-    const isVape = isVapeNicotineSubstanceId(payload.substanceId) && isVapePuffUnit(payload.unit);
+    const isVape = isVapeTrackingMode(payload.substanceId) && isVapePuffUnit(payload.unit);
     const record = {
         ...payload,
         remainingAmount: isVape
@@ -7180,7 +7381,8 @@ function renderPurchaseLinkedLogSummaryLine(log, purchaseId, unit) {
         }
     } else {
         const count = getUseCount(log);
-        if (count !== '' && count != null) parts.push(`${count} lines`);
+        const countLine = formatSecondaryCountDisplay(getUseSubstanceId(log), count);
+        if (countLine) parts.push(countLine);
         else if (enriched.durationHours) parts.push(formatDurationHours(enriched.durationHours));
     }
     return parts.join(' · ');
@@ -9660,7 +9862,7 @@ function updateLongestTimeBetween() {
 
 // ——— Taper / Do Not Surpass ———
 function getTaperReductionTypesForSubstance(substanceId) {
-    return isVapeNicotineSubstanceId(substanceId) ? TAPER_VAPE_REDUCTION_TYPES : TAPER_STANDARD_REDUCTION_TYPES;
+    return isVapeTrackingMode(substanceId) ? TAPER_VAPE_REDUCTION_TYPES : TAPER_STANDARD_REDUCTION_TYPES;
 }
 
 function getVapeBaselinePuffsPerDay(substanceId, data = appData) {
@@ -9724,12 +9926,12 @@ function getTaperTrackingUnit(plan, substanceId) {
     if (isManualWeeklyPlan(plan)) return getManualWeeklyPlanUnit(plan, substanceId);
     if (isReduceNicotinePlan(plan)) return 'mg/mL';
     if (isReduceBuyingPlan(plan)) return 'days';
-    if (isVapeNicotineSubstanceId(substanceId)) return 'puffs';
-    return getSubstance(substanceId)?.defaultUnit || 'units';
+    if (isVapeTrackingMode(substanceId)) return 'puffs';
+    return getSubstancePrimaryUnit(substanceId) || 'units';
 }
 
 function shouldUseVapeStatsUsage(substanceId, plan) {
-    return isVapeNicotineSubstanceId(substanceId)
+    return isVapeTrackingMode(substanceId)
         && (isReducePuffsPlan(plan) || isManualWeeklyPlan(plan));
 }
 
@@ -10025,7 +10227,7 @@ function isManualWeeklyPercentMode(plan) {
 function getManualWeeklyPlanUnit(plan, substanceId) {
     const stored = plan?.manualWeeklyUnit;
     if (stored && stored !== '__default__') return stored;
-    return getSubstance(substanceId)?.defaultUnit || 'units';
+    return getSubstancePrimaryUnit(substanceId) || 'units';
 }
 
 function getManualWeeklyModeFromForm() {
@@ -10076,9 +10278,12 @@ function populateManualWeeklyUnitSelect(substanceId, selectedUnit) {
     if (!select) return;
 
     const sub = getSubstance(substanceId);
-    const defaultUnit = sub?.defaultUnit || 'units';
+    const defaultUnit = getSubstancePrimaryUnit(substanceId) || sub?.defaultUnit || 'units';
     const substanceUnits = sub?.units || [];
-    const options = new Set([defaultUnit, ...substanceUnits, ...MANUAL_WEEKLY_UNIT_PRESETS]);
+    const presetUnits = isVapeTrackingMode(substanceId)
+        ? MANUAL_WEEKLY_UNIT_PRESETS.filter(u => ['puffs', 'hits'].includes(u))
+        : MANUAL_WEEKLY_UNIT_PRESETS.filter(u => u !== 'puffs');
+    const options = new Set([defaultUnit, ...substanceUnits, ...presetUnits]);
 
     select.innerHTML = '';
     const defaultOpt = document.createElement('option');
@@ -11013,8 +11218,15 @@ function toggleTaperPlanTypeFields() {
     if (monthlyMaxGroup) {
         const monthlyLabel = monthlyMaxGroup.querySelector('label');
         const monthlyHint = monthlyMaxGroup.querySelector('.field-hint');
+        const primaryUnit = getSubstancePrimaryUnit(substanceId);
         if (monthlyLabel) {
-            monthlyLabel.textContent = isBuying ? 'Monthly vape purchase cap (optional)' : 'Monthly cap';
+            if (isBuying) monthlyLabel.textContent = 'Monthly vape purchase cap (optional)';
+            else if (isVape) monthlyLabel.textContent = 'Monthly cap';
+            else if (primaryUnit && primaryUnit !== 'units') {
+                monthlyLabel.textContent = `Monthly cap (${primaryUnit})`;
+            } else {
+                monthlyLabel.textContent = 'Monthly cap';
+            }
         }
         if (monthlyHint) {
             monthlyHint.textContent = isBuying
