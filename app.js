@@ -723,11 +723,11 @@ const TABLE_COLUMNS_REQUIRED = {
 const USE_STATS_DEFAULTS = {
     order: [
         'totalUsage', 'sessionCount', 'avgPerSession', 'avgPerHr', 'totalDuration', 'avgDuration',
-        'longestSession', 'shortestSession', 'longestBreak', 'shortestBreak', 'avgBreak',
+        'currentSupplyDuration', 'longestSession', 'shortestSession', 'longestBreak', 'shortestBreak', 'avgBreak',
         'useDays', 'useDayPct', 'avgPerUseDay', 'avgPerCalendarDay'
     ],
     hidden: [
-        'longestSession', 'shortestSession', 'longestBreak', 'shortestBreak', 'avgBreak',
+        'currentSupplyDuration', 'longestSession', 'shortestSession', 'longestBreak', 'shortestBreak', 'avgBreak',
         'useDays', 'useDayPct', 'avgPerUseDay', 'avgPerCalendarDay'
     ]
 };
@@ -739,6 +739,7 @@ const USE_STATS_LABELS = {
     avgPerHr: 'Avg / hr',
     totalDuration: 'Total Duration',
     avgDuration: 'Avg Duration',
+    currentSupplyDuration: 'Current Supply Duration',
     longestSession: 'Longest Session',
     shortestSession: 'Shortest Session',
     longestBreak: 'Longest Break',
@@ -3533,29 +3534,202 @@ function formatVapeDuration(ms) {
     return `${hours} hr${hours === 1 ? '' : 's'} ${minutes} min${minutes === 1 ? '' : 's'}`;
 }
 
-function getVapePurchaseLifecycleMetrics(purchase) {
+function getVapePurchaseLifecycleMetrics(purchase, asOfMs = Date.now()) {
     if (!isVapePuffPurchase(purchase)) return null;
     const starting = getVapeStartingPuffsLeft(purchase);
     const remaining = getPurchaseRemainingAmount(purchase);
     const totalUsed = Math.max(0, starting - remaining);
     const started = parsePurchaseStartedAt(purchase);
     const finished = purchase.finishedAt ? new Date(purchase.finishedAt) : null;
-    let durationMs = null;
-    if (started && finished && !Number.isNaN(started.getTime()) && !Number.isNaN(finished.getTime())) {
-        durationMs = Math.max(0, finished.getTime() - started.getTime());
-    }
+    const isFinished = !!(purchase.isDepleted && finished && !Number.isNaN(finished.getTime()));
+    const durationMs = getVapePurchaseSupplyDurationMs(purchase, asOfMs);
     const durationDays = durationMs != null ? durationMs / 86400000 : null;
+    let durationLabel = '—';
+    if (durationMs != null) {
+        durationLabel = formatVapeDuration(durationMs);
+        if (!isFinished) durationLabel += ' so far';
+    }
     return {
         started,
-        finished,
+        finished: isFinished ? finished : null,
         durationMs,
-        durationLabel: durationMs != null ? formatVapeDuration(durationMs) : '—',
+        durationLabel,
         totalUsed,
+        isFinished,
         avgPuffsPerDay: durationDays != null && durationDays >= 1 ? totalUsed / durationDays : null,
         avgPuffsPerHour: durationMs != null && durationDays != null && durationDays < 2 && durationMs > 0
             ? totalUsed / (durationMs / 3600000)
             : null
     };
+}
+
+function getPurchaseStartedAtMs(purchase) {
+    const started = parsePurchaseStartedAt(purchase);
+    if (started && !Number.isNaN(started.getTime())) return started.getTime();
+    return getPurchaseDatetimeMs(purchase);
+}
+
+function getVapePurchaseSupplyDurationMs(purchase, asOfMs = Date.now()) {
+    const started = parsePurchaseStartedAt(purchase);
+    if (!started || Number.isNaN(started.getTime())) return null;
+    if (purchase.finishedAt) {
+        const finished = new Date(purchase.finishedAt);
+        if (!Number.isNaN(finished.getTime())) {
+            return Math.max(0, finished.getTime() - started.getTime());
+        }
+    }
+    if (!purchase.isDepleted && getPurchaseRemainingAmount(purchase) > INVENTORY_EPS) {
+        return Math.max(0, asOfMs - started.getTime());
+    }
+    return null;
+}
+
+function shouldDistributeVapeLogForStats(log) {
+    return isVapeUseLog(log) && isPersonalUseLog(log) && !log.needsReview && isPercentBasedVapeLog(log);
+}
+
+function distributeAmountOverTimeInterval(amount, startDt, endDt) {
+    if (!Number.isFinite(amount) || amount <= 0) return [];
+    const startMs = startDt?.getTime();
+    const endMs = endDt?.getTime();
+    if (startMs == null || endMs == null || Number.isNaN(startMs) || Number.isNaN(endMs)) {
+        return endDt && !Number.isNaN(endDt.getTime())
+            ? [{ date: getLocalDateString(endDt), amount }]
+            : [];
+    }
+    if (endMs <= startMs) {
+        return [{ date: getLocalDateString(endDt), amount }];
+    }
+    const totalMs = endMs - startMs;
+    const allocations = new Map();
+    let cursor = parseLocalDate(getLocalDateString(startDt));
+    const endDate = parseLocalDate(getLocalDateString(endDt));
+    while (cursor && endDate && cursor <= endDate) {
+        const dateStr = getLocalDateString(cursor);
+        const dayStart = parseLocalDate(dateStr);
+        const dayEnd = new Date(dayStart);
+        dayEnd.setHours(23, 59, 59, 999);
+        const overlapStart = Math.max(startMs, dayStart.getTime());
+        const overlapEnd = Math.min(endMs, dayEnd.getTime());
+        if (overlapEnd > overlapStart) {
+            const portion = amount * ((overlapEnd - overlapStart) / totalMs);
+            if (portion > 0) allocations.set(dateStr, (allocations.get(dateStr) || 0) + portion);
+        }
+        cursor.setDate(cursor.getDate() + 1);
+    }
+    const entries = [...allocations.entries()].map(([date, amt]) => ({ date, amount: amt }));
+    const sum = entries.reduce((s, e) => s + e.amount, 0);
+    if (entries.length && Math.abs(sum - amount) > 0.001) {
+        entries[entries.length - 1].amount += amount - sum;
+    }
+    return entries;
+}
+
+function getVapeLogStatsAllocations(log, data = appData) {
+    const amount = parseFloat(log.amount) || 0;
+    if (!shouldDistributeVapeLogForStats(log)) {
+        return log.date ? [{ date: log.date, amount }] : [];
+    }
+    const purchase = findPurchaseInData(getLogPurchaseId(log), data);
+    if (!purchase) return log.date ? [{ date: log.date, amount }] : [];
+    return distributeAmountOverTimeInterval(
+        amount,
+        parsePurchaseStartedAt(purchase),
+        parseUseDateTime(log.date, log.startTime || log.time)
+    );
+}
+
+function getVapeDistributedUsageMap(substanceId, data = appData) {
+    const map = new Map();
+    getUseLogsForSubstance(substanceId, { personalUseOnly: true, data }).forEach(log => {
+        if (!isVapeUseLog(log)) return;
+        getVapeLogStatsAllocations(log, data).forEach(({ date, amount }) => {
+            map.set(date, (map.get(date) || 0) + amount);
+        });
+    });
+    return map;
+}
+
+function getStatsUsageInRange(substanceId, startDate, endDate, data = appData) {
+    if (!isVapeNicotineSubstanceId(substanceId)) {
+        return getPersonalUseInRange(substanceId, startDate, endDate, data)
+            .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+    }
+    let total = 0;
+    getVapeDistributedUsageMap(substanceId, data).forEach((amount, date) => {
+        if (startDate && date < startDate) return;
+        if (endDate && date > endDate) return;
+        total += amount;
+    });
+    return total;
+}
+
+function getStatsUsageOnDate(substanceId, dateStr, data = appData) {
+    if (!isVapeNicotineSubstanceId(substanceId)) {
+        return getUsedAmount(substanceId, dateStr, null, data);
+    }
+    return getVapeDistributedUsageMap(substanceId, data).get(dateStr) || 0;
+}
+
+function getStatsMonthUsageTotal(substanceId, dateStr = getLocalDateString(), data = appData) {
+    const monthStart = getMonthStartDateStr(dateStr);
+    return getStatsUsageInRange(substanceId, monthStart, dateStr, data);
+}
+
+function getVapePurchaseBreakHoursList(substanceId, startDate = null, endDate = null, data = appData) {
+    const purchases = getPurchasesForSubstance(substanceId, data).filter(isVapePuffPurchase);
+    const gaps = [];
+    for (let i = 1; i < purchases.length; i++) {
+        const prevMs = getPurchaseStartedAtMs(purchases[i - 1]);
+        const curMs = getPurchaseStartedAtMs(purchases[i]);
+        const curDate = purchases[i].date;
+        if (!prevMs || !curMs || curMs <= prevMs) continue;
+        if (startDate && curDate < startDate) continue;
+        if (endDate && curDate > endDate) continue;
+        gaps.push((curMs - prevMs) / 3600000);
+    }
+    return gaps;
+}
+
+function getVapeFinishedSupplyDurationsInRange(substanceId, startDate, endDate, data = appData) {
+    return getPurchasesForSubstance(substanceId, data)
+        .filter(p => isVapePuffPurchase(p) && p.finishedAt)
+        .filter(p => {
+            const finishDate = getLocalDateString(new Date(p.finishedAt));
+            return finishDate >= startDate && finishDate <= endDate;
+        })
+        .map(p => getVapePurchaseSupplyDurationMs(p))
+        .filter(ms => ms != null && ms >= 0);
+}
+
+function getVapeCurrentSupplyDurationMs(substanceId) {
+    const active = getActivePurchasesForSubstance(substanceId).filter(isVapePuffPurchase);
+    if (!active.length) return null;
+    const latest = active.sort((a, b) => getPurchaseStartedAtMs(b) - getPurchaseStartedAtMs(a))[0];
+    return getVapePurchaseSupplyDurationMs(latest);
+}
+
+function formatStatsBreakValue(hours, substanceId) {
+    if (hours == null || Number.isNaN(hours)) return '—';
+    if (isVapeNicotineSubstanceId(substanceId)) return formatBreakFromHours(hours);
+    return formatDurationHMS(hours);
+}
+
+function formatStatsDurationValue(hours, substanceId, { soFar = false } = {}) {
+    if (hours == null || Number.isNaN(hours)) return '—';
+    if (isVapeNicotineSubstanceId(substanceId)) {
+        const label = formatVapeDuration(hours * 3600000);
+        return soFar ? `${label} so far` : label;
+    }
+    return formatDurationHMS(hours);
+}
+
+function getVisibleUseStatsOrderForSubstance(substanceId) {
+    const order = getVisibleUseStatsOrder();
+    if (!isVapeNicotineSubstanceId(substanceId) || order.includes('currentSupplyDuration')) return order;
+    const idx = order.indexOf('avgDuration');
+    const insertAt = idx >= 0 ? idx + 1 : order.length;
+    return [...order.slice(0, insertAt), 'currentSupplyDuration', ...order.slice(insertAt)];
 }
 
 function reconcileVapePurchaseLifecycle(purchase, data = appData) {
@@ -4429,7 +4603,9 @@ function getAverageDailyUse(substanceId, days = 7) {
         const d = new Date(today);
         d.setDate(today.getDate() - i);
         const dateStr = getLocalDateString(d);
-        total += getUsedAmount(substanceId, dateStr);
+        total += isVapeNicotineSubstanceId(substanceId)
+            ? getStatsUsageOnDate(substanceId, dateStr)
+            : getUsedAmount(substanceId, dateStr);
         dayCount++;
     }
     return dayCount ? total / dayCount : 0;
@@ -6418,9 +6594,16 @@ function getSubstanceSupplyDurationStats(substanceId) {
     const purchases = substanceId
         ? getPurchasesForSubstance(substanceId, appData)
         : [...getPurchasesFiltered(null)];
+    const isVape = isVapeNicotineSubstanceId(substanceId);
 
     const durationMsList = [];
     purchases.forEach(purchase => {
+        if (isVape && isVapePuffPurchase(purchase)) {
+            if (!purchase.finishedAt) return;
+            const ms = getVapePurchaseSupplyDurationMs(purchase);
+            if (ms != null) durationMsList.push(ms);
+            return;
+        }
         const metrics = getPurchaseSupplyMetrics(purchase);
         if (metrics.logs.length >= 2 && metrics.supplyDurationMs != null) {
             durationMsList.push(metrics.supplyDurationMs);
@@ -6515,7 +6698,7 @@ function renderVapePurchaseLifecycleHtml(purchase) {
             <div class="purchase-supply-stat"><span>Current left</span><strong>${formatAmount(remaining)} puffs / ${pctLeft}%</strong></div>
             <div class="purchase-supply-stat"><span>Started using</span><strong>${metrics.started ? formatDatetimeLong(metrics.started) : '—'}</strong></div>
             <div class="purchase-supply-stat"><span>Finished</span><strong>${metrics.finished ? formatDatetimeLong(metrics.finished) : '—'}</strong></div>
-            <div class="purchase-supply-stat"><span>Lasted</span><strong>${metrics.durationLabel}</strong></div>
+            <div class="purchase-supply-stat"><span>Supply duration</span><strong>${metrics.durationLabel}</strong></div>
             <div class="purchase-supply-stat"><span>Avg puffs/day</span><strong>${avgDay}</strong></div>
             <div class="purchase-supply-stat"><span>Avg puffs/hr</span><strong>${avgHour}</strong></div>
         </div>`;
@@ -7163,7 +7346,9 @@ function buildDailyUsageBuckets(substanceId, days = 7) {
         const label = d ? d.toLocaleDateString('en-US', { weekday: 'short' }) : dateStr.slice(5);
         buckets.push({
             label,
-            value: getUsedAmount(substanceId, dateStr)
+            value: isVapeNicotineSubstanceId(substanceId)
+                ? getStatsUsageOnDate(substanceId, dateStr)
+                : getUsedAmount(substanceId, dateStr)
         });
     }
     return buckets;
@@ -7175,8 +7360,10 @@ function buildWeeklyUsageBuckets(substanceId, weeks = 4) {
     for (let i = weeks - 1; i >= 0; i--) {
         const weekEnd = addDaysToDateStr(getWeekStartDateStr(today), -i * 7 + 6);
         const weekStart = addDaysToDateStr(weekEnd, -6);
-        const used = getPersonalUseInRange(substanceId, weekStart, weekEnd)
-            .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+        const used = isVapeNicotineSubstanceId(substanceId)
+            ? getStatsUsageInRange(substanceId, weekStart, weekEnd)
+            : getPersonalUseInRange(substanceId, weekStart, weekEnd)
+                .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
         buckets.push({ label: `W${weeks - i}`, value: used });
     }
     return buckets;
@@ -7189,7 +7376,9 @@ function buildMonthlyUsageBuckets(substanceId, months = 3) {
         const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
         const monthStart = getLocalDateString(d);
         const monthEnd = getMonthEndDateStr(monthStart);
-        const used = getMonthPersonalUseTotal(substanceId, monthEnd);
+        const used = isVapeNicotineSubstanceId(substanceId)
+            ? getStatsMonthUsageTotal(substanceId, monthEnd)
+            : getMonthPersonalUseTotal(substanceId, monthEnd);
         const label = d.toLocaleDateString('en-US', { month: 'short' });
         buckets.push({ label, value: used });
     }
@@ -7724,7 +7913,10 @@ function calculateUseStats(logs) {
     };
 }
 
-function buildUseStatsMetrics(logs, daysInRange, substanceId) {
+function buildUseStatsMetrics(logs, daysInRange, substanceId, bounds = null) {
+    if (isVapeNicotineSubstanceId(substanceId) && bounds) {
+        return buildVapeUseStatsMetrics(logs, daysInRange, substanceId, bounds);
+    }
     const base = calculateUseStats(logs);
     const personalLogs = (logs || []).filter(isPersonalUseLog);
     const useDays = new Set(personalLogs.map(l => l.date)).size;
@@ -7755,6 +7947,56 @@ function buildUseStatsMetrics(logs, daysInRange, substanceId) {
     };
 }
 
+function buildVapeUseStatsMetrics(logs, daysInRange, substanceId, bounds) {
+    const personalLogs = (logs || []).filter(isPersonalUseLog);
+    const totalAmount = getStatsUsageInRange(substanceId, bounds.startDate, bounds.endDate);
+    const sessionCount = personalLogs.filter(isVapeUseLog).length;
+    let useDays = 0;
+    getVapeDistributedUsageMap(substanceId).forEach((amount, date) => {
+        if (date >= bounds.startDate && date <= bounds.endDate && amount > INVENTORY_EPS) useDays++;
+    });
+    const useDayPct = daysInRange > 0 ? (useDays / daysInRange) * 100 : 0;
+    const avgPerUseDay = useDays > 0 ? totalAmount / useDays : null;
+    const avgPerCalendarDay = daysInRange > 0 ? totalAmount / daysInRange : null;
+    const avgPerSession = sessionCount > 0 ? totalAmount / sessionCount : null;
+
+    const finishedDurationsMs = getVapeFinishedSupplyDurationsInRange(
+        substanceId,
+        bounds.startDate,
+        bounds.endDate
+    );
+    const avgDurationMinutes = finishedDurationsMs.length
+        ? finishedDurationsMs.reduce((s, ms) => s + ms, 0) / finishedDurationsMs.length / 60000
+        : null;
+    const totalDurationMinutes = finishedDurationsMs.length
+        ? finishedDurationsMs.reduce((s, ms) => s + ms, 0) / 60000
+        : 0;
+    const currentSupplyDurationMs = getVapeCurrentSupplyDurationMs(substanceId);
+
+    const breakHoursList = getVapePurchaseBreakHoursList(substanceId, bounds.startDate, bounds.endDate);
+
+    return {
+        sessionCount,
+        totalAmount,
+        avgDurationMinutes,
+        currentSupplyDurationMs,
+        avgPerSession,
+        avgPerHour: null,
+        totalDurationMinutes,
+        longestMinutes: null,
+        shortestMinutes: null,
+        useDays,
+        useDayPct,
+        avgPerUseDay,
+        avgPerCalendarDay,
+        longestBreakHours: breakHoursList.length ? Math.max(...breakHoursList) : null,
+        shortestBreakHours: breakHoursList.length ? Math.min(...breakHoursList) : null,
+        avgBreakHours: breakHoursList.length
+            ? breakHoursList.reduce((sum, h) => sum + h, 0) / breakHoursList.length
+            : null
+    };
+}
+
 function formatUseStatValue(statId, metrics, unit) {
     switch (statId) {
         case 'totalUsage':
@@ -7770,8 +8012,17 @@ function formatUseStatValue(statId, metrics, unit) {
                 ? formatDurationHours(metrics.totalDurationMinutes / 60)
                 : '—';
         case 'avgDuration':
+            if (isVapeNicotineSubstanceId(currentSubstanceId)) {
+                return metrics.avgDurationMinutes != null
+                    ? formatVapeDuration(metrics.avgDurationMinutes * 60000)
+                    : '—';
+            }
             return metrics.avgDurationMinutes != null
                 ? formatDurationHours(metrics.avgDurationMinutes / 60)
+                : '—';
+        case 'currentSupplyDuration':
+            return metrics.currentSupplyDurationMs != null
+                ? `${formatVapeDuration(metrics.currentSupplyDurationMs)} so far`
                 : '—';
         case 'longestSession':
             return metrics.longestMinutes != null
@@ -7790,6 +8041,11 @@ function formatUseStatValue(statId, metrics, unit) {
                 ? formatBreakFromHours(metrics.shortestBreakHours)
                 : '—';
         case 'avgBreak':
+            if (isVapeNicotineSubstanceId(currentSubstanceId)) {
+                return metrics.avgBreakHours != null
+                    ? formatBreakFromHours(metrics.avgBreakHours)
+                    : '—';
+            }
             return metrics.avgBreakHours != null
                 ? formatBreakFromHours(metrics.avgBreakHours)
                 : '—';
@@ -7807,6 +8063,9 @@ function formatUseStatValue(statId, metrics, unit) {
 }
 
 function getUseStatLabel(statId, unit) {
+    if (statId === 'avgDuration' && isVapeNicotineSubstanceId(currentSubstanceId)) {
+        return 'Avg Supply Duration';
+    }
     if (statId === 'avgPerUseDay') return `Avg ${unit} / Use Day`;
     if (statId === 'avgPerCalendarDay') return `Avg ${unit} / Calendar Day`;
     return USE_STATS_LABELS[statId] || statId;
@@ -7816,7 +8075,7 @@ function renderUseStatsCards(metrics, unit) {
     const grid = document.getElementById('use-stats-cards-grid');
     if (!grid) return;
 
-    const visible = getVisibleUseStatsOrder();
+    const visible = getVisibleUseStatsOrderForSubstance(currentSubstanceId);
     if (!visible.length) {
         grid.innerHTML = '<p class="empty-hint">No stats selected. Tap Edit Stats to choose cards.</p>';
         return;
@@ -8064,17 +8323,44 @@ function enrichMonthlySummaryWithBuyData(summary, substanceId) {
 function calculateWeeklyTrackingSummary(substanceId, weekStart, weekEnd) {
     const enriched = buildEnrichedUseEntries(substanceId);
     const weekEntries = enriched.filter(e => isPersonalUseLog(e) && e.date >= weekStart && e.date <= weekEnd);
-    const totalUsage = weekEntries.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
-    const sessions = weekEntries.length;
+    const isVape = isVapeNicotineSubstanceId(substanceId);
+
+    let totalUsage;
+    let avgBreak;
+    let longestBreak;
+    let shortestBreak;
+    let avgDurationHours;
     let totalDurationHours = 0;
-    weekEntries.forEach(e => { if (e.durationHours) totalDurationHours += e.durationHours; });
-    const avgDurationHours = sessions > 0 ? totalDurationHours / sessions : null;
+    let gPerHour = null;
+
+    if (isVape) {
+        totalUsage = getStatsUsageInRange(substanceId, weekStart, weekEnd);
+        const breakHours = getVapePurchaseBreakHoursList(substanceId, weekStart, weekEnd);
+        avgBreak = breakHours.length ? breakHours.reduce((a, b) => a + b, 0) / breakHours.length : null;
+        longestBreak = breakHours.length ? Math.max(...breakHours) : null;
+        shortestBreak = breakHours.length ? Math.min(...breakHours) : null;
+        const supplyDurMs = getVapeFinishedSupplyDurationsInRange(substanceId, weekStart, weekEnd);
+        totalDurationHours = supplyDurMs.reduce((s, ms) => s + ms, 0) / 3600000;
+        avgDurationHours = supplyDurMs.length
+            ? totalDurationHours / supplyDurMs.length
+            : null;
+    } else {
+        totalUsage = weekEntries.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+        weekEntries.forEach(e => { if (e.durationHours) totalDurationHours += e.durationHours; });
+        avgDurationHours = weekEntries.length > 0 ? totalDurationHours / weekEntries.length : null;
+        const breaks = weekEntries.map(e => e.breakDurationHours).filter(h => h != null && h >= 0);
+        avgBreak = breaks.length ? breaks.reduce((a, b) => a + b, 0) / breaks.length : null;
+        longestBreak = breaks.length ? Math.max(...breaks) : null;
+        shortestBreak = breaks.length ? Math.min(...breaks) : null;
+    }
+
+    const sessions = isVape
+        ? weekEntries.filter(e => isVapeUseLog(e)).length
+        : weekEntries.length;
     const avgPerSession = sessions > 0 ? totalUsage / sessions : null;
-    const gPerHour = totalDurationHours > 0 ? totalUsage / totalDurationHours : null;
-    const breaks = weekEntries.map(e => e.breakDurationHours).filter(h => h != null && h >= 0);
-    const avgBreak = breaks.length ? breaks.reduce((a, b) => a + b, 0) / breaks.length : null;
-    const longestBreak = breaks.length ? Math.max(...breaks) : null;
-    const shortestBreak = breaks.length ? Math.min(...breaks) : null;
+    if (!isVape) {
+        gPerHour = totalDurationHours > 0 ? totalUsage / totalDurationHours : null;
+    }
     const goalUse = getWeeklyLimit(substanceId, weekStart);
     const left = goalUse != null && goalUse > 0 ? goalUse - totalUsage : null;
     const usageBadge = getUsageVsTargetBadge(totalUsage, goalUse);
@@ -8157,11 +8443,27 @@ function buildMonthSplitWeeklyRows(entries, amountGetter, dateGetter, limit = nu
 
 function getWeeklyTrackingSummaries(substanceId, limit = 12) {
     const logs = getUseLogsForSubstance(substanceId, { sortAsc: true, personalUseOnly: true });
-    if (!logs.length) return [];
-    const baseRows = buildMonthSplitWeeklyRows(logs, log => log.amount, log => log.date, limit);
+    const isVape = isVapeNicotineSubstanceId(substanceId);
+    let baseRows = [];
+    if (isVape) {
+        const distributedEntries = [];
+        getVapeDistributedUsageMap(substanceId).forEach((amount, date) => {
+            if (amount > INVENTORY_EPS) distributedEntries.push({ date, amount });
+        });
+        const rangeSource = distributedEntries.length ? distributedEntries : logs;
+        if (!rangeSource.length) return [];
+        baseRows = buildMonthSplitWeeklyRows(rangeSource, e => e.amount || 0, e => e.date, limit);
+    } else {
+        if (!logs.length) return [];
+        baseRows = buildMonthSplitWeeklyRows(logs, log => log.amount, log => log.date, limit);
+    }
     return baseRows.slice().reverse().map(row => ({
         ...calculateWeeklyTrackingSummary(substanceId, row.weekStart, row.weekEnd),
-        runningTotal: roundTaperValue(getMonthPersonalUseTotal(substanceId, row.weekEnd))
+        runningTotal: roundTaperValue(
+            isVapeNicotineSubstanceId(substanceId)
+                ? getStatsMonthUsageTotal(substanceId, row.weekEnd)
+                : getMonthPersonalUseTotal(substanceId, row.weekEnd)
+        )
     }));
 }
 
@@ -8312,9 +8614,9 @@ function renderStatsMonthlySummary(substanceId) {
             case 'sessions': return String(s.sessions);
             case 'useDays': return String(s.useDays);
             case 'usePct': return `${formatAmount(s.useDayPct, 1)}%`;
-            case 'avgBreak': return formatDurationHMS(s.avgBreak);
-            case 'duration': return formatDurationHMS(s.totalDurationHours);
-            case 'avgDur': return formatDurationHMS(s.avgDurationHours);
+            case 'avgBreak': return formatStatsBreakValue(s.avgBreak, substanceId);
+            case 'duration': return formatStatsDurationValue(s.totalDurationHours, substanceId);
+            case 'avgDur': return formatStatsDurationValue(s.avgDurationHours, substanceId);
             case 'gPerSession': return fmtSheetAmount(s.avgPerSession, unit);
             case 'gPerUseDay': return fmtSheetAmount(s.avgPerUseDay, unit);
             case 'gPerCalDay': return fmtSheetAmount(s.avgPerCalendarDay, unit);
@@ -8345,14 +8647,14 @@ function renderStatsWeeklySummary(substanceId) {
             case 'end': return formatDate(s.weekEnd);
             case 'usage': return fmtSheetAmount(s.totalUsage, unit);
             case 'monthRunning': return fmtSheetAmount(s.runningTotal, unit);
-            case 'avgBreak': return formatDurationHMS(s.avgBreak);
+            case 'avgBreak': return formatStatsBreakValue(s.avgBreak, substanceId);
             case 'sessions': return String(s.sessions);
-            case 'duration': return formatDurationHMS(s.totalDurationHours);
-            case 'avgDur': return formatDurationHMS(s.avgDurationHours);
+            case 'duration': return formatStatsDurationValue(s.totalDurationHours, substanceId);
+            case 'avgDur': return formatStatsDurationValue(s.avgDurationHours, substanceId);
             case 'gPerSession': return fmtSheetAmount(s.avgPerSession, unit);
             case 'gPerHour': return fmtSheetRate(s.gPerHour, unit, '/hr');
-            case 'longBreak': return formatDurationHMS(s.longestBreak);
-            case 'shortBreak': return formatDurationHMS(s.shortestBreak);
+            case 'longBreak': return formatStatsBreakValue(s.longestBreak, substanceId);
+            case 'shortBreak': return formatStatsBreakValue(s.shortestBreak, substanceId);
             case 'status':
                 return { html: renderStatusBadge(s.usageBadge.level, s.usageBadge.label) };
             default: return '—';
@@ -8617,7 +8919,7 @@ function updateStats() {
     const unit = sub?.defaultUnit || 'units';
     const cur = getCurrencySymbol();
     const daysInRange = countDaysInRange(bounds.startDate, bounds.endDate);
-    const useStats = buildUseStatsMetrics(rangeLogs, daysInRange, currentSubstanceId);
+    const useStats = buildUseStatsMetrics(rangeLogs, daysInRange, currentSubstanceId, bounds);
 
     const summaryEl = document.getElementById('stats-range-summary');
     if (summaryEl) summaryEl.textContent = getStatsRangeLabel(preset, bounds.startDate, bounds.endDate);
@@ -8718,11 +9020,18 @@ function renderGiftPartyBreakdown(containerId, totalsMap, unit) {
 function buildUsageChartBuckets(bounds) {
     const { startDate, endDate } = bounds;
     const grouping = getStatsChartGrouping(startDate, endDate);
+    const isVape = isVapeNicotineSubstanceId(currentSubstanceId);
     const logs = getUseEntries().filter(
         l => logMatchesSubstance(l, currentSubstanceId) && isPersonalUseLog(l)
     );
     const filtered = filterLogsByDateRange(logs, startDate, endDate);
     const buckets = [];
+
+    const sumUsage = (bucketStart, bucketEnd) => isVape
+        ? getStatsUsageInRange(currentSubstanceId, bucketStart, bucketEnd)
+        : filtered
+            .filter(l => l.date >= bucketStart && l.date <= bucketEnd)
+            .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
 
     if (grouping === 'day') {
         let cursor = parseLocalDate(startDate);
@@ -8730,9 +9039,11 @@ function buildUsageChartBuckets(bounds) {
         const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
         while (cursor && end && cursor <= end) {
             const dateStr = getLocalDateString(cursor);
-            const count = filtered
-                .filter(l => l.date === dateStr)
-                .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+            const count = isVape
+                ? getStatsUsageOnDate(currentSubstanceId, dateStr)
+                : filtered
+                    .filter(l => l.date === dateStr)
+                    .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
             buckets.push({
                 label: dayNames[cursor.getDay()],
                 detail: cursor.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
@@ -8754,15 +9065,12 @@ function buildUsageChartBuckets(bounds) {
             const weekEnd = new Date(cursor);
             weekEnd.setDate(weekEnd.getDate() + 6);
             const weekEndStr = getLocalDateString(weekEnd);
-            const count = filtered
-                .filter(l => l.date >= weekStartStr && l.date <= weekEndStr)
-                .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
             buckets.push({
                 label: cursor.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
                 detail: 'Week',
                 bucketStart: weekStartStr,
                 bucketEnd: weekEndStr,
-                count
+                count: sumUsage(weekStartStr, weekEndStr)
             });
             cursor.setDate(cursor.getDate() + 7);
         }
@@ -8774,15 +9082,13 @@ function buildUsageChartBuckets(bounds) {
     while (cursor && end && cursor <= end) {
         const monthKey = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
         const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
-        const count = filtered
-            .filter(l => l.date.startsWith(monthKey))
-            .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+        const monthEndStr = getLocalDateString(monthEnd);
         buckets.push({
             label: cursor.toLocaleDateString('en-US', { month: 'short' }),
             detail: String(cursor.getFullYear()),
             bucketStart: `${monthKey}-01`,
-            bucketEnd: getLocalDateString(monthEnd),
-            count
+            bucketEnd: monthEndStr,
+            count: sumUsage(`${monthKey}-01`, monthEndStr)
         });
         cursor.setMonth(cursor.getMonth() + 1);
     }
@@ -10101,12 +10407,15 @@ function renderTaperWeeklyPlan(substanceId) {
 }
 
 function getTaperMonthKeysFromLogs(substanceId) {
-    const logs = getUseLogsForSubstance(substanceId, { sortAsc: false, personalUseOnly: true });
     const monthSet = new Set();
-    logs.forEach(log => {
-        if (!log.date) return;
-        monthSet.add(log.date.slice(0, 7));
+    getUseLogsForSubstance(substanceId, { sortAsc: false, personalUseOnly: true }).forEach(log => {
+        if (log.date) monthSet.add(log.date.slice(0, 7));
     });
+    if (isVapeNicotineSubstanceId(substanceId)) {
+        getVapeDistributedUsageMap(substanceId).forEach((amount, date) => {
+            if (amount > INVENTORY_EPS) monthSet.add(date.slice(0, 7));
+        });
+    }
     return [...monthSet].sort((a, b) => b.localeCompare(a));
 }
 
@@ -10123,29 +10432,55 @@ function calculateMonthlyTrackingSummary(substanceId, year, monthIndex) {
     const monthEntries = enriched.filter(e =>
         isPersonalUseLog(e) && e.date >= monthStart && e.date <= monthEnd
     );
+    const isVape = isVapeNicotineSubstanceId(substanceId);
 
-    const totalUsage = monthEntries.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
-    const sessions = monthEntries.length;
-    const useDays = new Set(monthEntries.map(e => e.date)).size;
-    const useDayPct = daysInMonth > 0 ? (useDays / daysInMonth) * 100 : 0;
-
+    let totalUsage;
+    let sessions;
+    let useDays;
     let totalDurationHours = 0;
-    monthEntries.forEach(e => {
-        if (e.durationHours) totalDurationHours += e.durationHours;
-    });
+    let avgDurationHours;
+    let avgBreak;
+    let longestBreak;
+    let shortestBreak;
+    let gPerHour = null;
 
-    const avgDurationHours = sessions > 0 ? totalDurationHours / sessions : null;
+    if (isVape) {
+        totalUsage = getStatsUsageInRange(substanceId, monthStart, monthEnd);
+        sessions = monthEntries.filter(e => isVapeUseLog(e)).length;
+        useDays = 0;
+        getVapeDistributedUsageMap(substanceId).forEach((amount, date) => {
+            if (date >= monthStart && date <= monthEnd && amount > INVENTORY_EPS) useDays++;
+        });
+        const breakHours = getVapePurchaseBreakHoursList(substanceId, monthStart, monthEnd);
+        avgBreak = breakHours.length ? breakHours.reduce((a, b) => a + b, 0) / breakHours.length : null;
+        longestBreak = breakHours.length ? Math.max(...breakHours) : null;
+        shortestBreak = breakHours.length ? Math.min(...breakHours) : null;
+        const supplyDurMs = getVapeFinishedSupplyDurationsInRange(substanceId, monthStart, monthEnd);
+        totalDurationHours = supplyDurMs.reduce((s, ms) => s + ms, 0) / 3600000;
+        avgDurationHours = supplyDurMs.length ? totalDurationHours / supplyDurMs.length : null;
+    } else {
+        totalUsage = monthEntries.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+        sessions = monthEntries.length;
+        useDays = new Set(monthEntries.map(e => e.date)).size;
+        monthEntries.forEach(e => {
+            if (e.durationHours) totalDurationHours += e.durationHours;
+        });
+        avgDurationHours = sessions > 0 ? totalDurationHours / sessions : null;
+        const breaks = monthEntries
+            .map(e => e.breakDurationHours)
+            .filter(h => h != null && h >= 0);
+        avgBreak = breaks.length ? breaks.reduce((a, b) => a + b, 0) / breaks.length : null;
+        longestBreak = breaks.length ? Math.max(...breaks) : null;
+        shortestBreak = breaks.length ? Math.min(...breaks) : null;
+    }
+
+    const useDayPct = daysInMonth > 0 ? (useDays / daysInMonth) * 100 : 0;
     const avgPerSession = sessions > 0 ? totalUsage / sessions : null;
     const avgPerUseDay = useDays > 0 ? totalUsage / useDays : null;
     const avgPerCalendarDay = daysInMonth > 0 ? totalUsage / daysInMonth : null;
-    const gPerHour = totalDurationHours > 0 ? totalUsage / totalDurationHours : null;
-
-    const breaks = monthEntries
-        .map(e => e.breakDurationHours)
-        .filter(h => h != null && h >= 0);
-    const avgBreak = breaks.length ? breaks.reduce((a, b) => a + b, 0) / breaks.length : null;
-    const longestBreak = breaks.length ? Math.max(...breaks) : null;
-    const shortestBreak = breaks.length ? Math.min(...breaks) : null;
+    if (!isVape) {
+        gPerHour = totalDurationHours > 0 ? totalUsage / totalDurationHours : null;
+    }
 
     const monthLabel = new Date(year, monthIndex, 1).toLocaleDateString('en-US', {
         month: 'long',
