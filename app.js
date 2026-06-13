@@ -1474,7 +1474,6 @@ function applyMainSubstanceToForms() {
     });
     updateUseUnitDropdown();
     updateBuyUnitDropdown();
-    updateUseTaperPreview();
 }
 
 function applyMainSubstanceToViewSelectors() {
@@ -2807,7 +2806,6 @@ function setUseTransactionType(tx) {
         updateUseEndTimeVisibility();
     }
     updateUseLogModeUI();
-    updateUseTaperPreview();
     updateUsePurchaseLinkUI();
 }
 
@@ -2931,7 +2929,6 @@ function resetUseFormAfterSave() {
     document.getElementById('cancel-use-edit-btn')?.classList.add('hidden');
     applyMainSubstanceToForms();
     updateUseUnitDropdown();
-    updateUseTaperPreview();
     setUsePurchaseLinkMode('auto');
     setUseTransactionType('use');
     setUseAdjustmentDirection('add');
@@ -4238,8 +4235,6 @@ function editUseEntry(id) {
     setUseFormSubmitLabel('Update Entry');
     document.getElementById('cancel-use-edit-btn')?.classList.remove('hidden');
     computeUseFormDuration();
-    updateUseTaperPreview();
-
     switchTab('use-log-tab');
     document.getElementById('use-log-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
@@ -4253,7 +4248,6 @@ function cancelUseEdit() {
     document.getElementById('cancel-use-edit-btn')?.classList.add('hidden');
     applyMainSubstanceToForms();
     updateUseUnitDropdown();
-    updateUseTaperPreview();
     setUsePurchaseLinkMode('auto');
     setUseTransactionType('use');
     setUseAdjustmentDirection('add');
@@ -4400,7 +4394,6 @@ function setUseLogType(type) {
     }
     updateUseEndTimeVisibility();
     computeUseFormDuration();
-    updateUseTaperPreview();
 }
 
 function setDefaultUseLogDateTime() {
@@ -4419,22 +4412,18 @@ function setupUseLogForm() {
     form.addEventListener('submit', handleUseLogSubmit);
     document.getElementById('use-substance')?.addEventListener('change', () => {
         updateUseUnitDropdown();
-        updateUseTaperPreview();
         updateUsePurchaseLinkUI();
     });
     document.getElementById('use-unit')?.addEventListener('change', () => {
         updateUseLogModeUI();
-        updateUseTaperPreview();
     });
     ['use-amount', 'use-date'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', () => {
-            updateUseTaperPreview();
             updateUsePurchaseLinkUI();
         });
     });
     document.getElementById('use-percent-left')?.addEventListener('input', () => {
         updateUsePercentRemainingUI();
-        updateUseTaperPreview();
     });
     document.getElementById('use-percent-purchase')?.addEventListener('change', updateUsePercentRemainingUI);
     document.getElementById('use-purchase-link-mode')?.addEventListener('change', updateUsePurchaseLinkUI);
@@ -4463,69 +4452,6 @@ function computeUseFormDuration() {
     const hours = (e - s) / 3600000;
     preview.textContent = `Duration: ${formatDurationHours(hours)}`;
     preview.classList.remove('hidden');
-}
-
-function updateUseTaperPreview() {
-    const el = document.getElementById('use-taper-preview');
-    if (!el) return;
-    const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
-    if (!isPersonalUseLog({ transactionType })) {
-        el.classList.add('hidden');
-        return;
-    }
-    const substanceId = document.getElementById('use-substance')?.value;
-    const amount = getUseFormEffectiveAmount();
-    const entryDate = document.getElementById('use-date')?.value
-        || getLocalDateString();
-    if (!substanceId) {
-        el.classList.add('hidden');
-        return;
-    }
-    const sub = getSubstance(substanceId);
-    const limit = getDailyLimitForDate(substanceId, entryDate);
-    if (!sub?.taperTrackingEnabled || limit == null) {
-        el.classList.add('hidden');
-        return;
-    }
-
-    const excludeId = editingUseId || null;
-    const used = getUsedAmountForDate(substanceId, entryDate, excludeId);
-    const projected = used + amount;
-    const unit = sub.defaultUnit;
-    const isEditing = excludeId != null;
-    const today = getLocalDateString();
-    const existing = isEditing ? findUseEntry(excludeId) : null;
-
-    if (isEditing && existing
-        && logMatchesSubstance(existing, substanceId)
-        && existing.date === entryDate) {
-        const originalAmount = parseFloat(existing.amount) || 0;
-        if (Math.abs(amount - originalAmount) < 0.001) {
-            el.classList.remove('hidden');
-            el.className = 'use-taper-banner use-taper-banner-ok';
-            el.textContent = `Editing entry: ${projected.toFixed(1)} / ${limit} ${unit} for that day.`;
-            return;
-        }
-    }
-
-    el.classList.remove('hidden');
-    const dayPhrase = isEditing ? 'that day' : (entryDate === today ? 'today' : 'that day');
-
-    if (projected > limit) {
-        el.className = 'use-taper-banner use-taper-banner-warn';
-        el.textContent = isEditing
-            ? `Editing this entry would put that day at ${projected.toFixed(1)} / ${limit} ${unit}.`
-            : `This entry would put ${dayPhrase} at ${projected.toFixed(1)} / ${limit} ${unit}.`;
-    } else if (projected >= limit * 0.8) {
-        el.className = 'use-taper-banner use-taper-banner-close';
-        el.textContent = isEditing
-            ? `Editing this entry would put that day at ${projected.toFixed(1)} / ${limit} ${unit}.`
-            : `This entry would put ${dayPhrase} at ${projected.toFixed(1)} / ${limit} ${unit}.`;
-    } else {
-        el.className = 'use-taper-banner use-taper-banner-ok';
-        const remaining = Math.max(0, limit - projected);
-        el.textContent = `${remaining.toFixed(1)} ${unit} remaining (${projected.toFixed(1)} / ${limit} ${unit}).`;
-    }
 }
 
 function getQuickLogSubstanceId() {
@@ -4576,7 +4502,6 @@ function logOneUse() {
     renderRecentUseList();
     refreshTaperDashboard();
     refreshBuyTrackerRelatedViews();
-    notifyTaperAfterLog(substanceId);
     alert(`Logged 1 ${sub.defaultUnit} of ${sub.name}`);
 }
 
@@ -4587,7 +4512,6 @@ function openUseLogSession() {
     if (id) setInputValue('use-substance', id);
     setDefaultUseLogDateTime();
     updateUseUnitDropdown();
-    updateUseTaperPreview();
     updateUsePurchaseLinkUI();
 }
 
@@ -4692,9 +4616,6 @@ function handleUseLogSubmit(e) {
         refreshAfterLogLinkChange(substanceId);
         resetUseFormAfterSave();
         populateAllSubstanceDropdowns();
-        if (isPersonalUse && payload.date === getLocalDateString()) {
-            notifyTaperAfterLog(substanceId);
-        }
         alert(getUseUpdateSuccessMessage(updated));
         return;
     }
@@ -4723,7 +4644,6 @@ function handleUseLogSubmit(e) {
     resetUseFormAfterSave();
     populateAllSubstanceDropdowns();
     refreshUseLogRelatedViews();
-    if (isPersonalUse) notifyTaperAfterLog(substanceId);
     alert(getUseSaveSuccessMessage(log));
 }
 
@@ -4738,7 +4658,6 @@ function deleteUseEntry(id) {
 }
 
 function renderUseLogTab() {
-    updateUseTaperPreview();
     renderUseLogTotals();
     renderRecentUseList();
     renderUseHistoryTable();
@@ -7495,45 +7414,36 @@ function calculateWeeklyTrackingSummary(substanceId, weekStart, weekEnd) {
     };
 }
 
-function getWeekMonthKey(weekStart) {
-    return weekStart.slice(0, 7);
+function getMonthSplitWeekRangeForDate(dateStr) {
+    const monthStart = getMonthStartDateStr(dateStr);
+    const monthEnd = getMonthEndDateStr(dateStr);
+    const calendarWeekStart = getWeekStartDateStr(dateStr);
+    const calendarWeekEnd = addDaysToDateStr(calendarWeekStart, 6);
+    const weekStart = calendarWeekStart < monthStart ? monthStart : calendarWeekStart;
+    const weekEnd = calendarWeekEnd > monthEnd ? monthEnd : calendarWeekEnd;
+    return { weekStart, weekEnd };
+}
+
+function getMonthSplitWeekRangeKey(range) {
+    return `${range.weekStart}_${range.weekEnd}`;
 }
 
 function getWeeklyTrackingSummaries(substanceId, limit = 12) {
     const logs = getUseLogsForSubstance(substanceId, { sortAsc: true, personalUseOnly: true });
     if (!logs.length) return [];
-    const weekSet = new Set();
-    logs.forEach(log => weekSet.add(getWeekStartDateStr(log.date)));
-    const allWeeksAsc = [...weekSet].sort();
-    const usageByWeek = {};
-    allWeeksAsc.forEach(ws => {
-        const we = addDaysToDateStr(ws, 6);
-        usageByWeek[ws] = calculateWeeklyTrackingSummary(substanceId, ws, we).totalUsage;
+    const rangeMap = new Map();
+    logs.forEach(log => {
+        const range = getMonthSplitWeekRangeForDate(log.date);
+        const key = getMonthSplitWeekRangeKey(range);
+        if (!rangeMap.has(key)) rangeMap.set(key, range);
     });
-
-    const weeksByMonth = {};
-    allWeeksAsc.forEach(ws => {
-        const monthKey = getWeekMonthKey(ws);
-        if (!weeksByMonth[monthKey]) weeksByMonth[monthKey] = [];
-        weeksByMonth[monthKey].push(ws);
-    });
-
-    const monthRunningByWeek = {};
-    Object.values(weeksByMonth).forEach(weeksInMonth => {
-        let suffix = 0;
-        for (let i = weeksInMonth.length - 1; i >= 0; i--) {
-            suffix = roundTaperValue(suffix + (parseFloat(usageByWeek[weeksInMonth[i]]) || 0));
-            monthRunningByWeek[weeksInMonth[i]] = suffix;
-        }
-    });
-
-    return allWeeksAsc.slice(-limit).reverse().map(ws => {
-        const we = addDaysToDateStr(ws, 6);
-        return {
-            ...calculateWeeklyTrackingSummary(substanceId, ws, we),
-            runningTotal: monthRunningByWeek[ws] ?? 0
-        };
-    });
+    const allRangesAsc = [...rangeMap.values()].sort((a, b) =>
+        a.weekStart.localeCompare(b.weekStart) || a.weekEnd.localeCompare(b.weekEnd)
+    );
+    return allRangesAsc.slice(-limit).reverse().map(range => ({
+        ...calculateWeeklyTrackingSummary(substanceId, range.weekStart, range.weekEnd),
+        runningTotal: roundTaperValue(getMonthPersonalUseTotal(substanceId, range.weekEnd))
+    }));
 }
 
 function getBuyWeeklySummaries(substanceId, limit = 8) {
@@ -8999,26 +8909,8 @@ function confirmTaperBeforeLog(substanceId, amount, isQuickLog, excludeLogId = n
     if (!plan || plan.isPaused) return true;
 
     const checkDate = entryDate || getLocalDateString();
-    const dailyLimit = getDailyLimitForDate(substanceId, checkDate);
-    const usedToday = getUsedAmountForDate(substanceId, checkDate, excludeLogId);
     const weekUsed = getUsedAmountForWeek(substanceId, checkDate, excludeLogId);
-    const projectedToday = usedToday + amount;
     const projectedWeek = weekUsed + amount;
-
-    if (excludeLogId) {
-        const ex = findUseEntry(excludeLogId);
-        if (ex && logMatchesSubstance(ex, substanceId) && ex.date === checkDate) {
-            const originalAmount = parseFloat(ex.amount) || 0;
-            if (Math.abs(amount - originalAmount) < 0.001) return true;
-        }
-    }
-
-    if (plan.doNotSurpassDaily && dailyLimit != null && projectedToday > dailyLimit) {
-        const msg = excludeLogId
-            ? `Editing this entry would put that day at ${projectedToday.toFixed(1)} / ${dailyLimit} ${sub.defaultUnit}. Log anyway?`
-            : `This entry would put ${checkDate === getLocalDateString() ? 'today' : 'that day'} at ${projectedToday.toFixed(1)} / ${dailyLimit} ${sub.defaultUnit}. Log anyway?`;
-        if (!confirm(msg)) return false;
-    }
 
     const weeklyLimit = getWeeklyLimit(substanceId, checkDate);
     if (plan.doNotSurpassWeekly && weeklyLimit != null && projectedWeek > weeklyLimit) {
@@ -9026,22 +8918,6 @@ function confirmTaperBeforeLog(substanceId, amount, isQuickLog, excludeLogId = n
     }
 
     return true;
-}
-
-function notifyTaperAfterLog(substanceId) {
-    const sub = getSubstance(substanceId);
-    if (!sub?.taperTrackingEnabled) return;
-    const today = getLocalDateString();
-    const limit = getDailyLimitForDate(substanceId, today);
-    if (limit == null) return;
-    const used = getUsedAmount(substanceId, today);
-    const { status } = getTaperLimitStatus(used, limit);
-    const unit = sub.defaultUnit;
-    if (status === 'close') {
-        alert(`⚠️ Close to daily target: ${used}/${limit} ${unit}. ${Math.max(0, limit - used).toFixed(1)} remaining.`);
-    } else if (status === 'over') {
-        alert(`🚫 Over daily target (${used}/${limit} ${unit}).\n\n${TAPER_RELAPSE_NOTE}`);
-    }
 }
 
 function buildTaperPlanFromForm(substanceId, existingPlan) {
