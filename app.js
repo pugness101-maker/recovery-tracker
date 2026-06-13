@@ -2846,6 +2846,27 @@ function parseLocalDateTime(dateStr, timeStr = '12:00') {
     return d;
 }
 
+function getLocalDayBoundaryMs(dateStr) {
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(dateStr || '').trim());
+    if (!match) return null;
+    const y = Number(match[1]);
+    const m = Number(match[2]) - 1;
+    const day = Number(match[3]);
+    return {
+        startMs: new Date(y, m, day, 0, 0, 0, 0).getTime(),
+        endMs: new Date(y, m, day, 23, 59, 59, 999).getTime()
+    };
+}
+
+function formatStatsPuffs(value, maxDecimals = 1) {
+    if (value == null || Number.isNaN(value)) return '0';
+    const factor = Math.pow(10, maxDecimals);
+    const rounded = Math.round(value * factor) / factor;
+    if (Number.isInteger(rounded)) return String(rounded);
+    const fixed = rounded.toFixed(maxDecimals);
+    return fixed.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+}
+
 function getLocalDateFromIso(isoString) {
     if (!isoString) return '';
     const d = new Date(isoString);
@@ -4523,11 +4544,7 @@ function getVapePurchaseSupplyDurationMs(purchase, asOfMs = Date.now(), data = a
 }
 
 function shouldDistributeVapeLogForStats(log) {
-    if (!isVapeUseLog(log) || !isPersonalUseLog(log) || log.needsReview) return false;
-    const started = getUseLogStartedAt(log);
-    const ended = getUseLogEndedAt(log);
-    if (started && ended && ended > started) return true;
-    return isPercentBasedVapeLog(log);
+    return isVapeUseLog(log) && isPersonalUseLog(log) && !log.needsReview;
 }
 
 function distributeAmountOverTimeInterval(amount, startDt, endDt) {
@@ -4535,12 +4552,13 @@ function distributeAmountOverTimeInterval(amount, startDt, endDt) {
     const startMs = startDt?.getTime();
     const endMs = endDt?.getTime();
     if (startMs == null || endMs == null || Number.isNaN(startMs) || Number.isNaN(endMs)) {
-        return endDt && !Number.isNaN(endDt.getTime())
-            ? [{ date: getLocalDateString(endDt), amount }]
-            : [];
+        const fallbackDt = endDt && !Number.isNaN(endDt.getTime())
+            ? endDt
+            : (startDt && !Number.isNaN(startDt.getTime()) ? startDt : null);
+        return fallbackDt ? [{ date: getLocalDateString(fallbackDt), amount }] : [];
     }
     if (endMs <= startMs) {
-        return [{ date: getLocalDateString(endDt), amount }];
+        return [{ date: getLocalDateString(startDt), amount }];
     }
     const totalMs = endMs - startMs;
     const allocations = new Map();
@@ -4548,14 +4566,14 @@ function distributeAmountOverTimeInterval(amount, startDt, endDt) {
     const endDate = parseLocalDate(getLocalDateString(endDt));
     while (cursor && endDate && cursor <= endDate) {
         const dateStr = getLocalDateString(cursor);
-        const dayStart = parseLocalDate(dateStr);
-        const dayEnd = new Date(dayStart);
-        dayEnd.setHours(23, 59, 59, 999);
-        const overlapStart = Math.max(startMs, dayStart.getTime());
-        const overlapEnd = Math.min(endMs, dayEnd.getTime());
-        if (overlapEnd > overlapStart) {
-            const portion = amount * ((overlapEnd - overlapStart) / totalMs);
-            if (portion > 0) allocations.set(dateStr, (allocations.get(dateStr) || 0) + portion);
+        const bounds = getLocalDayBoundaryMs(dateStr);
+        if (bounds) {
+            const overlapStart = Math.max(startMs, bounds.startMs);
+            const overlapEnd = Math.min(endMs, bounds.endMs);
+            if (overlapEnd > overlapStart) {
+                const portion = amount * ((overlapEnd - overlapStart) / totalMs);
+                if (portion > 0) allocations.set(dateStr, (allocations.get(dateStr) || 0) + portion);
+            }
         }
         cursor.setDate(cursor.getDate() + 1);
     }
@@ -4567,25 +4585,42 @@ function distributeAmountOverTimeInterval(amount, startDt, endDt) {
     return entries;
 }
 
+function getVapeLogPuffAmount(log) {
+    return parseFloat(log.estimatedPuffsUsed ?? log.amount) || 0;
+}
+
 function getVapeLogStatsAllocations(log, data = appData) {
-    const amount = parseFloat(log.estimatedPuffsUsed ?? log.amount) || 0;
+    const amount = getVapeLogPuffAmount(log);
+    if (amount <= INVENTORY_EPS) return [];
     if (!shouldDistributeVapeLogForStats(log)) {
         return log.date ? [{ date: log.date, amount }] : [];
     }
 
     const startedAt = getUseLogStartedAt(log);
     const endedAt = getUseLogEndedAt(log);
+    const durationMs = getVapeLogDurationMs(log);
+
     if (startedAt && endedAt && endedAt > startedAt) {
         return distributeAmountOverTimeInterval(amount, startedAt, endedAt);
     }
+    if (startedAt && durationMs != null && durationMs <= 0) {
+        return [{ date: getLocalDateString(startedAt), amount }];
+    }
+    if (startedAt && !endedAt) {
+        return [{ date: getLocalDateString(startedAt), amount }];
+    }
 
     const purchase = findPurchaseInData(getLogPurchaseId(log), data);
-    if (!purchase) return log.date ? [{ date: log.date, amount }] : [];
-    return distributeAmountOverTimeInterval(
-        amount,
-        parsePurchaseStartedAt(purchase),
-        parseUseDateTime(log.date, log.startTime || log.time)
-    );
+    if (purchase) {
+        const supplyStart = parsePurchaseStartedAt(purchase, data);
+        const logEnd = endedAt || parseUseDateTime(log.date, log.endTime || log.startTime || log.time);
+        if (supplyStart && logEnd && logEnd > supplyStart) {
+            return distributeAmountOverTimeInterval(amount, supplyStart, logEnd);
+        }
+    }
+    if (log.date) return [{ date: log.date, amount }];
+    if (startedAt) return [{ date: getLocalDateString(startedAt), amount }];
+    return [];
 }
 
 function getVapeDistributedUsageMap(substanceId, data = appData) {
@@ -9279,13 +9314,16 @@ function buildVapeUseStatsMetrics(logs, daysInRange, substanceId, bounds) {
 }
 
 function formatUseStatValue(statId, metrics, unit) {
+    const fmtUsage = (value) => isVapeNicotineSubstanceId(currentSubstanceId)
+        ? formatStatsPuffs(value)
+        : value.toFixed(1);
     switch (statId) {
         case 'totalUsage':
-            return `${metrics.totalAmount.toFixed(1)} ${unit}`;
+            return `${fmtUsage(metrics.totalAmount)} ${unit}`;
         case 'sessionCount':
             return String(metrics.sessionCount);
         case 'avgPerSession':
-            return metrics.avgPerSession != null ? `${metrics.avgPerSession.toFixed(1)} ${unit}` : '—';
+            return metrics.avgPerSession != null ? `${fmtUsage(metrics.avgPerSession)} ${unit}` : '—';
         case 'avgPerHr':
             return metrics.avgPerHour != null ? `${metrics.avgPerHour.toFixed(2)} ${unit}/hr` : '—';
         case 'totalDuration':
@@ -9335,9 +9373,9 @@ function formatUseStatValue(statId, metrics, unit) {
         case 'useDayPct':
             return `${metrics.useDayPct.toFixed(2)}%`;
         case 'avgPerUseDay':
-            return metrics.avgPerUseDay != null ? `${metrics.avgPerUseDay.toFixed(1)} ${unit}` : '—';
+            return metrics.avgPerUseDay != null ? `${fmtUsage(metrics.avgPerUseDay)} ${unit}` : '—';
         case 'avgPerCalendarDay':
-            return metrics.avgPerCalendarDay != null ? `${metrics.avgPerCalendarDay.toFixed(1)} ${unit}` : '—';
+            return metrics.avgPerCalendarDay != null ? `${fmtUsage(metrics.avgPerCalendarDay)} ${unit}` : '—';
         default:
             return '—';
     }
@@ -9582,7 +9620,8 @@ function fmtSheetMoney(value, cur = getCurrencySymbol()) {
 
 function fmtSheetAmount(value, unit) {
     if (value == null || Number.isNaN(value)) return '—';
-    return `${formatAmount(value)} ${unit}`;
+    const amountStr = unit === 'puffs' ? formatStatsPuffs(value) : formatAmount(value);
+    return `${amountStr} ${unit}`;
 }
 
 function fmtSheetRate(value, unit, suffix) {
@@ -9767,8 +9806,10 @@ function getBuyWeeklySummaries(substanceId, limit = 8) {
         const cost = weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
         const costPerUnit = purchased > 0 ? cost / purchased : null;
         const daysInWeek = countDaysInRange(weekStart, weekEnd);
-        const weekUsed = getPersonalUseInRange(substanceId, weekStart, weekEnd)
-            .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+        const weekUsed = isVapeNicotineSubstanceId(substanceId)
+            ? getStatsUsageInRange(substanceId, weekStart, weekEnd)
+            : getPersonalUseInRange(substanceId, weekStart, weekEnd)
+                .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
         const gPerDay = weekUsed > 0 && daysInWeek > 0 ? weekUsed / daysInWeek : null;
         const supplyDuration = gPerDay > 0 ? purchased / gPerDay : null;
         return {
@@ -9872,6 +9913,7 @@ function renderStatsMonthlySummary(substanceId) {
         return;
     }
     const unit = sub.defaultUnit || 'units';
+    const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
     const cur = getCurrencySymbol();
     const summaries = getMonthlyTrackingSummaries(substanceId).map(s =>
         enrichMonthlySummaryWithBuyData(s, substanceId)
@@ -9889,7 +9931,7 @@ function renderStatsMonthlySummary(substanceId) {
             case 'start': return formatDate(s.monthStart);
             case 'end': return formatDate(s.monthEnd);
             case 'usage':
-                return { html: `${fmtSheetAmount(s.totalUsage, unit)} ${renderStatusBadge(usageBadge.level, usageBadge.label)}` };
+                return { html: `${fmtSheetAmount(s.totalUsage, displayUnit)} ${renderStatusBadge(usageBadge.level, usageBadge.label)}` };
             case 'purchased': return fmtSheetAmount(s.purchasedAmount, unit);
             case 'cost': return fmtSheetMoney(s.cost || 0, cur);
             case 'sessions': return String(s.sessions);
@@ -9898,9 +9940,9 @@ function renderStatsMonthlySummary(substanceId) {
             case 'avgBreak': return formatStatsBreakValue(s.avgBreak, substanceId);
             case 'duration': return formatStatsDurationValue(s.totalDurationHours, substanceId);
             case 'avgDur': return formatStatsDurationValue(s.avgDurationHours, substanceId);
-            case 'gPerSession': return fmtSheetAmount(s.avgPerSession, unit);
-            case 'gPerUseDay': return fmtSheetAmount(s.avgPerUseDay, unit);
-            case 'gPerCalDay': return fmtSheetAmount(s.avgPerCalendarDay, unit);
+            case 'gPerSession': return fmtSheetAmount(s.avgPerSession, displayUnit);
+            case 'gPerUseDay': return fmtSheetAmount(s.avgPerUseDay, displayUnit);
+            case 'gPerCalDay': return fmtSheetAmount(s.avgPerCalendarDay, displayUnit);
             case 'gPerHour': return fmtSheetRate(s.gPerHour, unit, '/hr');
             default: return '—';
         }
@@ -9916,6 +9958,7 @@ function renderStatsWeeklySummary(substanceId) {
         return;
     }
     const unit = sub.defaultUnit || 'units';
+    const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
     const summaries = getWeeklyTrackingSummaries(substanceId);
     if (!summaries.length) {
         container.innerHTML = '<p class="empty-hint">No weekly data yet.</p>';
@@ -9926,13 +9969,13 @@ function renderStatsWeeklySummary(substanceId) {
             case 'week': return `${formatDate(s.weekStart)}`;
             case 'start': return formatDate(s.weekStart);
             case 'end': return formatDate(s.weekEnd);
-            case 'usage': return fmtSheetAmount(s.totalUsage, unit);
-            case 'monthRunning': return fmtSheetAmount(s.runningTotal, unit);
+            case 'usage': return fmtSheetAmount(s.totalUsage, displayUnit);
+            case 'monthRunning': return fmtSheetAmount(s.runningTotal, displayUnit);
             case 'avgBreak': return formatStatsBreakValue(s.avgBreak, substanceId);
             case 'sessions': return String(s.sessions);
             case 'duration': return formatStatsDurationValue(s.totalDurationHours, substanceId);
             case 'avgDur': return formatStatsDurationValue(s.avgDurationHours, substanceId);
-            case 'gPerSession': return fmtSheetAmount(s.avgPerSession, unit);
+            case 'gPerSession': return fmtSheetAmount(s.avgPerSession, displayUnit);
             case 'gPerHour': return fmtSheetRate(s.gPerHour, unit, '/hr');
             case 'longBreak': return formatStatsBreakValue(s.longestBreak, substanceId);
             case 'shortBreak': return formatStatsBreakValue(s.shortestBreak, substanceId);
@@ -10225,7 +10268,7 @@ function renderTaperWeeklyCalendar(substanceId) {
                 <thead><tr><th></th>${dayNames.map(d => `<th>${d}</th>`).join('')}</tr></thead>
                 <tbody>
                     <tr><td>Date</td>${days.map(d => `<td class="${d.inPlan ? '' : 'cal-outside'}">${parseInt(d.dateStr.slice(-2), 10)}</td>`).join('')}</tr>
-                    <tr><td>Used</td>${days.map(d => `<td class="status-text-${d.badge}">${d.dayUsed > 0 ? d.dayUsed.toFixed(1) : '—'}</td>`).join('')}</tr>
+                    <tr><td>Used</td>${days.map(d => `<td class="status-text-${d.badge}">${d.dayUsed > 0 ? formatStatsPuffs(d.dayUsed) : '—'}</td>`).join('')}</tr>
                     <tr><td>Dur</td>${days.map(d => `<td>${d.dayDur > 0 ? formatDurationHours(d.dayDur) : '—'}</td>`).join('')}</tr>
                     <tr><td>Break</td>${days.map(d => `<td>${d.breakH != null ? formatBreakFromHours(d.breakH) : '—'}</td>`).join('')}</tr>
                 </tbody>
@@ -10509,12 +10552,14 @@ function renderUsageChart(bounds) {
     }
 
     const max = Math.max(...buckets.map(d => d.count), 1);
+    const isVapeChart = isVapeNicotineSubstanceId(currentSubstanceId);
     buckets.forEach(data => {
         const bar = document.createElement('div');
         bar.className = 'chart-bar';
         bar.style.height = `${Math.max((data.count / max) * 100, 4)}%`;
-        bar.title = data.detail ? `${data.detail}: ${data.count}` : String(data.count);
-        bar.innerHTML = `<span class="chart-bar-value">${data.count.toFixed(1)}</span><span class="chart-bar-label">${data.label}</span>`;
+        const displayCount = isVapeChart ? formatStatsPuffs(data.count) : data.count.toFixed(1);
+        bar.title = data.detail ? `${data.detail}: ${displayCount}` : displayCount;
+        bar.innerHTML = `<span class="chart-bar-value">${displayCount}</span><span class="chart-bar-label">${data.label}</span>`;
         container.appendChild(bar);
     });
 }
