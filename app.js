@@ -219,6 +219,18 @@ function isPowderTrackingMode(substanceId, data = appData) {
     return getSubstanceTrackingMode(substanceId, data) === 'powder';
 }
 
+function isAlcoholTrackingMode(substanceId, data = appData) {
+    return getSubstanceTrackingMode(substanceId, data) === 'alcohol';
+}
+
+function isWeedTrackingMode(substanceId, data = appData) {
+    return getSubstanceTrackingMode(substanceId, data) === 'weed';
+}
+
+function isCigarettesTrackingMode(substanceId, data = appData) {
+    return getSubstanceTrackingMode(substanceId, data) === 'cigarettes';
+}
+
 function isVapeTaperSubstanceId(substanceId, data = appData) {
     return isVapeTrackingMode(substanceId, data);
 }
@@ -306,6 +318,125 @@ function migrateSubstanceTrackingModes(data) {
         if (mode !== 'vape' && purchase.trackingMode === 'vape') {
             purchase.trackingMode = mode;
         }
+    });
+}
+
+function isAlcoholPurchase(purchase, data = appData) {
+    return isAlcoholTrackingMode(getPurchaseSubstanceId(purchase), data);
+}
+
+function isWeedPurchase(purchase, data = appData) {
+    return isWeedTrackingMode(getPurchaseSubstanceId(purchase), data);
+}
+
+function isCigarettesPurchase(purchase, data = appData) {
+    return isCigarettesTrackingMode(getPurchaseSubstanceId(purchase), data);
+}
+
+function computePureAlcoholMl(netVolumeMl, alcoholPercent) {
+    const vol = parseFloat(netVolumeMl);
+    const pct = parseFloat(alcoholPercent);
+    if (!Number.isFinite(vol) || !Number.isFinite(pct) || vol <= 0 || pct < 0) return null;
+    return vol * (pct / 100);
+}
+
+function getAlcoholPureAlcoholMl(purchase) {
+    if (!purchase) return null;
+    if (purchase.pureAlcoholMl != null && purchase.pureAlcoholMl !== '') {
+        const stored = parseFloat(purchase.pureAlcoholMl);
+        if (Number.isFinite(stored) && stored >= 0) return stored;
+    }
+    return computePureAlcoholMl(purchase.netVolumeMl, purchase.alcoholPercent);
+}
+
+function syncAlcoholPurchaseFields(purchase) {
+    if (!isAlcoholPurchase(purchase)) return;
+    const pure = computePureAlcoholMl(purchase.netVolumeMl, purchase.alcoholPercent);
+    if (pure != null) purchase.pureAlcoholMl = pure;
+    else delete purchase.pureAlcoholMl;
+}
+
+function parseAlcoholFieldsFromForm() {
+    const percentRaw = parseFloat(document.getElementById('buy-alcohol-percent')?.value);
+    const volumeRaw = parseFloat(document.getElementById('buy-net-volume-ml')?.value);
+    const alcoholPercent = Number.isFinite(percentRaw) && percentRaw >= 0 ? percentRaw : null;
+    const netVolumeMl = Number.isFinite(volumeRaw) && volumeRaw > 0 ? volumeRaw : null;
+    const pureAlcoholMl = computePureAlcoholMl(netVolumeMl, alcoholPercent);
+    return { alcoholPercent, netVolumeMl, pureAlcoholMl };
+}
+
+function applyAlcoholFieldsToPayload(payload, fields) {
+    if (fields.alcoholPercent != null) payload.alcoholPercent = fields.alcoholPercent;
+    else delete payload.alcoholPercent;
+    if (fields.netVolumeMl != null) payload.netVolumeMl = fields.netVolumeMl;
+    else delete payload.netVolumeMl;
+    if (fields.pureAlcoholMl != null) payload.pureAlcoholMl = fields.pureAlcoholMl;
+    else delete payload.pureAlcoholMl;
+}
+
+function getWeedProductTypeLabel(type) {
+    if (type === 'cart') return 'Cart';
+    if (type === 'edibles') return 'Edibles';
+    return 'Bud';
+}
+
+function parseWeedFieldsFromForm() {
+    const productType = document.getElementById('buy-weed-product-type')?.value || 'bud';
+    const budRaw = parseFloat(document.getElementById('buy-bud-grams')?.value);
+    const cartRaw = parseFloat(document.getElementById('buy-cart-grams')?.value);
+    const ediblesRaw = parseFloat(document.getElementById('buy-edibles-mg')?.value);
+    const weedProductType = ['bud', 'cart', 'edibles'].includes(productType) ? productType : 'bud';
+    const budGrams = weedProductType === 'bud' && Number.isFinite(budRaw) && budRaw >= 0 ? budRaw : null;
+    const cartGrams = weedProductType === 'cart' && Number.isFinite(cartRaw) && cartRaw >= 0 ? cartRaw : null;
+    const ediblesMg = weedProductType === 'edibles' && Number.isFinite(ediblesRaw) && ediblesRaw >= 0 ? ediblesRaw : null;
+    return { weedProductType, budGrams, cartGrams, ediblesMg };
+}
+
+function applyWeedFieldsToPayload(payload, fields) {
+    payload.weedProductType = fields.weedProductType;
+    delete payload.budGrams;
+    delete payload.cartGrams;
+    delete payload.ediblesMg;
+    if (fields.weedProductType === 'bud' && fields.budGrams != null) payload.budGrams = fields.budGrams;
+    if (fields.weedProductType === 'cart' && fields.cartGrams != null) payload.cartGrams = fields.cartGrams;
+    if (fields.weedProductType === 'edibles' && fields.ediblesMg != null) payload.ediblesMg = fields.ediblesMg;
+}
+
+function parseCigaretteFieldsFromForm() {
+    const raw = parseFloat(document.getElementById('buy-cigarette-nicotine-mg')?.value);
+    return Number.isFinite(raw) && raw >= 0 ? raw : null;
+}
+
+function applyCigaretteFieldsToPayload(payload, nicotineMg) {
+    if (nicotineMg != null) payload.nicotineMg = nicotineMg;
+    else delete payload.nicotineMg;
+}
+
+function stripIrrelevantPurchaseFields(purchase) {
+    if (!purchase || typeof purchase !== 'object') return;
+    const mode = getSubstanceTrackingMode(getPurchaseSubstanceId(purchase));
+    if (mode !== 'vape') {
+        ['fullPuffCount', 'percentBoughtAt', 'startingPuffsLeft', 'remainingPuffs', 'eLiquidCapacityMl',
+            'nicotineMgPerMl', 'totalNicotineMg', 'finishedAt'].forEach(key => delete purchase[key]);
+    }
+    if (mode !== 'alcohol') {
+        ['alcoholPercent', 'netVolumeMl', 'pureAlcoholMl'].forEach(key => delete purchase[key]);
+    }
+    if (mode !== 'weed') {
+        ['weedProductType', 'budGrams', 'cartGrams', 'ediblesMg'].forEach(key => delete purchase[key]);
+    }
+    if (mode !== 'cigarettes') {
+        delete purchase.nicotineMg;
+    }
+}
+
+function migrateInventorySubstanceFields(data) {
+    (data.purchases || []).forEach(purchase => {
+        if (!purchase || typeof purchase !== 'object') return;
+        try {
+            syncAlcoholPurchaseFields(purchase);
+            stripIrrelevantPurchaseFields(purchase);
+        } catch (_) { /* keep old entries loadable */ }
     });
 }
 
@@ -931,6 +1062,7 @@ function normalizeAppData(data) {
     ensureDefaultSubstances(data);
     ensureDefaultSubstanceSettings(data);
     migrateSubstanceTrackingModes(data);
+    migrateInventorySubstanceFields(data);
     normalizeMainSubstances(data);
     migrateTaperPlansSafely(data);
     recalculateAllBreaksForData(data);
@@ -1642,6 +1774,58 @@ function renderPurchaseHistoryHeaderCell(colId) {
     return `<th>${labels[colId] || colId}</th>`;
 }
 
+function renderPurchaseBoughtMetaInner(purchase) {
+    if (isAlcoholPurchase(purchase)) {
+        const pct = purchase.alcoholPercent;
+        const vol = purchase.netVolumeMl;
+        const pure = getAlcoholPureAlcoholMl(purchase);
+        let meta = '';
+        if (pct != null && pct !== '') meta += `<div class="purchase-vape-meta">Alcohol: ${formatAmount(pct)}%</div>`;
+        if (vol != null && vol !== '') meta += `<div class="purchase-vape-meta">Net volume: ${formatAmount(vol)} mL</div>`;
+        if (pure != null) meta += `<div class="purchase-vape-meta">Pure alcohol: ${formatAmount(pure)} mL</div>`;
+        return meta;
+    }
+    if (isWeedPurchase(purchase)) {
+        const type = purchase.weedProductType || 'bud';
+        const typeLabel = getWeedProductTypeLabel(type);
+        let amountLine = '';
+        if (type === 'cart' && purchase.cartGrams != null && purchase.cartGrams !== '') {
+            amountLine = `<div class="purchase-vape-meta">Amount: ${formatAmount(purchase.cartGrams)} g</div>`;
+        } else if (type === 'edibles' && purchase.ediblesMg != null && purchase.ediblesMg !== '') {
+            amountLine = `<div class="purchase-vape-meta">Amount: ${formatAmount(purchase.ediblesMg)} mg</div>`;
+        } else if (purchase.budGrams != null && purchase.budGrams !== '') {
+            amountLine = `<div class="purchase-vape-meta">Amount: ${formatAmount(purchase.budGrams)} g</div>`;
+        }
+        return `<div class="purchase-vape-meta">Type: ${typeLabel}</div>${amountLine}`;
+    }
+    if (isCigarettesPurchase(purchase)) {
+        const nic = purchase.nicotineMg;
+        if (nic != null && nic !== '') {
+            return `<div class="purchase-vape-meta">Nicotine: ${formatAmount(nic)} mg</div>`;
+        }
+    }
+    return '';
+}
+
+function renderPurchaseVapeBoughtCell(purchase) {
+    const full = getVapeFullPuffCount(purchase);
+    const pctBought = getVapePercentBoughtAt(purchase);
+    const starting = getVapeStartingPuffsLeft(purchase);
+    const cap = getVapeELiquidCapacityMl(purchase);
+    const strength = getVapeNicotineMgPerMl(purchase);
+    const totalNic = getVapeTotalNicotineMg(purchase);
+    let liquidLines = '';
+    if (cap != null) liquidLines += `<div class="purchase-vape-meta">E-liquid: ${formatAmount(cap)} mL</div>`;
+    if (strength != null) liquidLines += `<div class="purchase-vape-meta">Nicotine: ${formatAmount(strength)} mg/mL</div>`;
+    if (totalNic != null) liquidLines += `<div class="purchase-vape-meta">Total nicotine: ${formatAmount(totalNic)} mg</div>`;
+    return `<td class="purchase-vape-bought-cell">
+        <div>Full puff count: ${formatAmount(full)}</div>
+        <div class="purchase-vape-meta">Bought at: ${pctBought}%</div>
+        <div class="purchase-vape-meta">Started left: ${formatAmount(starting)} puffs</div>
+        ${liquidLines}
+    </td>`;
+}
+
 function renderPurchaseHistoryBodyCell(colId, ctx) {
     const {
         purchase, sub, cur, store, bought, remaining, pctUsed, supply, unit,
@@ -1655,22 +1839,13 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
             return `<td>${sub?.icon || ''} ${sub?.name || 'Unknown'}</td>`;
         case 'bought':
             if (isVapePuffPurchase(purchase)) {
-                const full = getVapeFullPuffCount(purchase);
-                const pctBought = getVapePercentBoughtAt(purchase);
-                const starting = getVapeStartingPuffsLeft(purchase);
-                const cap = getVapeELiquidCapacityMl(purchase);
-                const strength = getVapeNicotineMgPerMl(purchase);
-                const totalNic = getVapeTotalNicotineMg(purchase);
-                let liquidLines = '';
-                if (cap != null) liquidLines += `<div class="purchase-vape-meta">E-liquid: ${formatAmount(cap)} mL</div>`;
-                if (strength != null) liquidLines += `<div class="purchase-vape-meta">Nicotine: ${formatAmount(strength)} mg/mL</div>`;
-                if (totalNic != null) liquidLines += `<div class="purchase-vape-meta">Total nicotine: ${formatAmount(totalNic)} mg</div>`;
-                return `<td class="purchase-vape-bought-cell">
-                    <div>Full puff count: ${formatAmount(full)}</div>
-                    <div class="purchase-vape-meta">Bought at: ${pctBought}%</div>
-                    <div class="purchase-vape-meta">Started left: ${formatAmount(starting)} puffs</div>
-                    ${liquidLines}
-                </td>`;
+                return renderPurchaseVapeBoughtCell(purchase);
+            }
+            {
+                const meta = renderPurchaseBoughtMetaInner(purchase);
+                if (meta) {
+                    return `<td><div>${formatAmount(bought)}${unit}</div>${meta}</td>`;
+                }
             }
             return `<td>${formatAmount(bought)}${unit}</td>`;
         case 'remaining':
@@ -6723,12 +6898,40 @@ function updateBuyVapeFieldsPreview() {
     updateBuyVapeNicotinePreview();
 }
 
+function updateBuyAlcoholPreview() {
+    const substanceId = document.getElementById('buy-substance')?.value;
+    if (!isAlcoholTrackingMode(substanceId)) return;
+    const preview = document.getElementById('buy-alcohol-preview');
+    if (!preview) return;
+    const { netVolumeMl, alcoholPercent, pureAlcoholMl } = parseAlcoholFieldsFromForm();
+    if (netVolumeMl != null && alcoholPercent != null && pureAlcoholMl != null) {
+        preview.textContent = `${formatAmount(netVolumeMl)} mL × ${formatAmount(alcoholPercent)}% = ${formatAmount(pureAlcoholMl)} mL pure alcohol.`;
+    } else {
+        preview.textContent = '—';
+    }
+}
+
+function updateBuyWeedProductTypeUI() {
+    const substanceId = document.getElementById('buy-substance')?.value;
+    if (!isWeedTrackingMode(substanceId)) return;
+    const productType = document.getElementById('buy-weed-product-type')?.value || 'bud';
+    document.getElementById('buy-weed-bud-group')?.classList.toggle('hidden', productType !== 'bud');
+    document.getElementById('buy-weed-cart-group')?.classList.toggle('hidden', productType !== 'cart');
+    document.getElementById('buy-weed-edibles-group')?.classList.toggle('hidden', productType !== 'edibles');
+}
+
 function updateBuyVapeFieldsVisibility() {
     const substanceId = document.getElementById('buy-substance')?.value;
     const isVape = isVapeTrackingMode(substanceId);
+    const isAlcohol = isAlcoholTrackingMode(substanceId);
+    const isWeed = isWeedTrackingMode(substanceId);
+    const isCigarettes = isCigarettesTrackingMode(substanceId);
     document.getElementById('buy-vape-started-group')?.classList.toggle('hidden', !isVape);
     document.getElementById('buy-vape-percent-group')?.classList.toggle('hidden', !isVape);
     document.getElementById('buy-vape-liquid-group')?.classList.toggle('hidden', !isVape);
+    document.getElementById('buy-alcohol-fields-group')?.classList.toggle('hidden', !isAlcohol);
+    document.getElementById('buy-weed-fields-group')?.classList.toggle('hidden', !isWeed);
+    document.getElementById('buy-cigarettes-fields-group')?.classList.toggle('hidden', !isCigarettes);
     document.getElementById('buy-time-group')?.classList.toggle('hidden', isVape);
     const qtyLabel = document.getElementById('buy-quantity-label');
     const primaryUnit = getSubstancePrimaryUnit(substanceId);
@@ -6740,6 +6943,8 @@ function updateBuyVapeFieldsVisibility() {
                 : 'Quantity Bought');
     }
     if (isVape) updateBuyVapeFieldsPreview();
+    if (isAlcohol) updateBuyAlcoholPreview();
+    if (isWeed) updateBuyWeedProductTypeUI();
 }
 
 function setBuyFormSubmitLabel(text) {
@@ -6764,6 +6969,10 @@ function setupBuyTrackerForm() {
     ['buy-eliquid-capacity', 'buy-nicotine-strength'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', updateBuyVapeNicotinePreview);
     });
+    ['buy-alcohol-percent', 'buy-net-volume-ml'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', updateBuyAlcoholPreview);
+    });
+    document.getElementById('buy-weed-product-type')?.addEventListener('change', updateBuyWeedProductTypeUI);
     document.getElementById('buy-substance')?.addEventListener('change', updateBuyUnitDropdown);
     document.getElementById('buy-store-select')?.addEventListener('change', onBuyStoreSelectChange);
     document.getElementById('buy-date')?.addEventListener('change', () => {
@@ -6814,6 +7023,16 @@ function buildPurchaseFromForm() {
         payload.nicotineMgPerMl = nicotine.nicotineMgPerMl;
         payload.totalNicotineMg = nicotine.totalNicotineMg;
     }
+    if (isAlcoholTrackingMode(substanceId)) {
+        applyAlcoholFieldsToPayload(payload, parseAlcoholFieldsFromForm());
+    }
+    if (isWeedTrackingMode(substanceId)) {
+        applyWeedFieldsToPayload(payload, parseWeedFieldsFromForm());
+    }
+    if (isCigarettesTrackingMode(substanceId)) {
+        applyCigaretteFieldsToPayload(payload, parseCigaretteFieldsFromForm());
+    }
+    stripIrrelevantPurchaseFields(payload);
     return payload;
 }
 
@@ -6844,6 +7063,7 @@ function finalizeNewPurchaseRecord(payload) {
     } else if (isVape) {
         record.startedAt = getUseEventTimestamp(payload.date, '12:00');
     }
+    stripIrrelevantPurchaseFields(record);
     return record;
 }
 
@@ -6894,6 +7114,13 @@ function resetBuyFormAfterSave() {
     setDefaultBuyDateTime();
     resetBuyStoreField();
     setInputValue('buy-percent-bought', 100);
+    setInputValue('buy-alcohol-percent', '');
+    setInputValue('buy-net-volume-ml', '');
+    setInputValue('buy-weed-product-type', 'bud');
+    setInputValue('buy-bud-grams', '');
+    setInputValue('buy-cart-grams', '');
+    setInputValue('buy-edibles-mg', '');
+    setInputValue('buy-cigarette-nicotine-mg', '');
     setBuyFormSubmitLabel('Save Purchase');
     document.getElementById('cancel-buy-edit-btn')?.classList.add('hidden');
     applyMainSubstanceToForms();
@@ -6951,6 +7178,13 @@ function editPurchase(id) {
     setInputValue('buy-percent-bought', getVapePercentBoughtAt(purchase));
     setInputValue('buy-eliquid-capacity', getVapeELiquidCapacityMl(purchase) ?? '');
     setInputValue('buy-nicotine-strength', getVapeNicotineMgPerMl(purchase) ?? '');
+    setInputValue('buy-alcohol-percent', purchase.alcoholPercent ?? '');
+    setInputValue('buy-net-volume-ml', purchase.netVolumeMl ?? '');
+    setInputValue('buy-weed-product-type', purchase.weedProductType || 'bud');
+    setInputValue('buy-bud-grams', purchase.budGrams ?? '');
+    setInputValue('buy-cart-grams', purchase.cartGrams ?? '');
+    setInputValue('buy-edibles-mg', purchase.ediblesMg ?? '');
+    setInputValue('buy-cigarette-nicotine-mg', purchase.nicotineMg ?? '');
     setInputValue('buy-total-cost', getPurchaseTotalCost(purchase));
     setBuyStoreFieldValue(purchase.store || purchase.location || '');
     setInputValue('buy-payment', purchase.paymentMethod || '');
@@ -6960,6 +7194,8 @@ function editPurchase(id) {
     document.getElementById('cancel-buy-edit-btn')?.classList.remove('hidden');
     updateBuyCostPerUnitPreview();
     updateBuyVapeFieldsPreview();
+    updateBuyAlcoholPreview();
+    updateBuyWeedProductTypeUI();
     document.getElementById('buy-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -7022,6 +7258,8 @@ function handleBuySubmit(e) {
         if (isVapePuffPurchase(appData.purchases[idx])) {
             reconcileVapePurchaseLifecycle(appData.purchases[idx]);
         }
+        syncAlcoholPurchaseFields(appData.purchases[idx]);
+        stripIrrelevantPurchaseFields(appData.purchases[idx]);
         delete appData.purchases[idx].substance;
         delete appData.purchases[idx].item;
         delete appData.purchases[idx].cost;
@@ -9334,6 +9572,39 @@ function getStoreBuySummaries(substanceId, bounds) {
     return [...byStore.values()].sort((a, b) => b.cost - a.cost);
 }
 
+function getAlcoholInventoryAnalytics(purchases) {
+    const totalPureAlcoholMl = purchases.reduce((s, p) => s + (getAlcoholPureAlcoholMl(p) || 0), 0);
+    return { totalPureAlcoholMl };
+}
+
+function getWeedInventoryAnalytics(purchases) {
+    let budGrams = 0;
+    let cartGrams = 0;
+    let ediblesMg = 0;
+    purchases.forEach(p => {
+        if (p.budGrams != null && p.budGrams !== '') budGrams += parseFloat(p.budGrams) || 0;
+        if (p.cartGrams != null && p.cartGrams !== '') cartGrams += parseFloat(p.cartGrams) || 0;
+        if (p.ediblesMg != null && p.ediblesMg !== '') ediblesMg += parseFloat(p.ediblesMg) || 0;
+    });
+    return { budGrams, cartGrams, ediblesMg };
+}
+
+function getCigarettesInventoryAnalytics(purchases) {
+    let totalNicotineMg = 0;
+    let perUnitSamples = 0;
+    purchases.forEach(p => {
+        const nic = parseFloat(p.nicotineMg);
+        if (!Number.isFinite(nic)) return;
+        perUnitSamples += 1;
+        const qty = parseFloat(getPurchaseQuantity(p)) || 0;
+        const unit = (p.unit || '').toLowerCase();
+        if (unit === 'cigarettes' || unit === 'cigarette') {
+            totalNicotineMg += qty * nic;
+        }
+    });
+    return { totalNicotineMg, perUnitSamples };
+}
+
 function renderStatsBuyAnalyticsCards(substanceId, bounds) {
     const container = document.getElementById('stats-buy-analytics-cards');
     if (!container) return;
@@ -9372,7 +9643,7 @@ function renderStatsBuyAnalyticsCards(substanceId, bounds) {
     const topStore = storeSummaries[0];
     const supplyDuration = getAverageSupplyDurationDays(substanceId);
 
-    container.innerHTML = [
+    const cards = [
         renderSheetMetricCard('Total purchased', fmtSheetAmount(totalPurchased, unit), null),
         renderSheetMetricCard('Total cost', fmtSheetMoney(totalCost, cur), null),
         renderSheetMetricCard('Avg cost/g', avgCostPerUnit != null ? fmtSheetMoney(avgCostPerUnit, cur) : '—', null),
@@ -9387,7 +9658,58 @@ function renderStatsBuyAnalyticsCards(substanceId, bounds) {
         renderSheetMetricCard('Supply duration', supplyDuration != null ? formatSupplyDurationDays(supplyDuration) : '—', null),
         renderSheetMetricCard('Remaining supply', remaining != null ? fmtSheetAmount(remaining, unit) : '—', supplyBadge),
         renderSheetMetricCard('Top store', topStore ? `${topStore.store} (${fmtSheetMoney(topStore.cost, cur)})` : '—', null)
-    ].join('');
+    ];
+
+    if (isAlcoholTrackingMode(substanceId)) {
+        const alcoholStats = getAlcoholInventoryAnalytics(purchases);
+        if (alcoholStats.totalPureAlcoholMl > 0) {
+            cards.push(renderSheetMetricCard(
+                'Pure alcohol (range)',
+                fmtSheetAmount(alcoholStats.totalPureAlcoholMl, 'mL'),
+                null
+            ));
+        }
+        const allAlcoholStats = getAlcoholInventoryAnalytics(allPurchases);
+        if (allAlcoholStats.totalPureAlcoholMl > 0) {
+            cards.push(renderSheetMetricCard(
+                'Pure alcohol (all time)',
+                fmtSheetAmount(allAlcoholStats.totalPureAlcoholMl, 'mL'),
+                null
+            ));
+        }
+    }
+
+    if (isWeedTrackingMode(substanceId)) {
+        const weedStats = getWeedInventoryAnalytics(purchases);
+        if (weedStats.budGrams > 0) {
+            cards.push(renderSheetMetricCard('Bud purchased (range)', fmtSheetAmount(weedStats.budGrams, 'g'), null));
+        }
+        if (weedStats.cartGrams > 0) {
+            cards.push(renderSheetMetricCard('Cart purchased (range)', fmtSheetAmount(weedStats.cartGrams, 'g'), null));
+        }
+        if (weedStats.ediblesMg > 0) {
+            cards.push(renderSheetMetricCard('Edibles purchased (range)', fmtSheetAmount(weedStats.ediblesMg, 'mg'), null));
+        }
+    }
+
+    if (isCigarettesTrackingMode(substanceId)) {
+        const cigStats = getCigarettesInventoryAnalytics(purchases);
+        if (cigStats.totalNicotineMg > 0) {
+            cards.push(renderSheetMetricCard(
+                'Nicotine purchased (range)',
+                fmtSheetAmount(cigStats.totalNicotineMg, 'mg'),
+                null
+            ));
+        } else if (cigStats.perUnitSamples > 0) {
+            cards.push(renderSheetMetricCard(
+                'Nicotine per unit',
+                'See inventory entries',
+                null
+            ));
+        }
+    }
+
+    container.innerHTML = cards.join('');
 
     const storeContainer = document.getElementById('stats-buy-store-summary');
     if (storeContainer) {
