@@ -1150,7 +1150,7 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
         case 'unit':
             return `<td>${entry.unit}</td>`;
         case 'count':
-            return `<td>${entry.count || '—'}</td>`;
+            return `<td>${isVapeUseLog(entry) ? '—' : (entry.count || '—')}</td>`;
         case 'rate':
             return `<td>${rateStr}</td>`;
         case 'break':
@@ -3714,76 +3714,42 @@ function computeVapeUseFromForm(options = {}) {
     const linkMode = getUsePurchaseLinkMode();
     const purchaseId = linkMode === 'none' ? null : resolveLinkedPurchaseId(substanceId, tx);
     const purchase = purchaseId ? findPurchase(purchaseId) : null;
-    const totalPuffs = purchase ? getVapeFullPuffCount(purchase) : null;
+    const fullPuffCount = purchase ? getVapeFullPuffCount(purchase) : null;
 
     const percentRaw = document.getElementById('use-percent-after')?.value;
-    const puffsRaw = document.getElementById('use-amount')?.value;
     const hasPercent = percentRaw !== '' && percentRaw != null && Number.isFinite(parseFloat(percentRaw));
-    const hasPuffs = puffsRaw !== '' && puffsRaw != null && Number.isFinite(parseFloat(puffsRaw));
 
-    if (hasPercent && !purchase) {
+    if (!hasPercent) {
+        return { error: 'Enter current % left after this use.' };
+    }
+    if (!purchase || !fullPuffCount) {
         return { error: 'Select a vape inventory item to estimate puffs from % left.' };
     }
 
-    let previousRemaining = purchase
-        ? getVapeRemainingBeforeDateTime(purchase, useMs, appData, options.editingId || null)
-        : null;
+    const percentAfter = Math.max(0, Math.min(100, parseFloat(percentRaw)));
+    const previousRemaining = getVapeRemainingBeforeDateTime(
+        purchase,
+        useMs,
+        appData,
+        options.editingId || null
+    );
+    const currentRemaining = Math.max(0, Math.min(fullPuffCount, fullPuffCount * (percentAfter / 100)));
+    const puffsUsed = Math.max(0, previousRemaining - currentRemaining);
+    const usageRate = getVapeUsageRatePreview(purchase, currentRemaining, useDate, useTime);
 
-    if (hasPuffs) {
-        const puffsUsed = Math.max(0, parseFloat(puffsRaw));
-        let currentRemaining = previousRemaining != null
-            ? Math.max(0, previousRemaining - puffsUsed)
-            : null;
-        if (purchase && totalPuffs > 0 && currentRemaining != null) {
-            currentRemaining = Math.max(0, Math.min(totalPuffs, currentRemaining));
-        }
-        const percentAfter = hasPercent
-            ? Math.max(0, Math.min(100, parseFloat(percentRaw)))
-            : (purchase && totalPuffs > 0 && currentRemaining != null
-                ? Math.round((currentRemaining / totalPuffs) * 1000) / 10
-                : null);
-        const usageRate = purchase && currentRemaining != null
-            ? getVapeUsageRatePreview(purchase, currentRemaining, useDate, useTime)
-            : null;
-        return {
-            purchase,
-            purchaseId: purchase?.id || null,
-            puffsUsed,
-            currentRemaining,
-            percentAfter,
-            previousRemaining,
-            totalPuffs,
-            isEstimated: false,
-            estimatedFromPercent: false,
-            estimatedPuffsPerDay: usageRate?.puffsPerDay,
-            usageRate
-        };
-    }
-
-    if (hasPercent) {
-        const percentAfter = parseFloat(percentRaw);
-        if (percentAfter < 0 || percentAfter > 100) {
-            return { error: 'Enter a valid percent left (0–100).' };
-        }
-        const currentRemaining = Math.max(0, Math.min(totalPuffs, totalPuffs * (percentAfter / 100)));
-        const puffsUsed = Math.max(0, previousRemaining - currentRemaining);
-        const usageRate = getVapeUsageRatePreview(purchase, currentRemaining, useDate, useTime);
-        return {
-            purchase,
-            purchaseId: purchase.id,
-            puffsUsed,
-            currentRemaining,
-            percentAfter,
-            previousRemaining,
-            totalPuffs,
-            isEstimated: true,
-            estimatedFromPercent: true,
-            estimatedPuffsPerDay: usageRate?.puffsPerDay,
-            usageRate
-        };
-    }
-
-    return { error: 'Enter puffs used or current % left after this use.' };
+    return {
+        purchase,
+        purchaseId: purchase.id,
+        puffsUsed,
+        currentRemaining,
+        percentAfter,
+        previousRemaining,
+        totalPuffs: fullPuffCount,
+        isEstimated: true,
+        estimatedFromPercent: true,
+        estimatedPuffsPerDay: usageRate?.puffsPerDay,
+        usageRate
+    };
 }
 
 function updateVapeUsePreview() {
@@ -3796,32 +3762,17 @@ function updateVapeUsePreview() {
         return;
     }
 
-    const linkMode = getUsePurchaseLinkMode();
-    const purchaseId = linkMode === 'none' ? null : resolveLinkedPurchaseId(substanceId, tx);
-    const percentRaw = document.getElementById('use-percent-after')?.value;
-    const hasPercent = percentRaw !== '' && percentRaw != null;
-    if (!purchaseId && hasPercent) {
-        preview.textContent = 'Select a vape inventory item to estimate puffs from % left.';
-        return;
-    }
-
     const calc = computeVapeUseFromForm({ editingId: editingUseId || null });
     if (!calc || calc.error) {
-        preview.textContent = calc?.error || 'Enter puffs used or current % left after this use.';
+        preview.textContent = calc?.error || 'Enter current % left after this use.';
         return;
     }
 
-    if (!calc.purchase || calc.currentRemaining == null) {
-        preview.textContent = `Will log ${formatAmount(calc.puffsUsed)} puffs used.`;
-        return;
-    }
-
-    const prefix = calc.isEstimated ? 'Estimated ' : '';
     const pctLabel = Number.isInteger(calc.percentAfter)
         ? calc.percentAfter
         : parseFloat(calc.percentAfter).toFixed(1);
     const lines = [
-        `${prefix}${formatAmount(calc.puffsUsed)} puffs used → ${formatAmount(calc.currentRemaining)} puffs remaining (${pctLabel}% left).`
+        `Estimated ${formatAmount(calc.puffsUsed)} puffs used → ${formatAmount(calc.currentRemaining)} puffs remaining (${pctLabel}% left).`
     ];
 
     if (calc.usageRate) {
@@ -3848,41 +3799,33 @@ function updateVapeUseFormUI() {
     const tx = document.getElementById('use-transaction-type')?.value || 'use';
     const isVapeUse = isVapeNicotineSubstanceId(substanceId) && tx === 'use';
     const vapeGroup = document.getElementById('use-vape-fields-group');
-    const amountLabel = document.getElementById('use-amount-label');
+    const amountGroup = document.getElementById('use-amount-mode-group');
     const amountInput = document.getElementById('use-amount');
     const percentInput = document.getElementById('use-percent-after');
     const unitSelect = document.getElementById('use-unit');
     const countGroup = document.getElementById('use-count-group');
 
+    amountGroup?.classList.toggle('hidden', isVapeUse);
     vapeGroup?.classList.toggle('hidden', !isVapeUse);
-    if (amountLabel) {
-        amountLabel.textContent = isVapeUse ? 'Puffs used (optional if % left entered)' : 'Amount';
-    }
     if (amountInput) {
-        amountInput.step = isVapeUse ? '1' : '0.01';
-        amountInput.min = '0';
         amountInput.required = !isVapeUse;
     }
-    if (percentInput && isVapeUse) {
-        const linkMode = getUsePurchaseLinkMode();
-        const purchaseId = linkMode === 'none' ? null : resolveLinkedPurchaseId(substanceId, tx);
-        percentInput.disabled = !purchaseId;
-    } else if (percentInput) {
-        percentInput.disabled = false;
-    }
-    if (isVapeUse && unitSelect) {
-        if (![...unitSelect.options].some(o => o.value === 'puffs')) {
-            const option = document.createElement('option');
-            option.value = 'puffs';
-            option.textContent = 'puffs';
-            unitSelect.appendChild(option);
+    if (percentInput) {
+        if (isVapeUse) {
+            percentInput.required = true;
+            const linkMode = getUsePurchaseLinkMode();
+            const purchaseId = linkMode === 'none' ? null : resolveLinkedPurchaseId(substanceId, tx);
+            percentInput.disabled = !purchaseId;
+        } else {
+            percentInput.required = false;
+            percentInput.disabled = false;
         }
-        unitSelect.value = 'puffs';
-        unitSelect.disabled = true;
-    } else if (unitSelect) {
-        unitSelect.disabled = false;
     }
-    countGroup?.classList.toggle('hidden', !shouldShowUseCountForSubstance(substanceId));
+    if (unitSelect) {
+        unitSelect.disabled = isVapeUse;
+        unitSelect.required = !isVapeUse;
+    }
+    countGroup?.classList.toggle('hidden', !shouldShowUseCountForSubstance(substanceId) || isVapeUse);
     if (isVapeUse) updateVapeUsePreview();
 }
 
@@ -3905,23 +3848,29 @@ function applyVapeUseInventory(calc, logEntry) {
 }
 
 function formatVapeUseSummary(log, sub) {
-    const parts = [];
-    const amount = parseFloat(log.amount);
+    return formatVapeRecentUseDetailLines(log).join(' · ') || `${sub?.name || 'Vape'} use`;
+}
+
+function formatVapeRecentUseDetailLines(log) {
+    const lines = [];
     if (log.needsReview) {
-        parts.push('Needs review');
-    } else if (Number.isFinite(amount)) {
+        lines.push('Needs review');
+        return lines;
+    }
+    const amount = parseFloat(log.amount);
+    if (Number.isFinite(amount)) {
         const prefix = log.isEstimated || log.estimatedFromPercent ? '~' : '';
-        parts.push(`${prefix}${formatAmount(amount)} puffs used`);
+        lines.push(`${prefix}${formatAmount(amount)} puffs used`);
     }
     const pct = log.percentLeftAfter ?? log.percentRemaining;
-    if (pct != null && !log.needsReview) {
+    if (pct != null) {
         const pctLabel = Number.isInteger(pct) ? pct : parseFloat(pct).toFixed(1);
-        parts.push(`${pctLabel}% left after`);
+        lines.push(`${pctLabel}% left after`);
     }
-    if ((log.isEstimated || log.estimatedFromPercent) && !log.needsReview) {
-        parts.push('Estimated from percent left');
+    if (log.isEstimated || log.estimatedFromPercent) {
+        lines.push('Estimated from percent left');
     }
-    return parts.join(' · ') || `${sub?.name || 'Vape'} use`;
+    return lines;
 }
 
 function formatVapeLinkedPurchaseLine(log) {
@@ -4715,7 +4664,6 @@ function editUseEntry(id) {
     setInputValue('use-end-time', entry.endTime || '');
     if (isVapeUseLog(entry)) {
         updateVapeUseFormUI();
-        setInputValue('use-amount', entry.amount != null ? entry.amount : '');
         setInputValue('use-percent-after', entry.percentLeftAfter ?? entry.percentRemaining ?? '');
         updateVapeUsePreview();
     } else {
@@ -5676,8 +5624,11 @@ function renderRecentUseList() {
             ? `${log.startTime || log.time || ''}–${log.endTime}`
             : (log.startTime || log.time || '');
         const amountDisplay = isVape
-            ? formatVapeUseSummary(log, sub)
+            ? ''
             : `${log.amount != null ? formatAmount(log.amount) : '—'} ${log.unit || ''}`;
+        const vapeDetailHtml = isVape
+            ? formatVapeRecentUseDetailLines(log).map(line => `<div class="use-recent-detail">${line}</div>`).join('')
+            : '';
         const linkedLine = isVape ? formatVapeLinkedPurchaseLine(log) : formatInventoryLinkDisplay(log);
         const item = document.createElement('div');
         item.className = 'use-recent-card';
@@ -5685,11 +5636,12 @@ function renderRecentUseList() {
             <div class="use-recent-main">
                 <div class="use-recent-top">
                     ${renderUseLogBadge(log)}
-                    <span class="use-recent-amount">${amountDisplay}</span>
+                    ${amountDisplay ? `<span class="use-recent-amount">${amountDisplay}</span>` : ''}
                 </div>
                 <div class="use-recent-sub">${sub?.icon || ''} ${sub?.name || 'Unknown'} · ${formatDate(log.date || '')}${timeRange ? ` · ${timeRange}` : ''}</div>
+                ${vapeDetailHtml}
                 ${enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}
-                ${!isVape && countStr !== '' ? `<div class="use-recent-detail">${countStr} lines</div>` : ''}
+                ${!isVape && countStr !== '' && countStr != null && countStr !== 0 ? `<div class="use-recent-detail">${countStr} lines</div>` : ''}
                 ${log.notes ? `<div class="use-recent-notes">${log.notes}</div>` : ''}
                 ${log.mood ? `<div class="use-recent-detail">Mood: ${log.mood}</div>` : ''}
                 ${log.trigger ? `<div class="use-recent-detail">Trigger: ${log.trigger}</div>` : ''}
