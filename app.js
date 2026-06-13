@@ -1349,13 +1349,30 @@ const USE_STATS_DEFAULTS = {
     order: [
         'totalUsage', 'sessionCount', 'avgPerSession', 'avgPerHr', 'totalDuration', 'avgDuration',
         'currentSupplyDuration', 'longestSession', 'shortestSession', 'longestBreak', 'shortestBreak', 'avgBreak',
-        'useDays', 'useDayPct', 'avgPerUseDay', 'avgPerCalendarDay'
+        'useDays', 'useDayPct', 'avgPerUseDay', 'avgPerCalendarDay',
+        'avgPuffsPerDay', 'vapeCount', 'avgCostPerVape'
     ],
     hidden: [
         'currentSupplyDuration', 'longestSession', 'shortestSession', 'longestBreak', 'shortestBreak', 'avgBreak',
-        'useDays', 'useDayPct', 'avgPerUseDay', 'avgPerCalendarDay'
+        'useDays', 'useDayPct', 'avgPerUseDay', 'avgPerCalendarDay',
+        'avgPuffsPerDay', 'vapeCount', 'avgCostPerVape'
     ]
 };
+
+const USE_STATS_VAPE_DEFAULTS = {
+    order: [
+        'totalUsage', 'avgPuffsPerDay', 'vapeCount', 'avgCostPerVape', 'avgDuration', 'currentSupplyDuration'
+    ],
+    hidden: []
+};
+
+const VAPE_ONLY_USE_STAT_IDS = ['avgPuffsPerDay', 'vapeCount', 'avgCostPerVape'];
+
+const VAPE_EXCLUDED_USE_STAT_IDS = new Set([
+    'sessionCount', 'avgPerSession', 'avgPerHr', 'totalDuration',
+    'longestSession', 'shortestSession', 'longestBreak', 'shortestBreak', 'avgBreak',
+    'useDays', 'useDayPct', 'avgPerUseDay', 'avgPerCalendarDay'
+]);
 
 const USE_STATS_LABELS = {
     totalUsage: 'Total Usage',
@@ -1373,7 +1390,10 @@ const USE_STATS_LABELS = {
     useDays: 'Use Days',
     useDayPct: 'Use Day %',
     avgPerUseDay: 'Avg / Use Day',
-    avgPerCalendarDay: 'Avg / Calendar Day'
+    avgPerCalendarDay: 'Avg / Calendar Day',
+    avgPuffsPerDay: 'Avg puffs/day',
+    vapeCount: 'Vape count',
+    avgCostPerVape: 'Avg cost/vape'
 };
 
 let columnSettingsTableKey = null;
@@ -1463,7 +1483,10 @@ function saveUseStatsConfig(config) {
 }
 
 function resetUseStatsConfig() {
-    saveUseStatsConfig(JSON.parse(JSON.stringify(USE_STATS_DEFAULTS)));
+    const defaults = isVapeNicotineSubstanceId(currentSubstanceId)
+        ? USE_STATS_VAPE_DEFAULTS
+        : USE_STATS_DEFAULTS;
+    saveUseStatsConfig(JSON.parse(JSON.stringify(defaults)));
 }
 
 function openUseStatsSettingsModal() {
@@ -1481,14 +1504,15 @@ function renderUseStatsSettingsList() {
     if (!list) return;
     const config = getUseStatsConfig();
     const hidden = new Set(config.hidden || []);
-    const order = [...config.order];
-    USE_STATS_DEFAULTS.order.forEach(id => {
-        if (!order.includes(id)) order.push(id);
+    const catalog = getUseStatsCatalogForSubstance(currentSubstanceId);
+    const order = [];
+    [...config.order, ...catalog].forEach(id => {
+        if (catalog.includes(id) && !order.includes(id)) order.push(id);
     });
 
     list.innerHTML = order.map(statId => {
-        const checked = !hidden.has(statId) ? 'checked' : '';
-        const label = USE_STATS_LABELS[statId] || statId;
+        const checked = !hidden.has(statId) && !VAPE_EXCLUDED_USE_STAT_IDS.has(statId) ? 'checked' : '';
+        const label = getUseStatLabelForSubstance(statId, currentSubstanceId, 'puffs');
         return `<li class="column-settings-item" draggable="true" data-stat-id="${statId}">
             <span class="column-drag-handle" draggable="true" aria-hidden="true">☰</span>
             <label class="column-settings-label">
@@ -1502,11 +1526,31 @@ function renderUseStatsSettingsList() {
 function readUseStatsSettingsFromModal() {
     const list = document.getElementById('use-stats-settings-list');
     if (!list) return getUseStatsConfig();
-    const order = [...list.querySelectorAll('.column-settings-item')].map(li => li.dataset.statId);
-    const hidden = [];
-    list.querySelectorAll('.use-stats-settings-visible').forEach(input => {
-        if (!input.checked) hidden.push(input.dataset.statId);
+    const catalog = new Set(getUseStatsCatalogForSubstance(currentSubstanceId));
+    const modalOrder = [...list.querySelectorAll('.column-settings-item')].map(li => li.dataset.statId);
+    const existing = getUseStatsConfig();
+    const order = [...modalOrder];
+    existing.order.forEach(id => {
+        if (!order.includes(id)) order.push(id);
     });
+    USE_STATS_DEFAULTS.order.forEach(id => {
+        if (!order.includes(id)) order.push(id);
+    });
+    const hidden = [...(existing.hidden || [])];
+    list.querySelectorAll('.use-stats-settings-visible').forEach(input => {
+        const statId = input.dataset.statId;
+        if (!catalog.has(statId)) return;
+        if (!input.checked && !hidden.includes(statId)) hidden.push(statId);
+        if (input.checked) {
+            const idx = hidden.indexOf(statId);
+            if (idx >= 0) hidden.splice(idx, 1);
+        }
+    });
+    if (isVapeNicotineSubstanceId(currentSubstanceId)) {
+        VAPE_EXCLUDED_USE_STAT_IDS.forEach(id => {
+            if (!hidden.includes(id)) hidden.push(id);
+        });
+    }
     return { order, hidden };
 }
 
@@ -1599,7 +1643,6 @@ function renderColumnSettingsList(tableKey) {
     const list = document.getElementById('column-settings-list');
     if (!list) return;
     const config = getTableColumnConfig(tableKey);
-    const labels = TABLE_COLUMN_LABELS[tableKey];
     const required = new Set(TABLE_COLUMNS_REQUIRED[tableKey] || []);
     const hidden = new Set(config.hidden || []);
     const order = [...config.order];
@@ -1611,11 +1654,12 @@ function renderColumnSettingsList(tableKey) {
         const checked = !hidden.has(colId);
         const disabled = required.has(colId) ? 'disabled checked' : (checked ? 'checked' : '');
         const reqNote = required.has(colId) ? ' <span class="column-required-tag">(required)</span>' : '';
+        const label = getTableColumnLabelForSubstance(tableKey, colId, currentSubstanceId);
         return `<li class="column-settings-item" draggable="true" data-col-id="${colId}">
             <span class="column-drag-handle" draggable="true" aria-hidden="true">☰</span>
             <label class="column-settings-label">
                 <input type="checkbox" class="column-settings-visible" data-col-id="${colId}" ${disabled}>
-                ${labels[colId] || colId}${reqNote}
+                ${label}${reqNote}
             </label>
         </li>`;
     }).join('');
@@ -2865,6 +2909,48 @@ function formatStatsPuffs(value, maxDecimals = 1) {
     if (Number.isInteger(rounded)) return String(rounded);
     const fixed = rounded.toFixed(maxDecimals);
     return fixed.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '');
+}
+
+function formatStatsPuffsPerDay(value) {
+    if (value == null || Number.isNaN(value)) return '—';
+    const rounded = Math.round(value * 10) / 10;
+    const formatted = Number.isInteger(rounded)
+        ? rounded.toLocaleString('en-US')
+        : rounded.toLocaleString('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+    return `${formatted} puffs/day`;
+}
+
+function formatCostPerVape(value, cur = getCurrencySymbol()) {
+    if (value == null || Number.isNaN(value)) return '—';
+    return `${cur}${value.toFixed(2)}/vape`;
+}
+
+function getStatsDisplayUnit(substanceId, fallbackUnit = 'units') {
+    return isVapeNicotineSubstanceId(substanceId) ? 'puffs' : fallbackUnit;
+}
+
+function getTableColumnLabelForSubstance(tableKey, colId, substanceId = currentSubstanceId) {
+    const labels = TABLE_COLUMN_LABELS[tableKey] || {};
+    if (!isVapeNicotineSubstanceId(substanceId)) return labels[colId] || colId;
+    const vapeBuyLabels = {
+        purchased: 'Puffs purchased',
+        costPerUnit: 'Cost/vape',
+        gPerDay: 'Puffs/day',
+        supplyDuration: 'Days per vape'
+    };
+    const vapeStatsLabels = {
+        gPerSession: 'Puffs/sess',
+        gPerHour: 'Puffs/hr',
+        gPerUseDay: 'Puffs/use day',
+        gPerCalDay: 'Puffs/cal day'
+    };
+    if (tableKey === 'buyWeekly' || tableKey === 'buyMonthly') {
+        return vapeBuyLabels[colId] || labels[colId] || colId;
+    }
+    if (tableKey === 'statsWeekly' || tableKey === 'statsMonthly') {
+        return vapeStatsLabels[colId] || labels[colId] || colId;
+    }
+    return labels[colId] || colId;
 }
 
 function getLocalDateFromIso(isoString) {
@@ -4708,12 +4794,39 @@ function formatStatsDurationValue(hours, substanceId, { soFar = false } = {}) {
     return formatDurationHMS(hours);
 }
 
+function getUseStatsCatalogForSubstance(substanceId) {
+    if (isVapeNicotineSubstanceId(substanceId)) {
+        return [...USE_STATS_VAPE_DEFAULTS.order];
+    }
+    return USE_STATS_DEFAULTS.order.filter(id => !VAPE_ONLY_USE_STAT_IDS.includes(id));
+}
+
+function getUseStatLabelForSubstance(statId, substanceId, unit) {
+    if (isVapeNicotineSubstanceId(substanceId)) {
+        if (statId === 'avgDuration') return 'Avg Supply Duration';
+        if (statId === 'currentSupplyDuration') return 'Current Supply Duration';
+        if (statId === 'totalUsage') return 'Total Usage';
+        return USE_STATS_LABELS[statId] || statId;
+    }
+    if (statId === 'avgPerUseDay') return `Avg ${unit} / Use Day`;
+    if (statId === 'avgPerCalendarDay') return `Avg ${unit} / Calendar Day`;
+    return USE_STATS_LABELS[statId] || statId;
+}
+
 function getVisibleUseStatsOrderForSubstance(substanceId) {
-    const order = getVisibleUseStatsOrder();
-    if (!isVapeNicotineSubstanceId(substanceId) || order.includes('currentSupplyDuration')) return order;
-    const idx = order.indexOf('avgDuration');
-    const insertAt = idx >= 0 ? idx + 1 : order.length;
-    return [...order.slice(0, insertAt), 'currentSupplyDuration', ...order.slice(insertAt)];
+    if (!isVapeNicotineSubstanceId(substanceId)) {
+        return getVisibleUseStatsOrder().filter(id => !VAPE_ONLY_USE_STAT_IDS.includes(id));
+    }
+    const config = getUseStatsConfig();
+    const hidden = new Set(config.hidden || []);
+    VAPE_EXCLUDED_USE_STAT_IDS.forEach(id => hidden.add(id));
+    const catalog = getUseStatsCatalogForSubstance(substanceId);
+    const order = [];
+    [...config.order, ...catalog].forEach(id => {
+        if (catalog.includes(id) && !order.includes(id)) order.push(id);
+    });
+    const visible = order.filter(id => !hidden.has(id) && !VAPE_EXCLUDED_USE_STAT_IDS.has(id));
+    return visible.length ? visible : [...catalog];
 }
 
 function reconcileVapePurchaseLifecycle(purchase, data = appData) {
@@ -9263,18 +9376,48 @@ function buildUseStatsMetrics(logs, daysInRange, substanceId, bounds = null) {
     };
 }
 
+function getVapePurchasesInStatsRange(substanceId, startDate, endDate, data = appData) {
+    return (data.purchases || []).filter(p =>
+        getPurchaseSubstanceId(p) === substanceId
+        && isVapePuffPurchase(p)
+        && p.date >= startDate
+        && p.date <= endDate
+    );
+}
+
+function getVapeTotalSupplyDurationDaysInRange(substanceId, startDate, endDate, data = appData) {
+    let totalMs = 0;
+    getUseLogsForSubstance(substanceId, { personalUseOnly: true, data }).forEach(log => {
+        if (!isVapeUseLog(log, data) || log.needsReview) return;
+        const inRange = getVapeLogStatsAllocations(log, data).some(
+            a => a.date >= startDate && a.date <= endDate && a.amount > INVENTORY_EPS
+        );
+        if (!inRange) return;
+        const durationMs = getVapeLogDurationMs(log);
+        if (durationMs != null && durationMs > 0) totalMs += durationMs;
+    });
+    return totalMs / 86400000;
+}
+
 function buildVapeUseStatsMetrics(logs, daysInRange, substanceId, bounds) {
     const personalLogs = (logs || []).filter(isPersonalUseLog);
     const totalAmount = getStatsUsageInRange(substanceId, bounds.startDate, bounds.endDate);
-    const sessionCount = personalLogs.filter(isVapeUseLog).length;
-    let useDays = 0;
-    getVapeDistributedUsageMap(substanceId).forEach((amount, date) => {
-        if (date >= bounds.startDate && date <= bounds.endDate && amount > INVENTORY_EPS) useDays++;
-    });
-    const useDayPct = daysInRange > 0 ? (useDays / daysInRange) * 100 : 0;
-    const avgPerUseDay = useDays > 0 ? totalAmount / useDays : null;
-    const avgPerCalendarDay = daysInRange > 0 ? totalAmount / daysInRange : null;
-    const avgPerSession = sessionCount > 0 ? totalAmount / sessionCount : null;
+    const supplyDurationDays = getVapeTotalSupplyDurationDaysInRange(
+        substanceId,
+        bounds.startDate,
+        bounds.endDate
+    );
+    const avgPuffsPerDay = supplyDurationDays > 0 ? totalAmount / supplyDurationDays : null;
+    const vapePurchases = getVapePurchasesInStatsRange(substanceId, bounds.startDate, bounds.endDate);
+    const vapeCount = vapePurchases.length;
+    const vapePurchaseCost = vapePurchases.reduce(
+        (sum, p) => sum + (parseFloat(getPurchaseTotalCost(p)) || 0),
+        0
+    );
+    const avgCostPerVape = vapeCount > 0 ? vapePurchaseCost / vapeCount : null;
+    const costPerPuff = totalAmount > INVENTORY_EPS && vapePurchaseCost > 0
+        ? vapePurchaseCost / totalAmount
+        : null;
 
     const finishedDurationsMs = getVapeFinishedSupplyDurationsInRange(
         substanceId,
@@ -9284,32 +9427,29 @@ function buildVapeUseStatsMetrics(logs, daysInRange, substanceId, bounds) {
     const avgDurationMinutes = finishedDurationsMs.length
         ? finishedDurationsMs.reduce((s, ms) => s + ms, 0) / finishedDurationsMs.length / 60000
         : null;
-    const totalDurationMinutes = finishedDurationsMs.length
-        ? finishedDurationsMs.reduce((s, ms) => s + ms, 0) / 60000
-        : 0;
     const currentSupplyDurationMs = getVapeCurrentSupplyDurationMs(substanceId);
 
-    const breakHoursList = getVapePurchaseBreakHoursList(substanceId, bounds.startDate, bounds.endDate);
-
     return {
-        sessionCount,
         totalAmount,
+        avgPuffsPerDay,
+        vapeCount,
+        avgCostPerVape,
+        costPerPuff,
         avgDurationMinutes,
         currentSupplyDurationMs,
-        avgPerSession,
+        sessionCount: personalLogs.filter(isVapeUseLog).length,
+        avgPerSession: null,
         avgPerHour: null,
-        totalDurationMinutes,
+        totalDurationMinutes: 0,
         longestMinutes: null,
         shortestMinutes: null,
-        useDays,
-        useDayPct,
-        avgPerUseDay,
-        avgPerCalendarDay,
-        longestBreakHours: breakHoursList.length ? Math.max(...breakHoursList) : null,
-        shortestBreakHours: breakHoursList.length ? Math.min(...breakHoursList) : null,
-        avgBreakHours: breakHoursList.length
-            ? breakHoursList.reduce((sum, h) => sum + h, 0) / breakHoursList.length
-            : null
+        useDays: 0,
+        useDayPct: 0,
+        avgPerUseDay: null,
+        avgPerCalendarDay: null,
+        longestBreakHours: null,
+        shortestBreakHours: null,
+        avgBreakHours: null
     };
 }
 
@@ -9376,18 +9516,19 @@ function formatUseStatValue(statId, metrics, unit) {
             return metrics.avgPerUseDay != null ? `${fmtUsage(metrics.avgPerUseDay)} ${unit}` : '—';
         case 'avgPerCalendarDay':
             return metrics.avgPerCalendarDay != null ? `${fmtUsage(metrics.avgPerCalendarDay)} ${unit}` : '—';
+        case 'avgPuffsPerDay':
+            return formatStatsPuffsPerDay(metrics.avgPuffsPerDay);
+        case 'vapeCount':
+            return String(metrics.vapeCount ?? 0);
+        case 'avgCostPerVape':
+            return formatCostPerVape(metrics.avgCostPerVape, getCurrencySymbol());
         default:
             return '—';
     }
 }
 
 function getUseStatLabel(statId, unit) {
-    if (statId === 'avgDuration' && isVapeNicotineSubstanceId(currentSubstanceId)) {
-        return 'Avg Supply Duration';
-    }
-    if (statId === 'avgPerUseDay') return `Avg ${unit} / Use Day`;
-    if (statId === 'avgPerCalendarDay') return `Avg ${unit} / Calendar Day`;
-    return USE_STATS_LABELS[statId] || statId;
+    return getUseStatLabelForSubstance(statId, currentSubstanceId, unit);
 }
 
 function renderUseStatsCards(metrics, unit) {
@@ -9517,12 +9658,13 @@ function renderSheetMetricCard(label, value, badge) {
     return `<div class="sheet-metric-card"><span class="sheet-metric-label">${label}</span><strong class="sheet-metric-value">${value}</strong>${badgeHtml}</div>`;
 }
 
-function renderConfigurableSheetTable(tableKey, rows, renderCell) {
+function renderConfigurableSheetTable(tableKey, rows, renderCell, substanceId = currentSubstanceId) {
     const order = getEffectiveColumnOrder(tableKey);
-    const labels = TABLE_COLUMN_LABELS[tableKey] || {};
     if (!rows.length) return '<p class="empty-hint">No data yet.</p>';
     let html = '<div class="table-scroll"><table class="sheet-table"><thead><tr>';
-    order.forEach(colId => { html += `<th>${labels[colId] || colId}</th>`; });
+    order.forEach(colId => {
+        html += `<th>${getTableColumnLabelForSubstance(tableKey, colId, substanceId)}</th>`;
+    });
     html += '</tr></thead><tbody>';
     rows.forEach(rowData => {
         html += '<tr>';
@@ -9876,9 +10018,12 @@ function renderStatsSummaryDashboard(substanceId, useStats, bounds, unit, cur) {
     if (!container) return;
     const sub = getSubstance(substanceId);
     const today = getLocalDateString();
-    const todayStats = getTodayUseStats(substanceId);
     const weekStart = getWeekStartDateStr(today);
-    const weekUsed = getWeeklyUsed(substanceId, today);
+    const isVape = isVapeNicotineSubstanceId(substanceId);
+    const displayUnit = getStatsDisplayUnit(substanceId, unit);
+    const weekUsed = isVape
+        ? getStatsUsageInRange(substanceId, weekStart, today)
+        : getWeeklyUsed(substanceId, today);
     const weekGoal = getWeeklyLimit(substanceId, weekStart);
     const weeklyBadge = getUsageVsTargetBadge(weekUsed, weekGoal);
     const remaining = getTotalRemainingSupply(substanceId);
@@ -9891,15 +10036,31 @@ function renderStatsSummaryDashboard(substanceId, useStats, bounds, unit, cur) {
             : { level: 'good', label: 'Good' })
         : { level: 'none', label: '—' };
 
+    if (isVape) {
+        const todayUsed = getStatsUsageOnDate(substanceId, today);
+        container.innerHTML = [
+            renderSheetMetricCard('Today\'s use', `${formatStatsPuffs(todayUsed)} puffs`, null),
+            renderSheetMetricCard('This week', `${formatStatsPuffs(weekUsed)} puffs`, weeklyBadge),
+            renderSheetMetricCard('Weekly goal', weekGoal != null ? `${formatStatsPuffs(weekGoal)} puffs` : '—', weeklyBadge),
+            renderSheetMetricCard('Range total', `${formatStatsPuffs(useStats.totalAmount)} puffs`, null),
+            renderSheetMetricCard('Vape count', String(useStats.vapeCount ?? 0), null),
+            renderSheetMetricCard('Avg cost/vape', formatCostPerVape(useStats.avgCostPerVape, cur), null),
+            renderSheetMetricCard('Remaining puffs', remaining != null ? `${formatStatsPuffs(remaining)} puffs` : '—', supplyBadge),
+            renderSheetMetricCard('Range', `${formatDate(bounds.startDate)} – ${formatDate(bounds.endDate)}`, null)
+        ].join('');
+        return;
+    }
+
+    const todayStats = getTodayUseStats(substanceId);
     container.innerHTML = [
-        renderSheetMetricCard('Today\'s use', `${formatAmount(todayStats.totalAmount)} ${unit}`, null),
-        renderSheetMetricCard('This week', `${formatAmount(weekUsed)} ${unit}`, weeklyBadge),
-        renderSheetMetricCard('Weekly goal', weekGoal != null ? `${formatAmount(weekGoal)} ${unit}` : '—', weeklyBadge),
-        renderSheetMetricCard('Range total', `${formatAmount(useStats.totalAmount)} ${unit}`, null),
+        renderSheetMetricCard('Today\'s use', `${formatAmount(todayStats.totalAmount)} ${displayUnit}`, null),
+        renderSheetMetricCard('This week', `${formatAmount(weekUsed)} ${displayUnit}`, weeklyBadge),
+        renderSheetMetricCard('Weekly goal', weekGoal != null ? `${formatAmount(weekGoal)} ${displayUnit}` : '—', weeklyBadge),
+        renderSheetMetricCard('Range total', `${formatAmount(useStats.totalAmount)} ${displayUnit}`, null),
         renderSheetMetricCard('Sessions', String(useStats.sessionCount), null),
         renderSheetMetricCard('Use days', String(useStats.useDays), null),
         renderSheetMetricCard('Use day %', `${formatAmount(useStats.useDayPct, 1)}%`, null),
-        renderSheetMetricCard('Remaining supply', remaining != null ? `${formatAmount(remaining)} ${unit}` : '—', supplyBadge),
+        renderSheetMetricCard('Remaining supply', remaining != null ? `${formatAmount(remaining)} ${displayUnit}` : '—', supplyBadge),
         renderSheetMetricCard('Range', `${formatDate(bounds.startDate)} – ${formatDate(bounds.endDate)}`, null)
     ].join('');
 }
@@ -9932,7 +10093,10 @@ function renderStatsMonthlySummary(substanceId) {
             case 'end': return formatDate(s.monthEnd);
             case 'usage':
                 return { html: `${fmtSheetAmount(s.totalUsage, displayUnit)} ${renderStatusBadge(usageBadge.level, usageBadge.label)}` };
-            case 'purchased': return fmtSheetAmount(s.purchasedAmount, unit);
+            case 'purchased': return fmtSheetAmount(
+                s.purchasedAmount,
+                isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit
+            );
             case 'cost': return fmtSheetMoney(s.cost || 0, cur);
             case 'sessions': return String(s.sessions);
             case 'useDays': return String(s.useDays);
@@ -10040,6 +10204,7 @@ function renderStatsBuyAnalyticsCards(substanceId, bounds) {
     if (!container) return;
     const sub = getSubstance(substanceId);
     const unit = sub?.defaultUnit || 'units';
+    const displayUnit = getStatsDisplayUnit(substanceId, unit);
     const cur = getCurrencySymbol();
     const inRange = p => p.date >= bounds.startDate && p.date <= bounds.endDate;
     const purchases = (appData.purchases || []).filter(p =>
@@ -10047,9 +10212,6 @@ function renderStatsBuyAnalyticsCards(substanceId, bounds) {
     );
     const purchased = purchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
     const cost = purchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
-    const costPerUnit = purchased > 0 ? cost / purchased : getAveragePurchaseCostPerUnit(substanceId);
-    const daysInRange = countDaysInRange(bounds.startDate, bounds.endDate);
-    const gPerDaySupply = daysInRange > 0 ? purchased / daysInRange : null;
     const remaining = getTotalRemainingSupply(substanceId);
     const supplyBadge = remaining != null ? getSupplyRemainingBadge(0.25) : { level: 'none', label: '—' };
     const today = getLocalDateString();
@@ -10061,17 +10223,58 @@ function renderStatsBuyAnalyticsCards(substanceId, bounds) {
     const monthPurchases = (appData.purchases || []).filter(p =>
         getPurchaseSubstanceId(p) === substanceId && p.date >= monthStart
     );
-    const weekPurchased = weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
     const weekCost = weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
-    const monthPurchased = monthPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
     const monthCost = monthPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+    const storeSummaries = getStoreBuySummaries(substanceId, bounds);
+    const topStore = storeSummaries[0];
+    const supplyDuration = getAverageSupplyDurationDays(substanceId);
+
+    if (isVapeNicotineSubstanceId(substanceId)) {
+        const vapePurchases = purchases.filter(isVapePuffPurchase);
+        const vapeCount = vapePurchases.length;
+        const avgCostPerVape = vapeCount > 0 ? cost / vapeCount : null;
+        const rangePuffs = getStatsUsageInRange(substanceId, bounds.startDate, bounds.endDate);
+        const costPerPuff = rangePuffs > INVENTORY_EPS && cost > 0 ? cost / rangePuffs : null;
+        const cards = [
+            renderSheetMetricCard('Vape count (range)', String(vapeCount), null),
+            renderSheetMetricCard('Range cost', fmtSheetMoney(cost, cur), null),
+            renderSheetMetricCard('Avg cost/vape', formatCostPerVape(avgCostPerVape, cur), null),
+            renderSheetMetricCard('Cost/puff', costPerPuff != null ? `${cur}${costPerPuff.toFixed(4)}/puff` : '—', null),
+            renderSheetMetricCard('Weekly cost', fmtSheetMoney(weekCost, cur), null),
+            renderSheetMetricCard('Monthly cost', fmtSheetMoney(monthCost, cur), null),
+            renderSheetMetricCard('Days per vape', supplyDuration != null ? formatSupplyDurationDays(supplyDuration) : '—', null),
+            renderSheetMetricCard('Remaining puffs', remaining != null ? `${formatStatsPuffs(remaining)} puffs` : '—', supplyBadge),
+            renderSheetMetricCard('Top store', topStore ? `${topStore.store} (${fmtSheetMoney(topStore.cost, cur)})` : '—', null)
+        ];
+        container.innerHTML = cards.join('');
+        const storeContainer = document.getElementById('stats-buy-store-summary');
+        if (storeContainer) {
+            if (!storeSummaries.length) {
+                storeContainer.innerHTML = '';
+            } else {
+                storeContainer.innerHTML = renderSheetTable(
+                    ['Store / Location', 'Vapes', 'Cost', 'Purchases'],
+                    storeSummaries.map(s => [
+                        s.store,
+                        String(s.count),
+                        fmtSheetMoney(s.cost, cur),
+                        String(s.count)
+                    ])
+                );
+            }
+        }
+        return;
+    }
+
+    const costPerUnit = purchased > 0 ? cost / purchased : getAveragePurchaseCostPerUnit(substanceId);
+    const daysInRange = countDaysInRange(bounds.startDate, bounds.endDate);
+    const gPerDaySupply = daysInRange > 0 ? purchased / daysInRange : null;
+    const weekPurchased = weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
+    const monthPurchased = monthPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
     const allPurchases = (appData.purchases || []).filter(p => getPurchaseSubstanceId(p) === substanceId);
     const totalPurchased = allPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
     const totalCost = allPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
     const avgCostPerUnit = totalPurchased > 0 ? totalCost / totalPurchased : null;
-    const storeSummaries = getStoreBuySummaries(substanceId, bounds);
-    const topStore = storeSummaries[0];
-    const supplyDuration = getAverageSupplyDurationDays(substanceId);
 
     const cards = [
         renderSheetMetricCard('Total purchased', fmtSheetAmount(totalPurchased, unit), null),
@@ -10164,12 +10367,18 @@ function renderStatsLimitGoal(substanceId, useStats, bounds, unit, cur) {
     if (!container) return;
     const today = getLocalDateString();
     const weekStart = getWeekStartDateStr(today);
-    const weekUsed = getWeeklyUsed(substanceId, today);
+    const isVape = isVapeNicotineSubstanceId(substanceId);
+    const displayUnit = getStatsDisplayUnit(substanceId, unit);
+    const weekUsed = isVape
+        ? getStatsUsageInRange(substanceId, weekStart, today)
+        : getWeeklyUsed(substanceId, today);
     const weekGoal = getWeeklyLimit(substanceId, weekStart);
     const weeklyBadge = getUsageVsTargetBadge(weekUsed, weekGoal);
     const taperStart = getTaperStartingDailyAverage(substanceId);
     const daysInRange = countDaysInRange(bounds.startDate, bounds.endDate);
-    const avgPerDay = daysInRange ? useStats.totalAmount / daysInRange : 0;
+    const avgPerDay = isVape && useStats.avgPuffsPerDay != null
+        ? useStats.avgPuffsPerDay
+        : (daysInRange ? useStats.totalAmount / daysInRange : 0);
     let reductionPct = '—';
     if (taperStart != null && taperStart > 0) {
         reductionPct = `${Math.max(0, Math.round((1 - avgPerDay / taperStart) * 100))}%`;
@@ -10183,14 +10392,15 @@ function renderStatsLimitGoal(substanceId, useStats, bounds, unit, cur) {
     const monthWeeks = getWeeklyTrackingSummaries(substanceId)
         .filter(s => s.weekEnd >= monthStart && s.weekStart <= today);
     const monthRunning = monthWeeks.length ? monthWeeks[monthWeeks.length - 1].runningTotal : 0;
+    const fmtAmount = (value) => isVape ? formatStatsPuffs(value) : formatAmount(value);
 
     container.innerHTML = [
-        renderSheetMetricCard('Weekly used / goal', weekGoal != null ? `${formatAmount(weekUsed)} / ${formatAmount(weekGoal)} ${unit}` : `${formatAmount(weekUsed)} ${unit}`, weeklyBadge),
+        renderSheetMetricCard('Weekly used / goal', weekGoal != null ? `${fmtAmount(weekUsed)} / ${fmtAmount(weekGoal)} ${displayUnit}` : `${fmtAmount(weekUsed)} ${displayUnit}`, weeklyBadge),
         renderSheetMetricCard('Reduction from start', reductionPct, null),
-        renderSheetMetricCard('Running planned', byWeek ? `${formatAmount(byWeek.totalPlanned)} ${unit}` : '—', null),
-        renderSheetMetricCard('Running used', byWeek ? `${formatAmount(byWeek.totalUsed)} ${unit}` : '—', null),
-        renderSheetMetricCard('Running difference', byWeek ? `${formatAmount(byWeek.remainingAllowance)} ${unit}` : '—', trackBadge),
-        renderSheetMetricCard('Month running total', `${formatAmount(monthRunning)} ${unit}`, null),
+        renderSheetMetricCard('Running planned', byWeek ? `${fmtAmount(byWeek.totalPlanned)} ${displayUnit}` : '—', null),
+        renderSheetMetricCard('Running used', byWeek ? `${fmtAmount(byWeek.totalUsed)} ${displayUnit}` : '—', null),
+        renderSheetMetricCard('Running difference', byWeek ? `${fmtAmount(byWeek.remainingAllowance)} ${displayUnit}` : '—', trackBadge),
+        renderSheetMetricCard('Month running total', `${fmtAmount(monthRunning)} ${displayUnit}`, null),
         renderSheetMetricCard('Plan end', plan?.endDate ? formatDate(plan.endDate) : '—', null)
     ].join('');
 }
@@ -10299,15 +10509,27 @@ function renderBuyWeeklySummary(substanceId) {
         switch (colId) {
             case 'startWeek': return formatDate(s.weekStart);
             case 'endWeek': return formatDate(s.weekEnd);
-            case 'purchased': return fmtSheetAmount(s.purchased, s.unit);
-            case 'monthRunning': return fmtSheetAmount(s.monthRunning, s.unit);
+            case 'purchased': return fmtSheetAmount(
+                s.purchased,
+                isVapeNicotineSubstanceId(substanceId) ? 'puffs' : s.unit
+            );
+            case 'monthRunning': return fmtSheetAmount(
+                s.monthRunning,
+                isVapeNicotineSubstanceId(substanceId) ? 'puffs' : s.unit
+            );
             case 'cost': return fmtSheetMoney(s.cost, s.cur);
-            case 'costPerUnit': return s.costPerUnit != null ? fmtSheetMoney(s.costPerUnit, s.cur) : '—';
-            case 'gPerDay': return s.gPerDay != null ? fmtSheetRate(s.gPerDay, s.unit, '/day') : '—';
+            case 'costPerUnit': return isVapeNicotineSubstanceId(substanceId)
+                ? formatCostPerVape(s.costPerUnit, s.cur)
+                : (s.costPerUnit != null ? fmtSheetMoney(s.costPerUnit, s.cur) : '—');
+            case 'gPerDay': return s.gPerDay != null
+                ? (isVapeNicotineSubstanceId(substanceId)
+                    ? `${formatStatsPuffs(s.gPerDay)}/day`
+                    : fmtSheetRate(s.gPerDay, s.unit, '/day'))
+                : '—';
             case 'supplyDuration': return formatSupplyDurationDays(s.supplyDuration);
             default: return '—';
         }
-    });
+    }, substanceId);
 }
 
 function renderBuyMonthlySummary(substanceId) {
@@ -10326,14 +10548,23 @@ function renderBuyMonthlySummary(substanceId) {
         switch (colId) {
             case 'startMonth': return formatBuySheetDate(s.monthStart);
             case 'endMonth': return formatBuySheetDate(s.monthEnd);
-            case 'purchased': return fmtSheetAmount(s.purchased, s.unit);
+            case 'purchased': return fmtSheetAmount(
+                s.purchased,
+                isVapeNicotineSubstanceId(substanceId) ? 'puffs' : s.unit
+            );
             case 'cost': return fmtSheetMoney(s.cost, s.cur);
-            case 'costPerUnit': return s.costPerUnit != null ? fmtSheetMoney(s.costPerUnit, s.cur) : '—';
-            case 'gPerDay': return s.gPerDay != null ? formatAmount(s.gPerDay) : '—';
+            case 'costPerUnit': return isVapeNicotineSubstanceId(substanceId)
+                ? formatCostPerVape(s.costPerUnit, s.cur)
+                : (s.costPerUnit != null ? fmtSheetMoney(s.costPerUnit, s.cur) : '—');
+            case 'gPerDay': return s.gPerDay != null
+                ? (isVapeNicotineSubstanceId(substanceId)
+                    ? `${formatStatsPuffs(s.gPerDay)}/day`
+                    : formatAmount(s.gPerDay))
+                : '—';
             case 'supplyDuration': return formatSupplyDurationDaysHours(s.supplyDurationDays);
             default: return '—';
         }
-    });
+    }, substanceId);
 }
 
 function updateStats() {
@@ -10353,6 +10584,7 @@ function updateStats() {
     const { logs: rangeLogs, bounds, preset } = getStatsLogsForSubstance(currentSubstanceId);
     const sub = getSubstance(currentSubstanceId);
     const unit = sub?.defaultUnit || 'units';
+    const displayUnit = getStatsDisplayUnit(currentSubstanceId, unit);
     const cur = getCurrencySymbol();
     const daysInRange = countDaysInRange(bounds.startDate, bounds.endDate);
     const useStats = buildUseStatsMetrics(rangeLogs, daysInRange, currentSubstanceId, bounds);
@@ -10360,19 +10592,19 @@ function updateStats() {
     const summaryEl = document.getElementById('stats-range-summary');
     if (summaryEl) summaryEl.textContent = getStatsRangeLabel(preset, bounds.startDate, bounds.endDate);
 
-    renderStatsSummaryDashboard(currentSubstanceId, useStats, bounds, unit, cur);
+    renderStatsSummaryDashboard(currentSubstanceId, useStats, bounds, displayUnit, cur);
     renderStatsMonthlySummary(currentSubstanceId);
     renderStatsWeeklySummary(currentSubstanceId);
 
     renderUsageChart(bounds);
     renderSpendingChart(bounds);
-    renderUseStatsCards(useStats, unit);
+    renderUseStatsCards(useStats, displayUnit);
     updateLongestTimeBetween();
     updateBreakStats();
     updateBuyBreakStats();
     renderGiftAnalytics(bounds);
     renderStatsBuyAnalyticsCards(currentSubstanceId, bounds);
-    renderStatsLimitGoal(currentSubstanceId, useStats, bounds, unit, cur);
+    renderStatsLimitGoal(currentSubstanceId, useStats, bounds, displayUnit, cur);
     updateRecoveryStreakDisplay(currentSubstanceId);
     applyCollapsedSections();
 }
@@ -10416,7 +10648,7 @@ function renderGiftAnalytics(bounds) {
     const section = document.getElementById('gift-analytics-section');
     if (!section) return;
 
-    if (isAllSubstancesView()) {
+    if (isAllSubstancesView() || isVapeNicotineSubstanceId(currentSubstanceId)) {
         section.classList.add('hidden');
         return;
     }
