@@ -3103,7 +3103,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .purchase-history-actions-cell {
-    white-space: nowrap;
+    white-space: normal;
 }
 
 .purchase-history-actions-cell .secondary-btn,
@@ -3111,6 +3111,11 @@ input[type="range"]::-webkit-slider-thumb {
     padding: 6px 10px;
     font-size: 0.8rem;
     margin: 2px 0;
+}
+
+.purchase-history-actions-wrap .secondary-btn,
+.purchase-history-actions-wrap .delete-btn {
+    margin: 0;
 }
 
 body.locked .app-container,
@@ -3508,7 +3513,7 @@ body.locked .bottom-nav {
 #purchase-history-list,
 .purchase-history {
     margin-bottom: 12px;
-    padding-bottom: 8px;
+    padding-bottom: var(--bottom-nav-clearance);
 }
 
 .session-table {
@@ -4970,6 +4975,10 @@ body.locked .bottom-nav {
 
 .purchase-history-actions-cell,
 .use-history-actions-cell {
+    white-space: normal;
+}
+
+.use-history-actions-cell {
     white-space: nowrap;
 }
 
@@ -5168,6 +5177,170 @@ body.locked .bottom-nav {
 
 .collapsible-section[data-section="purchaseHistory"] .section-content {
     padding-bottom: var(--bottom-nav-clearance);
+}
+
+/* Inventory Purchase History — column widths and responsive layout */
+.purchase-history-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    width: 100%;
+    margin-bottom: 12px;
+    padding-bottom: 4px;
+}
+
+#purchase-history-list .purchase-history-scroll {
+    max-width: 100%;
+}
+
+.purchase-history-table.inventory-history-table {
+    width: 100%;
+    table-layout: auto;
+    min-width: 0;
+}
+
+.purchase-history-table.inventory-history-table th,
+.purchase-history-table.inventory-history-table td {
+    white-space: normal;
+    vertical-align: top;
+    padding: 10px 8px;
+}
+
+.purchase-history-table.inventory-history-table [data-col="date"] {
+    min-width: 110px;
+    width: 120px;
+    white-space: nowrap;
+}
+
+.purchase-history-table.inventory-history-table [data-col="supply"] {
+    min-width: 220px;
+}
+
+.purchase-history-table.inventory-history-table [data-col="supplyDuration"] {
+    min-width: 140px;
+}
+
+.purchase-history-table.inventory-history-table [data-col="bought"],
+.purchase-history-table.inventory-history-table [data-col="remaining"] {
+    min-width: 220px;
+}
+
+.purchase-history-table.inventory-history-table [data-col="substance"] {
+    min-width: 120px;
+}
+
+.purchase-history-table.inventory-history-table [data-col="cost"],
+.purchase-history-table.inventory-history-table [data-col="store"],
+.purchase-history-table.inventory-history-table [data-col="break"],
+.purchase-history-table.inventory-history-table [data-col="usedPct"] {
+    min-width: 96px;
+}
+
+.purchase-history-table.inventory-history-table [data-col="actions"] {
+    min-width: 420px;
+    width: 420px;
+}
+
+.purchase-history-table.inventory-history-table th.actions-cell,
+.purchase-history-table.inventory-history-table td.actions-cell {
+    position: static;
+    box-shadow: none;
+    background: inherit;
+}
+
+.purchase-history-table.inventory-history-table tbody tr:hover td.actions-cell {
+    background: inherit;
+}
+
+.purchase-history-actions-wrap {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    justify-content: flex-start;
+    max-width: 100%;
+}
+
+.purchase-history-actions-wrap .secondary-btn,
+.purchase-history-actions-wrap .delete-btn {
+    margin: 0;
+    flex: 0 1 auto;
+    white-space: nowrap;
+}
+
+.purchase-history-table .purchase-vape-bought-cell,
+.purchase-history-table .supply-cell {
+    white-space: normal;
+}
+
+@media (max-width: 700px) {
+    .purchase-history-scroll {
+        overflow-x: visible;
+    }
+
+    .purchase-history-table.inventory-history-table {
+        min-width: 0 !important;
+        display: block;
+        width: 100%;
+    }
+
+    .purchase-history-table.inventory-history-table thead {
+        display: none;
+    }
+
+    .purchase-history-table.inventory-history-table tbody {
+        display: block;
+    }
+
+    .purchase-history-table.inventory-history-table .inventory-history-row {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 10px;
+        padding: 14px 12px;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .purchase-history-table.inventory-history-table .inventory-history-row > td {
+        display: block;
+        width: 100%;
+        min-width: 0;
+        padding: 0;
+        border: none;
+    }
+
+    .purchase-history-table.inventory-history-table .inventory-history-row > td::before {
+        content: attr(data-label);
+        display: block;
+        font-weight: 600;
+        font-size: 0.72rem;
+        color: var(--text-secondary);
+        text-transform: uppercase;
+        letter-spacing: 0.02em;
+        margin-bottom: 4px;
+    }
+
+    .purchase-history-table.inventory-history-table .inventory-history-row > td.actions-cell::before {
+        content: 'Actions';
+    }
+
+    .purchase-history-table.inventory-history-table .purchase-linked-detail {
+        display: block;
+        border-bottom: 1px solid var(--border);
+    }
+
+    .purchase-history-table.inventory-history-table .purchase-linked-detail > td {
+        display: block;
+        width: 100%;
+        padding: 0;
+        border: none;
+    }
+
+    .purchase-history-table.inventory-history-table .purchase-linked-detail > td::before {
+        display: none;
+    }
+
+    .purchase-history-actions-wrap {
+        gap: 8px;
+    }
 }
 
 .sheet-table {

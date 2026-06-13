@@ -1839,10 +1839,38 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
     }
 }
 
+function getPurchaseHistoryColumnLabel(colId) {
+    return TABLE_COLUMN_LABELS.purchaseHistory[colId] || colId;
+}
+
+function getPurchaseHistoryTableMinWidth(columns) {
+    let min = 0;
+    columns.forEach(colId => {
+        if (colId === 'date') min += 120;
+        else if (colId === 'actions') min += 420;
+        else if (colId === 'bought') min += 220;
+        else if (['supply', 'supplyDuration', 'remaining'].includes(colId)) min += 180;
+        else min += 96;
+    });
+    return Math.max(min, 640);
+}
+
+function phTh(colId) {
+    const label = getPurchaseHistoryColumnLabel(colId);
+    if (colId === 'actions') {
+        return `<th class="actions-cell" data-col="${colId}">${label}</th>`;
+    }
+    return `<th data-col="${colId}">${label}</th>`;
+}
+
+function phTd(colId, content, className = '') {
+    const label = getPurchaseHistoryColumnLabel(colId);
+    const cls = className ? ` class="${className}"` : '';
+    return `<td${cls} data-col="${colId}" data-label="${escapeAttr(label)}">${content}</td>`;
+}
+
 function renderPurchaseHistoryHeaderCell(colId) {
-    const labels = TABLE_COLUMN_LABELS.purchaseHistory;
-    if (colId === 'actions') return `<th class="actions-cell">${labels.actions}</th>`;
-    return `<th>${labels[colId] || colId}</th>`;
+    return phTh(colId);
 }
 
 function renderPurchaseBoughtMetaInner(purchase) {
@@ -1889,12 +1917,10 @@ function renderPurchaseVapeBoughtCell(purchase) {
     if (cap != null) liquidLines += `<div class="purchase-vape-meta">E-liquid: ${formatAmount(cap)} mL</div>`;
     if (strength != null) liquidLines += `<div class="purchase-vape-meta">Nicotine: ${formatAmount(strength)} mg/mL</div>`;
     if (totalNic != null) liquidLines += `<div class="purchase-vape-meta">Total nicotine: ${formatAmount(totalNic)} mg</div>`;
-    return `<td class="purchase-vape-bought-cell">
-        <div>Full puff count: ${formatAmount(full)}</div>
+    return phTd('bought', `<div>Full puff count: ${formatAmount(full)}</div>
         <div class="purchase-vape-meta">Bought at: ${pctBought}%</div>
         <div class="purchase-vape-meta">Started left: ${formatAmount(starting)} puffs</div>
-        ${liquidLines}
-    </td>`;
+        ${liquidLines}`, 'purchase-vape-bought-cell');
 }
 
 function renderPurchaseHistoryBodyCell(colId, ctx) {
@@ -1905,9 +1931,9 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
     } = ctx;
     switch (colId) {
         case 'date':
-            return `<td>${formatDate(purchase.date || '')}</td>`;
+            return phTd('date', formatDate(purchase.date || ''));
         case 'substance':
-            return `<td>${sub?.icon || ''} ${sub?.name || 'Unknown'}</td>`;
+            return phTd('substance', `${sub?.icon || ''} ${sub?.name || 'Unknown'}`);
         case 'bought':
             if (isVapePuffPurchase(purchase)) {
                 return renderPurchaseVapeBoughtCell(purchase);
@@ -1915,39 +1941,49 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
             {
                 const meta = renderPurchaseBoughtMetaInner(purchase);
                 if (meta) {
-                    return `<td><div>${formatAmount(bought)}${unit}</div>${meta}</td>`;
+                    return phTd('bought', `<div>${formatAmount(bought)}${unit}</div>${meta}`);
                 }
             }
-            return `<td>${formatAmount(bought)}${unit}</td>`;
+            return phTd('bought', `${formatAmount(bought)}${unit}`);
         case 'remaining':
-            return `<td>${formatPurchaseRemainingDisplay(purchase)}</td>`;
+            return phTd('remaining', formatPurchaseRemainingDisplay(purchase));
         case 'usedPct':
-            return `<td>${pctUsed}%</td>`;
-        case 'supplyDuration':
-            return `<td class="purchase-supply-duration-cell" title="${supplyDurationTooltip}">${supplyDurationLabel}</td>`;
+            return phTd('usedPct', `${pctUsed}%`);
+        case 'supplyDuration': {
+            const titleAttr = supplyDurationTooltip ? ` title="${supplyDurationTooltip}"` : '';
+            return `<td class="purchase-supply-duration-cell" data-col="supplyDuration" data-label="${escapeAttr(getPurchaseHistoryColumnLabel('supplyDuration'))}"${titleAttr}>${supplyDurationLabel}</td>`;
+        }
         case 'supply':
-            return `<td class="supply-cell"><span class="purchase-supply-status ${supply.className}">${supply.label}</span></td>`;
+            return phTd(
+                'supply',
+                `<span class="purchase-supply-status ${supply.className}">${supply.label}</span>`,
+                'supply-cell'
+            );
         case 'cost':
-            return `<td>${fmtSheetMoney(totalNum, cur)} <small>(${fmtSheetMoney(cpu, cur)}/u)</small></td>`;
+            return phTd('cost', `${fmtSheetMoney(totalNum, cur)} <small>(${fmtSheetMoney(cpu, cur)}/u)</small>`);
         case 'store':
-            return `<td>${store || '—'}</td>`;
+            return phTd('store', store || '—');
         case 'break':
-            return `<td>${breakCell}</td>`;
+            return phTd('break', breakCell);
         case 'actions': {
             const pid = normalizePurchaseId(purchase.id);
             const markEmptyBtn = isVapePuffPurchase(purchase) && remaining > INVENTORY_EPS
                 ? `<button type="button" class="secondary-btn" data-mark-vape-empty="${escapeAttr(pid)}">Mark empty / 0%</button>`
                 : '';
-            return `<td class="actions-cell purchase-history-actions-cell">
+            const buttons = `
                 <button type="button" class="secondary-btn purchase-expand-btn" data-purchase-toggle="${escapeAttr(pid)}" data-toggle-purchase-logs="${escapeAttr(pid)}" aria-expanded="${expanded ? 'true' : 'false'}">${toggleLabel}</button>
                 ${markEmptyBtn}
                 <button type="button" class="secondary-btn" data-duplicate-purchase="${escapeAttr(pid)}">Duplicate</button>
                 <button type="button" class="secondary-btn" data-edit-purchase="${escapeAttr(pid)}">Edit</button>
-                <button type="button" class="delete-btn" data-delete-purchase="${escapeAttr(pid)}">Delete</button>
-            </td>`;
+                <button type="button" class="delete-btn" data-delete-purchase="${escapeAttr(pid)}">Delete</button>`;
+            return phTd(
+                'actions',
+                `<div class="purchase-history-actions-wrap">${buttons}</div>`,
+                'actions-cell purchase-history-actions-cell'
+            );
         }
         default:
-            return '<td>—</td>';
+            return phTd(colId, '—');
     }
 }
 
@@ -8485,7 +8521,8 @@ function renderPurchaseHistory(substanceId, containerId = null) {
 
     const cur = getCurrencySymbol();
     const purchaseColumns = getEffectiveColumnOrder('purchaseHistory');
-    let html = `<div class="table-scroll"><table class="session-table history-table purchase-history-table"><thead><tr>`;
+    const tableMinWidth = getPurchaseHistoryTableMinWidth(purchaseColumns);
+    let html = `<div class="table-scroll purchase-history-scroll"><table class="session-table history-table purchase-history-table inventory-history-table" style="min-width:${tableMinWidth}px"><thead><tr class="inventory-history-header">`;
     purchaseColumns.forEach(colId => {
         html += renderPurchaseHistoryHeaderCell(colId);
     });
@@ -8529,7 +8566,7 @@ function renderPurchaseHistory(substanceId, containerId = null) {
             toggleLabel
         };
 
-        html += '<tr class="purchase-history-row">';
+        html += '<tr class="purchase-history-row inventory-history-row">';
         purchaseColumns.forEach(colId => {
             html += renderPurchaseHistoryBodyCell(colId, rowCtx);
         });
