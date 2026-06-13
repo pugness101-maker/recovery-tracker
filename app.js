@@ -1941,6 +1941,7 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
             return `<td class="actions-cell purchase-history-actions-cell">
                 <button type="button" class="secondary-btn purchase-expand-btn" data-purchase-toggle="${escapeAttr(pid)}" data-toggle-purchase-logs="${escapeAttr(pid)}" aria-expanded="${expanded ? 'true' : 'false'}">${toggleLabel}</button>
                 ${markEmptyBtn}
+                <button type="button" class="secondary-btn" data-duplicate-purchase="${escapeAttr(pid)}">Duplicate</button>
                 <button type="button" class="secondary-btn" data-edit-purchase="${escapeAttr(pid)}">Edit</button>
                 <button type="button" class="delete-btn" data-delete-purchase="${escapeAttr(pid)}">Delete</button>
             </td>`;
@@ -3381,6 +3382,12 @@ function setupPurchaseHistoryActions() {
         if (editBtn) {
             e.preventDefault();
             editPurchase(editBtn.getAttribute('data-edit-purchase'));
+            return;
+        }
+        const duplicateBtn = e.target.closest('[data-duplicate-purchase]');
+        if (duplicateBtn) {
+            e.preventDefault();
+            duplicatePurchase(duplicateBtn.getAttribute('data-duplicate-purchase'));
             return;
         }
         const deleteBtn = e.target.closest('[data-delete-purchase]');
@@ -7621,6 +7628,7 @@ function resetBuyFormAfterSave() {
     setInputValue('buy-cigarette-nicotine-mg', '');
     setBuyFormSubmitLabel('Save Purchase');
     document.getElementById('cancel-buy-edit-btn')?.classList.add('hidden');
+    clearBuyFormFeedback();
     applyMainSubstanceToForms();
     updateBuyCostPerUnitPreview();
     updateBuyVapeFieldsVisibility();
@@ -7633,18 +7641,35 @@ function refreshBuyTrackerRelatedViews() {
     updateStats();
 }
 
-function editPurchase(id) {
-    const purchase = findPurchase(id);
-    if (!purchase) {
-        console.error('[inventory] purchase not found for edit:', id);
-        return;
+function ensureSectionExpanded(sectionKey) {
+    ensureCollapsedSections(appData);
+    if (appData.settings.collapsedSections[sectionKey]) {
+        appData.settings.collapsedSections[sectionKey] = false;
+        saveData(appData);
+        applyCollapsedSections();
     }
+}
 
-    editingPurchaseId = purchase.id;
-    switchTab('buy-tracker-tab');
+function clearBuyFormFeedback() {
+    const el = document.getElementById('buy-form-feedback');
+    if (!el) return;
+    el.textContent = '';
+    el.classList.add('hidden');
+}
+
+function showBuyFormFeedback(message) {
+    const el = document.getElementById('buy-form-feedback');
+    if (!el) return;
+    el.textContent = message;
+    el.classList.remove('hidden');
+}
+
+function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
+    if (!purchase) return false;
 
     const substanceId = getPurchaseSubstanceId(purchase);
     ensureSubstanceInBuyDropdown(substanceId, purchase);
+    setInputValue('buy-substance', substanceId);
     updateBuyUnitDropdown();
 
     const unit = purchase.unit || 'units';
@@ -7659,10 +7684,19 @@ function editPurchase(id) {
         unitSelect.value = unit;
     }
 
-    setInputValue('buy-date', purchase.date || '');
-    setInputValue('buy-time', purchase.time || '12:00');
+    const isVape = isVapePuffPurchase(purchase);
+    if (asDuplicate) {
+        setDefaultBuyDateTime();
+        if (isVape) {
+            setInputValue('buy-time', '12:00');
+        }
+    } else {
+        setInputValue('buy-date', purchase.date || '');
+        setInputValue('buy-time', purchase.time || '12:00');
+    }
+
     updateBuyVapeFieldsVisibility();
-    setInputValue('buy-quantity', isVapePuffPurchase(purchase) ? getVapeFullPuffCount(purchase) : getPurchaseQuantity(purchase));
+    setInputValue('buy-quantity', isVape ? getVapeFullPuffCount(purchase) : getPurchaseQuantity(purchase));
     setInputValue('buy-percent-bought', getVapePercentBoughtAt(purchase));
     setInputValue('buy-eliquid-capacity', getVapeELiquidCapacityMl(purchase) ?? '');
     setInputValue('buy-nicotine-strength', getVapeNicotineMgPerMl(purchase) ?? '');
@@ -7678,12 +7712,47 @@ function editPurchase(id) {
     setInputValue('buy-payment', purchase.paymentMethod || '');
     setInputValue('buy-notes', purchase.notes || '');
 
-    setBuyFormSubmitLabel('Update Purchase');
-    document.getElementById('cancel-buy-edit-btn')?.classList.remove('hidden');
     updateBuyCostPerUnitPreview();
     updateBuyVapeFieldsPreview();
     updateBuyAlcoholPreview();
     updateBuyWeedProductTypeUI();
+    return true;
+}
+
+function editPurchase(id) {
+    const purchase = findPurchase(id);
+    if (!purchase) {
+        console.error('[inventory] purchase not found for edit:', id);
+        return;
+    }
+
+    editingPurchaseId = purchase.id;
+    clearBuyFormFeedback();
+    switchTab('buy-tracker-tab');
+    ensureSectionExpanded('purchaseForm');
+    fillBuyFormFromPurchase(purchase);
+
+    setBuyFormSubmitLabel('Update Purchase');
+    document.getElementById('cancel-buy-edit-btn')?.classList.remove('hidden');
+    document.getElementById('buy-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function duplicatePurchase(id) {
+    const purchase = findPurchase(id);
+    if (!purchase) {
+        alert('Could not find that purchase to duplicate.');
+        return;
+    }
+
+    editingPurchaseId = null;
+    clearBuyFormFeedback();
+    switchTab('buy-tracker-tab');
+    ensureSectionExpanded('purchaseForm');
+    fillBuyFormFromPurchase(purchase, { asDuplicate: true });
+
+    setBuyFormSubmitLabel('Save Purchase');
+    document.getElementById('cancel-buy-edit-btn')?.classList.add('hidden');
+    showBuyFormFeedback('Duplicated purchase details. Review and save as a new buy.');
     document.getElementById('buy-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
 
@@ -7694,6 +7763,7 @@ function cancelBuyEdit() {
     resetBuyStoreField();
     setBuyFormSubmitLabel('Save Purchase');
     document.getElementById('cancel-buy-edit-btn')?.classList.add('hidden');
+    clearBuyFormFeedback();
     applyMainSubstanceToForms();
     updateBuyUnitDropdown();
     updateBuyCostPerUnitPreview();
@@ -13832,6 +13902,7 @@ if (typeof window !== 'undefined') {
         closeBulkLinkModal,
         applyBulkLinkPreview,
         editPurchase,
+        duplicatePurchase,
         deletePurchase,
         togglePurchaseLinkedLogs
     });
