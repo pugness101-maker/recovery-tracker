@@ -1408,6 +1408,17 @@ input[type="range"]::-webkit-slider-thumb {
     border-bottom: 1px solid var(--border);
 }
 
+.taper-buying-targets {
+    margin: 8px 0 12px;
+    padding-left: 1.2rem;
+    color: var(--text-secondary);
+    font-size: 0.92rem;
+}
+
+.taper-buying-targets li + li {
+    margin-top: 4px;
+}
+
 .taper-panel-header h3 {
     margin: 0;
     font-size: 0.95rem;

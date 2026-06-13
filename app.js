@@ -1577,6 +1577,7 @@ function populateAllSubstanceDropdowns() {
     populateSelect('taper-substance', taperSubs, { currentValue: mainId && taperSubs.some(s => s.id === mainId) ? mainId : taperSubs[0]?.id });
     populateSelect('use-substance', getLoggableSubstances(), { currentValue: mainId });
     populateSelect('buy-substance', active, { currentValue: mainId });
+    populateTaperReductionTypeSelect(getTaperSubstanceId());
     updateUseUnitDropdown();
     updateBuyUnitDropdown();
 }
@@ -2607,18 +2608,7 @@ function getTaperPlanWeekNumber(plan, dateStr) {
 }
 
 function getUsedAmountForTaperWeek(substanceId, dateStr, excludeLogId = null, data = appData) {
-    const plan = data?.taperPlans?.[substanceId];
-    const bounds = plan ? getTaperWeekBounds(plan, dateStr) : null;
-    if (!bounds) return getUsedAmountForWeek(substanceId, dateStr, excludeLogId, data);
-    return getUseEntries(data)
-        .filter(log =>
-            logMatchesSubstance(log, substanceId, data)
-            && log.date >= bounds.weekStart
-            && log.date <= bounds.weekEnd
-            && !logIdEquals(log.id, excludeLogId)
-            && isPersonalUseLog(log)
-        )
-        .reduce((sum, log) => sum + Number(log.amount || 0), 0);
+    return getTaperWeekUsage(substanceId, dateStr, excludeLogId, data);
 }
 
 function shortWeeklyTaperStatus(status) {
@@ -8939,9 +8929,8 @@ function renderTaperWeeklyCalendar(substanceId) {
         return;
     }
     syncTaperPlanData(substanceId);
-    const unit = isManualWeeklyPlan(plan)
-        ? getManualWeeklyPlanUnit(plan, substanceId)
-        : (sub.defaultUnit || 'units');
+    const unit = getTaperTrackingUnit(plan, substanceId);
+    const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
     const enriched = buildEnrichedUseEntries(substanceId);
     const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     let html = '';
@@ -8954,8 +8943,11 @@ function renderTaperWeeklyCalendar(substanceId) {
         const days = [];
         for (let i = 0; i < 7; i++) {
             const dateStr = addDaysToDateStr(calStart, i);
+            const dayUsed = isVapeNicotineSubstanceId(substanceId)
+                ? getStatsUsageOnDate(substanceId, dateStr)
+                : enriched.filter(e => isPersonalUseLog(e) && e.date === dateStr)
+                    .reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
             const dayLogs = enriched.filter(e => isPersonalUseLog(e) && e.date === dateStr);
-            const dayUsed = dayLogs.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
             let dayDur = 0;
             dayLogs.forEach(e => { if (e.durationHours) dayDur += e.durationHours; });
             const breakH = dayLogs[0]?.breakDurationHours ?? null;
@@ -8964,6 +8956,32 @@ function renderTaperWeeklyCalendar(substanceId) {
             const badge = mapTaperStatusToBadge(dayStatus);
             const inPlan = dateStr >= weekRow.weekStart && dateStr <= weekRow.weekEnd;
             days.push({ dateStr, dayUsed, dayDur, breakH, badge, inPlan });
+        }
+        if (isReduceBuyingPlan(plan)) {
+            const messages = weekRow.messages?.length ? weekRow.messages : buildBuyingTaperMessages(weekRow);
+            html += `<div class="taper-week-calendar-block">
+                <header class="taper-week-calendar-head">
+                    <h4>Week ${weekRow.week ?? index + 1} · ${formatDate(weekRow.weekStart)} – ${formatDate(weekRow.weekEnd)}</h4>
+                </header>
+                <ul class="taper-buying-targets">${messages.map(m => `<li>${m}</li>`).join('')}</ul>
+                <div class="taper-week-calendar-summary">
+                    <span>Purchases: <strong>${weekRow.actualPurchases || 0}</strong></span>
+                    <span>Spend: <strong>${formatTaperMoney(weekRow.actualSpend || 0)}</strong></span>
+                </div>
+            </div>`;
+            return;
+        }
+        if (isReduceNicotinePlan(plan)) {
+            html += `<div class="taper-week-calendar-block">
+                <header class="taper-week-calendar-head">
+                    <h4>Week ${weekRow.week ?? index + 1} · ${formatDate(weekRow.weekStart)} – ${formatDate(weekRow.weekEnd)}</h4>
+                </header>
+                <div class="taper-week-calendar-summary">
+                    <span>Target: <strong>${formatTaperNicotineStrength(weekRow.targetNicotineMgPerMl)}</strong></span>
+                    <span>Current: <strong>${formatTaperNicotineStrength(weekRow.actualNicotineMgPerMl)}</strong></span>
+                </div>
+            </div>`;
+            return;
         }
         html += `<div class="taper-week-calendar-block">
             <header class="taper-week-calendar-head">
@@ -8980,9 +8998,9 @@ function renderTaperWeeklyCalendar(substanceId) {
                 </tbody>
             </table></div>
             <div class="taper-week-calendar-summary">
-                <span>Total: <strong>${used} ${unit}</strong></span>
-                <span>Goal: <strong>${planned} ${unit}</strong></span>
-                <span>Left: <strong class="status-text-${mapTaperStatusToBadge(left >= 0 ? 'under' : 'over')}">${left} ${unit}</strong></span>
+                <span>Total: <strong>${used} ${displayUnit}</strong></span>
+                <span>Goal: <strong>${planned} ${displayUnit}</strong></span>
+                <span>Left: <strong class="status-text-${mapTaperStatusToBadge(left >= 0 ? 'under' : 'over')}">${left} ${displayUnit}</strong></span>
             </div>
         </div>`;
     });
@@ -9320,13 +9338,406 @@ function updateLongestTimeBetween() {
 
 // ——— Taper / Do Not Surpass ———
 const TAPER_RELAPSE_NOTE = 'Going over your limit doesn\'t erase your progress. Every day is a new chance—no shame, just data.';
+const TAPER_STANDARD_REDUCTION_TYPES = ['reduce-amount', 'reduce-percent', 'fixed', 'manual-weekly'];
+const TAPER_VAPE_REDUCTION_TYPES = ['reduce-puffs', 'reduce-buying', 'reduce-nicotine', 'manual-weekly'];
 const TAPER_REDUCTION_LABELS = {
     'reduce-amount': 'Reduce by amount',
     'reduce-percent': 'Reduce by percent',
     fixed: 'Fixed daily limit',
-    'step-weekly': 'Weekly step-down',
-    'manual-weekly': 'Manual weekly plan'
+    'manual-weekly': 'Manual weekly plan',
+    'reduce-puffs': 'Reduce by puffs',
+    'reduce-buying': 'Reduce buying',
+    'reduce-nicotine': 'Reduce nicotine strength'
 };
+
+function getTaperReductionTypesForSubstance(substanceId) {
+    return isVapeNicotineSubstanceId(substanceId) ? TAPER_VAPE_REDUCTION_TYPES : TAPER_STANDARD_REDUCTION_TYPES;
+}
+
+function isReducePuffsPlan(plan) {
+    return plan?.reductionType === 'reduce-puffs';
+}
+
+function isReduceBuyingPlan(plan) {
+    return plan?.reductionType === 'reduce-buying';
+}
+
+function isReduceNicotinePlan(plan) {
+    return plan?.reductionType === 'reduce-nicotine';
+}
+
+function isVapeSpecificTaperPlan(plan) {
+    return isReducePuffsPlan(plan) || isReduceBuyingPlan(plan) || isReduceNicotinePlan(plan);
+}
+
+function getPuffReductionMode(plan) {
+    return plan?.puffReductionMode === 'percent' ? 'percent' : 'amount';
+}
+
+function migrateLegacyTaperReductionType(plan, substanceId) {
+    if (plan.reductionType === 'step-weekly') {
+        plan.reductionType = 'reduce-amount';
+    }
+    if (isVapeNicotineSubstanceId(substanceId)) {
+        if (['reduce-amount', 'reduce-percent', 'fixed'].includes(plan.reductionType)) {
+            const previousType = plan.reductionType;
+            plan.reductionType = 'reduce-puffs';
+            if (!plan.puffReductionMode) {
+                plan.puffReductionMode = previousType === 'reduce-percent' ? 'percent' : 'amount';
+            }
+        } else if (!TAPER_VAPE_REDUCTION_TYPES.includes(plan.reductionType)) {
+            plan.reductionType = 'reduce-puffs';
+            plan.puffReductionMode = plan.puffReductionMode || 'amount';
+        }
+    } else if (['reduce-puffs', 'reduce-buying', 'reduce-nicotine'].includes(plan.reductionType)) {
+        plan.reductionType = 'reduce-amount';
+    }
+}
+
+function getVapeBaselinePuffsPerDay(substanceId, data = appData) {
+    const today = getLocalDateString();
+    const start = addDaysToDateStr(today, -13);
+    const total = getStatsUsageInRange(substanceId, start, today, data);
+    const days = countDaysInRange(start, today);
+    if (total > INVENTORY_EPS && days > 0) return roundTaperValue(total / days);
+    const baseline = data.settings?.substanceSettings?.[substanceId]?.baseline;
+    if (baseline != null && baseline !== '') return roundTaperValue(parseFloat(baseline));
+    return null;
+}
+
+function getVapeBaselineBuyFrequencyDays(substanceId) {
+    const stats = getSubstanceSupplyDurationStats(substanceId);
+    if (stats.avgDaysBetweenPurchases != null) return roundTaperValue(stats.avgDaysBetweenPurchases);
+    const buyMetrics = getBuyBreakMetrics(substanceId);
+    if (buyMetrics.average != null) return roundTaperValue(buyMetrics.average / 24);
+    return null;
+}
+
+function getVapeBaselineNicotineStrength(substanceId, data = appData) {
+    const purchases = getPurchasesForSubstance(substanceId, data)
+        .filter(p => p.nicotineMgPerMl != null && parseFloat(p.nicotineMgPerMl) > 0)
+        .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
+    if (purchases.length) return roundTaperValue(parseFloat(purchases[0].nicotineMgPerMl));
+    return null;
+}
+
+function getVapeCurrentNicotineStrength(substanceId) {
+    const active = getActivePurchasesForSubstance(substanceId).filter(isVapePuffPurchase);
+    const sorted = [...active].sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
+    for (const purchase of sorted) {
+        const strength = parseFloat(purchase.nicotineMgPerMl);
+        if (Number.isFinite(strength) && strength > 0) return roundTaperValue(strength);
+    }
+    return getVapeBaselineNicotineStrength(substanceId);
+}
+
+function getNicotineStepIntervalDays(interval) {
+    if (interval === 'biweekly') return 14;
+    if (interval === 'monthly') return 30;
+    return 7;
+}
+
+function populateTaperReductionTypeSelect(substanceId, selectedType) {
+    const select = document.getElementById('reduction-type');
+    if (!select) return;
+    const types = getTaperReductionTypesForSubstance(substanceId);
+    let value = selectedType || select.value || types[0];
+    if (!types.includes(value)) {
+        value = types.includes('reduce-puffs') ? 'reduce-puffs' : types[0];
+    }
+    select.innerHTML = types.map(type =>
+        `<option value="${type}">${TAPER_REDUCTION_LABELS[type] || type}</option>`
+    ).join('');
+    select.value = value;
+}
+
+function getTaperTrackingUnit(plan, substanceId) {
+    if (isManualWeeklyPlan(plan)) return getManualWeeklyPlanUnit(plan, substanceId);
+    if (isReduceNicotinePlan(plan)) return 'mg/mL';
+    if (isReduceBuyingPlan(plan)) return 'days';
+    if (isVapeNicotineSubstanceId(substanceId)) return 'puffs';
+    return getSubstance(substanceId)?.defaultUnit || 'units';
+}
+
+function shouldUseVapeStatsUsage(substanceId, plan) {
+    return isVapeNicotineSubstanceId(substanceId)
+        && (isReducePuffsPlan(plan) || isManualWeeklyPlan(plan));
+}
+
+function getTaperDayUsage(substanceId, dateStr, excludeLogId = null, data = appData) {
+    const plan = data?.taperPlans?.[substanceId];
+    if (shouldUseVapeStatsUsage(substanceId, plan)) {
+        return getStatsUsageOnDate(substanceId, dateStr, data);
+    }
+    return getUsedAmount(substanceId, dateStr, excludeLogId, data);
+}
+
+function getTaperWeekUsage(substanceId, dateStr, excludeLogId = null, data = appData) {
+    const plan = data?.taperPlans?.[substanceId];
+    const bounds = plan ? getTaperWeekBounds(plan, dateStr) : null;
+    const weekStart = bounds?.weekStart || getWeekStartDateStr(dateStr);
+    const weekEnd = bounds?.weekEnd || addDaysToDateStr(getWeekStartDateStr(dateStr), 6);
+    if (shouldUseVapeStatsUsage(substanceId, plan)) {
+        return getStatsUsageInRange(substanceId, weekStart, weekEnd, data);
+    }
+    if (bounds) {
+        return getUseEntries(data)
+            .filter(log =>
+                logMatchesSubstance(log, substanceId, data)
+                && log.date >= bounds.weekStart
+                && log.date <= bounds.weekEnd
+                && !logIdEquals(log.id, excludeLogId)
+                && isPersonalUseLog(log)
+            )
+            .reduce((sum, log) => sum + Number(log.amount || 0), 0);
+    }
+    return getUsedAmountForWeek(substanceId, dateStr, excludeLogId, data);
+}
+
+function getTaperMonthUsage(substanceId, dateStr = getLocalDateString(), data = appData) {
+    if (isVapeNicotineSubstanceId(substanceId)) {
+        return getStatsMonthUsageTotal(substanceId, dateStr, data);
+    }
+    return getMonthPersonalUseTotal(substanceId, dateStr, data);
+}
+
+function formatTaperPuffsPerDay(value) {
+    if (value == null || Number.isNaN(value)) return '—';
+    return `${formatAmount(value)} puffs/day`;
+}
+
+function formatTaperDaysPerVape(value) {
+    if (value == null || Number.isNaN(value)) return '—';
+    return `${formatAmount(value)} days/vape`;
+}
+
+function formatTaperVapesPerMonth(value) {
+    if (value == null || Number.isNaN(value)) return '—';
+    return `${formatAmount(value)} vapes/month`;
+}
+
+function formatTaperNicotineStrength(value) {
+    if (value == null || Number.isNaN(value)) return '—';
+    return `${formatAmount(value)} mg/mL`;
+}
+
+function formatTaperMoney(value) {
+    if (value == null || Number.isNaN(value)) return '—';
+    return `${getCurrencySymbol()}${formatAmount(value, 2)}`;
+}
+
+function getPurchasesInDateRange(substanceId, startDate, endDate, data = appData) {
+    return getPurchasesForSubstance(substanceId, data)
+        .filter(p => p.date >= startDate && p.date <= endDate);
+}
+
+function getDaysSinceLastVapePurchase(substanceId, data = appData) {
+    const purchases = getPurchasesForSubstance(substanceId, data);
+    if (!purchases.length) return null;
+    const last = purchases[purchases.length - 1];
+    const lastMs = getPurchaseDatetimeMs(last);
+    if (!lastMs) return null;
+    return Math.max(0, (Date.now() - lastMs) / 86400000);
+}
+
+function buildBuyingTaperMessages(weekRow) {
+    const messages = [];
+    if (weekRow.minDaysPerVape > 0) {
+        messages.push(`Make each vape last at least ${formatAmount(weekRow.minDaysPerVape)} days`);
+    }
+    if (weekRow.monthlyVapeCap > 0) {
+        messages.push(`Max ${formatAmount(weekRow.monthlyVapeCap)} vapes this month`);
+    }
+    if (weekRow.weeklySpendCap > 0) {
+        messages.push(`Weekly spend cap ${formatTaperMoney(weekRow.weeklySpendCap)}`);
+    }
+    if (weekRow.doNotBuyBefore) {
+        messages.push(`Do not buy before ${formatDate(weekRow.doNotBuyBefore)}`);
+    }
+    return messages;
+}
+
+function generateReducePuffsWeeklyTargets(plan) {
+    const {
+        startDate, endDate, startingDailyAverage, goalDailyAverage,
+        reductionAmount, reductionPercent, weeklyMax, puffReductionMode
+    } = plan;
+    const weeks = [];
+    let cursor = startDate;
+    let currentDaily = startingDailyAverage ?? 0;
+    const goal = goalDailyAverage ?? 0;
+    let guard = 0;
+    const mode = puffReductionMode === 'percent' ? 'percent' : 'amount';
+
+    while (cursor <= endDate && guard < 104) {
+        guard++;
+        const weekStart = cursor;
+        let weekEnd = addDaysToDateStr(getWeekStartDateStr(cursor), 6);
+        if (weekEnd > endDate) weekEnd = endDate;
+
+        let dailyTarget = roundTaperValue(Math.max(goal, currentDaily));
+        const wMax = weeklyMax > 0 ? roundTaperValue(weeklyMax) : roundTaperValue(dailyTarget * 7);
+
+        weeks.push({
+            weekStart,
+            weekEnd,
+            dailyTarget,
+            weeklyMax: wMax,
+            targetPuffsPerDay: dailyTarget,
+            actualUsed: 0,
+            difference: 0,
+            status: 'under'
+        });
+
+        if (mode === 'percent') {
+            currentDaily = Math.max(goal, currentDaily * (1 - (parseFloat(reductionPercent) || 0) / 100));
+        } else {
+            currentDaily = Math.max(goal, currentDaily - (parseFloat(reductionAmount) || 0));
+        }
+
+        const next = addDaysToDateStr(weekEnd, 1);
+        if (next <= cursor) break;
+        cursor = next;
+    }
+    return weeks;
+}
+
+function generateBuyingTaperWeeklyTargets(plan, substanceId, data = appData) {
+    const { startDate, endDate } = plan;
+    const currentDays = plan.currentBuyFrequencyDays ?? getVapeBaselineBuyFrequencyDays(substanceId) ?? 7;
+    const goalDays = plan.goalBuyFrequencyDays ?? currentDays;
+    const totalWeeks = Math.max(1, countWeeksBetween(startDate, endDate));
+    const purchases = getPurchasesForSubstance(substanceId, data);
+    const lastPurchase = purchases.length ? purchases[purchases.length - 1] : null;
+    const weeks = [];
+    let cursor = startDate;
+    let guard = 0;
+
+    while (cursor <= endDate && guard < 104) {
+        guard++;
+        const weekIndex = weeks.length;
+        const progress = totalWeeks > 1 ? weekIndex / (totalWeeks - 1) : 1;
+        const targetBuyDays = roundTaperValue(currentDays + (goalDays - currentDays) * progress);
+        const weekStart = cursor;
+        let weekEnd = addDaysToDateStr(getWeekStartDateStr(cursor), 6);
+        if (weekEnd > endDate) weekEnd = endDate;
+
+        let doNotBuyBefore = null;
+        if (lastPurchase?.date) {
+            doNotBuyBefore = addDaysToDateStr(lastPurchase.date, Math.ceil(targetBuyDays));
+        }
+
+        const weekRow = {
+            week: weekIndex + 1,
+            weekStart,
+            weekEnd,
+            targetBuyFrequencyDays: targetBuyDays,
+            minDaysPerVape: targetBuyDays,
+            monthlyVapeCap: plan.monthlyMax > 0 ? plan.monthlyMax : null,
+            weeklySpendCap: plan.weeklySpendCap > 0 ? plan.weeklySpendCap : null,
+            doNotBuyBefore,
+            dailyTarget: null,
+            weeklyMax: null,
+            actualUsed: 0,
+            actualPurchases: 0,
+            actualSpend: 0,
+            difference: 0,
+            status: 'under'
+        };
+        weekRow.messages = buildBuyingTaperMessages(weekRow);
+        weeks.push(weekRow);
+
+        const next = addDaysToDateStr(weekEnd, 1);
+        if (next <= cursor) break;
+        cursor = next;
+    }
+    return weeks;
+}
+
+function generateNicotineTaperWeeklyTargets(plan) {
+    const startStrength = parseFloat(plan.startingNicotineMgPerMl) || 0;
+    const goalStrength = parseFloat(plan.goalNicotineMgPerMl) || 0;
+    const step = Math.max(0.1, parseFloat(plan.nicotineStepDownMgPerMl) || 5);
+    const intervalDays = getNicotineStepIntervalDays(plan.nicotineStepDownInterval);
+    const weeks = [];
+    let strength = startStrength > 0 ? startStrength : 50;
+    let cursor = plan.startDate || getLocalDateString();
+    let guard = 0;
+
+    while (strength > goalStrength + INVENTORY_EPS && guard < 104) {
+        guard++;
+        const weekStart = cursor;
+        const weekEnd = addDaysToDateStr(cursor, intervalDays - 1);
+        weeks.push({
+            week: weeks.length + 1,
+            weekStart,
+            weekEnd,
+            targetNicotineMgPerMl: roundTaperValue(strength),
+            dailyTarget: null,
+            weeklyMax: null,
+            actualUsed: 0,
+            actualNicotineMgPerMl: null,
+            difference: 0,
+            status: 'under'
+        });
+        strength = Math.max(goalStrength, roundTaperValue(strength - step));
+        cursor = addDaysToDateStr(weekEnd, 1);
+    }
+
+    if (!weeks.length || weeks[weeks.length - 1].targetNicotineMgPerMl > goalStrength) {
+        weeks.push({
+            week: weeks.length + 1,
+            weekStart: cursor,
+            weekEnd: addDaysToDateStr(cursor, intervalDays - 1),
+            targetNicotineMgPerMl: roundTaperValue(goalStrength),
+            dailyTarget: null,
+            weeklyMax: null,
+            actualUsed: 0,
+            actualNicotineMgPerMl: null,
+            difference: 0,
+            status: 'under'
+        });
+    }
+
+    if (weeks.length) plan.endDate = weeks[weeks.length - 1].weekEnd;
+    return weeks;
+}
+
+function prefillVapeTaperDefaults(substanceId) {
+    if (!isVapeNicotineSubstanceId(substanceId)) return;
+    const type = document.getElementById('reduction-type')?.value;
+    const currentAvgEl = document.getElementById('current-avg');
+    const goalAvgEl = document.getElementById('goal-avg');
+    if (type === 'reduce-puffs' && currentAvgEl && !currentAvgEl.value) {
+        const baseline = getVapeBaselinePuffsPerDay(substanceId);
+        if (baseline != null) setInputValue('current-avg', baseline);
+    }
+    if (type === 'reduce-buying') {
+        const currentBuyEl = document.getElementById('vape-current-buy-days');
+        const goalBuyEl = document.getElementById('vape-goal-buy-days');
+        if (currentBuyEl && !currentBuyEl.value) {
+            const baseline = getVapeBaselineBuyFrequencyDays(substanceId);
+            if (baseline != null) setInputValue('vape-current-buy-days', baseline);
+        }
+        if (goalBuyEl && !goalBuyEl.value && currentBuyEl?.value) {
+            setInputValue('vape-goal-buy-days', Math.max(1, parseFloat(currentBuyEl.value) + 2));
+        }
+    }
+    if (type === 'reduce-nicotine') {
+        const startNicEl = document.getElementById('vape-start-nicotine');
+        const goalNicEl = document.getElementById('vape-goal-nicotine');
+        if (startNicEl && !startNicEl.value) {
+            const baseline = getVapeBaselineNicotineStrength(substanceId);
+            if (baseline != null) setInputValue('vape-start-nicotine', baseline);
+        }
+        if (goalNicEl && !goalNicEl.value && startNicEl?.value) {
+            setInputValue('vape-goal-nicotine', Math.max(0, parseFloat(startNicEl.value) - 10));
+        }
+    }
+    if (type === 'reduce-puffs' && goalAvgEl && !goalAvgEl.value && currentAvgEl?.value) {
+        setInputValue('goal-avg', Math.max(0, parseFloat(currentAvgEl.value) - 5));
+    }
+}
 
 const MANUAL_WEEKLY_UNIT_PRESETS = ['g', 'mg', 'ug', 'drinks', 'cigarettes', 'puffs', 'hits', 'pills'];
 
@@ -9737,7 +10148,28 @@ function migrateTaperPlan(plan, substanceId, data) {
             : getLocalDateString();
     }
 
-    if (isManualWeeklyPlan(plan)) {
+    migrateLegacyTaperReductionType(plan, substanceId);
+
+    if (isReducePuffsPlan(plan)) {
+        if (!plan.puffReductionMode) {
+            plan.puffReductionMode = plan.reductionPercent > 0 && !plan.reductionAmount ? 'percent' : 'amount';
+        }
+        plan.startingDailyAverage = plan.startingDailyAverage ?? plan.currentAvg ?? getVapeBaselinePuffsPerDay(substanceId, data);
+        plan.goalDailyAverage = plan.goalDailyAverage ?? plan.goalAvg ?? 0;
+        plan.currentAvg = plan.startingDailyAverage ?? null;
+        plan.goalAvg = plan.goalDailyAverage ?? null;
+        if (plan.reductionAmount == null && plan.puffReductionMode === 'amount') plan.reductionAmount = 5;
+        if (plan.reductionPercent == null && plan.puffReductionMode === 'percent') plan.reductionPercent = 10;
+    } else if (isReduceBuyingPlan(plan)) {
+        plan.currentBuyFrequencyDays = plan.currentBuyFrequencyDays ?? getVapeBaselineBuyFrequencyDays(substanceId) ?? 7;
+        plan.goalBuyFrequencyDays = plan.goalBuyFrequencyDays ?? plan.currentBuyFrequencyDays;
+        if (plan.weeklySpendCap == null) plan.weeklySpendCap = null;
+    } else if (isReduceNicotinePlan(plan)) {
+        plan.startingNicotineMgPerMl = plan.startingNicotineMgPerMl ?? getVapeBaselineNicotineStrength(substanceId, data) ?? 50;
+        plan.goalNicotineMgPerMl = plan.goalNicotineMgPerMl ?? 0;
+        plan.nicotineStepDownMgPerMl = plan.nicotineStepDownMgPerMl ?? 5;
+        plan.nicotineStepDownInterval = plan.nicotineStepDownInterval || 'weekly';
+    } else if (isManualWeeklyPlan(plan)) {
         if (plan.startingDailyAverage == null && plan.currentAvg != null) {
             plan.startingDailyAverage = plan.currentAvg;
         }
@@ -9755,7 +10187,7 @@ function migrateTaperPlan(plan, substanceId, data) {
         plan.goalAvg = plan.goalDailyAverage;
 
         if (!plan.reductionType) {
-            const map = { linear: 'reduce-amount', 'step-weekly': 'step-weekly', hold: 'fixed', custom: 'fixed' };
+            const map = { linear: 'reduce-amount', hold: 'fixed', custom: 'fixed' };
             plan.reductionType = map[plan.planType] || 'reduce-amount';
         }
 
@@ -9768,8 +10200,8 @@ function migrateTaperPlan(plan, substanceId, data) {
     }
 
     if (!plan.reductionType) {
-        const map = { linear: 'reduce-amount', 'step-weekly': 'step-weekly', hold: 'fixed', custom: 'fixed' };
-        plan.reductionType = map[plan.planType] || 'reduce-amount';
+        const map = { linear: 'reduce-amount', hold: 'fixed', custom: 'fixed' };
+        plan.reductionType = map[plan.planType] || (isVapeNicotineSubstanceId(substanceId) ? 'reduce-puffs' : 'reduce-amount');
     }
 
     plan.weeklyMax = plan.weeklyMax ?? null;
@@ -9826,6 +10258,15 @@ function migrateTaperPlan(plan, substanceId, data) {
         if (!plan.endDate || plan.endDate < plan.startDate) {
             plan.endDate = computeManualPlanEndDate(plan);
         }
+    } else if (isReduceNicotinePlan(plan)) {
+        plan.weeklyTargets = generateNicotineTaperWeeklyTargets(plan);
+    } else if (isReduceBuyingPlan(plan)) {
+        if (!plan.endDate) {
+            const d = new Date(parseLocalDate(plan.startDate) || new Date());
+            d.setDate(d.getDate() + 84);
+            plan.endDate = getLocalDateString(d);
+        }
+        plan.weeklyTargets = generateBuyingTaperWeeklyTargets(plan, substanceId, data);
     } else if (!plan.weeklyTargets?.length) {
         plan.weeklyTargets = generateWeeklyTargets(plan);
     }
@@ -9842,6 +10283,15 @@ function countWeeksBetween(startDate, endDate) {
 function generateWeeklyTargets(plan) {
     if (isManualWeeklyPlan(plan)) {
         return buildWeeklyTargetsFromManual(plan);
+    }
+    if (isReducePuffsPlan(plan)) {
+        return generateReducePuffsWeeklyTargets(plan);
+    }
+    if (isReduceBuyingPlan(plan)) {
+        return generateBuyingTaperWeeklyTargets(plan, plan.substanceId);
+    }
+    if (isReduceNicotinePlan(plan)) {
+        return generateNicotineTaperWeeklyTargets(plan);
     }
 
     const { startDate, endDate, startingDailyAverage, goalDailyAverage, reductionType, reductionAmount, reductionPercent, weeklyMax } = plan;
@@ -9877,7 +10327,6 @@ function generateWeeklyTargets(plan) {
 
         switch (reductionType) {
             case 'reduce-amount':
-            case 'step-weekly':
                 currentDaily = Math.max(goal, currentDaily - (parseFloat(reductionAmount) || 0));
                 break;
             case 'reduce-percent':
@@ -9924,12 +10373,68 @@ function syncTaperPlanData(substanceId, data = appData) {
     const plan = data?.taperPlans?.[substanceId];
     if (!plan) return;
 
+    if (isReduceBuyingPlan(plan)) {
+        const today = getLocalDateString();
+        const purchases = getPurchasesForSubstance(substanceId, data);
+        const lastPurchase = purchases.length ? purchases[purchases.length - 1] : null;
+        (plan.weeklyTargets || []).forEach(w => {
+            const weekPurchases = getPurchasesInDateRange(substanceId, w.weekStart, w.weekEnd, data);
+            w.actualPurchases = weekPurchases.length;
+            w.actualSpend = roundTaperActual(weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0));
+            w.actualUsed = w.actualPurchases;
+            if (lastPurchase?.date && w.targetBuyFrequencyDays > 0) {
+                w.doNotBuyBefore = addDaysToDateStr(lastPurchase.date, Math.ceil(w.targetBuyFrequencyDays));
+            }
+            w.messages = buildBuyingTaperMessages(w);
+            const daysSince = getDaysSinceLastVapePurchase(substanceId, data);
+            let status = 'under';
+            if (w.weeklySpendCap > 0 && w.actualSpend > w.weeklySpendCap) status = 'over';
+            else if (w.monthlyVapeCap > 0) {
+                const monthPurchases = getPurchasesInDateRange(substanceId, getMonthStartDateStr(today), getMonthEndDateStr(today), data).length;
+                if (monthPurchases > w.monthlyVapeCap) status = 'over';
+            } else if (daysSince != null && w.targetBuyFrequencyDays > 0 && daysSince < w.targetBuyFrequencyDays && today >= w.weekStart && today <= w.weekEnd) {
+                status = 'over';
+            }
+            w.status = status;
+            w.difference = roundTaperActual(w.actualPurchases - (w.monthlyVapeCap || 0));
+        });
+        expandDailyTargetsFromWeekly(plan);
+        return;
+    }
+
+    if (isReduceNicotinePlan(plan)) {
+        const currentStrength = getVapeCurrentNicotineStrength(substanceId);
+        (plan.weeklyTargets || []).forEach(w => {
+            w.actualNicotineMgPerMl = currentStrength;
+            w.actualUsed = currentStrength;
+            const target = w.targetNicotineMgPerMl;
+            if (target == null) {
+                w.status = 'none';
+            } else if (currentStrength == null) {
+                w.status = 'under';
+            } else if (currentStrength > target) {
+                w.status = 'over';
+            } else {
+                w.status = 'under';
+            }
+            w.difference = currentStrength != null && target != null
+                ? roundTaperActual(currentStrength - target)
+                : 0;
+        });
+        expandDailyTargetsFromWeekly(plan);
+        return;
+    }
+
     (plan.weeklyTargets || []).forEach(w => {
         let actual = 0;
-        let d = w.weekStart;
-        while (d <= w.weekEnd) {
-            actual += getUsedAmount(substanceId, d, null, data);
-            d = addDaysToDateStr(d, 1);
+        if (shouldUseVapeStatsUsage(substanceId, plan)) {
+            actual = getStatsUsageInRange(substanceId, w.weekStart, w.weekEnd, data);
+        } else {
+            let d = w.weekStart;
+            while (d <= w.weekEnd) {
+                actual += getUsedAmount(substanceId, d, null, data);
+                d = addDaysToDateStr(d, 1);
+            }
         }
         w.actualUsed = roundTaperActual(actual);
         const target = isManualWeeklyPlan(plan)
@@ -9945,7 +10450,9 @@ function syncTaperPlanData(substanceId, data = appData) {
     (plan.dailyTargets || []).forEach(day => {
         const limit = day.limit ?? day.target;
         if (limit == null) return;
-        const used = getUsedAmount(substanceId, day.date, null, data);
+        const used = shouldUseVapeStatsUsage(substanceId, plan)
+            ? getStatsUsageOnDate(substanceId, day.date, data)
+            : getUsedAmount(substanceId, day.date, null, data);
         day.limit = limit;
         day.target = limit;
         day.used = used;
@@ -9961,6 +10468,7 @@ function getWeekRowForDate(plan, dateStr) {
 function getDailyLimitForDate(substanceId, dateStr) {
     const plan = appData.taperPlans[substanceId];
     if (!plan || plan.isPaused) return null;
+    if (isReduceBuyingPlan(plan) || isReduceNicotinePlan(plan)) return null;
 
     if (isManualWeeklyPlan(plan)) {
         const week = getCurrentManualWeekRow(plan, dateStr);
@@ -9977,6 +10485,7 @@ function getDailyLimitForDate(substanceId, dateStr) {
 function getWeeklyLimit(substanceId, dateStr) {
     const plan = appData.taperPlans[substanceId];
     if (!plan || plan.isPaused) return null;
+    if (isReduceBuyingPlan(plan) || isReduceNicotinePlan(plan)) return null;
 
     if (isManualWeeklyPlan(plan)) {
         const week = getCurrentManualWeekRow(plan, dateStr);
@@ -10100,10 +10609,15 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
         || getLocalDateString();
     const reductionType = document.getElementById('reduction-type')?.value || 'reduce-amount';
     const isManual = reductionType === 'manual-weekly';
-    const startingDailyAverage = isManual
+    const isPuffs = reductionType === 'reduce-puffs';
+    const isBuying = reductionType === 'reduce-buying';
+    const isNicotine = reductionType === 'reduce-nicotine';
+    const startingDailyAverage = (isManual || isBuying || isNicotine)
         ? null
         : parseOptionalTaperNumber(document.getElementById('current-avg'));
-    const goalDailyAverage = parseOptionalTaperNumber(document.getElementById('goal-avg'));
+    const goalDailyAverage = (isBuying || isNicotine)
+        ? null
+        : parseOptionalTaperNumber(document.getElementById('goal-avg'));
 
     const plan = {
         id: existingPlan?.id || `${substanceId}-${Date.now()}`,
@@ -10113,9 +10627,9 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
         startingDailyAverage,
         goalDailyAverage: isManual ? goalDailyAverage : (goalDailyAverage ?? 0),
         reductionType,
-        reductionAmount: isManual ? 0 : (parseFloat(document.getElementById('reduction-amount')?.value) || 0),
-        reductionPercent: isManual ? 0 : (parseFloat(document.getElementById('reduction-percent')?.value) || 0),
-        weeklyMax: isManual ? null : (parseFloat(document.getElementById('weekly-max')?.value) || null),
+        reductionAmount: (isManual || isBuying || isNicotine) ? 0 : (parseFloat(document.getElementById('reduction-amount')?.value) || 0),
+        reductionPercent: (isManual || isBuying || isNicotine) ? 0 : (parseFloat(document.getElementById('reduction-percent')?.value) || 0),
+        weeklyMax: (isManual || isBuying || isNicotine) ? null : (parseFloat(document.getElementById('weekly-max')?.value) || null),
         monthlyMax: parseOptionalTaperNumber(document.getElementById('monthly-max')),
         doNotSurpassDaily: document.getElementById('do-not-surpass-daily')?.checked !== false,
         doNotSurpassWeekly: !!document.getElementById('do-not-surpass-weekly')?.checked,
@@ -10124,6 +10638,21 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
         createdAt: existingPlan?.createdAt || now,
         updatedAt: now
     };
+
+    if (isPuffs) {
+        plan.puffReductionMode = document.getElementById('puff-reduction-mode')?.value === 'percent' ? 'percent' : 'amount';
+    }
+    if (isBuying) {
+        plan.currentBuyFrequencyDays = parseOptionalTaperNumber(document.getElementById('vape-current-buy-days'));
+        plan.goalBuyFrequencyDays = parseOptionalTaperNumber(document.getElementById('vape-goal-buy-days'));
+        plan.weeklySpendCap = parseOptionalTaperNumber(document.getElementById('vape-weekly-spend-cap'));
+    }
+    if (isNicotine) {
+        plan.startingNicotineMgPerMl = parseOptionalTaperNumber(document.getElementById('vape-start-nicotine'));
+        plan.goalNicotineMgPerMl = parseOptionalTaperNumber(document.getElementById('vape-goal-nicotine'));
+        plan.nicotineStepDownMgPerMl = parseOptionalTaperNumber(document.getElementById('vape-nicotine-step'));
+        plan.nicotineStepDownInterval = document.getElementById('vape-nicotine-interval')?.value || 'weekly';
+    }
 
     if (isManual) {
         plan.manualWeeklyMode = getManualWeeklyModeFromForm();
@@ -10143,7 +10672,7 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
     plan.currentAvg = plan.startingDailyAverage;
     plan.goalAvg = plan.goalDailyAverage;
     plan.weeklyTargets = generateWeeklyTargets(plan);
-    migrateTaperPlan(plan, substanceId);
+    migrateTaperPlan(plan, substanceId, appData);
     return plan;
 }
 
@@ -10155,10 +10684,15 @@ function syncTaperSubstanceToMain() {
 
 function onTaperSubstanceChange() {
     taperEditingPlan = false;
+    populateTaperReductionTypeSelect(getTaperSubstanceId());
+    toggleTaperPlanTypeFields();
+    prefillVapeTaperDefaults(getTaperSubstanceId());
     refreshTaperDashboard();
 }
 
 function toggleTaperPlanTypeFields() {
+    const substanceId = getTaperSubstanceId();
+    populateTaperReductionTypeSelect(substanceId);
     const type = document.getElementById('reduction-type')?.value || 'reduce-amount';
     const hint = document.getElementById('plan-type-hint');
     const amtGroup = document.getElementById('reduction-amount-group');
@@ -10168,33 +10702,65 @@ function toggleTaperPlanTypeFields() {
     const startAvgGroup = document.getElementById('taper-start-avg-group');
     const endWeeklyRow = document.getElementById('taper-end-weekly-row');
     const weeklyMaxGroup = document.getElementById('weekly-max-group');
+    const monthlyMaxGroup = document.getElementById('monthly-max-group');
     const warnToggles = document.getElementById('taper-warn-toggles');
     const goalAvgInput = document.getElementById('goal-avg');
     const goalAvgLabel = document.getElementById('goal-avg-label');
+    const startAvgLabel = document.querySelector('#taper-start-avg-group label');
     const endDateInput = document.getElementById('end-date');
     const endDateLabel = document.getElementById('end-date-label');
+    const vapePuffsExtra = document.getElementById('taper-vape-puffs-extra');
+    const vapeBuyingSection = document.getElementById('taper-vape-buying-section');
+    const vapeNicotineSection = document.getElementById('taper-vape-nicotine-section');
     const isManual = type === 'manual-weekly';
+    const isPuffs = type === 'reduce-puffs';
+    const isBuying = type === 'reduce-buying';
+    const isNicotine = type === 'reduce-nicotine';
+    const isVape = isVapeNicotineSubstanceId(substanceId);
+    const puffMode = document.getElementById('puff-reduction-mode')?.value || 'amount';
 
-    reductionRow?.classList.toggle('hidden', isManual);
-    amtGroup?.classList.toggle('hidden', isManual || type === 'reduce-percent' || type === 'fixed');
-    pctGroup?.classList.toggle('hidden', isManual || type !== 'reduce-percent');
+    reductionRow?.classList.toggle('hidden', isManual || isBuying || isNicotine);
+    amtGroup?.classList.toggle('hidden', isManual || isBuying || isNicotine || type === 'reduce-percent' || type === 'fixed' || (isPuffs && puffMode === 'percent'));
+    pctGroup?.classList.toggle('hidden', isManual || isBuying || isNicotine || (type !== 'reduce-percent' && !(isPuffs && puffMode === 'percent')));
     manualSection?.classList.toggle('hidden', !isManual);
-    startAvgGroup?.classList.toggle('hidden', isManual);
-    document.getElementById('taper-start-goal-row')?.classList.toggle('hidden', isManual);
-    endWeeklyRow?.classList.toggle('hidden', isManual);
-    weeklyMaxGroup?.classList.toggle('hidden', isManual);
-    warnToggles?.classList.toggle('hidden', isManual);
+    startAvgGroup?.classList.toggle('hidden', isManual || isBuying || isNicotine);
+    document.getElementById('taper-start-goal-row')?.classList.toggle('hidden', isManual || isBuying || isNicotine);
+    endWeeklyRow?.classList.toggle('hidden', isManual || isNicotine);
+    weeklyMaxGroup?.classList.toggle('hidden', isManual || isBuying || isNicotine);
+    monthlyMaxGroup?.classList.toggle('hidden', isManual || isNicotine);
+    warnToggles?.classList.toggle('hidden', isManual || isBuying || isNicotine);
+    vapePuffsExtra?.classList.toggle('hidden', !isPuffs);
+    vapeBuyingSection?.classList.toggle('hidden', !isBuying);
+    vapeNicotineSection?.classList.toggle('hidden', !isNicotine);
+
+    if (startAvgLabel) {
+        startAvgLabel.textContent = isPuffs ? 'Starting puffs/day' : 'Starting Daily Average (optional)';
+    }
+    if (goalAvgLabel) {
+        if (isManual) goalAvgLabel.textContent = 'Goal Daily Average (optional)';
+        else if (isPuffs) goalAvgLabel.textContent = 'Goal puffs/day';
+        else goalAvgLabel.textContent = 'Daily average allowed';
+    }
+    if (monthlyMaxGroup) {
+        const monthlyLabel = monthlyMaxGroup.querySelector('label');
+        const monthlyHint = monthlyMaxGroup.querySelector('.field-hint');
+        if (monthlyLabel) {
+            monthlyLabel.textContent = isBuying ? 'Monthly vape purchase cap (optional)' : 'Monthly cap';
+        }
+        if (monthlyHint) {
+            monthlyHint.textContent = isBuying
+                ? 'Optional limit on how many vapes you buy per month.'
+                : 'Optional monthly limit for your taper plan.';
+        }
+    }
 
     mountManualWeeklyFormFields(isManual);
 
-    if (goalAvgLabel) {
-        goalAvgLabel.textContent = isManual ? 'Goal Daily Average (optional)' : 'Goal Daily Average';
-    }
-    if (goalAvgInput) goalAvgInput.required = !isManual;
+    if (goalAvgInput) goalAvgInput.required = !isManual && !isBuying && !isNicotine;
     if (endDateLabel) {
-        endDateLabel.textContent = isManual ? 'End Date (optional)' : 'End Date';
+        endDateLabel.textContent = isManual || isNicotine ? 'End Date (optional)' : 'End Date';
     }
-    if (endDateInput) endDateInput.required = !isManual;
+    if (endDateInput) endDateInput.required = !isManual && !isNicotine;
 
     if (isManual) {
         populateManualWeeklyUnitSelect(getTaperSubstanceId());
@@ -10210,14 +10776,20 @@ function toggleTaperPlanTypeFields() {
         'reduce-amount': 'Reduce a fixed amount from your daily average each week.',
         'reduce-percent': 'Reduce by a percentage of your daily average each week.',
         fixed: 'Keep the same daily limit until your target end date.',
-        'step-weekly': 'Step down once per week (same as reduce by amount).',
-        'manual-weekly': 'Set weekly goals by amount or percentage of a baseline.'
+        'manual-weekly': 'Set weekly goals by amount or percentage of a baseline.',
+        'reduce-puffs': 'Reduce estimated puffs per day each week until you reach your goal.',
+        'reduce-buying': 'Space out purchases and stretch each vape longer using buy frequency targets.',
+        'reduce-nicotine': 'Step down nicotine strength (mg/mL) on a fixed schedule.'
     };
     if (hint) hint.textContent = hints[type] || hints['reduce-amount'];
+
+    if (isVape && taperEditingPlan) prefillVapeTaperDefaults(substanceId);
 }
 
 function fillTaperFormFromPlan(plan) {
     if (!plan) return;
+    const substanceId = plan.substanceId || getTaperSubstanceId();
+    populateTaperReductionTypeSelect(substanceId, plan.reductionType || 'reduce-amount');
     setInputValue('start-date', plan.startDate || (plan.createdAt ? getLocalDateFromIso(plan.createdAt) : ''));
     const startVal = plan.startingDailyAverage ?? plan.currentAvg;
     setInputValue('current-avg', startVal != null && startVal !== '' ? startVal : '');
@@ -10226,6 +10798,14 @@ function fillTaperFormFromPlan(plan) {
     setInputValue('reduction-type', plan.reductionType || 'reduce-amount');
     setInputValue('reduction-amount', plan.reductionAmount ?? '');
     setInputValue('reduction-percent', plan.reductionPercent ?? '');
+    setInputValue('puff-reduction-mode', plan.puffReductionMode || 'amount');
+    setInputValue('vape-current-buy-days', plan.currentBuyFrequencyDays ?? '');
+    setInputValue('vape-goal-buy-days', plan.goalBuyFrequencyDays ?? '');
+    setInputValue('vape-weekly-spend-cap', plan.weeklySpendCap ?? '');
+    setInputValue('vape-start-nicotine', plan.startingNicotineMgPerMl ?? '');
+    setInputValue('vape-goal-nicotine', plan.goalNicotineMgPerMl ?? '');
+    setInputValue('vape-nicotine-step', plan.nicotineStepDownMgPerMl ?? '');
+    setInputValue('vape-nicotine-interval', plan.nicotineStepDownInterval || 'weekly');
     setInputValue('end-date', plan.endDate || '');
     setInputValue('weekly-max', plan.weeklyMax ?? '');
     setInputValue('monthly-max', plan.monthlyMax ?? '');
@@ -10268,8 +10848,10 @@ function showTaperSetup() {
     document.getElementById('taper-dashboard')?.classList.add('hidden');
     document.getElementById('taper-no-plan')?.classList.add('hidden');
     document.getElementById('taper-setup')?.classList.remove('hidden');
+    populateTaperReductionTypeSelect(getTaperSubstanceId());
     setDefaultTaperEndDate();
     toggleTaperPlanTypeFields();
+    prefillVapeTaperDefaults(getTaperSubstanceId());
 }
 
 function taperMetricTile(label, value) {
@@ -10290,20 +10872,47 @@ function shortTaperStatus(status) {
     return getRecoveryTaperStatusLabel(status);
 }
 
+function updateTaperKpiLabels(plan, substanceId) {
+    const setLabel = (id, text) => {
+        const el = document.getElementById(id)?.querySelector('.taper-kpi-label');
+        if (el) el.textContent = text;
+    };
+    if (isReduceBuyingPlan(plan)) {
+        setLabel('taper-kpi-used-today', 'Days since last buy');
+        setLabel('taper-kpi-used-week', 'Purchases this week');
+        setLabel('taper-kpi-remaining-week', 'Spend cap remaining');
+        return;
+    }
+    if (isReduceNicotinePlan(plan)) {
+        setLabel('taper-kpi-used-today', 'Current strength');
+        setLabel('taper-kpi-used-week', 'Target this week');
+        setLabel('taper-kpi-remaining-week', 'Steps to goal');
+        return;
+    }
+    if (isVapeNicotineSubstanceId(substanceId)) {
+        setLabel('taper-kpi-used-today', 'Puffs today (est.)');
+        setLabel('taper-kpi-used-week', 'Puffs this week (est.)');
+        setLabel('taper-kpi-remaining-week', 'Puffs left this week');
+        return;
+    }
+    setLabel('taper-kpi-used-today', 'Used Today');
+    setLabel('taper-kpi-used-week', 'Used This Week');
+    setLabel('taper-kpi-remaining-week', 'Remaining This Week');
+}
+
 function renderTaperKpiRow(substanceId) {
     const plan = appData.taperPlans[substanceId];
     const sub = getSubstance(substanceId);
     if (!plan || !sub) return;
 
     syncTaperPlanData(substanceId);
+    updateTaperKpiLabels(plan, substanceId);
 
     const set = (id, text) => {
         const el = document.getElementById(id);
         if (el) el.textContent = text;
     };
-    const unit = isManualWeeklyPlan(plan)
-        ? getManualWeeklyPlanUnit(plan, substanceId)
-        : sub.defaultUnit;
+    const unit = getTaperTrackingUnit(plan, substanceId);
     const statusTiles = [
         'taper-kpi-used-today',
         'taper-kpi-used-week',
@@ -10321,16 +10930,63 @@ function renderTaperKpiRow(substanceId) {
     }
 
     const today = getLocalDateString();
-    const usedToday = getUsedAmount(substanceId, today);
-    const weeklyLimit = getWeeklyLimit(substanceId, today);
-    const usedWeek = getUsedAmountForTaperWeek(substanceId, today);
 
-    set('taper-kpi-used-today-val', formatTaperAmount(usedToday, sub.defaultUnit));
-    set('taper-kpi-used-week-val', formatTaperActualAmount(usedWeek, unit));
+    if (isReduceBuyingPlan(plan)) {
+        const daysSince = getDaysSinceLastVapePurchase(substanceId);
+        const weekStart = getWeekStartDateStr(today);
+        const weekEnd = addDaysToDateStr(getWeekStartDateStr(today), 6);
+        const purchasesThisWeek = getPurchasesInDateRange(substanceId, weekStart, weekEnd).length;
+        const weekSpend = getPurchasesInDateRange(substanceId, weekStart, weekEnd)
+            .reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+        const spendCap = plan.weeklySpendCap;
+        set('taper-kpi-used-today-val', daysSince != null ? `${formatAmount(daysSince, 1)} days` : '—');
+        set('taper-kpi-used-week-val', `${purchasesThisWeek} vapes`);
+        if (spendCap > 0) {
+            set('taper-kpi-remaining-week-val', formatTaperMoney(Math.max(0, spendCap - weekSpend)));
+            const status = weekSpend > spendCap ? 'over' : 'under';
+            set('taper-kpi-status-val', shortWeeklyTaperStatus(status));
+            document.getElementById('taper-kpi-status')?.classList.add(`taper-kpi-${status}`);
+        } else {
+            set('taper-kpi-remaining-week-val', '—');
+            set('taper-kpi-status-val', purchasesThisWeek === 0 ? 'On track' : 'Review');
+        }
+        return;
+    }
+
+    if (isReduceNicotinePlan(plan)) {
+        const currentStrength = getVapeCurrentNicotineStrength(substanceId);
+        const weekRow = getWeekRowForDate(plan, today);
+        const targetStrength = weekRow?.targetNicotineMgPerMl;
+        const stepsLeft = (plan.weeklyTargets || []).filter(w =>
+            today <= w.weekEnd && w.targetNicotineMgPerMl != null && currentStrength != null
+            && currentStrength > w.targetNicotineMgPerMl
+        ).length;
+        set('taper-kpi-used-today-val', formatTaperNicotineStrength(currentStrength));
+        set('taper-kpi-used-week-val', formatTaperNicotineStrength(targetStrength));
+        set('taper-kpi-remaining-week-val', stepsLeft ? String(stepsLeft) : '0');
+        const status = currentStrength != null && targetStrength != null && currentStrength <= targetStrength ? 'under' : 'over';
+        set('taper-kpi-status-val', shortWeeklyTaperStatus(status));
+        document.getElementById('taper-kpi-status')?.classList.add(`taper-kpi-${status}`);
+        return;
+    }
+
+    const usedToday = getTaperDayUsage(substanceId, today);
+    const weeklyLimit = getWeeklyLimit(substanceId, today);
+    const usedWeek = getTaperWeekUsage(substanceId, today);
+
+    if (isVapeNicotineSubstanceId(substanceId)) {
+        set('taper-kpi-used-today-val', formatTaperAmount(usedToday, 'puffs'));
+        set('taper-kpi-used-week-val', formatTaperActualAmount(usedWeek, 'puffs'));
+    } else {
+        set('taper-kpi-used-today-val', formatTaperAmount(usedToday, sub.defaultUnit));
+        set('taper-kpi-used-week-val', formatTaperActualAmount(usedWeek, unit));
+    }
 
     if (weeklyLimit != null) {
         const remWeek = Math.max(0, weeklyLimit - usedWeek);
-        set('taper-kpi-remaining-week-val', formatTaperAmount(remWeek, unit));
+        set('taper-kpi-remaining-week-val', isVapeNicotineSubstanceId(substanceId)
+            ? formatTaperAmount(remWeek, 'puffs')
+            : formatTaperAmount(remWeek, unit));
         const weeklyStatus = isManualWeeklyPlan(plan)
             ? getManualWeeklyStatus(usedWeek, weeklyLimit).status
             : getTaperLimitStatus(usedWeek, weeklyLimit).status;
@@ -10351,9 +11007,7 @@ function renderTaperProgressCard(substanceId) {
     if (!plan || !sub) return;
     syncTaperPlanData(substanceId);
     const today = getLocalDateString();
-    const unit = isManualWeeklyPlan(plan)
-        ? getManualWeeklyPlanUnit(plan, substanceId)
-        : sub.defaultUnit;
+    const unit = getTaperTrackingUnit(plan, substanceId);
     const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
 
     if (plan.isPaused) {
@@ -10361,15 +11015,68 @@ function renderTaperProgressCard(substanceId) {
         return;
     }
 
+    if (isReduceBuyingPlan(plan)) {
+        const weekRow = getWeekRowForDate(plan, today) || plan.weeklyTargets?.[0];
+        const weekStart = getWeekStartDateStr(today);
+        const weekEnd = addDaysToDateStr(getWeekStartDateStr(today), 6);
+        const purchases = getPurchasesInDateRange(substanceId, weekStart, weekEnd);
+        const weekSpend = purchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+        const monthPurchases = getPurchasesInDateRange(substanceId, getMonthStartDateStr(today), getMonthEndDateStr(today)).length;
+        const daysSince = getDaysSinceLastVapePurchase(substanceId);
+        const messages = weekRow?.messages?.length ? weekRow.messages : buildBuyingTaperMessages(weekRow || {});
+
+        set('taper-weekly-max-val', weekRow ? formatTaperDaysPerVape(weekRow.minDaysPerVape) : '—');
+        set('taper-weekly-used', `${purchases.length} vapes`);
+        set('taper-weekly-remaining', weekRow?.doNotBuyBefore ? formatDate(weekRow.doNotBuyBefore) : '—');
+        set('taper-weekly-over-under', messages[0] || '—');
+        set('taper-weekly-pct', daysSince != null ? `${formatAmount(daysSince, 1)} days since buy` : '—');
+        set('taper-monthly-cap-val', plan.monthlyMax > 0 ? formatTaperVapesPerMonth(plan.monthlyMax) : '—');
+        set('taper-monthly-used-val', `${monthPurchases} vapes`);
+        set('taper-monthly-remaining-val', plan.monthlyMax > 0
+            ? formatTaperVapesPerMonth(Math.max(0, plan.monthlyMax - monthPurchases))
+            : '—');
+        const spendCap = plan.weeklySpendCap;
+        if (spendCap > 0) {
+            applyTaperProgressBar(
+                document.getElementById('taper-weekly-bar'),
+                document.getElementById('taper-weekly-bar-text'),
+                weekSpend,
+                spendCap
+            );
+        }
+        setTaperStatusBadge(document.getElementById('taper-weekly-status'), weekSpend > (spendCap || Infinity) ? 'over' : 'under', weekRow ? 'Buying plan' : '—');
+        return;
+    }
+
+    if (isReduceNicotinePlan(plan)) {
+        const weekRow = getWeekRowForDate(plan, today) || plan.weeklyTargets?.[0];
+        const currentStrength = getVapeCurrentNicotineStrength(substanceId);
+        const targetStrength = weekRow?.targetNicotineMgPerMl;
+        set('taper-weekly-max-val', formatTaperNicotineStrength(targetStrength));
+        set('taper-weekly-used', formatTaperNicotineStrength(currentStrength));
+        set('taper-weekly-remaining', weekRow ? `Week ${weekRow.week || getTaperPlanWeekNumber(plan, today)}` : '—');
+        set('taper-weekly-over-under', currentStrength != null && targetStrength != null
+            ? (currentStrength <= targetStrength ? 'At or below target' : `${formatAmount(currentStrength - targetStrength)} mg/mL above`)
+            : '—');
+        set('taper-weekly-pct', '—');
+        set('taper-monthly-cap-val', '—');
+        set('taper-monthly-used-val', '—');
+        set('taper-monthly-remaining-val', '—');
+        const status = currentStrength != null && targetStrength != null && currentStrength <= targetStrength ? 'under' : 'over';
+        setTaperStatusBadge(document.getElementById('taper-weekly-status'), status, shortTaperStatus(status));
+        return;
+    }
+
     const weeklyLimit = getWeeklyLimit(substanceId, today);
-    const weeklyUsed = getUsedAmountForTaperWeek(substanceId, today);
+    const weeklyUsed = getTaperWeekUsage(substanceId, today);
 
     const monthLimit = getMonthlyLimit(substanceId, today);
-    const monthUsed = getMonthPersonalUseTotal(substanceId, today);
-    set('taper-monthly-cap-val', monthLimit != null ? formatTaperAmount(monthLimit, sub.defaultUnit) : '—');
-    set('taper-monthly-used-val', formatTaperAmount(monthUsed, sub.defaultUnit));
+    const monthUsed = getTaperMonthUsage(substanceId, today);
+    const monthUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : sub.defaultUnit;
+    set('taper-monthly-cap-val', monthLimit != null ? formatTaperAmount(monthLimit, monthUnit) : '—');
+    set('taper-monthly-used-val', formatTaperAmount(monthUsed, monthUnit));
     set('taper-monthly-remaining-val', monthLimit != null
-        ? formatTaperAmount(Math.max(0, monthLimit - monthUsed), sub.defaultUnit)
+        ? formatTaperAmount(Math.max(0, monthLimit - monthUsed), monthUnit)
         : '—');
 
     if (weeklyLimit != null) {
@@ -10383,29 +11090,35 @@ function renderTaperProgressCard(substanceId) {
             weeklyLimit,
             weeklyStatusFn
         );
+        const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
         if (isManualWeeklyPlan(plan)) {
             const weekNum = getManualWeeklyWeekNumber(plan, today);
             const weekRow = getCurrentManualWeekRow(plan, today);
             const goalLabel = isManualWeeklyPercentMode(plan) && weekRow?.targetPercent != null
-                ? `${weekRow.targetPercent}% (${formatTaperAmount(weeklyLimit, unit)})`
-                : formatTaperAmount(weeklyLimit, unit);
+                ? `${weekRow.targetPercent}% (${formatTaperAmount(weeklyLimit, displayUnit)})`
+                : formatTaperAmount(weeklyLimit, displayUnit);
             set('taper-weekly-max-val', `Week ${weekNum}: ${goalLabel}`);
+        } else if (isReducePuffsPlan(plan)) {
+            const weekRow = getWeekRowForDate(plan, today);
+            set('taper-weekly-max-val', weekRow?.targetPuffsPerDay != null
+                ? `${formatTaperAmount(weeklyLimit, 'puffs')} · ${formatTaperPuffsPerDay(weekRow.targetPuffsPerDay)}`
+                : formatTaperAmount(weeklyLimit, 'puffs'));
         } else {
-            set('taper-weekly-max-val', formatTaperAmount(weeklyLimit, unit));
+            set('taper-weekly-max-val', formatTaperAmount(weeklyLimit, displayUnit));
         }
-        set('taper-weekly-used', formatTaperActualAmount(weeklyUsed, unit));
-        set('taper-weekly-remaining', formatTaperActualAmount(remW, unit));
+        set('taper-weekly-used', formatTaperActualAmount(weeklyUsed, displayUnit));
+        set('taper-weekly-remaining', formatTaperActualAmount(remW, displayUnit));
         set('taper-weekly-over-under', diffW > 0
-            ? `${formatTaperActualAmount(diffW, unit)} above`
+            ? `${formatTaperActualAmount(diffW, displayUnit)} above`
             : diffW < 0
-                ? `${formatTaperActualAmount(Math.abs(diffW), unit)} below`
+                ? `${formatTaperActualAmount(Math.abs(diffW), displayUnit)} below`
                 : 'On plan');
         set('taper-weekly-pct', formatTaperPercent(weeklyUsed, weeklyLimit));
         const badgeStatus = weeklyStatus;
         setTaperStatusBadge(document.getElementById('taper-weekly-status'), badgeStatus, shortTaperStatus(badgeStatus));
     } else {
         set('taper-weekly-max-val', '—');
-        set('taper-weekly-used', formatTaperAmount(weeklyUsed, unit));
+        set('taper-weekly-used', formatTaperAmount(weeklyUsed, isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit));
         set('taper-weekly-remaining', '—');
         set('taper-weekly-pct', '—');
         setTaperStatusBadge(document.getElementById('taper-weekly-status'), 'under', '—');
@@ -10437,12 +11150,12 @@ function getTaperWeeklySummary(plan, substanceId) {
     if (currentWeek) {
         let d = currentWeek.weekStart;
         while (d <= today && d <= currentWeek.weekEnd) {
-            avgThis += getUsedAmount(substanceId, d);
+            avgThis += getTaperDayUsage(substanceId, d);
             daysThis++;
             d = addDaysToDateStr(d, 1);
         }
     }
-    avgThis = daysThis ? avgThis / daysThis : getUsedAmount(substanceId, today);
+    avgThis = daysThis ? avgThis / daysThis : getTaperDayUsage(substanceId, today);
 
     const prevStart = currentWeek ? addDaysToDateStr(getWeekStartDateStr(currentWeek.weekStart), -7) : null;
     const prevWeek = prevStart ? plan.weeklyTargets.find(w => w.weekStart === getWeekStartDateStr(prevStart)) : null;
@@ -10451,7 +11164,7 @@ function getTaperWeeklySummary(plan, substanceId) {
         let d = prevWeek.weekStart;
         let cnt = 0;
         while (d <= prevWeek.weekEnd) {
-            avgLast += getUsedAmount(substanceId, d);
+            avgLast += getTaperDayUsage(substanceId, d);
             cnt++;
             d = addDaysToDateStr(d, 1);
         }
@@ -10483,27 +11196,87 @@ function renderTaperWeeklyPlan(substanceId) {
     }
 
     syncTaperPlanData(substanceId);
-    const unit = getManualWeeklyPlanUnit(plan, substanceId);
+    const unit = getTaperTrackingUnit(plan, substanceId);
     const sum = getTaperWeeklySummary(plan, substanceId);
 
     if (summary) {
         const changeStr = sum.changeVsLast != null
             ? `${sum.changeVsLast >= 0 ? '+' : ''}${sum.changeVsLast.toFixed(0)}%`
             : '—';
-        summary.innerHTML = [
-            taperChipStat('Week', sum.weekIndex || '—'),
-            taperChipStat('Weeks Remaining', sum.weeksRemaining),
-            taperChipStat('Reduction done', `${formatAmount(sum.reductionCompleted)}/${formatAmount(sum.totalReduction)}`),
-            taperChipStat('Avg this week', formatTaperAmount(sum.avgThis, unit)),
-            taperChipStat('Avg last week', formatTaperAmount(sum.avgLast, unit)),
-            taperChipStat('Change vs Last Week', changeStr),
-            taperChipStat('On-track weeks', sum.underWeeks),
-            taperChipStat('Over weeks', sum.overWeeks)
-        ].join('');
+        if (isReduceBuyingPlan(plan)) {
+            summary.innerHTML = [
+                taperChipStat('Week', sum.weekIndex || '—'),
+                taperChipStat('Buy every (target)', formatTaperDaysPerVape(getWeekRowForDate(plan, getLocalDateString())?.targetBuyFrequencyDays)),
+                taperChipStat('Min days/vape', formatTaperDaysPerVape(getWeekRowForDate(plan, getLocalDateString())?.minDaysPerVape)),
+                taperChipStat('On-track weeks', sum.underWeeks),
+                taperChipStat('Over weeks', sum.overWeeks)
+            ].join('');
+        } else if (isReduceNicotinePlan(plan)) {
+            summary.innerHTML = [
+                taperChipStat('Week', sum.weekIndex || '—'),
+                taperChipStat('Target strength', formatTaperNicotineStrength(getWeekRowForDate(plan, getLocalDateString())?.targetNicotineMgPerMl)),
+                taperChipStat('Current strength', formatTaperNicotineStrength(getVapeCurrentNicotineStrength(substanceId))),
+                taperChipStat('Weeks remaining', sum.weeksRemaining)
+            ].join('');
+        } else {
+            summary.innerHTML = [
+                taperChipStat('Week', sum.weekIndex || '—'),
+                taperChipStat('Weeks Remaining', sum.weeksRemaining),
+                taperChipStat('Reduction done', `${formatAmount(sum.reductionCompleted)}/${formatAmount(sum.totalReduction)}`),
+                taperChipStat('Avg this week', isReducePuffsPlan(plan) || isVapeNicotineSubstanceId(substanceId)
+                    ? formatTaperPuffsPerDay(sum.avgThis)
+                    : formatTaperAmount(sum.avgThis, unit)),
+                taperChipStat('Avg last week', isReducePuffsPlan(plan) || isVapeNicotineSubstanceId(substanceId)
+                    ? formatTaperPuffsPerDay(sum.avgLast)
+                    : formatTaperAmount(sum.avgLast, unit)),
+                taperChipStat('Change vs Last Week', changeStr),
+                taperChipStat('On-track weeks', sum.underWeeks),
+                taperChipStat('Over weeks', sum.overWeeks)
+            ].join('');
+        }
     }
 
     if (!plan.weeklyTargets?.length) {
         table.innerHTML = '<p class="empty-hint">No weekly rows.</p>';
+        return;
+    }
+
+    if (isReduceBuyingPlan(plan)) {
+        let html = `<table class="taper-preview-table taper-weekly-table"><thead><tr>
+            <th>Week</th><th>Dates</th><th>Targets</th><th>Purchases</th><th>Spend</th><th>Status</th>
+        </tr></thead><tbody>`;
+        plan.weeklyTargets.forEach(w => {
+            const messages = w.messages?.length ? w.messages : buildBuyingTaperMessages(w);
+            const { emoji, label } = getTaperLimitStatus(w.actualPurchases, w.monthlyVapeCap || 0);
+            html += `<tr class="taper-preview-${w.status}">
+                <td>Week ${w.week ?? '—'}</td>
+                <td>${formatDate(w.weekStart)} – ${formatDate(w.weekEnd)}</td>
+                <td>${messages.join('<br>') || '—'}</td>
+                <td>${w.actualPurchases || 0}</td>
+                <td>${formatTaperMoney(w.actualSpend || 0)}</td>
+                <td>${emoji} ${getRecoveryTaperStatusLabel(w.status)}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        table.innerHTML = html;
+        return;
+    }
+
+    if (isReduceNicotinePlan(plan)) {
+        let html = `<table class="taper-preview-table taper-weekly-table"><thead><tr>
+            <th>Week</th><th>Dates</th><th>Target mg/mL</th><th>Current mg/mL</th><th>Status</th>
+        </tr></thead><tbody>`;
+        plan.weeklyTargets.forEach(w => {
+            html += `<tr class="taper-preview-${w.status}">
+                <td>Week ${w.week ?? '—'}</td>
+                <td>${formatDate(w.weekStart)} – ${formatDate(w.weekEnd)}</td>
+                <td>${formatTaperNicotineStrength(w.targetNicotineMgPerMl)}</td>
+                <td>${formatTaperNicotineStrength(w.actualNicotineMgPerMl)}</td>
+                <td>${getRecoveryTaperStatusLabel(w.status)}</td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        table.innerHTML = html;
         return;
     }
 
@@ -10532,15 +11305,19 @@ function renderTaperWeeklyPlan(substanceId) {
         <th>Week Start</th><th>Week End</th><th>Daily Target</th><th>Weekly Max</th>
         <th>Actual Used</th><th>Difference</th><th>Status</th>
     </tr></thead><tbody>`;
+    const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
     plan.weeklyTargets.forEach(w => {
         const { emoji, status } = getTaperLimitStatus(w.actualUsed, w.weeklyMax);
+        const dailyLabel = isReducePuffsPlan(plan) && w.targetPuffsPerDay != null
+            ? formatTaperPuffsPerDay(w.targetPuffsPerDay)
+            : formatTaperAmount(w.dailyTarget, displayUnit);
         html += `<tr class="taper-preview-${w.status}">
             <td>${formatDate(w.weekStart)}</td>
             <td>${formatDate(w.weekEnd)}</td>
-            <td>${formatTaperAmount(w.dailyTarget, unit)}</td>
-            <td>${formatTaperAmount(w.weeklyMax, unit)}</td>
-            <td>${formatTaperActualAmount(w.actualUsed, unit)}</td>
-            <td>${formatTaperWeekDiff(w.difference, unit)}</td>
+            <td>${dailyLabel}</td>
+            <td>${formatTaperAmount(w.weeklyMax, displayUnit)}</td>
+            <td>${formatTaperActualAmount(w.actualUsed, displayUnit)}</td>
+            <td>${formatTaperWeekDiff(w.difference, displayUnit)}</td>
             <td>${emoji} ${getRecoveryTaperStatusLabel(status)}</td>
         </tr>`;
     });
@@ -10813,6 +11590,29 @@ function handleTaperSubmit(e) {
             const hasAmount = targets.some(t => (parseFloat(t.targetAmount) || 0) > 0);
             if (!hasAmount) return alert('Enter at least one weekly target amount.');
         }
+    } else if (reductionType === 'reduce-buying') {
+        const currentDays = parseOptionalTaperNumber(document.getElementById('vape-current-buy-days'));
+        const goalDays = parseOptionalTaperNumber(document.getElementById('vape-goal-buy-days'));
+        if (currentDays == null || currentDays <= 0) return alert('Enter your current buying frequency (days).');
+        if (goalDays == null || goalDays <= 0) return alert('Enter your goal buying frequency (days).');
+        const endDate = document.getElementById('end-date')?.value;
+        if (!endDate || new Date(endDate) <= new Date(startDate)) {
+            return alert('End date must be after the start date.');
+        }
+    } else if (reductionType === 'reduce-nicotine') {
+        const startNic = parseOptionalTaperNumber(document.getElementById('vape-start-nicotine'));
+        const goalNic = parseOptionalTaperNumber(document.getElementById('vape-goal-nicotine'));
+        const step = parseOptionalTaperNumber(document.getElementById('vape-nicotine-step'));
+        if (startNic == null || startNic <= 0) return alert('Enter a starting nicotine strength (mg/mL).');
+        if (goalNic == null || goalNic < 0) return alert('Enter a goal nicotine strength (mg/mL).');
+        if (step == null || step <= 0) return alert('Enter a step-down amount (mg/mL).');
+    } else if (reductionType === 'reduce-puffs') {
+        const goal = parseOptionalTaperNumber(document.getElementById('goal-avg'));
+        if (goal == null || goal < 0) return alert('Enter a goal puffs/day target.');
+        const endDate = document.getElementById('end-date')?.value;
+        if (!endDate || new Date(endDate) <= new Date(startDate)) {
+            return alert('End date must be after the start date.');
+        }
     } else {
         const endDate = document.getElementById('end-date')?.value;
         if (!endDate || new Date(endDate) <= new Date(startDate)) {
@@ -10885,6 +11685,12 @@ function renderTaperPlan() {
 function getPlannedWeeklyTarget(plan, weekRow) {
     if (isManualWeeklyPlan(plan)) {
         return roundTaperValue(parseFloat(weekRow.targetAmount ?? weekRow.weeklyMax) || 0);
+    }
+    if (isReduceBuyingPlan(plan)) {
+        return roundTaperValue(parseFloat(weekRow.monthlyVapeCap) || 0);
+    }
+    if (isReduceNicotinePlan(plan)) {
+        return roundTaperValue(parseFloat(weekRow.targetNicotineMgPerMl) || 0);
     }
     return roundTaperValue(parseFloat(weekRow.weeklyMax) || 0);
 }
@@ -10984,16 +11790,70 @@ function renderTaperByWeek(substanceId) {
         return;
     }
 
-    const unit = isManualWeeklyPlan(plan)
-        ? getManualWeeklyPlanUnit(plan, substanceId)
-        : (sub.defaultUnit || 'units');
-    summaryEl.innerHTML = [
-        taperChipStat('Total planned', formatTaperAmount(data.totalPlanned, unit)),
-        taperChipStat('Total used', formatTaperActualAmount(data.totalUsed, unit)),
-        taperChipStat('Remaining allowance', formatTaperAmount(data.remainingAllowance, unit)),
-        taperChipStat('Current week', data.currentWeek),
-        taperChipStat('Weeks remaining', data.weeksRemaining)
-    ].join('');
+    const unit = getTaperTrackingUnit(plan, substanceId);
+    if (isReduceBuyingPlan(plan)) {
+        summaryEl.innerHTML = [
+            taperChipStat('Weeks in plan', data.rows.length),
+            taperChipStat('Purchases so far', formatAmount(data.totalUsed, 0)),
+            taperChipStat('Current week', data.currentWeek),
+            taperChipStat('Weeks remaining', data.weeksRemaining)
+        ].join('');
+    } else if (isReduceNicotinePlan(plan)) {
+        summaryEl.innerHTML = [
+            taperChipStat('Steps in plan', data.rows.length),
+            taperChipStat('Current strength', formatTaperNicotineStrength(getVapeCurrentNicotineStrength(substanceId))),
+            taperChipStat('Current week', data.currentWeek),
+            taperChipStat('Weeks remaining', data.weeksRemaining)
+        ].join('');
+    } else {
+        summaryEl.innerHTML = [
+            taperChipStat('Total planned', formatTaperAmount(data.totalPlanned, isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit)),
+            taperChipStat('Total used', formatTaperActualAmount(data.totalUsed, isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit)),
+            taperChipStat('Remaining allowance', formatTaperAmount(data.remainingAllowance, isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit)),
+            taperChipStat('Current week', data.currentWeek),
+            taperChipStat('Weeks remaining', data.weeksRemaining)
+        ].join('');
+    }
+
+    if (isReduceBuyingPlan(plan)) {
+        let html = `<table class="taper-preview-table taper-by-week-table"><thead><tr>
+            <th>Week</th><th>Dates</th><th>Targets</th><th>Purchases</th><th>Spend</th><th>Status</th>
+        </tr></thead><tbody>`;
+        data.rows.forEach(row => {
+            const weekRow = plan.weeklyTargets[row.weekNum - 1];
+            const messages = weekRow?.messages?.length ? weekRow.messages : buildBuyingTaperMessages(weekRow || {});
+            html += `<tr class="taper-by-week-row taper-by-week-${row.status}${row.isCurrent ? ' taper-by-week-current' : ''}">
+                <td>Week ${row.weekNum}</td>
+                <td class="taper-by-week-dates">${formatDate(row.weekStart)} – ${formatDate(row.weekEnd)}</td>
+                <td>${messages.join('<br>') || '—'}</td>
+                <td>${weekRow?.actualPurchases || 0}</td>
+                <td>${formatTaperMoney(weekRow?.actualSpend || 0)}</td>
+                <td><span class="taper-by-week-status taper-by-week-status-${row.status}">${row.statusLabel}</span></td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        tableEl.innerHTML = html;
+        return;
+    }
+
+    if (isReduceNicotinePlan(plan)) {
+        let html = `<table class="taper-preview-table taper-by-week-table"><thead><tr>
+            <th>Week</th><th>Dates</th><th>Target mg/mL</th><th>Current mg/mL</th><th>Status</th>
+        </tr></thead><tbody>`;
+        data.rows.forEach(row => {
+            const weekRow = plan.weeklyTargets[row.weekNum - 1];
+            html += `<tr class="taper-by-week-row taper-by-week-${row.status}${row.isCurrent ? ' taper-by-week-current' : ''}">
+                <td>Week ${row.weekNum}</td>
+                <td class="taper-by-week-dates">${formatDate(row.weekStart)} – ${formatDate(row.weekEnd)}</td>
+                <td>${formatTaperNicotineStrength(weekRow?.targetNicotineMgPerMl)}</td>
+                <td>${formatTaperNicotineStrength(weekRow?.actualNicotineMgPerMl)}</td>
+                <td><span class="taper-by-week-status taper-by-week-status-${row.status}">${row.statusLabel}</span></td>
+            </tr>`;
+        });
+        html += '</tbody></table>';
+        tableEl.innerHTML = html;
+        return;
+    }
 
     let html = `<table class="taper-preview-table taper-by-week-table"><thead><tr>
         <th>Week</th>
@@ -11007,17 +11867,18 @@ function renderTaperByWeek(substanceId) {
         <th>Status</th>
     </tr></thead><tbody>`;
 
+    const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
     data.rows.forEach(row => {
         const dateRange = `${formatDate(row.weekStart)} – ${formatDate(row.weekEnd)}`;
         html += `<tr class="taper-by-week-row taper-by-week-${row.status}${row.isCurrent ? ' taper-by-week-current' : ''}">
             <td>Week ${row.weekNum}</td>
             <td class="taper-by-week-dates">${dateRange}</td>
-            <td>${formatTaperAmount(row.planned, unit)}</td>
-            <td>${formatTaperActualAmount(row.used, unit)}</td>
-            <td>${formatTaperWeekDiff(row.diff, unit)}</td>
-            <td>${formatTaperAmount(row.runningPlanned, unit)}</td>
-            <td>${formatTaperActualAmount(row.runningUsed, unit)}</td>
-            <td>${formatTaperWeekDiff(row.runningDiff, unit)}</td>
+            <td>${formatTaperAmount(row.planned, displayUnit)}</td>
+            <td>${formatTaperActualAmount(row.used, displayUnit)}</td>
+            <td>${formatTaperWeekDiff(row.diff, displayUnit)}</td>
+            <td>${formatTaperAmount(row.runningPlanned, displayUnit)}</td>
+            <td>${formatTaperActualAmount(row.runningUsed, displayUnit)}</td>
+            <td>${formatTaperWeekDiff(row.runningDiff, displayUnit)}</td>
             <td><span class="taper-by-week-status taper-by-week-status-${row.status}">${row.statusLabel}</span></td>
         </tr>`;
     });
@@ -11035,15 +11896,47 @@ function renderTaperInsights(substanceId) {
         container.innerHTML = '<p class="empty-hint">No insights yet.</p>';
         return;
     }
-    const unit = sub.defaultUnit;
-    const items = [
-        ['Plan type', TAPER_REDUCTION_LABELS[plan.reductionType] || plan.reductionType || '—'],
-        ['Start average', plan.startingDailyAverage != null ? `${plan.startingDailyAverage} ${unit}/day` : '—'],
-        ['Goal average', plan.goalDailyAverage != null ? `${plan.goalDailyAverage} ${unit}/day` : '—'],
-        ['Target end', plan.endDate ? formatDate(plan.endDate) : '—'],
-        ['Weekly max', plan.weeklyMax != null ? `${plan.weeklyMax} ${unit}` : '—'],
-        ['Status', plan.isPaused ? 'Paused' : 'Active']
-    ];
+    let items;
+    if (isReduceBuyingPlan(plan)) {
+        items = [
+            ['Plan type', TAPER_REDUCTION_LABELS[plan.reductionType] || plan.reductionType || '—'],
+            ['Current buy frequency', plan.currentBuyFrequencyDays != null ? `Every ${plan.currentBuyFrequencyDays} days` : '—'],
+            ['Goal buy frequency', plan.goalBuyFrequencyDays != null ? `Every ${plan.goalBuyFrequencyDays} days` : '—'],
+            ['Monthly vape cap', plan.monthlyMax != null ? formatTaperVapesPerMonth(plan.monthlyMax) : '—'],
+            ['Weekly spend cap', plan.weeklySpendCap != null ? formatTaperMoney(plan.weeklySpendCap) : '—'],
+            ['Status', plan.isPaused ? 'Paused' : 'Active']
+        ];
+    } else if (isReduceNicotinePlan(plan)) {
+        items = [
+            ['Plan type', TAPER_REDUCTION_LABELS[plan.reductionType] || plan.reductionType || '—'],
+            ['Starting strength', formatTaperNicotineStrength(plan.startingNicotineMgPerMl)],
+            ['Goal strength', formatTaperNicotineStrength(plan.goalNicotineMgPerMl)],
+            ['Step-down', plan.nicotineStepDownMgPerMl != null ? `${plan.nicotineStepDownMgPerMl} mg/mL` : '—'],
+            ['Interval', plan.nicotineStepDownInterval || 'weekly'],
+            ['Status', plan.isPaused ? 'Paused' : 'Active']
+        ];
+    } else if (isReducePuffsPlan(plan)) {
+        items = [
+            ['Plan type', TAPER_REDUCTION_LABELS[plan.reductionType] || plan.reductionType || '—'],
+            ['Start average', plan.startingDailyAverage != null ? formatTaperPuffsPerDay(plan.startingDailyAverage) : '—'],
+            ['Goal average', plan.goalDailyAverage != null ? formatTaperPuffsPerDay(plan.goalDailyAverage) : '—'],
+            ['Reduction', getPuffReductionMode(plan) === 'percent'
+                ? `${plan.reductionPercent || 0}% per week`
+                : `${plan.reductionAmount || 0} puffs/day per week`],
+            ['Target end', plan.endDate ? formatDate(plan.endDate) : '—'],
+            ['Status', plan.isPaused ? 'Paused' : 'Active']
+        ];
+    } else {
+        const unit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : sub.defaultUnit;
+        items = [
+            ['Plan type', TAPER_REDUCTION_LABELS[plan.reductionType] || plan.reductionType || '—'],
+            ['Start average', plan.startingDailyAverage != null ? `${plan.startingDailyAverage} ${unit}/day` : '—'],
+            ['Goal average', plan.goalDailyAverage != null ? `${plan.goalDailyAverage} ${unit}/day` : '—'],
+            ['Target end', plan.endDate ? formatDate(plan.endDate) : '—'],
+            ['Weekly max', plan.weeklyMax != null ? `${plan.weeklyMax} ${unit}` : '—'],
+            ['Status', plan.isPaused ? 'Paused' : 'Active']
+        ];
+    }
     container.innerHTML = items.map(([label, val]) =>
         `<div class="taper-insight-item"><span>${label}</span><strong>${val}</strong></div>`
     ).join('');

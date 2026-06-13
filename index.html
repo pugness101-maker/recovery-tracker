@@ -851,10 +851,53 @@
                                 <option value="reduce-amount">Reduce by amount</option>
                                 <option value="reduce-percent">Reduce by percent</option>
                                 <option value="fixed">Fixed daily limit</option>
-                                <option value="step-weekly">Weekly step-down</option>
                                 <option value="manual-weekly">Manual weekly plan</option>
                             </select>
                             <p class="field-hint" id="plan-type-hint">Reduce a set amount each week until you reach your goal.</p>
+                        </div>
+                        <div id="taper-vape-puffs-extra" class="form-group hidden">
+                            <label for="puff-reduction-mode">Puff reduction type</label>
+                            <select id="puff-reduction-mode" onchange="toggleTaperPlanTypeFields()">
+                                <option value="amount">Reduce by amount (puffs/week)</option>
+                                <option value="percent">Reduce by percent</option>
+                            </select>
+                        </div>
+                        <div class="form-row hidden" id="taper-vape-buying-section">
+                            <div class="form-group">
+                                <label for="vape-current-buy-days">Current buying frequency (every X days)</label>
+                                <input type="number" id="vape-current-buy-days" min="1" step="0.5" placeholder="e.g. 5">
+                                <p class="field-hint">Baseline from purchase gaps and supply duration when left blank on save.</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="vape-goal-buy-days">Goal buying frequency (every X days)</label>
+                                <input type="number" id="vape-goal-buy-days" min="1" step="0.5" placeholder="e.g. 10">
+                            </div>
+                            <div class="form-group">
+                                <label for="vape-weekly-spend-cap">Weekly spend cap (optional)</label>
+                                <input type="number" id="vape-weekly-spend-cap" min="0" step="0.01" placeholder="Optional">
+                            </div>
+                        </div>
+                        <div class="form-row hidden" id="taper-vape-nicotine-section">
+                            <div class="form-group">
+                                <label for="vape-start-nicotine">Starting nicotine strength (mg/mL)</label>
+                                <input type="number" id="vape-start-nicotine" min="0" step="0.1" placeholder="e.g. 50">
+                            </div>
+                            <div class="form-group">
+                                <label for="vape-goal-nicotine">Goal nicotine strength (mg/mL)</label>
+                                <input type="number" id="vape-goal-nicotine" min="0" step="0.1" placeholder="e.g. 0">
+                            </div>
+                            <div class="form-group">
+                                <label for="vape-nicotine-step">Step-down amount (mg/mL)</label>
+                                <input type="number" id="vape-nicotine-step" min="0.1" step="0.1" placeholder="e.g. 5">
+                            </div>
+                            <div class="form-group">
+                                <label for="vape-nicotine-interval">Step-down interval</label>
+                                <select id="vape-nicotine-interval">
+                                    <option value="weekly">Weekly</option>
+                                    <option value="biweekly">Every 2 weeks</option>
+                                    <option value="monthly">Monthly</option>
+                                </select>
+                            </div>
                         </div>
                         <div class="form-row" id="taper-reduction-fields-row">
                             <div class="form-group" id="reduction-amount-group">
