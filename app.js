@@ -613,7 +613,7 @@ const TABLE_COLUMN_DEFAULTS = {
         hidden: ['gPerUseDay', 'gPerCalDay']
     },
     buyWeekly: {
-        order: ['startWeek', 'endWeek', 'purchased', 'cost', 'costPerUnit', 'gPerDay', 'supplyDuration'],
+        order: ['startWeek', 'endWeek', 'purchased', 'monthRunning', 'cost', 'costPerUnit', 'gPerDay', 'supplyDuration'],
         hidden: []
     },
     buyMonthly: {
@@ -689,6 +689,7 @@ const TABLE_COLUMN_LABELS = {
         startWeek: 'Start Week',
         endWeek: 'End Week',
         purchased: 'Purchased',
+        monthRunning: 'Month running',
         cost: 'Cost',
         costPerUnit: 'Cost/unit',
         gPerDay: 'g/day',
@@ -7006,6 +7007,13 @@ function getMonthSpent(substanceId, dateStr = getLocalDateString()) {
         .reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
 }
 
+function getMonthPurchaseTotal(substanceId, dateStr = getLocalDateString()) {
+    const monthStart = getMonthStartDateStr(dateStr);
+    return (appData.purchases || [])
+        .filter(p => getPurchaseSubstanceId(p) === substanceId && p.date >= monthStart && p.date <= dateStr)
+        .reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
+}
+
 function estimateLogCost(log) {
     const pid = getLogPurchaseId(log);
     if (!pid) return 0;
@@ -8150,52 +8158,93 @@ function getMonthSplitWeekRangeKey(range) {
     return `${range.weekStart}_${range.weekEnd}`;
 }
 
-function getWeeklyTrackingSummaries(substanceId, limit = 12) {
-    const logs = getUseLogsForSubstance(substanceId, { sortAsc: true, personalUseOnly: true });
-    if (!logs.length) return [];
+function buildMonthSplitWeeklyRanges(entries, dateGetter, limit = null) {
+    if (!entries?.length) return [];
     const rangeMap = new Map();
-    logs.forEach(log => {
-        const range = getMonthSplitWeekRangeForDate(log.date);
+    entries.forEach(entry => {
+        const dateStr = dateGetter(entry);
+        if (!dateStr) return;
+        const range = getMonthSplitWeekRangeForDate(dateStr);
         const key = getMonthSplitWeekRangeKey(range);
         if (!rangeMap.has(key)) rangeMap.set(key, range);
     });
-    const allRangesAsc = [...rangeMap.values()].sort((a, b) =>
+    let ranges = [...rangeMap.values()].sort((a, b) =>
         a.weekStart.localeCompare(b.weekStart) || a.weekEnd.localeCompare(b.weekEnd)
     );
-    return allRangesAsc.slice(-limit).reverse().map(range => ({
-        ...calculateWeeklyTrackingSummary(substanceId, range.weekStart, range.weekEnd),
-        runningTotal: roundTaperValue(getMonthPersonalUseTotal(substanceId, range.weekEnd))
+    if (limit != null && limit > 0) {
+        ranges = ranges.slice(-limit);
+    }
+    return ranges;
+}
+
+function buildMonthSplitWeeklyRows(entries, amountGetter, dateGetter, limit = null) {
+    const ranges = buildMonthSplitWeeklyRanges(entries, dateGetter, limit);
+    let monthRunning = 0;
+    let currentMonthKey = null;
+    return ranges.map(range => {
+        const monthKey = range.weekStart.slice(0, 7);
+        if (monthKey !== currentMonthKey) {
+            currentMonthKey = monthKey;
+            monthRunning = 0;
+        }
+        const amount = entries
+            .filter(entry => {
+                const dateStr = dateGetter(entry);
+                return dateStr && dateStr >= range.weekStart && dateStr <= range.weekEnd;
+            })
+            .reduce((sum, entry) => sum + (parseFloat(amountGetter(entry)) || 0), 0);
+        monthRunning += amount;
+        return {
+            weekStart: range.weekStart,
+            weekEnd: range.weekEnd,
+            amount,
+            monthRunning: roundTaperValue(monthRunning)
+        };
+    });
+}
+
+function getWeeklyTrackingSummaries(substanceId, limit = 12) {
+    const logs = getUseLogsForSubstance(substanceId, { sortAsc: true, personalUseOnly: true });
+    if (!logs.length) return [];
+    const baseRows = buildMonthSplitWeeklyRows(logs, log => log.amount, log => log.date, limit);
+    return baseRows.slice().reverse().map(row => ({
+        ...calculateWeeklyTrackingSummary(substanceId, row.weekStart, row.weekEnd),
+        runningTotal: roundTaperValue(getMonthPersonalUseTotal(substanceId, row.weekEnd))
     }));
 }
 
 function getBuyWeeklySummaries(substanceId, limit = 8) {
     const purchases = (appData.purchases || [])
-        .filter(p => getPurchaseSubstanceId(p) === substanceId)
-        .sort((a, b) => getPurchaseDatetimeMs(a) - getPurchaseDatetimeMs(b));
+        .filter(p => getPurchaseSubstanceId(p) === substanceId);
     if (!purchases.length) return [];
-    const weekSet = new Set();
-    purchases.forEach(p => weekSet.add(getWeekStartDateStr(p.date)));
-    const weeks = [...weekSet].sort().slice(-limit).reverse();
+    const baseRows = buildMonthSplitWeeklyRows(
+        purchases,
+        p => getPurchaseQuantity(p),
+        p => p.date,
+        limit
+    );
     const sub = getSubstance(substanceId);
     const unit = sub?.defaultUnit || 'units';
     const cur = getCurrencySymbol();
-    return weeks.map(ws => {
-        const we = addDaysToDateStr(ws, 6);
-        const weekPurchases = purchases.filter(p => p.date >= ws && p.date <= we);
-        const purchased = weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
+    return baseRows.slice().reverse().map(row => {
+        const { weekStart, weekEnd, amount: purchased } = row;
+        const weekPurchases = purchases.filter(p => p.date >= weekStart && p.date <= weekEnd);
         const cost = weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
         const costPerUnit = purchased > 0 ? cost / purchased : null;
-        const weekUsed = getWeeklyUsed(substanceId, ws);
-        const gPerDay = weekUsed > 0 ? weekUsed / 7 : null;
+        const daysInWeek = countDaysInRange(weekStart, weekEnd);
+        const weekUsed = getPersonalUseInRange(substanceId, weekStart, weekEnd)
+            .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
+        const gPerDay = weekUsed > 0 && daysInWeek > 0 ? weekUsed / daysInWeek : null;
         const supplyDuration = gPerDay > 0 ? purchased / gPerDay : null;
         return {
-            weekStart: ws,
-            weekEnd: we,
+            weekStart,
+            weekEnd,
             purchased,
             cost,
             costPerUnit,
             gPerDay,
             supplyDuration,
+            monthRunning: roundTaperValue(getMonthPurchaseTotal(substanceId, weekEnd)),
             unit,
             cur
         };
@@ -8561,6 +8610,7 @@ function renderBuyWeeklySummary(substanceId) {
             case 'startWeek': return formatDate(s.weekStart);
             case 'endWeek': return formatDate(s.weekEnd);
             case 'purchased': return fmtSheetAmount(s.purchased, s.unit);
+            case 'monthRunning': return fmtSheetAmount(s.monthRunning, s.unit);
             case 'cost': return fmtSheetMoney(s.cost, s.cur);
             case 'costPerUnit': return s.costPerUnit != null ? fmtSheetMoney(s.costPerUnit, s.cur) : '—';
             case 'gPerDay': return s.gPerDay != null ? fmtSheetRate(s.gPerDay, s.unit, '/day') : '—';
