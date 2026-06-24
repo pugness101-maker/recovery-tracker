@@ -403,7 +403,7 @@
                                 <label for="use-date" id="use-date-label">Date</label>
                                 <input type="date" id="use-date" required>
                             </div>
-                            <div class="form-group use-log-compact">
+                            <div class="form-group use-log-compact" id="use-start-time-group">
                                 <label for="use-start-time" id="use-start-time-label">Start</label>
                                 <input type="time" id="use-start-time" required>
                             </div>
@@ -427,6 +427,16 @@
                                 <label for="use-unit">Unit</label>
                                 <select id="use-unit" required></select>
                             </div>
+                        </div>
+
+                        <div class="form-group use-log-compact hidden" id="use-weed-product-type-group">
+                            <label for="use-weed-product-type">Product type</label>
+                            <select id="use-weed-product-type">
+                                <option value="bud">Bud</option>
+                                <option value="cart">Cart</option>
+                                <option value="edibles">Edibles</option>
+                                <option value="prerolls">Pre-rolls</option>
+                            </select>
                         </div>
 
                         <div id="use-vape-fields-group" class="use-vape-fields-group hidden">
@@ -458,6 +468,8 @@
                             <input type="text" id="use-gift-party" placeholder="Name">
                         </div>
 
+                        <div id="use-inventory-core-anchor"></div>
+
                         <div class="form-group use-log-compact use-log-notes-group">
                             <label for="use-notes">Notes</label>
                             <textarea id="use-notes" rows="2" placeholder="Optional notes…"></textarea>
@@ -467,19 +479,21 @@
                     <details class="use-log-advanced" id="use-advanced-section">
                         <summary class="use-log-advanced-summary">Advanced options</summary>
                         <div class="use-log-advanced-body">
-                            <div class="form-group use-log-compact">
-                                <label for="use-purchase-link-mode" id="use-purchase-link-label">Use From Inventory</label>
-                                <select id="use-purchase-link-mode" onchange="updateUsePurchaseLinkUI()">
-                                    <option value="auto">Auto-select current supply</option>
-                                    <option value="manual">Manual select purchase</option>
-                                    <option value="none">No linked purchase</option>
-                                </select>
+                            <div id="use-inventory-fields-group">
+                                <div class="form-group use-log-compact">
+                                    <label for="use-purchase-link-mode" id="use-purchase-link-label">Use From Inventory</label>
+                                    <select id="use-purchase-link-mode" onchange="updateUsePurchaseLinkUI()">
+                                        <option value="auto">Auto-select current supply</option>
+                                        <option value="manual">Manual select purchase</option>
+                                        <option value="none">No linked purchase</option>
+                                    </select>
+                                </div>
+                                <div id="use-purchase-manual-wrap" class="form-group use-log-compact hidden">
+                                    <label for="use-purchase-select">Select purchase</label>
+                                    <select id="use-purchase-select"></select>
+                                </div>
+                                <p id="use-purchase-preview" class="use-supply-preview hidden">—</p>
                             </div>
-                            <div id="use-purchase-manual-wrap" class="form-group use-log-compact hidden">
-                                <label for="use-purchase-select">Select purchase</label>
-                                <select id="use-purchase-select"></select>
-                            </div>
-                            <p id="use-purchase-preview" class="use-supply-preview hidden">—</p>
                             <div class="form-group use-log-compact" id="use-count-group">
                                 <label for="use-count">Count (lines/hits/drinks)</label>
                                 <input type="number" id="use-count" min="0" step="1" placeholder="Optional">

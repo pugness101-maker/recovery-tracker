@@ -3790,6 +3790,14 @@ body.locked .bottom-nav {
     gap: 12px;
 }
 
+.use-log-form.is-weed-simple .use-log-advanced {
+    display: none;
+}
+
+.use-log-form.is-weed-simple .use-log-datetime-grid {
+    grid-template-columns: 1fr;
+}
+
 .use-log-entry-toggle {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -4373,6 +4381,14 @@ body.locked .bottom-nav {
     display: flex;
     flex-direction: column;
     gap: 12px;
+}
+
+.use-log-form.is-weed-simple .use-log-advanced {
+    display: none;
+}
+
+.use-log-form.is-weed-simple .use-log-datetime-grid {
+    grid-template-columns: 1fr;
 }
 
 .use-log-entry-toggle {
@@ -5869,7 +5885,10 @@ body.purchase-history-col-resizing {
 .purchase-history-table [data-col="date"] { min-width: 110px; }
 .purchase-history-table [data-col="substance"] { min-width: 140px; }
 .purchase-history-table [data-col="bought"] { min-width: 110px; }
-.purchase-history-table [data-col="remaining"] { min-width: 120px; }
+.purchase-history-table [data-col="remaining"] { min-width: 130px; }
+.purchase-history-table .purchase-remaining-cell {
+    white-space: nowrap;
+}
 .purchase-history-table [data-col="cost"] { min-width: 100px; }
 .purchase-history-table [data-col="store"] { min-width: 140px; }
 .purchase-history-table [data-col="payment"] { min-width: 110px; }
