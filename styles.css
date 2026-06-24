@@ -3798,6 +3798,14 @@ body.locked .bottom-nav {
     grid-template-columns: 1fr;
 }
 
+.use-log-form.is-vape-simple .use-log-advanced {
+    display: none;
+}
+
+.use-log-form.is-vape-simple .use-log-datetime-grid {
+    grid-template-columns: 1fr;
+}
+
 .use-log-entry-toggle {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -4388,6 +4396,14 @@ body.locked .bottom-nav {
 }
 
 .use-log-form.is-weed-simple .use-log-datetime-grid {
+    grid-template-columns: 1fr;
+}
+
+.use-log-form.is-vape-simple .use-log-advanced {
+    display: none;
+}
+
+.use-log-form.is-vape-simple .use-log-datetime-grid {
     grid-template-columns: 1fr;
 }
 
