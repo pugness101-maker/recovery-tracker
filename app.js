@@ -2510,51 +2510,132 @@ function saveTableColumnConfig(tableKey, config) {
     saveData(appData);
 }
 
-function ensureUseStatsConfig(data) {
-    if (!data.settings) data.settings = {};
-    if (!data.settings.useStatsCards) {
-        data.settings.useStatsCards = JSON.parse(JSON.stringify(USE_STATS_DEFAULTS));
-        return;
-    }
-    const stored = data.settings.useStatsCards;
-    const order = Array.isArray(stored.order)
-        ? stored.order.filter(id => USE_STATS_DEFAULTS.order.includes(id))
-        : [];
-    USE_STATS_DEFAULTS.order.forEach(id => {
-        if (!order.includes(id)) order.push(id);
-    });
-    const hidden = Array.isArray(stored.hidden)
-        ? stored.hidden.filter(id => USE_STATS_DEFAULTS.order.includes(id))
-        : [...USE_STATS_DEFAULTS.hidden];
-    data.settings.useStatsCards = { order, hidden };
+function getUseStatsDefaultsForSubstance(substanceId) {
+    if (isVapeNicotineSubstanceId(substanceId)) return USE_STATS_VAPE_DEFAULTS;
+    if (isWeedTrackingMode(substanceId)) return USE_STATS_WEED_DEFAULTS;
+    return USE_STATS_COKE_DEFAULTS;
 }
 
-function getUseStatsConfig() {
-    ensureUseStatsConfig(appData);
-    return appData.settings.useStatsCards;
+function getExcludedStatIdsForSubstance(substanceId) {
+    if (isVapeNicotineSubstanceId(substanceId)) return VAPE_EXCLUDED_USE_STAT_IDS;
+    if (isWeedTrackingMode(substanceId)) {
+        return new Set([...WEED_EXCLUDED_USE_STAT_IDS, ...VAPE_ONLY_USE_STAT_IDS]);
+    }
+    return new Set(VAPE_ONLY_USE_STAT_IDS);
+}
+
+function loadUseStatsLayoutStore() {
+    try {
+        const raw = localStorage.getItem(USE_STATS_LAYOUT_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : {};
+    } catch {
+        return {};
+    }
+}
+
+function saveUseStatsLayoutStore(store) {
+    localStorage.setItem(USE_STATS_LAYOUT_STORAGE_KEY, JSON.stringify(store));
+}
+
+function layoutFromDefaults(substanceId) {
+    const defaults = getUseStatsDefaultsForSubstance(substanceId);
+    const catalog = getUseStatsCatalogForSubstance(substanceId);
+    const excluded = getExcludedStatIdsForSubstance(substanceId);
+    const hidden = new Set(defaults.hidden || []);
+    const order = [];
+    (defaults.order || []).forEach(id => {
+        if (catalog.includes(id) && !order.includes(id)) order.push(id);
+    });
+    catalog.forEach(id => {
+        if (!order.includes(id)) order.push(id);
+    });
+    const enabled = order.filter(id => !hidden.has(id) && !excluded.has(id));
+    return { enabled, order };
+}
+
+function normalizeUseStatsLayout(layout, substanceId) {
+    const catalog = getUseStatsCatalogForSubstance(substanceId);
+    const excluded = getExcludedStatIdsForSubstance(substanceId);
+    const defaults = getUseStatsDefaultsForSubstance(substanceId);
+
+    let order = Array.isArray(layout?.order) ? layout.order.filter(id => catalog.includes(id)) : [];
+    catalog.forEach(id => {
+        if (!order.includes(id)) order.push(id);
+    });
+    (defaults.order || []).forEach(id => {
+        if (catalog.includes(id) && !order.includes(id)) order.push(id);
+    });
+
+    let enabled = Array.isArray(layout?.enabled)
+        ? layout.enabled.filter(id => catalog.includes(id) && !excluded.has(id))
+        : [];
+    if (!enabled.length) {
+        const hidden = new Set(defaults.hidden || []);
+        enabled = order.filter(id => !hidden.has(id) && !excluded.has(id));
+    }
+    enabled = order.filter(id => enabled.includes(id));
+
+    return { enabled, order };
+}
+
+function getUseStatsLayout(substanceId) {
+    let sid = substanceId;
+    if (!sid || sid === DASHBOARD_ALL) {
+        sid = getMainSubstanceId() || getActiveSubstances()[0]?.id;
+    }
+    if (!sid) return { enabled: [], order: [] };
+    const store = loadUseStatsLayoutStore();
+    if (store[sid]) return normalizeUseStatsLayout(store[sid], sid);
+    return layoutFromDefaults(sid);
+}
+
+function saveUseStatsLayout(substanceId, layout) {
+    if (!substanceId || substanceId === DASHBOARD_ALL) return;
+    const store = loadUseStatsLayoutStore();
+    store[substanceId] = normalizeUseStatsLayout(layout, substanceId);
+    saveUseStatsLayoutStore(store);
+}
+
+function migrateLegacyUseStatsLayoutIfNeeded(data = appData) {
+    const store = loadUseStatsLayoutStore();
+    if (Object.keys(store).length) return;
+    const legacy = data?.settings?.useStatsCards;
+    if (!legacy) return;
+    const mainId = getMainSubstanceId() || 'coke';
+    const hidden = new Set(legacy.hidden || []);
+    const order = Array.isArray(legacy.order) ? [...legacy.order] : [];
+    const catalog = getUseStatsCatalogForSubstance(mainId);
+    const enabled = order.filter(id => catalog.includes(id) && !hidden.has(id));
+    if (enabled.length) {
+        saveUseStatsLayout(mainId, { enabled, order });
+    }
+}
+
+function ensureUseStatsConfig(data) {
+    if (!data.settings) data.settings = {};
+    migrateLegacyUseStatsLayoutIfNeeded(data);
+}
+
+function getUseStatsConfig(substanceId = currentSubstanceId) {
+    const layout = getUseStatsLayout(substanceId);
+    return {
+        order: layout.order,
+        hidden: layout.order.filter(id => !layout.enabled.includes(id))
+    };
 }
 
 function getVisibleUseStatsOrder() {
-    const config = getUseStatsConfig();
-    const hidden = new Set(config.hidden || []);
-    const order = [...config.order];
-    USE_STATS_DEFAULTS.order.forEach(id => {
-        if (!order.includes(id)) order.push(id);
-    });
-    return order.filter(id => USE_STATS_DEFAULTS.order.includes(id) && !hidden.has(id));
+    return getVisibleUseStatsOrderForSubstance(currentSubstanceId);
 }
 
-function saveUseStatsConfig(config) {
-    ensureUseStatsConfig(appData);
-    appData.settings.useStatsCards = config;
-    saveData(appData);
+function saveUseStatsConfig(substanceId, layout) {
+    saveUseStatsLayout(substanceId, layout);
 }
 
-function resetUseStatsConfig() {
-    const defaults = isVapeNicotineSubstanceId(currentSubstanceId)
-        ? USE_STATS_VAPE_DEFAULTS
-        : USE_STATS_DEFAULTS;
-    saveUseStatsConfig(JSON.parse(JSON.stringify(defaults)));
+function resetUseStatsConfig(substanceId = currentSubstanceId) {
+    const layout = layoutFromDefaults(substanceId);
+    saveUseStatsLayout(substanceId, layout);
+    return layout;
 }
 
 function openUseStatsSettingsModal() {
@@ -2570,67 +2651,61 @@ function closeUseStatsSettingsModal() {
 function renderUseStatsSettingsList() {
     const list = document.getElementById('use-stats-settings-list');
     if (!list) return;
-    const config = getUseStatsConfig();
-    const hidden = new Set(config.hidden || []);
-    const catalog = getUseStatsCatalogForSubstance(currentSubstanceId);
-    const order = [];
-    [...config.order, ...catalog].forEach(id => {
-        if (catalog.includes(id) && !order.includes(id)) order.push(id);
-    });
+    const substanceId = currentSubstanceId;
+    const layout = getUseStatsLayout(substanceId);
+    const enabledSet = new Set(layout.enabled);
+    const excluded = getExcludedStatIdsForSubstance(substanceId);
 
-    list.innerHTML = order.map(statId => {
-        const checked = !hidden.has(statId) && !VAPE_EXCLUDED_USE_STAT_IDS.has(statId) ? 'checked' : '';
-        const label = getUseStatLabelForSubstance(statId, currentSubstanceId, 'puffs');
-        return `<li class="column-settings-item" draggable="true" data-stat-id="${statId}">
+    list.innerHTML = layout.order
+        .filter(statId => !excluded.has(statId))
+        .map(statId => {
+            const checked = enabledSet.has(statId) ? 'checked' : '';
+            const label = getUseStatLabelForSubstance(statId, substanceId, 'puffs');
+            return `<li class="column-settings-item" draggable="true" data-stat-id="${statId}">
             <span class="column-drag-handle" draggable="true" aria-hidden="true">☰</span>
             <label class="column-settings-label">
                 <input type="checkbox" class="use-stats-settings-visible" data-stat-id="${statId}" ${checked}>
                 ${label}
             </label>
         </li>`;
-    }).join('');
+        }).join('');
 }
 
 function readUseStatsSettingsFromModal() {
     const list = document.getElementById('use-stats-settings-list');
-    if (!list) return getUseStatsConfig();
-    const catalog = new Set(getUseStatsCatalogForSubstance(currentSubstanceId));
-    const modalOrder = [...list.querySelectorAll('.column-settings-item')].map(li => li.dataset.statId);
-    const existing = getUseStatsConfig();
-    const order = [...modalOrder];
-    existing.order.forEach(id => {
-        if (!order.includes(id)) order.push(id);
-    });
-    USE_STATS_DEFAULTS.order.forEach(id => {
-        if (!order.includes(id)) order.push(id);
-    });
-    const hidden = [...(existing.hidden || [])];
+    const substanceId = currentSubstanceId;
+    const catalog = new Set(getUseStatsCatalogForSubstance(substanceId));
+    const excluded = getExcludedStatIdsForSubstance(substanceId);
+    if (!list) return getUseStatsLayout(substanceId);
+
+    const order = [...list.querySelectorAll('.column-settings-item')]
+        .map(li => li.dataset.statId)
+        .filter(id => catalog.has(id) && !excluded.has(id));
+
+    const enabled = [];
     list.querySelectorAll('.use-stats-settings-visible').forEach(input => {
         const statId = input.dataset.statId;
-        if (!catalog.has(statId)) return;
-        if (!input.checked && !hidden.includes(statId)) hidden.push(statId);
-        if (input.checked) {
-            const idx = hidden.indexOf(statId);
-            if (idx >= 0) hidden.splice(idx, 1);
-        }
+        if (!catalog.has(statId) || excluded.has(statId)) return;
+        if (input.checked) enabled.push(statId);
     });
-    if (isVapeNicotineSubstanceId(currentSubstanceId)) {
-        VAPE_EXCLUDED_USE_STAT_IDS.forEach(id => {
-            if (!hidden.includes(id)) hidden.push(id);
-        });
-    }
-    return { order, hidden };
+
+    const enabledOrdered = order.filter(id => enabled.includes(id));
+    return { enabled: enabledOrdered, order };
 }
 
 function applyUseStatsSettingsFromModal() {
-    const config = readUseStatsSettingsFromModal();
-    saveUseStatsConfig(config);
+    const layout = readUseStatsSettingsFromModal();
+    if (!layout.enabled.length) {
+        alert('Keep at least one stat visible.');
+        return;
+    }
+    saveUseStatsLayout(currentSubstanceId, layout);
     closeUseStatsSettingsModal();
     updateStats();
 }
 
 function resetUseStatsSettingsFromModal() {
-    resetUseStatsConfig();
+    resetUseStatsConfig(currentSubstanceId);
     renderUseStatsSettingsList();
     updateStats();
 }
@@ -6362,32 +6437,11 @@ function getUseStatLabelForSubstance(statId, substanceId, unit) {
 }
 
 function getVisibleUseStatsOrderForSubstance(substanceId) {
-    if (isWeedTrackingMode(substanceId)) {
-        const config = getUseStatsConfig();
-        const hidden = new Set(config.hidden || []);
-        WEED_EXCLUDED_USE_STAT_IDS.forEach(id => hidden.add(id));
-        VAPE_ONLY_USE_STAT_IDS.forEach(id => hidden.add(id));
-        const catalog = getUseStatsCatalogForSubstance(substanceId);
-        const order = [];
-        [...config.order, ...catalog].forEach(id => {
-            if (catalog.includes(id) && !order.includes(id)) order.push(id);
-        });
-        const visible = order.filter(id => !hidden.has(id) && catalog.includes(id));
-        return visible.length ? visible : [...catalog];
-    }
-    if (!isVapeNicotineSubstanceId(substanceId)) {
-        return getVisibleUseStatsOrder().filter(id => !VAPE_ONLY_USE_STAT_IDS.includes(id));
-    }
-    const config = getUseStatsConfig();
-    const hidden = new Set(config.hidden || []);
-    VAPE_EXCLUDED_USE_STAT_IDS.forEach(id => hidden.add(id));
-    const catalog = getUseStatsCatalogForSubstance(substanceId);
-    const order = [];
-    [...config.order, ...catalog].forEach(id => {
-        if (catalog.includes(id) && !order.includes(id)) order.push(id);
-    });
-    const visible = order.filter(id => !hidden.has(id) && !VAPE_EXCLUDED_USE_STAT_IDS.has(id));
-    return visible.length ? visible : [...catalog];
+    const layout = getUseStatsLayout(substanceId);
+    const excluded = getExcludedStatIdsForSubstance(substanceId);
+    const visible = layout.order.filter(id => layout.enabled.includes(id) && !excluded.has(id));
+    if (visible.length) return visible;
+    return layoutFromDefaults(substanceId).enabled.filter(id => !excluded.has(id));
 }
 
 function reconcileVapePurchaseLifecycle(purchase, data = appData) {
@@ -10430,6 +10484,7 @@ function setupEventListeners() {
     setupManualBulkLinkListeners();
     setupColumnSettingsModal();
     setupUseStatsSettingsModal();
+    migrateLegacyUseStatsLayoutIfNeeded();
     document.getElementById('taper-form')?.addEventListener('submit', handleTaperSubmit);
     setupSubstanceForm();
     document.getElementById('save-substance-btn')?.addEventListener('click', () => {
