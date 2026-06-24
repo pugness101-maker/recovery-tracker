@@ -4279,6 +4279,19 @@ body.table-col-resizing {
     padding: 0 2px;
 }
 
+.use-duration-preview.use-duration-error {
+    color: var(--danger);
+}
+
+.use-log-datetime-grid.is-coke-session .use-end-time-field.session-end-span {
+    grid-column: auto;
+}
+
+.use-log-datetime-grid.is-coke-session .use-end-date-field:not(.hidden),
+.use-log-datetime-grid.is-coke-session .use-end-time-field:not(.hidden) {
+    grid-column: auto;
+}
+
 .use-taper-banner {
     border-radius: 10px;
     padding: 10px 12px;
@@ -4878,6 +4891,19 @@ body.table-col-resizing {
     color: var(--accent);
     margin: 0;
     padding: 0 2px;
+}
+
+.use-duration-preview.use-duration-error {
+    color: var(--danger);
+}
+
+.use-log-datetime-grid.is-coke-session .use-end-time-field.session-end-span {
+    grid-column: auto;
+}
+
+.use-log-datetime-grid.is-coke-session .use-end-date-field:not(.hidden),
+.use-log-datetime-grid.is-coke-session .use-end-time-field:not(.hidden) {
+    grid-column: auto;
 }
 
 .use-taper-banner {

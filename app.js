@@ -414,6 +414,36 @@ function useTimeToMinutes(timeStr) {
     return (parts[0] || 0) * 60 + (parts[1] || 0);
 }
 
+function timeToMinutes(timeStr) {
+    return useTimeToMinutes(timeStr);
+}
+
+function to24HourTime(timeStr) {
+    return timeStr || '00:00';
+}
+
+function isCokeSubstanceId(substanceId) {
+    return substanceId === 'coke';
+}
+
+function isCokeSessionForm() {
+    const substanceId = document.getElementById('use-substance')?.value || selectedSubstanceId;
+    const type = document.getElementById('use-type')?.value || 'quick';
+    return isCokeSubstanceId(substanceId) && type === 'session';
+}
+
+function shouldShowUseEndDateField() {
+    return isCokeSessionForm();
+}
+
+function inferEndDate(date, startTime, endTime) {
+    if (!date || !startTime || !endTime) return date;
+    if (timeToMinutes(endTime) < timeToMinutes(startTime)) {
+        return addDaysToDateStr(date, 1);
+    }
+    return date;
+}
+
 function repairDataConsistency(data) {
     const stats = {
         logsTransactionTypeFixed: 0,
@@ -434,10 +464,8 @@ function repairDataConsistency(data) {
         }
 
         if (log.startTime && log.endTime && !log.endDate && log.date) {
-            if (useTimeToMinutes(log.endTime) < useTimeToMinutes(log.startTime)) {
-                log.endDate = addDaysToDateStr(log.date, 1);
-                stats.logsEndDateFixed++;
-            }
+            log.endDate = inferEndDate(log.date, log.startTime, log.endTime);
+            if (log.endDate !== log.date) stats.logsEndDateFixed++;
         }
     });
 
@@ -4839,6 +4867,22 @@ function formatDurationHours(hours) {
     return `${m}m`;
 }
 
+function formatUseSessionDurationPreview(hours) {
+    if (hours == null || isNaN(hours) || hours < 0) return '—';
+    const totalMinutes = Math.round(hours * 60);
+    const days = Math.floor(totalMinutes / (24 * 60));
+    const remainder = totalMinutes - days * 24 * 60;
+    const h = Math.floor(remainder / 60);
+    const m = remainder % 60;
+    if (days > 0) {
+        const parts = [`${days}d`];
+        if (h > 0) parts.push(`${h}h`);
+        if (m > 0) parts.push(`${m}m`);
+        return parts.join(' ');
+    }
+    return formatDurationHours(hours);
+}
+
 function formatDurationHMS(hours) {
     if (hours == null || isNaN(hours) || hours < 0) return '—';
     const totalSeconds = Math.round(hours * 3600);
@@ -5563,27 +5607,34 @@ function setDefaultVapeUseLogDate() {
     setDefaultWeedUseLogDate();
 }
 
-function parseUseSessionEndDateTime(startDate, startTime, endDate, endTime) {
-    const start = parseUseDateTime(startDate, startTime);
-    if (!start) return { start: null, end: null };
-    const resolvedEndDate = endDate || startDate;
+function parseUseSessionEndDateTime(startDate, startTime, endDate, endTime, { allowInferOvernight = true } = {}) {
+    const start = getLogStartDateTime({ date: startDate, startTime, time: startTime });
+    if (!start) return { start: null, end: null, invalid: false };
+    const resolvedEndDate = endDate || inferEndDate(startDate, startTime, endTime);
     let end = endTime ? parseUseDateTime(resolvedEndDate, endTime) : null;
-    if (end && end <= start && resolvedEndDate === startDate) {
-        end = new Date(end);
-        end.setDate(end.getDate() + 1);
+    if (!end) return { start, end: null, invalid: false };
+    if (end <= start) {
+        if (allowInferOvernight && !endDate && resolvedEndDate === startDate) {
+            end = new Date(end);
+            end.setDate(end.getDate() + 1);
+        } else {
+            return { start, end, invalid: true };
+        }
     }
-    return { start, end };
+    return { start, end, invalid: false };
 }
 
-function getUseLogStartedAt(log) {
+function getLogStartDateTime(log) {
     if (log?.startedAt) {
         const d = new Date(log.startedAt);
         if (!Number.isNaN(d.getTime())) return d;
     }
-    return parseUseDateTime(log?.date, log?.startTime || log?.time);
+    const startTime = log?.startTime || log?.time;
+    if (!log?.date || !startTime) return null;
+    return parseUseDateTime(log.date, startTime);
 }
 
-function getUseLogEndedAt(log) {
+function getLogEndDateTime(log) {
     if (log?.endedAt) {
         const d = new Date(log.endedAt);
         if (!Number.isNaN(d.getTime())) return d;
@@ -5592,28 +5643,44 @@ function getUseLogEndedAt(log) {
         const d = new Date(log.endDatetime);
         if (!Number.isNaN(d.getTime())) return d;
     }
-    const endDate = log?.endDate || log?.date;
-    if (log?.endTime) {
-        const end = parseUseDateTime(endDate, log.endTime);
-        const start = getUseLogStartedAt(log);
-        if (end && start && end <= start) {
-            end.setDate(end.getDate() + 1);
-        }
-        return end;
+    if (!log?.endTime) return null;
+    const startTime = log.startTime || log.time;
+    const endDate = log.endDate || inferEndDate(log.date, startTime, log.endTime);
+    return parseUseDateTime(endDate, log.endTime);
+}
+
+function getUseLogStartedAt(log) {
+    return getLogStartDateTime(log);
+}
+
+function getUseLogEndedAt(log) {
+    return getLogEndDateTime(log);
+}
+
+function syncCokeSessionEndDateDefault({ fromStartDateChange = false } = {}) {
+    if (!shouldShowUseEndDateField()) return;
+    const startDate = document.getElementById('use-date')?.value;
+    const startTime = document.getElementById('use-start-time')?.value;
+    const endTime = document.getElementById('use-end-time')?.value;
+    const endDateEl = document.getElementById('use-end-date');
+    if (!startDate || !endDateEl) return;
+
+    if (fromStartDateChange) {
+        delete endDateEl.dataset.manual;
     }
-    return null;
+
+    const isManual = endDateEl.dataset.manual === '1';
+    if (!isManual) {
+        endDateEl.value = startDate;
+        endDateEl.dataset.syncedStart = startDate;
+        if (startTime && endTime && timeToMinutes(endTime) < timeToMinutes(startTime)) {
+            endDateEl.value = addDaysToDateStr(startDate, 1);
+        }
+    }
 }
 
 function syncVapeEndDateDefault() {
-    if (!isVapeSessionFormActive() || isVapeDateOnlyUseForm()) return;
-    const startDate = document.getElementById('use-date')?.value;
-    const endDateEl = document.getElementById('use-end-date');
-    if (!startDate || !endDateEl) return;
-    const prevSynced = endDateEl.dataset.syncedStart;
-    if (!endDateEl.value || endDateEl.value === prevSynced) {
-        endDateEl.value = startDate;
-    }
-    endDateEl.dataset.syncedStart = startDate;
+    syncCokeSessionEndDateDefault();
 }
 
 function ensureVapeUseFormDefaults() {
@@ -5842,6 +5909,7 @@ function buildUseEntryFromForm(vapeCalc = null) {
     const endDate = (isWeedSimple || isVapeDateOnly) ? null : (document.getElementById('use-end-date')?.value || date);
     const endTime = (isWeedSimple || isVapeDateOnly) ? '' : (document.getElementById('use-end-time')?.value || '');
     const isVapeUse = isVapeDateOnly;
+    const isCokeSession = isCokeSubstanceId(substanceId) && type === 'session';
 
     let amount;
     let unit;
@@ -5905,6 +5973,18 @@ function buildUseEntryFromForm(vapeCalc = null) {
         base.percentLeftAfter = vapeCalc.percentAfter;
         base.remainingPuffsAfter = vapeCalc.currentRemaining;
         base.estimatedPuffsUsed = vapeCalc.estimatedPuffsUsed ?? vapeCalc.puffsUsed;
+    }
+
+    if (isCokeSession && endTime) {
+        const { start, end, invalid } = parseUseSessionEndDateTime(date, startTime, endDate || date, endTime, {
+            allowInferOvernight: false
+        });
+        if (!invalid && start && end) {
+            base.startedAt = start.toISOString();
+            base.endedAt = end.toISOString();
+            base.durationMs = end - start;
+            base.endDate = endDate || date;
+        }
     }
 
     return base;
@@ -7295,11 +7375,6 @@ function updateVapeUseFormUI() {
     document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isVape || isWeed || isNonUse);
     document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', isVape);
     document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape);
-    document.getElementById('use-end-date-group')?.classList.add('hidden');
-    document.getElementById('use-end-time-group')?.classList.toggle('hidden', isWeed || isVape || (
-        (document.getElementById('use-type')?.value || 'quick') !== 'session'
-        && !isNonUse
-    ));
 
     const dateLabel = document.getElementById('use-date-label');
     if (dateLabel) dateLabel.textContent = 'Date';
@@ -7350,6 +7425,10 @@ function updateVapeUseFormUI() {
     countGroup?.classList.toggle('hidden', !shouldShowUseCountForSubstance(substanceId) || isVapeUse || isWeed);
     if (isVapeUse) {
         updateVapeUsePreview();
+    }
+
+    if (!isWeed && !isVape) {
+        updateUseEndTimeVisibility();
     }
 }
 
@@ -8261,8 +8340,21 @@ function editUseEntry(id) {
         updateVapeUseFormUI();
     } else {
         setInputValue('use-start-time', entry.startTime || entry.time || '12:00');
-        setInputValue('use-end-date', entry.endDate || entry.date || '');
+        const inferredEndDate = entry.endDate
+            || inferEndDate(entry.date, entry.startTime || entry.time, entry.endTime)
+            || entry.date
+            || '';
+        setInputValue('use-end-date', inferredEndDate);
         setInputValue('use-end-time', entry.endTime || '');
+        const endDateEl = document.getElementById('use-end-date');
+        if (endDateEl) {
+            endDateEl.dataset.syncedStart = entry.date || '';
+            if (entry.endDate && entry.endDate !== entry.date) {
+                endDateEl.dataset.manual = '1';
+            } else {
+                delete endDateEl.dataset.manual;
+            }
+        }
         if (entry.startedAt) {
             const started = new Date(entry.startedAt);
             if (!Number.isNaN(started.getTime())) {
@@ -8344,6 +8436,9 @@ function editUseEntry(id) {
 
     setUseFormSubmitLabel('Update Entry');
     document.getElementById('cancel-use-edit-btn')?.classList.remove('hidden');
+    if (!isWeed && !isVape) {
+        updateUseEndTimeVisibility();
+    }
     computeUseFormDuration();
     switchTab('use-log-tab');
     document.getElementById('use-log-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
@@ -8486,11 +8581,18 @@ function updateUseEndTimeVisibility() {
     const isNonUse = isNonUseTransactionType(tx);
     const type = document.getElementById('use-type')?.value || 'quick';
     const showEnd = type === 'session' || isNonUse;
+    const showEndDate = shouldShowUseEndDateField();
     document.getElementById('use-end-time-group')?.classList.toggle('hidden', !showEnd);
-    document.getElementById('use-end-date-group')?.classList.add('hidden');
+    document.getElementById('use-end-date-group')?.classList.toggle('hidden', !showEndDate);
+    document.getElementById('use-datetime-grid')?.classList.toggle('is-coke-session', showEndDate);
+    const startLabel = document.getElementById('use-start-time-label');
+    if (startLabel) startLabel.textContent = showEndDate ? 'Start time' : 'Start';
     document.querySelectorAll('.use-end-time-field').forEach(el => {
-        el.classList.toggle('session-end-span', showEnd && !isNonUse && type === 'session');
+        el.classList.toggle('session-end-span', showEnd && !isNonUse && type === 'session' && !showEndDate);
     });
+    if (showEndDate) {
+        syncCokeSessionEndDateDefault();
+    }
 }
 
 function setUseLogType(type) {
@@ -8509,6 +8611,7 @@ function setUseLogType(type) {
     }
     updateUseEndTimeVisibility();
     computeUseFormDuration();
+    syncCokeSessionEndDateDefault();
 }
 
 function setDefaultUseLogDateTime() {
@@ -8535,13 +8638,14 @@ function setupUseLogForm() {
     document.getElementById('use-substance')?.addEventListener('change', () => {
         updateUseUnitDropdown();
         updateUsePurchaseLinkUI();
+        updateVapeUseFormUI();
     });
     document.getElementById('use-unit')?.addEventListener('change', () => {
         updateVapeUseFormUI();
     });
     ['use-amount', 'use-date', 'use-end-date', 'use-percent-after', 'use-vape-puffs-used'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', () => {
-            if (id === 'use-date') syncVapeEndDateDefault();
+            if (id === 'use-date') syncCokeSessionEndDateDefault({ fromStartDateChange: true });
             updateUsePurchaseLinkUI();
             updateVapeUsePreview();
             computeUseFormDuration();
@@ -8555,14 +8659,17 @@ function setupUseLogForm() {
         updateVapeUsePreview();
     });
     document.getElementById('use-start-time')?.addEventListener('change', () => {
+        syncCokeSessionEndDateDefault();
         computeUseFormDuration();
         updateVapeUsePreview();
     });
     document.getElementById('use-end-time')?.addEventListener('change', () => {
+        syncCokeSessionEndDateDefault();
         computeUseFormDuration();
         updateVapeUsePreview();
     });
-    document.getElementById('use-end-date')?.addEventListener('change', () => {
+    document.getElementById('use-end-date')?.addEventListener('change', (e) => {
+        if (e.target?.dataset) e.target.dataset.manual = '1';
         computeUseFormDuration();
         updateVapeUsePreview();
     });
@@ -8594,20 +8701,32 @@ function computeUseFormDuration() {
     const end = document.getElementById('use-end-time')?.value;
     const preview = document.getElementById('use-duration-preview');
     if (!preview) return;
-    const showForVape = false;
     const showForSession = (document.getElementById('use-type')?.value || 'quick') === 'session';
-    if (!startDate || !start || !end || (!showForVape && !showForSession)) {
+    if (!startDate || !start || !end || !showForSession) {
         preview.classList.add('hidden');
+        preview.classList.remove('use-duration-error');
         return;
     }
-    const { start: s, end: e } = parseUseSessionEndDateTime(startDate, start, endDate, end);
+    const { start: s, end: e, invalid } = parseUseSessionEndDateTime(
+        startDate,
+        start,
+        endDate,
+        end,
+        { allowInferOvernight: !shouldShowUseEndDateField() }
+    );
     if (!s || !e) {
         preview.classList.add('hidden');
+        preview.classList.remove('use-duration-error');
         return;
     }
-    const hours = (e - s) / 3600000;
-    preview.textContent = `Duration: ${formatDurationHours(hours)}`;
-    preview.classList.remove('hidden');
+    if (invalid || e <= s) {
+        preview.textContent = 'End date/time is before start date/time.';
+        preview.classList.remove('hidden');
+        preview.classList.add('use-duration-error');
+        return;
+    }
+    preview.textContent = `Duration: ${formatUseSessionDurationPreview((e - s) / 3600000)}`;
+    preview.classList.remove('hidden', 'use-duration-error');
 }
 
 function getQuickLogSubstanceId() {
@@ -8743,6 +8862,22 @@ function handleUseLogSubmit(e) {
     const eventTimestamp = getUseEventTimestamp(payload.date, payload.startTime);
     const now = new Date().toISOString();
     const useVapeInventory = isVapeUse && vapeCalc?.purchase && payload.inventoryAffects;
+
+    if (isCokeSubstanceId(substanceId) && type === 'session') {
+        if (!payload.endTime) {
+            return alert('End time is required for coke sessions.');
+        }
+        const { start, end, invalid } = parseUseSessionEndDateTime(
+            payload.date,
+            payload.startTime,
+            payload.endDate || payload.date,
+            payload.endTime,
+            { allowInferOvernight: false }
+        );
+        if (invalid || !start || !end || end <= start) {
+            return alert('End date/time is before start date/time.');
+        }
+    }
 
     if (!confirmTaperBeforeLog(substanceId, amount, type === 'quick', editingUseId, transactionType, payload.date)) return;
 
@@ -10322,7 +10457,7 @@ function escapeHtml(str) {
 }
 
 function getLogSupplyStartDate(log) {
-    return parseUseDateTime(log.date, log.startTime || log.time);
+    return getLogStartDateTime(log);
 }
 
 function computeSupplyDurationMetrics(logs) {
@@ -12136,13 +12271,9 @@ function getStatsChartGrouping(startDate, endDate) {
 
 function calculateSessionDurationMinutes(log) {
     if (isWeedDateOnlyUseLog(log)) return null;
-    if (!log?.endTime) return null;
-    const startTime = log.startTime || log.time;
-    if (!startTime || !log.date) return null;
-    const start = parseUseDateTime(log.date, startTime);
-    let end = parseUseDateTime(log.date, log.endTime);
+    const start = getLogStartDateTime(log);
+    const end = getLogEndDateTime(log);
     if (!start || !end) return null;
-    if (end < start) end.setDate(end.getDate() + 1);
     const minutes = (end - start) / 60000;
     return minutes >= 0 ? minutes : null;
 }
