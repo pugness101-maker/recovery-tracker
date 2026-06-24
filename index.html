@@ -1,16 +1,41 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Recovery Tracker</title>
+    <script>
+        (function () {
+            var key = 'recoveryTracker.themePreference';
+            var pref = 'dark';
+            try {
+                var saved = localStorage.getItem(key);
+                if (saved === 'dark' || saved === 'light' || saved === 'system') pref = saved;
+            } catch (e) { /* ignore */ }
+            var resolved = 'dark';
+            if (pref === 'light') {
+                resolved = 'light';
+            } else if (pref === 'system') {
+                resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            document.documentElement.dataset.theme = resolved;
+        })();
+    </script>
     <link rel="stylesheet" href="styles.css">
     <style>
-        /* Fallback styles to ensure page is visible */
+        /* Fallback styles to ensure page is visible before CSS loads */
+        html[data-theme="light"] body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f6f7f8;
+            color: #1d1d1f;
+            margin: 0;
+            padding: 0;
+        }
+        html[data-theme="dark"] body,
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #121212;
-            color: #ffffff;
+            background: #0f0f0f;
+            color: #f5f5f5;
             margin: 0;
             padding: 0;
         }
@@ -1169,47 +1194,75 @@
 
                 <div class="inventory-tab-bar">
                     <button type="button" class="inventory-tab-btn active" data-inventory-tab="active" onclick="setInventoryTab('active')">Active</button>
-                    <button type="button" class="inventory-tab-btn" data-inventory-tab="stored" onclick="setInventoryTab('stored')">Stored</button>
                     <button type="button" class="inventory-tab-btn" data-inventory-tab="depleted" onclick="setInventoryTab('depleted')">Depleted</button>
                     <button type="button" class="inventory-tab-btn" data-inventory-tab="hidden" onclick="setInventoryTab('hidden')">Hidden</button>
                     <button type="button" class="inventory-tab-btn" data-inventory-tab="all" onclick="setInventoryTab('all')">All</button>
                 </div>
 
-                <div class="inventory-filters-bar">
-                    <input type="search" id="inventory-search" class="inventory-search-input" placeholder="Search store, notes, substance…" oninput="applyInventorySearchFilters()">
-                    <input type="date" id="inventory-filter-date-start" onchange="applyInventorySearchFilters()" title="From date">
-                    <input type="date" id="inventory-filter-date-end" onchange="applyInventorySearchFilters()" title="To date">
-                    <select id="inventory-filter-status" onchange="applyInventorySearchFilters()">
-                        <option value="">Any status</option>
-                        <option value="active">Active</option>
-                        <option value="stored">Stored</option>
-                        <option value="depleted">Depleted</option>
-                        <option value="hidden">Hidden</option>
-                    </select>
-                    <select id="inventory-filter-payment" onchange="applyInventorySearchFilters()">
-                        <option value="">Any payment</option>
-                        <option value="Cash">Cash</option>
-                        <option value="Card">Card</option>
-                        <option value="Apple Pay">Apple Pay</option>
-                        <option value="Other">Other</option>
-                    </select>
-                    <select id="inventory-filter-remaining" onchange="applyInventorySearchFilters()">
-                        <option value="">Any remaining</option>
-                        <option value="yes">Has remaining</option>
-                        <option value="no">No remaining</option>
-                    </select>
-                    <select id="inventory-filter-cost" onchange="applyInventorySearchFilters()">
-                        <option value="">Any cost</option>
-                        <option value="yes">Has cost</option>
-                        <option value="no">No cost</option>
-                    </select>
-                    <label class="inventory-filter-check"><input type="checkbox" id="inventory-filter-vape-only" onchange="applyInventorySearchFilters()"> Vape only</label>
-                </div>
+                <section class="inventory-filter-card">
+                    <button type="button" id="inventory-filter-toggle" class="inventory-filter-toggle section-toggle" onclick="toggleInventoryFiltersPanel()">
+                        <span>Search &amp; Filters</span>
+                        <span id="inventory-filter-count"></span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div id="inventory-filter-chips" class="inventory-filter-chips hidden"></div>
+                    <div id="inventory-filter-panel" class="inventory-filter-panel hidden">
+                        <div class="inventory-filter-grid">
+                            <input type="search" id="inventory-search" class="inventory-search-input" placeholder="Search store, notes, substance…" oninput="applyInventorySearchFilters()">
+                            <div class="inventory-filter-field">
+                                <label for="inventory-filter-date-start">From date</label>
+                                <input type="date" id="inventory-filter-date-start" onchange="applyInventorySearchFilters()">
+                            </div>
+                            <div class="inventory-filter-field">
+                                <label for="inventory-filter-date-end">To date</label>
+                                <input type="date" id="inventory-filter-date-end" onchange="applyInventorySearchFilters()">
+                            </div>
+                            <div class="inventory-filter-field">
+                                <label for="inventory-filter-status">Status</label>
+                                <select id="inventory-filter-status" onchange="applyInventorySearchFilters()">
+                                    <option value="">Any status</option>
+                                    <option value="active">Active</option>
+                                    <option value="depleted">Depleted</option>
+                                    <option value="hidden">Hidden</option>
+                                </select>
+                            </div>
+                            <div class="inventory-filter-field">
+                                <label for="inventory-filter-payment">Payment</label>
+                                <select id="inventory-filter-payment" onchange="applyInventorySearchFilters()">
+                                    <option value="">Any payment</option>
+                                    <option value="Cash">Cash</option>
+                                    <option value="Card">Card</option>
+                                    <option value="Apple Pay">Apple Pay</option>
+                                    <option value="Other">Other</option>
+                                </select>
+                            </div>
+                            <div class="inventory-filter-field">
+                                <label for="inventory-filter-remaining">Remaining</label>
+                                <select id="inventory-filter-remaining" onchange="applyInventorySearchFilters()">
+                                    <option value="">Any remaining</option>
+                                    <option value="yes">Has remaining</option>
+                                    <option value="no">No remaining</option>
+                                </select>
+                            </div>
+                            <div class="inventory-filter-field">
+                                <label for="inventory-filter-cost">Cost</label>
+                                <select id="inventory-filter-cost" onchange="applyInventorySearchFilters()">
+                                    <option value="">Any cost</option>
+                                    <option value="yes">Has cost</option>
+                                    <option value="no">No cost</option>
+                                </select>
+                            </div>
+                            <label class="inventory-filter-check"><input type="checkbox" id="inventory-filter-vape-only" onchange="applyInventorySearchFilters()"> Vape only</label>
+                            <div class="inventory-filter-actions">
+                                <button type="button" class="secondary-btn btn-sm" onclick="clearInventoryFilters()">Clear Filters</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
 
                 <div class="inventory-bulk-bar">
                     <span class="inventory-bulk-label">Bulk:</span>
                     <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('active')">Mark Active</button>
-                    <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('stored')">Mark Stored</button>
                     <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('depleted')">Mark Depleted</button>
                     <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('hide')">Hide</button>
                     <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('unhide')">Unhide</button>
@@ -1456,6 +1509,27 @@
             <!-- Settings Tab -->
             <section id="settings-tab" class="tab">
                 <h2>Settings</h2>
+
+                <div class="collapsible-section" data-section="settingsAppearance">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsAppearance')">
+                        <span>Appearance</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section">
+                    <div class="form-group">
+                        <label for="theme-preference">Theme</label>
+                        <select id="theme-preference" onchange="setThemePreference(this.value)">
+                            <option value="dark">Dark</option>
+                            <option value="light">Light</option>
+                            <option value="system">System</option>
+                        </select>
+                    </div>
+                    <p id="theme-preview-text" class="settings-hint theme-preview-text">Current theme: Dark</p>
+                    <p id="theme-system-note" class="settings-hint theme-system-note hidden"></p>
+                </div>
+                    </div>
+                </div>
 
                 <div class="collapsible-section" data-section="settingsSubstances">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsSubstances')">
