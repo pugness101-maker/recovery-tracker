@@ -4546,6 +4546,20 @@ body.table-col-resizing {
     line-height: 1.35;
 }
 
+.use-recent-date {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-top: 4px;
+    line-height: 1.35;
+}
+
+.use-recent-time,
+.use-recent-amount-line {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.35;
+}
+
 .use-recent-detail,
 .use-recent-supply {
     font-size: 0.78rem;
@@ -5154,6 +5168,20 @@ body.table-col-resizing {
 }
 
 .use-recent-sub {
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    line-height: 1.35;
+}
+
+.use-recent-date {
+    font-size: 0.9rem;
+    font-weight: 600;
+    margin-top: 4px;
+    line-height: 1.35;
+}
+
+.use-recent-time,
+.use-recent-amount-line {
     font-size: 0.82rem;
     color: var(--text-secondary);
     line-height: 1.35;
