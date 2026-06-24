@@ -156,6 +156,55 @@
                 </div>
                 <p id="dash-inventory-warning" class="dash-inventory-warning hidden" role="status"></p>
 
+                <div id="vape-dashboard-section" class="hidden vape-dashboard-section">
+                    <h3 class="dash-card-title">Vape / Nicotine</h3>
+                    <div class="vape-dash-grid">
+                        <div class="dash-card vape-dash-card">
+                            <h4>Active Vape</h4>
+                            <div class="vape-dash-rows">
+                                <div class="vape-dash-row"><span>Name</span><strong id="vape-dash-name">—</strong></div>
+                                <div class="vape-dash-row"><span>Purchase date</span><strong id="vape-dash-purchase-date">—</strong></div>
+                                <div class="vape-dash-row"><span>Started</span><strong id="vape-dash-started">—</strong></div>
+                                <div class="vape-dash-row"><span>Full puff count</span><strong id="vape-dash-full-puffs">—</strong></div>
+                                <div class="vape-dash-row"><span>Puffs left</span><strong id="vape-dash-puffs-left">—</strong></div>
+                                <div class="vape-dash-row"><span>Percent left</span><strong id="vape-dash-percent-left">—</strong></div>
+                                <div class="vape-dash-row"><span>Status</span><strong id="vape-dash-status" class="vape-dash-status">—</strong></div>
+                            </div>
+                        </div>
+                        <div class="dash-card vape-dash-card">
+                            <h4>Usage</h4>
+                            <div class="vape-dash-rows">
+                                <div class="vape-dash-row"><span>Week puffs</span><strong id="vape-dash-week-puffs">—</strong></div>
+                                <div class="vape-dash-row"><span>Month puffs</span><strong id="vape-dash-month-puffs">—</strong></div>
+                                <div class="vape-dash-row"><span>Avg puffs/day</span><strong id="vape-dash-avg-day">—</strong></div>
+                                <div class="vape-dash-row"><span>Avg puffs/session</span><strong id="vape-dash-avg-session">—</strong></div>
+                                <div class="vape-dash-row"><span>Last log</span><strong id="vape-dash-last-log">—</strong></div>
+                                <div class="vape-dash-row"><span>Est. daily (percent logs)</span><strong id="vape-dash-est-daily">—</strong></div>
+                            </div>
+                        </div>
+                        <div class="dash-card vape-dash-card">
+                            <h4>Cost</h4>
+                            <div class="vape-dash-rows">
+                                <div class="vape-dash-row"><span>Avg cost/vape</span><strong id="vape-dash-avg-cost-vape">—</strong></div>
+                                <div class="vape-dash-row"><span>Cost/day</span><strong id="vape-dash-cost-day">—</strong></div>
+                                <div class="vape-dash-row"><span>Cost / 1,000 puffs</span><strong id="vape-dash-cost-1k">—</strong></div>
+                                <div class="vape-dash-row"><span>Month spend</span><strong id="vape-dash-month-spend">—</strong></div>
+                                <div class="vape-dash-row"><span>All-time spend</span><strong id="vape-dash-all-spend">—</strong></div>
+                            </div>
+                        </div>
+                        <div class="dash-card vape-dash-card">
+                            <h4>Nicotine Estimate</h4>
+                            <p class="settings-hint">Estimate based on mL and mg/mL</p>
+                            <div class="vape-dash-rows">
+                                <div class="vape-dash-row"><span>Total mg/vape</span><strong id="vape-dash-total-nic">—</strong></div>
+                                <div class="vape-dash-row"><span>Est. mg used</span><strong id="vape-dash-nic-used">—</strong></div>
+                                <div class="vape-dash-row"><span>Avg mg/day</span><strong id="vape-dash-nic-day">—</strong></div>
+                                <div class="vape-dash-row"><span>Est. mg left</span><strong id="vape-dash-nic-left">—</strong></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div id="dash-next-action" class="dash-card dash-next-action-card dash-next-action-steady"></div>
 
                 <!-- Legacy today detail (hidden, for JS compatibility) -->
@@ -381,9 +430,25 @@
                         </div>
 
                         <div id="use-vape-fields-group" class="use-vape-fields-group hidden">
-                            <div class="form-group use-log-compact">
-                                <label for="use-percent-after">Current % left after this use</label>
+                            <div id="use-vape-purchase-block" class="hidden">
+                                <div class="form-group use-log-compact">
+                                    <label for="use-vape-purchase-select">Active vape</label>
+                                    <select id="use-vape-purchase-select" onchange="updateVapePurchaseSelectDetails()"></select>
+                                </div>
+                                <p id="use-vape-purchase-detail" class="use-supply-preview">—</p>
+                                <div class="use-vape-mode-toggle">
+                                    <button type="button" class="use-vape-mode-btn active" data-vape-mode="percent" onclick="setVapeLogInputMode('percent')">Log by percent left</button>
+                                    <button type="button" class="use-vape-mode-btn" data-vape-mode="puffs" onclick="setVapeLogInputMode('puffs')">Log by puffs used</button>
+                                </div>
+                                <input type="hidden" id="use-vape-log-mode" value="percent">
+                            </div>
+                            <div id="use-vape-percent-group" class="form-group use-log-compact">
+                                <label for="use-percent-after">Percent Left After</label>
                                 <input type="number" id="use-percent-after" min="0" max="100" step="0.1" placeholder="e.g. 85">
+                            </div>
+                            <div id="use-vape-puffs-group" class="form-group use-log-compact hidden">
+                                <label for="use-vape-puffs-used">Puffs used</label>
+                                <input type="number" id="use-vape-puffs-used" min="0" step="1" placeholder="e.g. 12">
                             </div>
                             <p id="use-vape-preview" class="use-supply-preview">—</p>
                         </div>
@@ -980,6 +1045,61 @@
                 <h2>Inventory</h2>
                 <p class="settings-hint">Track inventory purchases — amount bought, remaining, cost, and notes.</p>
 
+                <div id="inventory-summary-cards" class="inventory-summary-wrap"></div>
+
+                <div class="inventory-tab-bar">
+                    <button type="button" class="inventory-tab-btn active" data-inventory-tab="active" onclick="setInventoryTab('active')">Active</button>
+                    <button type="button" class="inventory-tab-btn" data-inventory-tab="stored" onclick="setInventoryTab('stored')">Stored</button>
+                    <button type="button" class="inventory-tab-btn" data-inventory-tab="depleted" onclick="setInventoryTab('depleted')">Depleted</button>
+                    <button type="button" class="inventory-tab-btn" data-inventory-tab="hidden" onclick="setInventoryTab('hidden')">Hidden</button>
+                    <button type="button" class="inventory-tab-btn" data-inventory-tab="all" onclick="setInventoryTab('all')">All</button>
+                </div>
+
+                <div class="inventory-filters-bar">
+                    <input type="search" id="inventory-search" class="inventory-search-input" placeholder="Search store, notes, substance…" oninput="applyInventorySearchFilters()">
+                    <select id="inventory-filter-substance" onchange="applyInventorySearchFilters()">
+                        <option value="">All substances</option>
+                    </select>
+                    <input type="date" id="inventory-filter-date-start" onchange="applyInventorySearchFilters()" title="From date">
+                    <input type="date" id="inventory-filter-date-end" onchange="applyInventorySearchFilters()" title="To date">
+                    <select id="inventory-filter-status" onchange="applyInventorySearchFilters()">
+                        <option value="">Any status</option>
+                        <option value="active">Active</option>
+                        <option value="stored">Stored</option>
+                        <option value="depleted">Depleted</option>
+                        <option value="hidden">Hidden</option>
+                    </select>
+                    <select id="inventory-filter-payment" onchange="applyInventorySearchFilters()">
+                        <option value="">Any payment</option>
+                        <option value="Cash">Cash</option>
+                        <option value="Card">Card</option>
+                        <option value="Apple Pay">Apple Pay</option>
+                        <option value="Other">Other</option>
+                    </select>
+                    <select id="inventory-filter-remaining" onchange="applyInventorySearchFilters()">
+                        <option value="">Any remaining</option>
+                        <option value="yes">Has remaining</option>
+                        <option value="no">No remaining</option>
+                    </select>
+                    <select id="inventory-filter-cost" onchange="applyInventorySearchFilters()">
+                        <option value="">Any cost</option>
+                        <option value="yes">Has cost</option>
+                        <option value="no">No cost</option>
+                    </select>
+                    <label class="inventory-filter-check"><input type="checkbox" id="inventory-filter-vape-only" onchange="applyInventorySearchFilters()"> Vape only</label>
+                </div>
+
+                <div class="inventory-bulk-bar">
+                    <span class="inventory-bulk-label">Bulk:</span>
+                    <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('active')">Mark Active</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('stored')">Mark Stored</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('depleted')">Mark Depleted</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('hide')">Hide</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('unhide')">Unhide</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('recalculate')">Recalculate</button>
+                    <button type="button" class="delete-btn btn-sm" onclick="runInventoryBulkAction('delete')">Delete</button>
+                </div>
+
                 <div class="collapsible-section" data-section="purchaseForm">
                     <button type="button" class="section-toggle" onclick="toggleSection('purchaseForm')">
                         <span>Add Inventory</span>
@@ -1025,12 +1145,22 @@
                     </div>
                     <div id="buy-vape-started-group" class="form-row hidden">
                         <div class="form-group">
-                            <label for="buy-started-date">Started Using (date)</label>
+                            <label for="buy-started-date">Started At (date)</label>
                             <input type="date" id="buy-started-date">
                         </div>
                         <div class="form-group">
-                            <label for="buy-started-time">Started Using (time)</label>
+                            <label for="buy-started-time">Started At (time)</label>
                             <input type="time" id="buy-started-time">
+                        </div>
+                    </div>
+                    <div id="buy-vape-finished-group" class="form-row hidden">
+                        <div class="form-group">
+                            <label for="buy-finished-date">Finished At (date)</label>
+                            <input type="date" id="buy-finished-date">
+                        </div>
+                        <div class="form-group">
+                            <label for="buy-finished-time">Finished At (time)</label>
+                            <input type="time" id="buy-finished-time">
                         </div>
                     </div>
                     <div id="buy-alcohol-fields-group" class="hidden">
@@ -1257,6 +1387,27 @@
                     </div>
                 </div>
 
+                <div class="collapsible-section" data-section="settingsDataQuality">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsDataQuality')">
+                        <span>Data Quality</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section">
+                    <div id="data-quality-panel"></div>
+                    <div class="form-group">
+                        <label for="vape-taper-count-mode">Vape taper count mode</label>
+                        <select id="vape-taper-count-mode" onchange="setVapeTaperCountMode(this.value)">
+                            <option value="log-date">Count on log date (default)</option>
+                            <option value="spread-across-days">Spread across days</option>
+                        </select>
+                        <p id="vape-taper-mode-note" class="settings-hint hidden">Vape use is estimated and spread across days based on percent-left changes.</p>
+                    </div>
+                    <button type="button" class="secondary-btn" onclick="repairAppData()">Repair Data</button>
+                </div>
+                    </div>
+                </div>
+
                 <div class="collapsible-section" data-section="settingsBackup">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsBackup')">
                         <span>Data Backup</span>
@@ -1273,6 +1424,7 @@
                         <button type="button" class="secondary-btn" onclick="triggerImportJsonBackup()">Import JSON Backup</button>
                         <button type="button" class="secondary-btn" onclick="restoreLastAutoBackup()">Restore Last Backup</button>
                         <button type="button" class="secondary-btn" onclick="exportDataCsv()">Export CSV</button>
+                        <button type="button" class="secondary-btn" onclick="repairAppData()">Repair Data</button>
                     </div>
                 </div>
                     </div>
