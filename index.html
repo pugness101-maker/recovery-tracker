@@ -905,6 +905,41 @@
                         </div>
                     </div>
 
+                    <div id="taper-purchase-kpi-row" class="taper-kpi-row taper-purchase-kpi-row hidden">
+                        <div class="taper-kpi-tile taper-purchase-kpi-tile hidden" id="taper-kpi-bought-week">
+                            <span class="taper-kpi-label">Bought this week</span>
+                            <span class="taper-kpi-value" id="taper-kpi-bought-week-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-kpi-highlight taper-purchase-kpi-tile hidden" id="taper-kpi-buy-remaining-week">
+                            <span class="taper-kpi-label">Buy amount remaining this week</span>
+                            <span class="taper-kpi-value" id="taper-kpi-buy-remaining-week-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-purchase-kpi-tile hidden" id="taper-kpi-spent-week">
+                            <span class="taper-kpi-label">Spent this week</span>
+                            <span class="taper-kpi-value" id="taper-kpi-spent-week-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-kpi-highlight taper-purchase-kpi-tile hidden" id="taper-kpi-spend-remaining-week">
+                            <span class="taper-kpi-label">Spending remaining this week</span>
+                            <span class="taper-kpi-value" id="taper-kpi-spend-remaining-week-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-purchase-kpi-tile hidden" id="taper-kpi-bought-month">
+                            <span class="taper-kpi-label">Bought this month</span>
+                            <span class="taper-kpi-value" id="taper-kpi-bought-month-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-kpi-highlight taper-purchase-kpi-tile hidden" id="taper-kpi-buy-remaining-month">
+                            <span class="taper-kpi-label">Monthly buy remaining</span>
+                            <span class="taper-kpi-value" id="taper-kpi-buy-remaining-month-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-purchase-kpi-tile hidden" id="taper-kpi-spent-month">
+                            <span class="taper-kpi-label">Spent this month</span>
+                            <span class="taper-kpi-value" id="taper-kpi-spent-month-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-kpi-highlight taper-purchase-kpi-tile hidden" id="taper-kpi-spend-remaining-month">
+                            <span class="taper-kpi-label">Monthly spending remaining</span>
+                            <span class="taper-kpi-value" id="taper-kpi-spend-remaining-month-val">—</span>
+                        </div>
+                    </div>
+
                     <!-- Plan control strip -->
                     <div class="taper-plan-strip" id="taper-plan-summary-card">
                         <div class="taper-plan-strip-main">
@@ -970,6 +1005,29 @@
                                     </div>
                                 </div>
                                 <p id="taper-weekly-days-left" class="taper-panel-footer hidden">—</p>
+
+                                <div id="taper-purchase-progress" class="taper-progress-panel taper-progress-purchase hidden">
+                                    <div class="taper-progress-panel-head">
+                                        <span class="taper-panel-badge">Buying Progress</span>
+                                        <span id="taper-purchase-status" class="taper-status-badge">—</span>
+                                    </div>
+                                    <div class="taper-mini-stats">
+                                        <div class="taper-mini-stat"><span>Weekly buy target</span><strong id="taper-purchase-weekly-buy-target">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Bought this week</span><strong id="taper-purchase-bought-week">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Buy remaining</span><strong id="taper-purchase-buy-remaining">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Buy over / under</span><strong id="taper-purchase-buy-over-under">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Weekly spend target</span><strong id="taper-purchase-weekly-spend-target">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Spent this week</span><strong id="taper-purchase-spent-week">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Spend remaining</span><strong id="taper-purchase-spend-remaining">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Spend over / under</span><strong id="taper-purchase-spend-over-under">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Monthly buy cap</span><strong id="taper-purchase-monthly-buy-cap">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Bought this month</span><strong id="taper-purchase-bought-month">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Monthly buy remaining</span><strong id="taper-purchase-buy-month-remaining">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Monthly spend cap</span><strong id="taper-purchase-monthly-spend-cap">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Spent this month</span><strong id="taper-purchase-spent-month">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Monthly spend remaining</span><strong id="taper-purchase-spend-month-remaining">—</strong></div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -1167,6 +1225,76 @@
                             <label for="do-not-surpass-weekly">Do not surpass weekly limit</label>
                             <input type="checkbox" id="do-not-surpass-weekly">
                         </div>
+                        </div>
+                        <div id="purchase-taper-section" class="purchase-taper-section hidden">
+                            <h4>Buying / Spending Reduction</h4>
+                            <div class="form-group toggle-row">
+                                <label for="purchase-taper-enabled">Track buying reduction</label>
+                                <input type="checkbox" id="purchase-taper-enabled" onchange="togglePurchaseTaperFields()">
+                            </div>
+                            <div id="purchase-taper-fields" class="hidden">
+                                <div class="form-group">
+                                    <label for="purchase-reduction-mode">Reduction target</label>
+                                    <select id="purchase-reduction-mode" onchange="togglePurchaseTaperFields()">
+                                        <option value="reduce_buy_amount">Reduce purchase amount</option>
+                                        <option value="reduce_buy_spend">Reduce purchase cost</option>
+                                        <option value="weekly_buy_amount">Fixed weekly purchase limit</option>
+                                        <option value="weekly_spend">Fixed weekly spending limit</option>
+                                        <option value="monthly_buy_amount">Fixed monthly purchase cap</option>
+                                        <option value="monthly_spend">Fixed monthly spending cap</option>
+                                        <option value="manual_weekly_buy_amount">Manual weekly buy plan</option>
+                                        <option value="manual_weekly_spend">Manual weekly spending plan</option>
+                                    </select>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group hidden" id="purchase-start-amount-group">
+                                        <label for="purchase-start-amount" id="purchase-start-amount-label">Starting weekly purchase amount</label>
+                                        <input type="number" id="purchase-start-amount" min="0" step="0.1">
+                                    </div>
+                                    <div class="form-group hidden" id="purchase-start-spend-group">
+                                        <label for="purchase-start-spend" id="purchase-start-spend-label">Starting weekly spend</label>
+                                        <input type="number" id="purchase-start-spend" min="0" step="0.01">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group hidden" id="purchase-weekly-amount-group">
+                                        <label for="purchase-weekly-amount" id="purchase-weekly-amount-label">Weekly purchase target</label>
+                                        <input type="number" id="purchase-weekly-amount" min="0" step="0.1">
+                                    </div>
+                                    <div class="form-group hidden" id="purchase-weekly-spend-group">
+                                        <label for="purchase-weekly-spend" id="purchase-weekly-spend-label">Weekly spending target</label>
+                                        <input type="number" id="purchase-weekly-spend" min="0" step="0.01">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group hidden" id="purchase-monthly-amount-group">
+                                        <label for="purchase-monthly-amount" id="purchase-monthly-amount-label">Monthly purchase cap</label>
+                                        <input type="number" id="purchase-monthly-amount" min="0" step="0.1">
+                                    </div>
+                                    <div class="form-group hidden" id="purchase-monthly-spend-group">
+                                        <label for="purchase-monthly-spend" id="purchase-monthly-spend-label">Monthly spending cap</label>
+                                        <input type="number" id="purchase-monthly-spend" min="0" step="0.01">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group hidden" id="purchase-reduction-amount-group">
+                                        <label for="purchase-reduction-amount" id="purchase-reduction-amount-label">Reduction amount per week</label>
+                                        <input type="number" id="purchase-reduction-amount" min="0" step="0.1">
+                                    </div>
+                                    <div class="form-group hidden" id="purchase-reduction-percent-group">
+                                        <label for="purchase-reduction-percent" id="purchase-reduction-percent-label">Reduction percent per week</label>
+                                        <input type="number" id="purchase-reduction-percent" min="0" max="100" step="1">
+                                    </div>
+                                </div>
+                                <div id="manual-purchase-plan-section" class="manual-weekly-plan-section hidden">
+                                    <h4>Manual Weekly Purchase Targets</h4>
+                                    <div id="manual-purchase-targets-list" class="manual-weekly-targets-list"></div>
+                                    <div class="manual-weekly-targets-actions">
+                                        <button type="button" class="secondary-btn" onclick="addManualPurchaseWeek()">+ Add Week</button>
+                                        <button type="button" class="secondary-btn" onclick="removeManualPurchaseWeek()">Remove Week</button>
+                                    </div>
+                                </div>
+                            </div>
                         </div>
                         <div class="taper-form-actions">
                             <button type="button" class="secondary-btn hidden" id="taper-cancel-edit-btn" onclick="cancelTaperEdit()">Cancel Edit</button>

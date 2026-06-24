@@ -2761,8 +2761,8 @@ const TABLE_COLUMN_DEFAULTS = {
         }
     },
     taperByWeek: {
-        order: ['week', 'dates', 'planned', 'used', 'difference', 'runningPlanned', 'runningUsed', 'remaining', 'status'],
-        hidden: [],
+        order: ['week', 'dates', 'planned', 'used', 'difference', 'runningPlanned', 'runningUsed', 'remaining', 'buyPlanned', 'bought', 'buyDiff', 'spendPlanned', 'spent', 'spendDiff', 'status'],
+        hidden: ['buyPlanned', 'bought', 'buyDiff', 'spendPlanned', 'spent', 'spendDiff'],
         widths: {
             week: 70,
             dates: 170,
@@ -2772,6 +2772,12 @@ const TABLE_COLUMN_DEFAULTS = {
             runningPlanned: 120,
             runningUsed: 110,
             remaining: 100,
+            buyPlanned: 100,
+            bought: 90,
+            buyDiff: 90,
+            spendPlanned: 110,
+            spent: 90,
+            spendDiff: 90,
             status: 100
         }
     },
@@ -2892,6 +2898,12 @@ const TABLE_COLUMN_LABELS = {
         runningPlanned: 'Running planned',
         runningUsed: 'Running used',
         remaining: 'Running +/-',
+        buyPlanned: 'Buy planned',
+        bought: 'Bought',
+        buyDiff: 'Buy +/-',
+        spendPlanned: 'Spend planned',
+        spent: 'Spent',
+        spendDiff: 'Spend +/-',
         status: 'Status'
     },
     statsCalendarYearSummary: {
@@ -12009,6 +12021,49 @@ function getNextBestAction(substanceId) {
             message: 'You are below your weekly plan so far. Notice what is helping you — small wins matter.'
         };
     }
+
+    const purchaseMetrics = plan?.purchaseTaperEnabled && !isTaperPlanPaused(plan)
+        ? getPurchaseTaperMetrics(plan, substanceId)
+        : null;
+    if (purchaseMetrics) {
+        if (purchaseMetrics.spendWeekDiff != null && purchaseMetrics.spendWeekDiff > 0) {
+            return {
+                tone: 'reset',
+                title: 'Spending check-in',
+                message: `You are over weekly spending target by ${formatTaperMoney(purchaseMetrics.spendWeekDiff)}.`
+            };
+        }
+        if (purchaseMetrics.buyWeekDiff != null && purchaseMetrics.buyWeekDiff > 0) {
+            const sub = getSubstance(substanceId);
+            return {
+                tone: 'reset',
+                title: 'Buying check-in',
+                message: `You are over weekly purchase target by ${formatTaperActualAmount(purchaseMetrics.buyWeekDiff, sub?.defaultUnit || 'units')}.`
+            };
+        }
+        const parts = [];
+        if (purchaseMetrics.buyWeekRemaining != null && isPurchaseTaperWeeklyAmountMode(plan)) {
+            parts.push(`${formatTaperAmount(purchaseMetrics.buyWeekRemaining, purchaseMetrics.unit)} left to buy this week`);
+        }
+        if (purchaseMetrics.spendWeekRemaining != null && isPurchaseTaperWeeklySpendMode(plan)) {
+            parts.push(`${formatTaperMoney(purchaseMetrics.spendWeekRemaining)} spending left this week`);
+        }
+        if (parts.length) {
+            return {
+                tone: 'encourage',
+                title: 'Buying goal on track',
+                message: `You are on track for buying amount. Buying goal remaining this week: ${parts.join(' · ')}.`
+            };
+        }
+        if (isPurchaseTaperWeeklyAmountMode(plan) && purchaseMetrics.buyWeekStatus === 'under') {
+            return {
+                tone: 'encourage',
+                title: 'Buying on track',
+                message: 'You are on track for buying amount this week.'
+            };
+        }
+    }
+
     if (dailyLimit != null && todayUsed > 0 && todayUsed <= dailyLimit * 0.8) {
         return {
             tone: 'encourage',
@@ -15382,6 +15437,400 @@ function getPurchasesInDateRange(substanceId, startDate, endDate, data = appData
         .filter(p => p.date >= startDate && p.date <= endDate);
 }
 
+function supportsPurchaseTaper(substanceId, data = appData) {
+    const sub = getSubstance(substanceId, data);
+    return !!sub?.costTrackingEnabled;
+}
+
+function getPurchaseSegments(purchases, { substanceId, startDate, endDate }) {
+    return (purchases || [])
+        .filter(p => p.substanceId === substanceId && p.date >= startDate && p.date <= endDate)
+        .map(p => ({
+            date: p.date,
+            substanceId: p.substanceId,
+            quantityBought: parseFloat(getPurchaseQuantityBought(p)) || 0,
+            totalCost: parseFloat(getPurchaseTotalCost(p)) || 0
+        }));
+}
+
+function sumPurchasedAmountForRange(purchases, substanceId, startDate, endDate) {
+    return getPurchaseSegments(purchases, { substanceId, startDate, endDate })
+        .reduce((sum, seg) => sum + seg.quantityBought, 0);
+}
+
+function sumPurchaseCostForRange(purchases, substanceId, startDate, endDate) {
+    return getPurchaseSegments(purchases, { substanceId, startDate, endDate })
+        .reduce((sum, seg) => sum + seg.totalCost, 0);
+}
+
+const PURCHASE_TAPER_MODES = [
+    'none',
+    'weekly_buy_amount',
+    'weekly_spend',
+    'monthly_buy_amount',
+    'monthly_spend',
+    'manual_weekly_buy_amount',
+    'manual_weekly_spend'
+];
+
+const PURCHASE_TAPER_FORM_MODE_MAP = {
+    reduce_buy_amount: 'weekly_buy_amount',
+    reduce_buy_spend: 'weekly_spend'
+};
+
+const PURCHASE_TAPER_MODE_LABELS = {
+    none: 'None',
+    reduce_buy_amount: 'Reduce purchase amount',
+    reduce_buy_spend: 'Reduce purchase cost',
+    weekly_buy_amount: 'Fixed weekly purchase limit',
+    weekly_spend: 'Fixed weekly spending limit',
+    monthly_buy_amount: 'Fixed monthly purchase cap',
+    monthly_spend: 'Fixed monthly spending cap',
+    manual_weekly_buy_amount: 'Manual weekly buy plan',
+    manual_weekly_spend: 'Manual weekly spending plan'
+};
+
+function normalizePurchaseReductionMode(mode) {
+    if (!mode || mode === 'none') return 'none';
+    if (PURCHASE_TAPER_FORM_MODE_MAP[mode]) return PURCHASE_TAPER_FORM_MODE_MAP[mode];
+    return PURCHASE_TAPER_MODES.includes(mode) ? mode : 'none';
+}
+
+function getPurchaseTaperFormMode(plan) {
+    if (!plan?.purchaseTaperEnabled) return 'none';
+    const mode = normalizePurchaseReductionMode(plan.purchaseReductionMode);
+    if (mode === 'weekly_buy_amount' && isProgressivePurchaseAmountPlan(plan)) return 'reduce_buy_amount';
+    if (mode === 'weekly_spend' && isProgressivePurchaseSpendPlan(plan)) return 'reduce_buy_spend';
+    return mode;
+}
+
+function isProgressivePurchaseAmountPlan(plan) {
+    return (parseFloat(plan.purchaseReductionAmountPerWeek) || 0) > 0
+        || (parseFloat(plan.purchaseReductionPercentPerWeek) || 0) > 0;
+}
+
+function isProgressivePurchaseSpendPlan(plan) {
+    return (parseFloat(plan.purchaseReductionAmountPerWeek) || 0) > 0
+        || (parseFloat(plan.purchaseReductionPercentPerWeek) || 0) > 0;
+}
+
+function isPurchaseTaperWeeklyAmountMode(plan) {
+    const mode = normalizePurchaseReductionMode(plan?.purchaseReductionMode);
+    return mode === 'weekly_buy_amount' || mode === 'manual_weekly_buy_amount';
+}
+
+function isPurchaseTaperWeeklySpendMode(plan) {
+    const mode = normalizePurchaseReductionMode(plan?.purchaseReductionMode);
+    return mode === 'weekly_spend' || mode === 'manual_weekly_spend';
+}
+
+function isPurchaseTaperMonthlyAmountMode(plan) {
+    return normalizePurchaseReductionMode(plan?.purchaseReductionMode) === 'monthly_buy_amount';
+}
+
+function isPurchaseTaperMonthlySpendMode(plan) {
+    return normalizePurchaseReductionMode(plan?.purchaseReductionMode) === 'monthly_spend';
+}
+
+function ensurePurchaseTaperDefaults(plan, substanceId, data = appData) {
+    if (!plan) return;
+    if (plan.purchaseTaperEnabled == null) plan.purchaseTaperEnabled = false;
+    if (!plan.purchaseReductionMode) plan.purchaseReductionMode = 'none';
+    plan.purchaseReductionMode = normalizePurchaseReductionMode(plan.purchaseReductionMode);
+    if (plan.purchaseWeeklyAmountTarget === undefined) plan.purchaseWeeklyAmountTarget = null;
+    if (plan.purchaseWeeklySpendTarget === undefined) plan.purchaseWeeklySpendTarget = null;
+    if (plan.purchaseMonthlyAmountCap === undefined) plan.purchaseMonthlyAmountCap = null;
+    if (plan.purchaseMonthlySpendCap === undefined) plan.purchaseMonthlySpendCap = null;
+    if (plan.purchaseStartingWeeklyAmount === undefined) plan.purchaseStartingWeeklyAmount = null;
+    if (plan.purchaseStartingWeeklySpend === undefined) plan.purchaseStartingWeeklySpend = null;
+    if (plan.purchaseReductionAmountPerWeek === undefined) plan.purchaseReductionAmountPerWeek = null;
+    if (plan.purchaseReductionPercentPerWeek === undefined) plan.purchaseReductionPercentPerWeek = null;
+    if (!Array.isArray(plan.manualWeeklyPurchaseTargets)) plan.manualWeeklyPurchaseTargets = [];
+    if (!plan.purchaseTaperEnabled || !supportsPurchaseTaper(substanceId, data)) {
+        plan.purchaseTaperEnabled = false;
+        plan.purchaseReductionMode = 'none';
+    }
+}
+
+function inferPurchaseStartingWeeklyAmount(substanceId, data = appData) {
+    const today = getLocalDateString();
+    const weekStart = getWeekStartDateStr(today);
+    const weekEnd = addDaysToDateStr(weekStart, 6);
+    const purchases = getPurchasesForSubstance(substanceId, data);
+    const amount = sumPurchasedAmountForRange(purchases, substanceId, weekStart, weekEnd);
+    return amount > 0 ? roundTaperValue(amount) : null;
+}
+
+function inferPurchaseStartingWeeklySpend(substanceId, data = appData) {
+    const today = getLocalDateString();
+    const weekStart = getWeekStartDateStr(today);
+    const weekEnd = addDaysToDateStr(weekStart, 6);
+    const purchases = getPurchasesForSubstance(substanceId, data);
+    const spend = sumPurchaseCostForRange(purchases, substanceId, weekStart, weekEnd);
+    return spend > 0 ? roundTaperActual(spend) : null;
+}
+
+function buildManualWeeklyPurchaseTargetsFromPlan(plan) {
+    const startDate = plan.startDate || getLocalDateString();
+    return (plan.manualWeeklyPurchaseTargets || []).map((entry, index) => {
+        const weekNumber = entry.weekNumber ?? entry.week ?? index + 1;
+        const weekStart = entry.startDate || addDaysToDateStr(startDate, (weekNumber - 1) * 7);
+        const weekEnd = entry.endDate || addDaysToDateStr(weekStart, 6);
+        return {
+            weekNumber,
+            startDate: weekStart,
+            endDate: weekEnd,
+            amountTarget: entry.amountTarget ?? entry.targetAmount ?? null,
+            spendTarget: entry.spendTarget ?? entry.targetSpend ?? null
+        };
+    });
+}
+
+function applyPurchaseTargetsToWeeklyRows(plan) {
+    if (!plan?.purchaseTaperEnabled || plan.purchaseReductionMode === 'none') return;
+    const rows = plan.weeklyTargets || [];
+    const mode = normalizePurchaseReductionMode(plan.purchaseReductionMode);
+    if (mode === 'manual_weekly_buy_amount' || mode === 'manual_weekly_spend') {
+        const manual = buildManualWeeklyPurchaseTargetsFromPlan(plan);
+        plan.weeklyTargets = manual.map((entry, index) => {
+            const existing = rows[index] || {};
+            return {
+                week: entry.weekNumber,
+                weekStart: entry.startDate,
+                weekEnd: entry.endDate,
+                dailyTarget: existing.dailyTarget ?? 0,
+                weeklyMax: existing.weeklyMax ?? 0,
+                actualUsed: existing.actualUsed ?? 0,
+                difference: existing.difference ?? 0,
+                status: existing.status ?? 'under',
+                purchaseAmountTarget: entry.amountTarget != null ? roundTaperValue(entry.amountTarget) : null,
+                purchaseSpendTarget: entry.spendTarget != null ? roundTaperActual(entry.spendTarget) : null
+            };
+        });
+        if (manual.length && (!plan.endDate || plan.endDate < manual[manual.length - 1].endDate)) {
+            plan.endDate = manual[manual.length - 1].endDate;
+        }
+        return;
+    }
+
+    let currentAmount = plan.purchaseStartingWeeklyAmount ?? inferPurchaseStartingWeeklyAmount(plan.substanceId) ?? 0;
+    let currentSpend = plan.purchaseStartingWeeklySpend ?? inferPurchaseStartingWeeklySpend(plan.substanceId) ?? 0;
+
+    rows.forEach(row => {
+        if (mode === 'weekly_buy_amount') {
+            if (plan.purchaseWeeklyAmountTarget != null && !isProgressivePurchaseAmountPlan(plan)) {
+                row.purchaseAmountTarget = roundTaperValue(plan.purchaseWeeklyAmountTarget);
+            } else if (isProgressivePurchaseAmountPlan(plan)) {
+                row.purchaseAmountTarget = roundTaperValue(Math.max(0, currentAmount));
+                if (plan.purchaseReductionAmountPerWeek != null) {
+                    currentAmount = Math.max(0, currentAmount - (parseFloat(plan.purchaseReductionAmountPerWeek) || 0));
+                } else if (plan.purchaseReductionPercentPerWeek != null) {
+                    currentAmount = Math.max(0, currentAmount * (1 - (parseFloat(plan.purchaseReductionPercentPerWeek) || 0) / 100));
+                }
+            }
+        } else if (mode === 'weekly_spend') {
+            if (plan.purchaseWeeklySpendTarget != null && !isProgressivePurchaseSpendPlan(plan)) {
+                row.purchaseSpendTarget = roundTaperActual(plan.purchaseWeeklySpendTarget);
+            } else if (isProgressivePurchaseSpendPlan(plan)) {
+                row.purchaseSpendTarget = roundTaperActual(Math.max(0, currentSpend));
+                if (plan.purchaseReductionAmountPerWeek != null) {
+                    currentSpend = Math.max(0, currentSpend - (parseFloat(plan.purchaseReductionAmountPerWeek) || 0));
+                } else if (plan.purchaseReductionPercentPerWeek != null) {
+                    currentSpend = Math.max(0, currentSpend * (1 - (parseFloat(plan.purchaseReductionPercentPerWeek) || 0) / 100));
+                }
+            }
+        } else if (mode === 'monthly_buy_amount') {
+            row.purchaseAmountTarget = plan.purchaseMonthlyAmountCap != null ? roundTaperValue(plan.purchaseMonthlyAmountCap) : null;
+        } else if (mode === 'monthly_spend') {
+            row.purchaseSpendTarget = plan.purchaseMonthlySpendCap != null ? roundTaperActual(plan.purchaseMonthlySpendCap) : null;
+        }
+    });
+}
+
+function syncPurchaseTaperForPlan(plan, data = appData) {
+    if (!plan?.purchaseTaperEnabled || plan.purchaseReductionMode === 'none') return;
+    const substanceId = plan.substanceId;
+    applyPurchaseTargetsToWeeklyRows(plan);
+    const purchases = getPurchasesForSubstance(substanceId, data);
+    (plan.weeklyTargets || []).forEach(row => {
+        row.actualPurchasedAmount = roundTaperActual(sumPurchasedAmountForRange(
+            purchases, substanceId, row.weekStart, row.weekEnd
+        ));
+        row.actualPurchaseSpend = roundTaperActual(sumPurchaseCostForRange(
+            purchases, substanceId, row.weekStart, row.weekEnd
+        ));
+        if (row.purchaseAmountTarget != null) {
+            row.purchaseAmountDiff = roundTaperActual(row.actualPurchasedAmount - row.purchaseAmountTarget);
+            row.purchaseAmountStatus = getTaperLimitStatus(row.actualPurchasedAmount, row.purchaseAmountTarget).status;
+        }
+        if (row.purchaseSpendTarget != null) {
+            row.purchaseSpendDiff = roundTaperActual(row.actualPurchaseSpend - row.purchaseSpendTarget);
+            row.purchaseSpendStatus = getTaperLimitStatus(row.actualPurchaseSpend, row.purchaseSpendTarget).status;
+        }
+    });
+}
+
+function getPurchaseTaperMetrics(plan, substanceId, data = appData, dateStr = getLocalDateString()) {
+    if (!plan?.purchaseTaperEnabled || plan.purchaseReductionMode === 'none') return null;
+    const sub = getSubstance(substanceId, data);
+    const unit = sub?.defaultUnit || 'units';
+    const weekStart = getWeekStartDateStr(dateStr);
+    const weekEnd = addDaysToDateStr(weekStart, 6);
+    const monthStart = getMonthStartDateStr(dateStr);
+    const monthEnd = getMonthEndDateStr(dateStr);
+    const purchases = getPurchasesForSubstance(substanceId, data);
+    const boughtWeek = roundTaperActual(sumPurchasedAmountForRange(purchases, substanceId, weekStart, weekEnd));
+    const spentWeek = roundTaperActual(sumPurchaseCostForRange(purchases, substanceId, weekStart, weekEnd));
+    const boughtMonth = roundTaperActual(sumPurchasedAmountForRange(purchases, substanceId, monthStart, monthEnd));
+    const spentMonth = roundTaperActual(sumPurchaseCostForRange(purchases, substanceId, monthStart, monthEnd));
+    const weekRow = getWeekRowForDate(plan, dateStr);
+
+    let weeklyBuyTarget = null;
+    let weeklySpendTarget = null;
+    if (isPurchaseTaperWeeklyAmountMode(plan)) {
+        weeklyBuyTarget = weekRow?.purchaseAmountTarget ?? plan.purchaseWeeklyAmountTarget;
+    }
+    if (isPurchaseTaperWeeklySpendMode(plan)) {
+        weeklySpendTarget = weekRow?.purchaseSpendTarget ?? plan.purchaseWeeklySpendTarget;
+    }
+
+    const monthlyBuyCap = isPurchaseTaperMonthlyAmountMode(plan) ? plan.purchaseMonthlyAmountCap : null;
+    const monthlySpendCap = isPurchaseTaperMonthlySpendMode(plan) ? plan.purchaseMonthlySpendCap : null;
+
+    return {
+        unit,
+        boughtWeek,
+        spentWeek,
+        boughtMonth,
+        spentMonth,
+        weeklyBuyTarget,
+        weeklySpendTarget,
+        monthlyBuyCap,
+        monthlySpendCap,
+        buyWeekRemaining: weeklyBuyTarget != null ? Math.max(0, weeklyBuyTarget - boughtWeek) : null,
+        spendWeekRemaining: weeklySpendTarget != null ? Math.max(0, weeklySpendTarget - spentWeek) : null,
+        buyMonthRemaining: monthlyBuyCap != null ? Math.max(0, monthlyBuyCap - boughtMonth) : null,
+        spendMonthRemaining: monthlySpendCap != null ? Math.max(0, monthlySpendCap - spentMonth) : null,
+        buyWeekDiff: weeklyBuyTarget != null ? roundTaperActual(boughtWeek - weeklyBuyTarget) : null,
+        spendWeekDiff: weeklySpendTarget != null ? roundTaperActual(spentWeek - weeklySpendTarget) : null,
+        buyWeekStatus: weeklyBuyTarget != null ? getTaperLimitStatus(boughtWeek, weeklyBuyTarget).status : 'none',
+        spendWeekStatus: weeklySpendTarget != null ? getTaperLimitStatus(spentWeek, weeklySpendTarget).status : 'none',
+        buyMonthStatus: monthlyBuyCap != null ? getTaperLimitStatus(boughtMonth, monthlyBuyCap).status : 'none',
+        spendMonthStatus: monthlySpendCap != null ? getTaperLimitStatus(spentMonth, monthlySpendCap).status : 'none'
+    };
+}
+
+function renderManualPurchaseTargetsEditor(targets, mode) {
+    const container = document.getElementById('manual-purchase-targets-list');
+    if (!container) return;
+    const list = targets?.length ? targets : [{ weekNumber: 1, amountTarget: '', spendTarget: '' }];
+    const showAmount = mode === 'manual_weekly_buy_amount';
+    const showSpend = mode === 'manual_weekly_spend';
+    container.innerHTML = list.map((entry, index) => {
+        const weekNum = entry.weekNumber ?? entry.week ?? index + 1;
+        return `<div class="manual-week-row manual-purchase-week-row" data-week="${weekNum}">
+            <label>Week ${weekNum}</label>
+            ${showAmount ? `<input type="number" class="manual-purchase-amount-input" data-week="${weekNum}" min="0" step="0.1" value="${entry.amountTarget ?? ''}" placeholder="Amount">` : ''}
+            ${showSpend ? `<input type="number" class="manual-purchase-spend-input" data-week="${weekNum}" min="0" step="0.01" value="${entry.spendTarget ?? ''}" placeholder="Spend">` : ''}
+        </div>`;
+    }).join('');
+}
+
+function collectManualPurchaseTargetsFromForm(mode) {
+    if (mode === 'manual_weekly_buy_amount') {
+        return [...document.querySelectorAll('.manual-purchase-amount-input')].map((input, index) => ({
+            weekNumber: parseInt(input.dataset.week, 10) || index + 1,
+            amountTarget: parseOptionalTaperNumber({ value: input.value })
+        }));
+    }
+    if (mode === 'manual_weekly_spend') {
+        return [...document.querySelectorAll('.manual-purchase-spend-input')].map((input, index) => ({
+            weekNumber: parseInt(input.dataset.week, 10) || index + 1,
+            spendTarget: parseOptionalTaperNumber({ value: input.value })
+        }));
+    }
+    return [];
+}
+
+function addManualPurchaseWeek() {
+    const mode = document.getElementById('purchase-reduction-mode')?.value || 'none';
+    const targets = collectManualPurchaseTargetsFromForm(mode);
+    if (mode === 'manual_weekly_buy_amount') {
+        targets.push({ weekNumber: targets.length + 1, amountTarget: '' });
+    } else if (mode === 'manual_weekly_spend') {
+        targets.push({ weekNumber: targets.length + 1, spendTarget: '' });
+    }
+    renderManualPurchaseTargetsEditor(targets, mode);
+}
+
+function removeManualPurchaseWeek() {
+    const mode = document.getElementById('purchase-reduction-mode')?.value || 'none';
+    const targets = collectManualPurchaseTargetsFromForm(mode);
+    if (targets.length <= 1) return;
+    targets.pop();
+    renderManualPurchaseTargetsEditor(targets, mode);
+}
+
+function togglePurchaseTaperFields() {
+    const substanceId = getTaperSubstanceId();
+    const section = document.getElementById('purchase-taper-section');
+    const fields = document.getElementById('purchase-taper-fields');
+    const enabled = !!document.getElementById('purchase-taper-enabled')?.checked;
+    const supported = supportsPurchaseTaper(substanceId);
+    section?.classList.toggle('hidden', !supported);
+    fields?.classList.toggle('hidden', !enabled || !supported);
+    if (!supported || !enabled) return;
+
+    const sub = getSubstance(substanceId);
+    const unit = sub?.defaultUnit || 'g';
+    const formMode = document.getElementById('purchase-reduction-mode')?.value || 'none';
+    const mode = normalizePurchaseReductionMode(PURCHASE_TAPER_FORM_MODE_MAP[formMode] || formMode);
+
+    const setLabel = (id, text) => {
+        const el = document.getElementById(id);
+        if (el) el.textContent = text;
+    };
+    setLabel('purchase-start-amount-label', `Starting weekly purchase amount (${unit})`);
+    setLabel('purchase-weekly-amount-label', `Weekly purchase target (${unit})`);
+    setLabel('purchase-monthly-amount-label', `Monthly purchase cap (${unit})`);
+    setLabel('purchase-start-spend-label', 'Starting weekly spend ($)');
+    setLabel('purchase-weekly-spend-label', 'Weekly spending target ($)');
+    setLabel('purchase-monthly-spend-label', 'Monthly spending cap ($)');
+    setLabel('purchase-reduction-amount-label', progressiveSpend
+        ? 'Reduction spend per week ($)'
+        : `Reduction amount per week (${unit})`);
+    setLabel('purchase-reduction-percent-label', progressiveSpend
+        ? 'Reduction spend percent per week'
+        : 'Reduction percent per week');
+
+    const progressiveBuy = formMode === 'reduce_buy_amount';
+    const progressiveSpend = formMode === 'reduce_buy_spend';
+    const fixedWeeklyBuy = formMode === 'weekly_buy_amount';
+    const fixedWeeklySpend = formMode === 'weekly_spend';
+    const monthlyBuy = formMode === 'monthly_buy_amount';
+    const monthlySpend = formMode === 'monthly_spend';
+    const manualBuy = formMode === 'manual_weekly_buy_amount';
+    const manualSpend = formMode === 'manual_weekly_spend';
+
+    document.getElementById('purchase-start-amount-group')?.classList.toggle('hidden', !progressiveBuy);
+    document.getElementById('purchase-start-spend-group')?.classList.toggle('hidden', !progressiveSpend);
+    document.getElementById('purchase-weekly-amount-group')?.classList.toggle('hidden', !fixedWeeklyBuy);
+    document.getElementById('purchase-weekly-spend-group')?.classList.toggle('hidden', !fixedWeeklySpend);
+    document.getElementById('purchase-monthly-amount-group')?.classList.toggle('hidden', !monthlyBuy);
+    document.getElementById('purchase-monthly-spend-group')?.classList.toggle('hidden', !monthlySpend);
+    document.getElementById('purchase-reduction-amount-group')?.classList.toggle('hidden', !progressiveBuy && !progressiveSpend);
+    document.getElementById('purchase-reduction-percent-group')?.classList.toggle('hidden', !progressiveBuy && !progressiveSpend);
+    document.getElementById('purchase-reduction-spend-group')?.classList.add('hidden');
+    document.getElementById('purchase-reduction-spend-percent-group')?.classList.add('hidden');
+    document.getElementById('manual-purchase-plan-section')?.classList.toggle('hidden', !manualBuy && !manualSpend);
+
+    if (manualBuy || manualSpend) {
+        if (!document.querySelector('.manual-purchase-amount-input, .manual-purchase-spend-input')) {
+            renderManualPurchaseTargetsEditor([], formMode);
+        }
+    }
+}
+
 function getDaysSinceLastVapePurchase(substanceId, data = appData) {
     const purchases = getPurchasesForSubstance(substanceId, data);
     if (!purchases.length) return null;
@@ -16065,6 +16514,11 @@ function migrateTaperPlan(plan, substanceId, data) {
     plan.notes = plan.notes ?? plan.taperNotes ?? '';
     plan.taperNotes = plan.notes;
 
+    ensurePurchaseTaperDefaults(plan, substanceId, data);
+    if (plan.purchaseTaperEnabled) {
+        applyPurchaseTargetsToWeeklyRows(plan);
+    }
+
     if (isManualWeeklyPlan(plan)) {
         if (!plan.manualWeeklyMode) plan.manualWeeklyMode = 'amount';
         if (!plan.manualWeeklyTargets?.length) {
@@ -16312,6 +16766,8 @@ function syncTaperPlanDataForPlan(plan, data = appData) {
         day.remaining = Math.max(0, limit - used);
         day.status = getTaperLimitStatus(used, limit).status;
     });
+
+    syncPurchaseTaperForPlan(plan, data);
 }
 
 function syncTaperPlanData(substanceId, data = appData) {
@@ -16530,6 +16986,94 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
         plan.endDate = plan.endDate || computeManualPlanEndDate(plan);
     }
 
+    const purchaseEnabled = supportsPurchaseTaper(substanceId)
+        && !!document.getElementById('purchase-taper-enabled')?.checked;
+    plan.purchaseTaperEnabled = purchaseEnabled;
+    if (purchaseEnabled) {
+        const formMode = document.getElementById('purchase-reduction-mode')?.value || 'none';
+        plan.purchaseReductionMode = normalizePurchaseReductionMode(
+            PURCHASE_TAPER_FORM_MODE_MAP[formMode] || formMode
+        );
+        plan.purchaseStartingWeeklyAmount = parseOptionalTaperNumber(document.getElementById('purchase-start-amount'));
+        plan.purchaseStartingWeeklySpend = parseOptionalTaperNumber(document.getElementById('purchase-start-spend'));
+        plan.purchaseWeeklyAmountTarget = parseOptionalTaperNumber(document.getElementById('purchase-weekly-amount'));
+        plan.purchaseWeeklySpendTarget = parseOptionalTaperNumber(document.getElementById('purchase-weekly-spend'));
+        plan.purchaseMonthlyAmountCap = parseOptionalTaperNumber(document.getElementById('purchase-monthly-amount'));
+        plan.purchaseMonthlySpendCap = parseOptionalTaperNumber(document.getElementById('purchase-monthly-spend'));
+        plan.purchaseReductionAmountPerWeek = parseOptionalTaperNumber(document.getElementById('purchase-reduction-amount'));
+        plan.purchaseReductionPercentPerWeek = parseOptionalTaperNumber(document.getElementById('purchase-reduction-percent'));
+        const manualMode = formMode === 'manual_weekly_buy_amount' || formMode === 'manual_weekly_spend'
+            ? formMode
+            : null;
+        if (manualMode) {
+            const startDate = plan.startDate;
+            plan.manualWeeklyPurchaseTargets = collectManualPurchaseTargetsFromForm(manualMode).map((entry, index) => ({
+                weekNumber: entry.weekNumber ?? index + 1,
+                startDate: addDaysToDateStr(startDate, index * 7),
+                endDate: addDaysToDateStr(startDate, index * 7 + 6),
+                amountTarget: entry.amountTarget ?? null,
+                spendTarget: entry.spendTarget ?? null
+            }));
+        } else {
+            plan.manualWeeklyPurchaseTargets = existingPlan?.manualWeeklyPurchaseTargets || [];
+        }
+        const storedMode = plan.purchaseReductionMode;
+        if (formMode === 'reduce_buy_amount' || storedMode === 'weekly_buy_amount' && isProgressivePurchaseAmountPlan(plan)) {
+            plan.purchaseWeeklyAmountTarget = null;
+            plan.purchaseStartingWeeklySpend = null;
+            plan.purchaseWeeklySpendTarget = null;
+            plan.purchaseMonthlyAmountCap = null;
+            plan.purchaseMonthlySpendCap = null;
+        } else if (formMode === 'reduce_buy_spend' || storedMode === 'weekly_spend' && isProgressivePurchaseSpendPlan(plan)) {
+            plan.purchaseWeeklySpendTarget = null;
+            plan.purchaseStartingWeeklyAmount = null;
+            plan.purchaseWeeklyAmountTarget = null;
+            plan.purchaseMonthlyAmountCap = null;
+            plan.purchaseMonthlySpendCap = null;
+        } else if (formMode === 'weekly_buy_amount') {
+            plan.purchaseStartingWeeklyAmount = null;
+            plan.purchaseReductionAmountPerWeek = null;
+            plan.purchaseReductionPercentPerWeek = null;
+            plan.purchaseWeeklySpendTarget = null;
+            plan.purchaseMonthlyAmountCap = null;
+            plan.purchaseMonthlySpendCap = null;
+        } else if (formMode === 'weekly_spend') {
+            plan.purchaseStartingWeeklySpend = null;
+            plan.purchaseReductionAmountPerWeek = null;
+            plan.purchaseReductionPercentPerWeek = null;
+            plan.purchaseWeeklyAmountTarget = null;
+            plan.purchaseMonthlyAmountCap = null;
+            plan.purchaseMonthlySpendCap = null;
+        } else if (formMode === 'monthly_buy_amount') {
+            plan.purchaseWeeklyAmountTarget = null;
+            plan.purchaseWeeklySpendTarget = null;
+            plan.purchaseMonthlySpendCap = null;
+            plan.purchaseStartingWeeklyAmount = null;
+            plan.purchaseStartingWeeklySpend = null;
+            plan.purchaseReductionAmountPerWeek = null;
+            plan.purchaseReductionPercentPerWeek = null;
+        } else if (formMode === 'monthly_spend') {
+            plan.purchaseWeeklyAmountTarget = null;
+            plan.purchaseWeeklySpendTarget = null;
+            plan.purchaseMonthlyAmountCap = null;
+            plan.purchaseStartingWeeklyAmount = null;
+            plan.purchaseStartingWeeklySpend = null;
+            plan.purchaseReductionAmountPerWeek = null;
+            plan.purchaseReductionPercentPerWeek = null;
+        }
+    } else {
+        plan.purchaseReductionMode = 'none';
+        plan.purchaseWeeklyAmountTarget = null;
+        plan.purchaseWeeklySpendTarget = null;
+        plan.purchaseMonthlyAmountCap = null;
+        plan.purchaseMonthlySpendCap = null;
+        plan.purchaseStartingWeeklyAmount = null;
+        plan.purchaseStartingWeeklySpend = null;
+        plan.purchaseReductionAmountPerWeek = null;
+        plan.purchaseReductionPercentPerWeek = null;
+        plan.manualWeeklyPurchaseTargets = [];
+    }
+
     plan.currentAvg = plan.startingDailyAverage;
     plan.goalAvg = plan.goalDailyAverage;
     plan.weeklyTargets = generateWeeklyTargets(plan);
@@ -16629,6 +17173,10 @@ function showNewTaperPlan() {
     setDefaultTaperEndDate();
     toggleTaperPlanTypeFields();
     prefillVapeTaperDefaults(substanceId);
+    const purchaseEnabledEl = document.getElementById('purchase-taper-enabled');
+    if (purchaseEnabledEl) purchaseEnabledEl.checked = false;
+    setInputValue('purchase-reduction-mode', 'weekly_spend');
+    togglePurchaseTaperFields();
 }
 
 function duplicateSelectedTaperPlan() {
@@ -16852,10 +17400,10 @@ function archiveTaperPlanById(planId) {
     refreshTaperDashboard();
 }
 
-function deleteTaperPlanById(planId) {
+function deleteTaperPlanById(planId, options = {}) {
     const plan = getTaperPlanById(planId);
     if (!plan) return;
-    if (!confirm('Delete this taper plan? This cannot be undone.')) return;
+    if (!options.skipConfirm && !confirm('Delete this taper plan? This cannot be undone.')) return;
     const substanceId = plan.substanceId;
     const wasPrimary = plan.isPrimary;
     appData.taperPlansV2 = (appData.taperPlansV2 || []).filter(p => p.id !== planId);
@@ -16978,6 +17526,7 @@ function toggleTaperPlanTypeFields() {
     if (hint) hint.textContent = hints[type] || hints['reduce-amount'];
 
     if (isVape && taperEditingPlan) prefillVapeTaperDefaults(substanceId);
+    togglePurchaseTaperFields();
 }
 
 function fillTaperFormFromPlan(plan) {
@@ -17019,6 +17568,21 @@ function fillTaperFormFromPlan(plan) {
         setInputValue('manual-weekly-baseline', plan.manualWeeklyBaseline ?? '');
         renderManualWeeklyTargetsEditor(plan.manualWeeklyTargets || []);
     }
+    const purchaseEnabledEl = document.getElementById('purchase-taper-enabled');
+    if (purchaseEnabledEl) purchaseEnabledEl.checked = !!plan.purchaseTaperEnabled;
+    setInputValue('purchase-reduction-mode', getPurchaseTaperFormMode(plan));
+    setInputValue('purchase-start-amount', plan.purchaseStartingWeeklyAmount ?? '');
+    setInputValue('purchase-start-spend', plan.purchaseStartingWeeklySpend ?? '');
+    setInputValue('purchase-weekly-amount', plan.purchaseWeeklyAmountTarget ?? '');
+    setInputValue('purchase-weekly-spend', plan.purchaseWeeklySpendTarget ?? '');
+    setInputValue('purchase-monthly-amount', plan.purchaseMonthlyAmountCap ?? '');
+    setInputValue('purchase-monthly-spend', plan.purchaseMonthlySpendCap ?? '');
+    setInputValue('purchase-reduction-amount', plan.purchaseReductionAmountPerWeek ?? '');
+    setInputValue('purchase-reduction-percent', plan.purchaseReductionPercentPerWeek ?? '');
+    if (plan.purchaseTaperEnabled) {
+        renderManualPurchaseTargetsEditor(plan.manualWeeklyPurchaseTargets || [], getPurchaseTaperFormMode(plan));
+    }
+    togglePurchaseTaperFields();
 }
 
 function setDefaultTaperDates() {
@@ -17114,6 +17678,7 @@ function renderTaperKpiRow(substanceId) {
         set('taper-kpi-used-week-val', '—');
         set('taper-kpi-remaining-week-val', '—');
         set('taper-kpi-status-val', 'Paused');
+        renderPurchaseTaperKpiRow(substanceId, plan);
         return;
     }
 
@@ -17138,6 +17703,7 @@ function renderTaperKpiRow(substanceId) {
             set('taper-kpi-remaining-week-val', '—');
             set('taper-kpi-status-val', purchasesThisWeek === 0 ? 'On track' : 'Review');
         }
+        renderPurchaseTaperKpiRow(substanceId, plan);
         return;
     }
 
@@ -17155,6 +17721,7 @@ function renderTaperKpiRow(substanceId) {
         const status = currentStrength != null && targetStrength != null && currentStrength <= targetStrength ? 'under' : 'over';
         set('taper-kpi-status-val', shortWeeklyTaperStatus(status));
         document.getElementById('taper-kpi-status')?.classList.add(`taper-kpi-${status}`);
+        renderPurchaseTaperKpiRow(substanceId, plan);
         return;
     }
 
@@ -17187,6 +17754,99 @@ function renderTaperKpiRow(substanceId) {
         set('taper-kpi-remaining-week-val', '—');
         set('taper-kpi-status-val', 'No plan');
     }
+
+    renderPurchaseTaperKpiRow(substanceId, plan);
+}
+
+function renderPurchaseTaperKpiRow(substanceId, plan) {
+    const row = document.getElementById('taper-purchase-kpi-row');
+    if (!row) return;
+    const sub = getSubstance(substanceId);
+    const metrics = getPurchaseTaperMetrics(plan, substanceId);
+    const show = !!metrics && !isTaperPlanPaused(plan);
+    row.classList.toggle('hidden', !show);
+    if (!show || !metrics) return;
+
+    const unit = metrics.unit;
+    const tiles = row.querySelectorAll('.taper-purchase-kpi-tile');
+    tiles.forEach(tile => tile.classList.add('hidden'));
+
+    const showTile = (id, label, value, status) => {
+        const tile = document.getElementById(id);
+        if (!tile) return;
+        tile.classList.remove('hidden');
+        tile.classList.remove('taper-kpi-under', 'taper-kpi-close', 'taper-kpi-over');
+        if (status) tile.classList.add(`taper-kpi-${status}`);
+        const labelEl = tile.querySelector('.taper-kpi-label');
+        const valueEl = tile.querySelector('.taper-kpi-value');
+        if (labelEl) labelEl.textContent = label;
+        if (valueEl) valueEl.textContent = value;
+    };
+
+    if (isPurchaseTaperWeeklyAmountMode(plan)) {
+        showTile(
+            'taper-kpi-bought-week',
+            'Bought this week',
+            formatTaperActualAmount(metrics.boughtWeek, unit),
+            metrics.buyWeekStatus
+        );
+        showTile(
+            'taper-kpi-buy-remaining-week',
+            'Buy amount remaining this week',
+            metrics.weeklyBuyTarget != null
+                ? formatTaperAmount(metrics.buyWeekRemaining, unit)
+                : '—',
+            metrics.buyWeekStatus
+        );
+    }
+    if (isPurchaseTaperWeeklySpendMode(plan)) {
+        showTile(
+            'taper-kpi-spent-week',
+            'Spent this week',
+            formatTaperMoney(metrics.spentWeek),
+            metrics.spendWeekStatus
+        );
+        showTile(
+            'taper-kpi-spend-remaining-week',
+            'Spending remaining this week',
+            metrics.weeklySpendTarget != null
+                ? formatTaperMoney(metrics.spendWeekRemaining)
+                : '—',
+            metrics.spendWeekStatus
+        );
+    }
+    if (isPurchaseTaperMonthlyAmountMode(plan)) {
+        showTile(
+            'taper-kpi-bought-month',
+            'Bought this month',
+            formatTaperActualAmount(metrics.boughtMonth, unit),
+            metrics.buyMonthStatus
+        );
+        showTile(
+            'taper-kpi-buy-remaining-month',
+            'Monthly buy remaining',
+            metrics.monthlyBuyCap != null
+                ? formatTaperAmount(metrics.buyMonthRemaining, unit)
+                : '—',
+            metrics.buyMonthStatus
+        );
+    }
+    if (isPurchaseTaperMonthlySpendMode(plan)) {
+        showTile(
+            'taper-kpi-spent-month',
+            'Spent this month',
+            formatTaperMoney(metrics.spentMonth),
+            metrics.spendMonthStatus
+        );
+        showTile(
+            'taper-kpi-spend-remaining-month',
+            'Monthly spending remaining',
+            metrics.monthlySpendCap != null
+                ? formatTaperMoney(metrics.spendMonthRemaining)
+                : '—',
+            metrics.spendMonthStatus
+        );
+    }
 }
 
 function renderTaperProgressCard(substanceId) {
@@ -17200,6 +17860,7 @@ function renderTaperProgressCard(substanceId) {
 
     if (isTaperPlanPaused(plan)) {
         setTaperStatusBadge(document.getElementById('taper-weekly-status'), 'close', 'Paused');
+        renderPurchaseTaperProgress(substanceId, plan);
         return;
     }
 
@@ -17233,6 +17894,7 @@ function renderTaperProgressCard(substanceId) {
             );
         }
         setTaperStatusBadge(document.getElementById('taper-weekly-status'), weekSpend > (spendCap || Infinity) ? 'over' : 'under', weekRow ? 'Buying plan' : '—');
+        renderPurchaseTaperProgress(substanceId, plan);
         return;
     }
 
@@ -17252,6 +17914,7 @@ function renderTaperProgressCard(substanceId) {
         set('taper-monthly-remaining-val', '—');
         const status = currentStrength != null && targetStrength != null && currentStrength <= targetStrength ? 'under' : 'over';
         setTaperStatusBadge(document.getElementById('taper-weekly-status'), status, shortTaperStatus(status));
+        renderPurchaseTaperProgress(substanceId, plan);
         return;
     }
 
@@ -17311,6 +17974,92 @@ function renderTaperProgressCard(substanceId) {
         set('taper-weekly-pct', '—');
         setTaperStatusBadge(document.getElementById('taper-weekly-status'), 'under', '—');
     }
+
+    renderPurchaseTaperProgress(substanceId, plan);
+}
+
+function renderPurchaseTaperProgress(substanceId, plan) {
+    const panel = document.getElementById('taper-purchase-progress');
+    if (!panel) return;
+    const metrics = getPurchaseTaperMetrics(plan, substanceId);
+    const show = !!metrics && !isTaperPlanPaused(plan);
+    panel.classList.toggle('hidden', !show);
+    if (!show || !metrics) return;
+
+    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+    const unit = metrics.unit;
+    const formatDiff = (diff, isMoney) => {
+        if (diff == null) return '—';
+        if (diff === 0) return 'On plan';
+        const abs = Math.abs(diff);
+        const formatted = isMoney ? formatTaperMoney(abs) : formatTaperActualAmount(abs, unit);
+        return diff > 0 ? `${formatted} over` : `${formatted} under`;
+    };
+
+    if (isPurchaseTaperWeeklyAmountMode(plan)) {
+        set('taper-purchase-weekly-buy-target', metrics.weeklyBuyTarget != null
+            ? formatTaperAmount(metrics.weeklyBuyTarget, unit)
+            : '—');
+        set('taper-purchase-bought-week', formatTaperActualAmount(metrics.boughtWeek, unit));
+        set('taper-purchase-buy-remaining', metrics.weeklyBuyTarget != null
+            ? formatTaperAmount(metrics.buyWeekRemaining, unit)
+            : '—');
+        set('taper-purchase-buy-over-under', formatDiff(metrics.buyWeekDiff, false));
+    } else {
+        ['taper-purchase-weekly-buy-target', 'taper-purchase-bought-week', 'taper-purchase-buy-remaining', 'taper-purchase-buy-over-under']
+            .forEach(id => set(id, '—'));
+    }
+
+    if (isPurchaseTaperWeeklySpendMode(plan)) {
+        set('taper-purchase-weekly-spend-target', metrics.weeklySpendTarget != null
+            ? formatTaperMoney(metrics.weeklySpendTarget)
+            : '—');
+        set('taper-purchase-spent-week', formatTaperMoney(metrics.spentWeek));
+        set('taper-purchase-spend-remaining', metrics.weeklySpendTarget != null
+            ? formatTaperMoney(metrics.spendWeekRemaining)
+            : '—');
+        set('taper-purchase-spend-over-under', formatDiff(metrics.spendWeekDiff, true));
+    } else {
+        ['taper-purchase-weekly-spend-target', 'taper-purchase-spent-week', 'taper-purchase-spend-remaining', 'taper-purchase-spend-over-under']
+            .forEach(id => set(id, '—'));
+    }
+
+    if (isPurchaseTaperMonthlyAmountMode(plan)) {
+        set('taper-purchase-monthly-buy-cap', metrics.monthlyBuyCap != null
+            ? formatTaperAmount(metrics.monthlyBuyCap, unit)
+            : '—');
+        set('taper-purchase-bought-month', formatTaperActualAmount(metrics.boughtMonth, unit));
+        set('taper-purchase-buy-month-remaining', metrics.monthlyBuyCap != null
+            ? formatTaperAmount(metrics.buyMonthRemaining, unit)
+            : '—');
+    } else {
+        ['taper-purchase-monthly-buy-cap', 'taper-purchase-bought-month', 'taper-purchase-buy-month-remaining']
+            .forEach(id => set(id, '—'));
+    }
+
+    if (isPurchaseTaperMonthlySpendMode(plan)) {
+        set('taper-purchase-monthly-spend-cap', metrics.monthlySpendCap != null
+            ? formatTaperMoney(metrics.monthlySpendCap)
+            : '—');
+        set('taper-purchase-spent-month', formatTaperMoney(metrics.spentMonth));
+        set('taper-purchase-spend-month-remaining', metrics.monthlySpendCap != null
+            ? formatTaperMoney(metrics.spendMonthRemaining)
+            : '—');
+    } else {
+        ['taper-purchase-monthly-spend-cap', 'taper-purchase-spent-month', 'taper-purchase-spend-month-remaining']
+            .forEach(id => set(id, '—'));
+    }
+
+    let overallStatus = 'under';
+    const statuses = [
+        metrics.buyWeekStatus,
+        metrics.spendWeekStatus,
+        metrics.buyMonthStatus,
+        metrics.spendMonthStatus
+    ].filter(s => s && s !== 'none');
+    if (statuses.includes('over')) overallStatus = 'over';
+    else if (statuses.includes('close')) overallStatus = 'close';
+    setTaperStatusBadge(document.getElementById('taper-purchase-status'), overallStatus, shortTaperStatus(overallStatus));
 }
 
 function getTaperWeeklySummary(plan, substanceId) {
@@ -17817,6 +18566,49 @@ function handleTaperSubmit(e) {
         }
     }
 
+    if (document.getElementById('purchase-taper-enabled')?.checked && supportsPurchaseTaper(substanceId)) {
+        const formMode = document.getElementById('purchase-reduction-mode')?.value || 'none';
+        if (formMode === 'weekly_spend') {
+            const target = parseOptionalTaperNumber(document.getElementById('purchase-weekly-spend'));
+            if (target == null || target <= 0) return alert('Enter a weekly spending target.');
+        } else if (formMode === 'weekly_buy_amount') {
+            const target = parseOptionalTaperNumber(document.getElementById('purchase-weekly-amount'));
+            if (target == null || target <= 0) return alert('Enter a weekly purchase target.');
+        } else if (formMode === 'monthly_spend') {
+            const cap = parseOptionalTaperNumber(document.getElementById('purchase-monthly-spend'));
+            if (cap == null || cap <= 0) return alert('Enter a monthly spending cap.');
+        } else if (formMode === 'monthly_buy_amount') {
+            const cap = parseOptionalTaperNumber(document.getElementById('purchase-monthly-amount'));
+            if (cap == null || cap <= 0) return alert('Enter a monthly purchase cap.');
+        } else if (formMode === 'reduce_buy_amount') {
+            const startAmt = parseOptionalTaperNumber(document.getElementById('purchase-start-amount'));
+            const redAmt = parseOptionalTaperNumber(document.getElementById('purchase-reduction-amount'));
+            const redPct = parseOptionalTaperNumber(document.getElementById('purchase-reduction-percent'));
+            if (startAmt == null || startAmt <= 0) return alert('Enter a starting weekly purchase amount.');
+            if ((redAmt == null || redAmt <= 0) && (redPct == null || redPct <= 0)) {
+                return alert('Enter a reduction amount or percent per week.');
+            }
+        } else if (formMode === 'reduce_buy_spend') {
+            const startSpend = parseOptionalTaperNumber(document.getElementById('purchase-start-spend'));
+            const redAmt = parseOptionalTaperNumber(document.getElementById('purchase-reduction-amount'));
+            const redPct = parseOptionalTaperNumber(document.getElementById('purchase-reduction-percent'));
+            if (startSpend == null || startSpend <= 0) return alert('Enter a starting weekly spend.');
+            if ((redAmt == null || redAmt <= 0) && (redPct == null || redPct <= 0)) {
+                return alert('Enter a reduction amount or percent per week.');
+            }
+        } else if (formMode === 'manual_weekly_buy_amount' || formMode === 'manual_weekly_spend') {
+            const targets = collectManualPurchaseTargetsFromForm(formMode);
+            if (!targets.length) return alert('Add at least one manual purchase week.');
+            if (formMode === 'manual_weekly_buy_amount') {
+                if (!targets.some(t => (parseFloat(t.amountTarget) || 0) > 0)) {
+                    return alert('Enter at least one weekly purchase amount target.');
+                }
+            } else if (!targets.some(t => (parseFloat(t.spendTarget) || 0) > 0)) {
+                return alert('Enter at least one weekly spending target.');
+            }
+        }
+    }
+
     ensureTaperPlansV2(appData);
     const built = buildTaperPlanFromForm(substanceId, existingPlan);
     built.name = planName;
@@ -17965,6 +18757,12 @@ function buildTaperByWeekData(substanceId, plan = null) {
         const { status, label } = getTaperByWeekStatus(used, planned);
         const weekNum = weekRow.week ?? index + 1;
         const isCurrent = today >= weekRow.weekStart && today <= weekRow.weekEnd;
+        const buyPlanned = weekRow.purchaseAmountTarget ?? null;
+        const bought = weekRow.actualPurchasedAmount ?? 0;
+        const buyDiff = buyPlanned != null ? roundTaperActual(bought - buyPlanned) : null;
+        const spendPlanned = weekRow.purchaseSpendTarget ?? null;
+        const spent = weekRow.actualPurchaseSpend ?? 0;
+        const spendDiff = spendPlanned != null ? roundTaperActual(spent - spendPlanned) : null;
 
         return {
             weekNum,
@@ -17976,6 +18774,12 @@ function buildTaperByWeekData(substanceId, plan = null) {
             runningPlanned,
             runningUsed,
             runningDiff,
+            buyPlanned,
+            bought,
+            buyDiff,
+            spendPlanned,
+            spent,
+            spendDiff,
             status,
             statusLabel: label,
             isCurrent
@@ -18107,6 +18911,12 @@ function renderTaperByWeek(substanceId) {
             runningPlanned: formatTaperAmount(row.runningPlanned, displayUnit),
             runningUsed: formatTaperActualAmount(row.runningUsed, displayUnit),
             remaining: formatTaperWeekDiff(row.runningDiff, displayUnit),
+            buyPlanned: row.buyPlanned != null ? formatTaperAmount(row.buyPlanned, unit) : '—',
+            bought: formatTaperActualAmount(row.bought, unit),
+            buyDiff: row.buyDiff != null ? formatTaperWeekDiff(row.buyDiff, unit) : '—',
+            spendPlanned: row.spendPlanned != null ? formatTaperMoney(row.spendPlanned) : '—',
+            spent: formatTaperMoney(row.spent),
+            spendDiff: row.spendDiff != null ? formatTaperWeekDiff(row.spendDiff, getCurrencySymbol()) : '—',
             status: `<span class="taper-by-week-status taper-by-week-status-${row.status}">${row.statusLabel}</span>`
         };
         html += `<tr class="taper-by-week-row taper-by-week-${row.status}${row.isCurrent ? ' taper-by-week-current' : ''}">`;
@@ -18204,7 +19014,8 @@ function pauseTaper() {
 function resetTaper() {
     const plan = getSelectedTaperPlan();
     if (!plan) return;
-    deleteTaperPlanById(plan.id);
+    if (!confirm('Reset this taper plan? Usage and buying/spending goals will be removed. This cannot be undone.')) return;
+    deleteTaperPlanById(plan.id, { skipConfirm: true });
 }
 
 function checkTaperTarget() {

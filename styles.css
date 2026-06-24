@@ -1412,6 +1412,26 @@ input[type="range"]::-webkit-slider-thumb {
     gap: 10px;
 }
 
+.taper-purchase-kpi-row {
+    margin-top: 10px;
+}
+
+.purchase-taper-section {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+}
+
+.purchase-taper-section h4 {
+    margin: 0 0 0.75rem;
+}
+
+.taper-progress-purchase {
+    margin-top: 1rem;
+    padding-top: 1rem;
+    border-top: 1px solid var(--border);
+}
+
 .taper-kpi-tile {
     background: var(--bg-card);
     border-radius: 12px;
