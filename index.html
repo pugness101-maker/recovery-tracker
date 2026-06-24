@@ -341,8 +341,14 @@
 
             <!-- Use Log Tab -->
             <section id="use-log-tab" class="tab use-log-page">
-                <div class="use-log-page-header">
-                    <h2>Use Log</h2>
+                <div class="page-header-row use-log-page-header">
+                    <div class="page-title-block">
+                        <h2>Use Log</h2>
+                    </div>
+                    <div class="page-substance-selector substance-select-card">
+                        <label for="use-log-substance" class="page-substance-label">Substance</label>
+                        <select id="use-log-substance" class="page-substance-select" onchange="onUseLogSubstanceChange()"></select>
+                    </div>
                 </div>
 
                 <div class="use-log-filter-bar">
@@ -393,7 +399,7 @@
                     </div>
 
                     <div class="use-log-core-card">
-                        <div class="form-group use-log-compact">
+                        <div class="form-group use-log-compact" id="use-substance-group">
                             <label for="use-substance">Substance</label>
                             <select id="use-substance" required></select>
                         </div>
@@ -750,14 +756,14 @@
 
             <!-- Taper Tab -->
             <section id="taper-tab" class="tab taper-page">
-                <div class="taper-page-header">
-                    <div class="taper-page-title">
+                <div class="page-header-row taper-page-header">
+                    <div class="page-title-block taper-page-title">
                         <h2>Taper</h2>
-                        <p class="taper-page-subtitle">Plan vs actual targets</p>
+                        <p class="page-subtitle taper-page-subtitle">Plan vs actual targets</p>
                     </div>
-                    <div class="taper-toolbar">
-                        <label for="taper-substance" class="taper-toolbar-label">Substance</label>
-                        <select id="taper-substance" class="taper-toolbar-select" required onchange="onTaperSubstanceChange()"></select>
+                    <div class="page-substance-selector substance-select-card taper-toolbar">
+                        <label for="taper-substance" class="page-substance-label taper-toolbar-label">Substance</label>
+                        <select id="taper-substance" class="page-substance-select taper-toolbar-select" required onchange="onTaperSubstanceChange()"></select>
                     </div>
                 </div>
 
@@ -1056,8 +1062,16 @@
 
             <!-- Buy Tracker Tab -->
             <section id="buy-tracker-tab" class="tab">
-                <h2>Inventory</h2>
-                <p class="settings-hint">Track inventory purchases — amount bought, remaining, cost, and notes.</p>
+                <div class="page-header-row inventory-page-header">
+                    <div class="page-title-block">
+                        <h2>Inventory</h2>
+                        <p class="page-subtitle settings-hint">Track inventory purchases — amount bought, remaining, cost, and notes.</p>
+                    </div>
+                    <div class="page-substance-selector substance-select-card">
+                        <label for="inventory-substance" class="page-substance-label">Substance</label>
+                        <select id="inventory-substance" class="page-substance-select" onchange="onInventorySubstanceChange()"></select>
+                    </div>
+                </div>
 
                 <div id="inventory-summary-cards" class="inventory-summary-wrap"></div>
 
@@ -1071,9 +1085,6 @@
 
                 <div class="inventory-filters-bar">
                     <input type="search" id="inventory-search" class="inventory-search-input" placeholder="Search store, notes, substance…" oninput="applyInventorySearchFilters()">
-                    <select id="inventory-filter-substance" onchange="applyInventorySearchFilters()">
-                        <option value="">All substances</option>
-                    </select>
                     <input type="date" id="inventory-filter-date-start" onchange="applyInventorySearchFilters()" title="From date">
                     <input type="date" id="inventory-filter-date-end" onchange="applyInventorySearchFilters()" title="To date">
                     <select id="inventory-filter-status" onchange="applyInventorySearchFilters()">

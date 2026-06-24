@@ -832,16 +832,11 @@ function isInventoryAllSubstancesFilter(selectedSubstanceId) {
 }
 
 function getInventorySubstanceFilterId() {
-    return document.getElementById('inventory-filter-substance')?.value || '';
+    return isSelectedAllSubstances() ? '' : selectedSubstanceId;
 }
 
-function ensureInventorySubstanceFilterDefault() {
-    const select = document.getElementById('inventory-filter-substance');
-    if (!select || inventorySubstanceFilterInitialized) return;
-    const mainId = getMainSubstanceId();
-    select.value = mainId || '';
-    inventoryListFilters.substanceId = select.value;
-    inventorySubstanceFilterInitialized = true;
+function syncInventorySubstanceFilterState() {
+    inventoryListFilters.substanceId = getInventorySubstanceFilterId();
 }
 
 function getFilteredPurchases(purchases, selectedSubstanceId, selectedStatus = null, data = appData) {
@@ -1001,7 +996,6 @@ function setInventoryTab(tab) {
 
 function applyInventorySearchFilters() {
     inventorySearchQuery = document.getElementById('inventory-search')?.value?.trim() || '';
-    inventoryListFilters.substanceId = document.getElementById('inventory-filter-substance')?.value || '';
     inventoryListFilters.dateStart = document.getElementById('inventory-filter-date-start')?.value || '';
     inventoryListFilters.dateEnd = document.getElementById('inventory-filter-date-end')?.value || '';
     inventoryListFilters.status = document.getElementById('inventory-filter-status')?.value || '';
@@ -1009,7 +1003,7 @@ function applyInventorySearchFilters() {
     inventoryListFilters.hasRemaining = document.getElementById('inventory-filter-remaining')?.value || '';
     inventoryListFilters.hasCost = document.getElementById('inventory-filter-cost')?.value || '';
     inventoryListFilters.vapeOnly = !!document.getElementById('inventory-filter-vape-only')?.checked;
-    if (inventoryListFilters.substanceId) inventorySubstanceFilterInitialized = true;
+    syncInventorySubstanceFilterState();
     renderPurchaseHistory(null);
     renderInventorySummaryCards();
 }
@@ -1038,18 +1032,122 @@ function runInventoryBulkAction(action) {
     refreshBuyTrackerRelatedViews();
 }
 
-function populateInventoryFilterSubstances() {
-    const select = document.getElementById('inventory-filter-substance');
-    if (!select) return;
-    const prev = select.value;
-    select.innerHTML = '<option value="">All substances</option>';
-    getActiveSubstances().forEach(sub => {
-        const opt = document.createElement('option');
-        opt.value = sub.id;
-        opt.textContent = `${sub.icon || ''} ${sub.name}`.trim();
-        select.appendChild(opt);
-    });
-    if (prev) select.value = prev;
+function populatePageSubstanceDropdowns() {
+    const active = getActiveSubstances();
+    populatePageSubstanceSelect('use-log-substance', { includeAll: true, substances: active });
+    populatePageSubstanceSelect('inventory-substance', { includeAll: true, substances: active });
+    const taperSubs = sortSubstancesMainFirst(getTaperSubstances());
+    populatePageSubstanceSelect('taper-substance', { includeAll: false, substances: taperSubs });
+    syncPageSubstanceSelectors();
+    syncInventorySubstanceFilterState();
+}
+
+function populatePageSubstanceSelect(selectId, { includeAll = false, substances = null } = {}) {
+    const dropdown = document.getElementById(selectId);
+    if (!dropdown) return;
+    const subs = substances || getActiveSubstances();
+    dropdown.innerHTML = '';
+    if (includeAll) {
+        const all = document.createElement('option');
+        all.value = DASHBOARD_ALL;
+        all.textContent = '📊 All substances';
+        dropdown.appendChild(all);
+    }
+    sortSubstancesMainFirst(subs).forEach(sub => dropdown.appendChild(buildSubstanceOption(sub)));
+    const fallback = includeAll
+        ? (subs[0]?.id || DASHBOARD_ALL)
+        : (subs[0]?.id || '');
+    const target = [...dropdown.options].some(o => o.value === selectedSubstanceId)
+        ? selectedSubstanceId
+        : fallback;
+    if (target && [...dropdown.options].some(o => o.value === target)) {
+        dropdown.value = target;
+    }
+}
+
+function syncPageSubstanceSelectors(skipId = null) {
+    if (skipId !== 'use-log-substance') {
+        const el = document.getElementById('use-log-substance');
+        if (el && [...el.options].some(o => o.value === selectedSubstanceId)) el.value = selectedSubstanceId;
+    }
+    if (skipId !== 'inventory-substance') {
+        const el = document.getElementById('inventory-substance');
+        if (el && [...el.options].some(o => o.value === selectedSubstanceId)) el.value = selectedSubstanceId;
+    }
+    if (skipId !== 'taper-substance') {
+        const taperEl = document.getElementById('taper-substance');
+        if (taperEl && [...taperEl.options].some(o => o.value === selectedSubstanceId)) {
+            taperEl.value = selectedSubstanceId;
+        }
+    }
+    syncInventorySubstanceFilterState();
+}
+
+function ensureSelectedSubstanceIdValid() {
+    if (isSelectedAllSubstances()) return;
+    if (getActiveSubstances().some(s => s.id === selectedSubstanceId)) return;
+    selectedSubstanceId = resolveDefaultSelectedSubstanceId();
+}
+
+function setSelectedSubstanceId(id, { source = null, refresh = true } = {}) {
+    selectedSubstanceId = id || DASHBOARD_ALL;
+    ensureSelectedSubstanceIdValid();
+    syncPageSubstanceSelectors(source);
+    syncUseLogFormFromSelectedSubstance();
+    syncBuyFormFromSelectedSubstance();
+    if (!refresh) return;
+    renderUseLogTab();
+    renderInventorySummaryCards();
+    renderPurchaseHistory(null);
+    if (source !== 'taper' && getTaperSubstances().some(s => s.id === selectedSubstanceId)) {
+        refreshTaperDashboard();
+    }
+}
+
+function onUseLogSubstanceChange() {
+    const id = document.getElementById('use-log-substance')?.value;
+    if (!id) return;
+    setSelectedSubstanceId(id, { source: 'use-log-substance' });
+}
+
+function onInventorySubstanceChange() {
+    const id = document.getElementById('inventory-substance')?.value;
+    if (!id) return;
+    setSelectedSubstanceId(id, { source: 'inventory-substance' });
+}
+
+function syncUseLogFormFromSelectedSubstance() {
+    const group = document.getElementById('use-substance-group');
+    const useSelect = document.getElementById('use-substance');
+    const all = isSelectedAllSubstances();
+    group?.classList.toggle('hidden', !all);
+    if (useSelect) {
+        useSelect.required = all;
+        if (!all && [...useSelect.options].some(o => o.value === selectedSubstanceId)) {
+            useSelect.value = selectedSubstanceId;
+            updateUseUnitDropdown();
+            updateVapeUseFormUI();
+        }
+    }
+}
+
+function syncBuyFormFromSelectedSubstance() {
+    if (isSelectedAllSubstances()) return;
+    const buyEl = document.getElementById('buy-substance');
+    if (buyEl && [...buyEl.options].some(o => o.value === selectedSubstanceId)) {
+        buyEl.value = selectedSubstanceId;
+        updateBuyUnitDropdown();
+        updateBuyVapeFieldsVisibility();
+    }
+}
+
+function getUseLogViewSubstanceId() {
+    return isSelectedAllSubstances() ? null : selectedSubstanceId;
+}
+
+function getUseLogFormSubstanceId() {
+    if (!isSelectedAllSubstances()) return selectedSubstanceId;
+    return document.getElementById('use-substance')?.value || selectedSubstanceId;
 }
 
 function syncVapeTaperCountModeSelect() {
@@ -2265,12 +2363,37 @@ const USE_STATS_DEFAULTS = {
 
 const USE_STATS_VAPE_DEFAULTS = {
     order: [
-        'totalUsage', 'sessionCount', 'avgPuffsPerDay', 'avgPuffsPerSession',
-        'puffsRemaining', 'percentLeft', 'vapeCount', 'activeVapes',
-        'avgCostPerVape', 'avgCostPerDay', 'nicotineMgPerDay'
+        'totalUsage', 'avgPuffsPerDay', 'vapeCount', 'activeVapes', 'avgCostPerDay',
+        'avgDaysPerVape', 'nicotineMgPerDay',
+        'sessionCount', 'avgPuffsPerSession', 'puffsRemaining', 'percentLeft', 'avgCostPerVape',
+        'avgDuration', 'currentSupplyDuration'
     ],
-    hidden: ['avgDuration', 'currentSupplyDuration', 'avgDaysPerVape']
+    hidden: [
+        'sessionCount', 'avgPuffsPerSession', 'puffsRemaining', 'percentLeft', 'avgCostPerVape',
+        'avgDuration', 'currentSupplyDuration'
+    ]
 };
+
+const USE_STATS_COKE_DEFAULTS = {
+    order: [
+        'totalUsage', 'sessionCount', 'avgPerCalendarDay', 'avgPerUseDay',
+        'avgPerSession', 'avgPerHr', 'totalDuration', 'avgDuration',
+        'currentSupplyDuration', 'longestSession', 'shortestSession', 'longestBreak', 'shortestBreak', 'avgBreak',
+        'useDays', 'useDayPct'
+    ],
+    hidden: [
+        'avgPerSession', 'avgPerHr', 'totalDuration', 'avgDuration', 'currentSupplyDuration',
+        'longestSession', 'shortestSession', 'longestBreak', 'shortestBreak', 'avgBreak',
+        'avgPerUseDay', 'useDays', 'useDayPct'
+    ]
+};
+
+const USE_STATS_WEED_DEFAULTS = {
+    order: [...USE_STATS_COKE_DEFAULTS.order],
+    hidden: [...USE_STATS_COKE_DEFAULTS.hidden]
+};
+
+const USE_STATS_LAYOUT_STORAGE_KEY = 'recoveryTracker.useStatsLayout.v1';
 
 const VAPE_ONLY_USE_STAT_IDS = [
     'avgPuffsPerDay', 'avgPuffsPerSession', 'vapeCount', 'activeVapes',
@@ -3238,6 +3361,21 @@ function getMainSubstanceId() {
     return getMainSubstance()?.id || DEFAULT_MAIN_SUBSTANCE_ID;
 }
 
+function resolveDefaultSelectedSubstanceId() {
+    if (!appData?.substances?.length) return DASHBOARD_ALL;
+    const mainId = getMainSubstanceId();
+    if (mainId) return mainId;
+    return getActiveSubstances()[0]?.id || DASHBOARD_ALL;
+}
+
+function isSelectedAllSubstances() {
+    return selectedSubstanceId === DASHBOARD_ALL;
+}
+
+function getSelectedSubstanceFilterId() {
+    return isSelectedAllSubstances() ? null : selectedSubstanceId;
+}
+
 function resolveStartupSubstanceId() {
     if (!appData?.substances?.length) return DEFAULT_MAIN_SUBSTANCE_ID;
     const mainId = getMainSubstanceId();
@@ -3271,6 +3409,7 @@ try {
 }
 
 let currentSubstanceId = resolveStartupSubstanceId();
+let selectedSubstanceId = resolveDefaultSelectedSubstanceId();
 let statsDateRangePreset = 'last-7';
 let statsCustomStartDate = '';
 let statsCustomEndDate = '';
@@ -3287,7 +3426,8 @@ function initializeApp() {
     setupEventListeners();
     populateAllSubstanceDropdowns();
     syncSubstanceSelectors();
-    syncTaperSubstanceToMain();
+    syncUseLogFormFromSelectedSubstance();
+    syncBuyFormFromSelectedSubstance();
     updateDashboard();
     renderRecentUseList();
     refreshTaperDashboard();
@@ -3318,8 +3458,11 @@ function refreshAppAfterDataChange() {
     recalculateAllBreaks();
     recalculateAllBuyBreaks();
     currentSubstanceId = resolveStartupSubstanceId();
+    ensureSelectedSubstanceIdValid();
     populateAllSubstanceDropdowns();
+    populatePageSubstanceDropdowns();
     syncSubstanceSelectors();
+    syncUseLogFormFromSelectedSubstance();
     applyMainSubstanceToForms();
     applyMainSubstanceToViewSelectors();
     updateDashboard();
@@ -3359,7 +3502,10 @@ function setMainSubstance(id) {
     appData.substances.forEach(s => { s.isMain = s.id === id; });
     saveData(appData);
     currentSubstanceId = id;
+    selectedSubstanceId = id;
     populateAllSubstanceDropdowns();
+    populatePageSubstanceDropdowns();
+    syncUseLogFormFromSelectedSubstance();
     applyMainSubstanceToViewSelectors();
     syncSubstanceSelectors();
     applyMainSubstanceToForms();
@@ -3373,11 +3519,13 @@ function setMainSubstance(id) {
 
 function applyMainSubstanceToForms() {
     const mainId = getMainSubstanceId();
-    if (!mainId) return;
-    ['use-substance', 'buy-substance'].forEach(selectId => {
-        const el = document.getElementById(selectId);
-        if (el && [...el.options].some(o => o.value === mainId)) el.value = mainId;
-    });
+    syncUseLogFormFromSelectedSubstance();
+    syncBuyFormFromSelectedSubstance();
+    if (!mainId || !isSelectedAllSubstances()) return;
+    const useEl = document.getElementById('use-substance');
+    if (useEl && [...useEl.options].some(o => o.value === mainId)) useEl.value = mainId;
+    const buyEl = document.getElementById('buy-substance');
+    if (buyEl && [...buyEl.options].some(o => o.value === mainId)) buyEl.value = mainId;
     updateUseUnitDropdown();
     updateBuyUnitDropdown();
 }
@@ -3455,14 +3603,13 @@ function populateSelect(selectId, substances, { includeAll = false, currentValue
 function populateAllSubstanceDropdowns() {
     const mainId = getMainSubstanceId();
     const active = getActiveSubstances();
-    const taperSubs = sortSubstancesMainFirst(getTaperSubstances());
     const viewDefault = mainId || currentSubstanceId;
 
     populateSelect('dashboard-substance', active, { includeAll: true, currentValue: viewDefault });
     populateSelect('stats-substance', active, { includeAll: true, currentValue: viewDefault });
-    populateSelect('taper-substance', taperSubs, { currentValue: mainId && taperSubs.some(s => s.id === mainId) ? mainId : taperSubs[0]?.id });
-    populateSelect('use-substance', getLoggableSubstances(), { currentValue: mainId });
-    populateSelect('buy-substance', active, { currentValue: mainId });
+    populateSelect('use-substance', getLoggableSubstances(), { currentValue: isSelectedAllSubstances() ? getMainSubstanceId() : selectedSubstanceId });
+    populateSelect('buy-substance', active, { currentValue: isSelectedAllSubstances() ? mainId : selectedSubstanceId });
+    populatePageSubstanceDropdowns();
     populateTaperReductionTypeSelect(getTaperSubstanceId());
     updateUseUnitDropdown();
     updateBuyUnitDropdown();
@@ -3997,14 +4144,15 @@ function switchTab(tabId) {
         applyMainSubstanceToViewSelectors();
         updateStats();
     } else if (tabId === 'buy-tracker-tab') {
-        applyMainSubstanceToForms();
+        syncBuyFormFromSelectedSubstance();
         renderBuyTrackerTab();
     } else if (tabId === 'use-log-tab') {
-        applyMainSubstanceToForms();
+        syncUseLogFormFromSelectedSubstance();
         renderUseLogTab();
     } else if (tabId === 'taper-tab') {
         applyMainSubstanceToViewSelectors();
-        syncTaperSubstanceToMain();
+        populatePageSubstanceDropdowns();
+        syncTaperSubstanceToSelected();
         refreshTaperDashboard();
     } else if (tabId === 'settings-tab') {
         applyMainSubstanceToViewSelectors();
@@ -7944,9 +8092,8 @@ function logOneUse() {
     const sub = getSubstance(substanceId);
     if (!sub) return alert('Add an active substance first.');
     if (isVapeTrackingMode(substanceId)) {
+        setSelectedSubstanceId(substanceId, { source: 'use-log-substance', refresh: false });
         switchTab('use-log-tab');
-        setInputValue('use-substance', substanceId);
-        updateUseUnitDropdown();
         setDefaultVapeUseLogDate();
         ensureVapeUseFormDefaults();
         updateVapeUseFormUI();
@@ -7954,9 +8101,8 @@ function logOneUse() {
         return;
     }
     if (isWeedTrackingMode(substanceId)) {
+        setSelectedSubstanceId(substanceId, { source: 'use-log-substance', refresh: false });
         switchTab('use-log-tab');
-        setInputValue('use-substance', substanceId);
-        updateUseUnitDropdown();
         setDefaultWeedUseLogDate();
         ensureWeedUseFormDefaults();
         updateVapeUseFormUI();
@@ -8240,7 +8386,7 @@ function useHistorySelectionHas(id) {
 
 function buildUseHistoryRows(substanceIdOverride = null) {
     const entries = getUseEntries();
-    const filterId = substanceIdOverride ?? (isAllSubstancesView() ? null : currentSubstanceId);
+    const filterId = substanceIdOverride ?? getUseLogViewSubstanceId();
     let substances = filterId ? [getSubstance(filterId)].filter(Boolean) : getLoggableSubstances();
 
     if (filterId && !substances.length && entries.length) {
@@ -8347,9 +8493,9 @@ function populateManualLinkSubstanceDropdown() {
         select.appendChild(opt);
     });
 
-    let defaultId = currentSubstanceId;
-    if (!isAllSubstancesView() && subs.some(s => s.id === currentSubstanceId)) {
-        defaultId = currentSubstanceId;
+    let defaultId = selectedSubstanceId;
+    if (!isSelectedAllSubstances() && subs.some(s => s.id === selectedSubstanceId)) {
+        defaultId = selectedSubstanceId;
     } else if (substanceIdsInSelection.size === 1) {
         defaultId = [...substanceIdsInSelection][0];
     } else if (subs.length) {
@@ -8696,7 +8842,7 @@ function renderRecentUseList() {
     const container = document.getElementById('recent-use-list');
     if (!container) return;
     container.innerHTML = '';
-    const filterId = isAllSubstancesView() ? null : currentSubstanceId;
+    const filterId = getUseLogViewSubstanceId();
     let list = [...getUseEntries()].filter(l => logMatchesUseLogFilter(l));
     if (filterId) list = list.filter(l => logMatchesSubstance(l, filterId));
     const recent = list.sort((a, b) => getLogDatetimeMs(b) - getLogDatetimeMs(a)).slice(0, 12);
@@ -10091,7 +10237,7 @@ function renderBuySpendingTrend(substanceId) {
 }
 
 function renderBuyTrackerTab() {
-    const filterId = isAllSubstancesView() ? null : currentSubstanceId;
+    const filterId = getSelectedSubstanceFilterId();
     const stats = getBuyStats(filterId);
     const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
 
@@ -10162,9 +10308,8 @@ function renderBuyTrackerTab() {
     }
 
     renderBuySpendingTrend(filterId);
-    populateInventoryFilterSubstances();
-    renderInventorySummaryCards(filterId);
-    renderPurchaseHistory(filterId);
+    renderInventorySummaryCards();
+    renderPurchaseHistory(null);
     renderBuyWeeklySummary(filterId);
     renderBuyMonthlySummary(filterId);
     renderStoresList();
@@ -10174,7 +10319,7 @@ function renderBuyTrackerTab() {
 function renderPurchaseHistory(substanceId, containerId = null) {
     const filterId = substanceId !== undefined
         ? substanceId
-        : (isAllSubstancesView() ? null : currentSubstanceId);
+        : getSelectedSubstanceFilterId();
     const container = document.getElementById(containerId || 'purchase-history-list')
         || document.getElementById('buy-history-table-wrap')
         || document.getElementById('purchase-history');
@@ -10415,7 +10560,7 @@ function setUseLogFilter(filter) {
     renderUseLogTab();
 }
 
-function getUseLogTotalsForView(substanceId = isAllSubstancesView() ? null : currentSubstanceId) {
+function getUseLogTotalsForView(substanceId = getUseLogViewSubstanceId()) {
     const bounds = getUseLogFilterBounds();
     let logs = getUseEntries().filter(l => logMatchesUseLogFilter(l) && isPersonalUseLog(l));
     if (substanceId) {
@@ -10429,7 +10574,7 @@ function getUseLogTotalsForView(substanceId = isAllSubstancesView() ? null : cur
 function renderUseLogTotals() {
     const container = document.getElementById('use-log-totals');
     if (!container) return;
-    const sub = isAllSubstancesView() ? null : getSubstance(currentSubstanceId);
+    const sub = isSelectedAllSubstances() ? null : getSubstance(selectedSubstanceId);
     const unit = sub?.defaultUnit || 'units';
     const { totalGrams, totalCost, entryCount } = getUseLogTotalsForView();
     const cur = getCurrencySymbol();
@@ -14393,7 +14538,18 @@ function syncTaperSubstanceToMain() {
     if (el && mainId && [...el.options].some(o => o.value === mainId)) el.value = mainId;
 }
 
+function syncTaperSubstanceToSelected() {
+    const el = document.getElementById('taper-substance');
+    if (el && [...el.options].some(o => o.value === selectedSubstanceId)) {
+        el.value = selectedSubstanceId;
+    } else {
+        syncTaperSubstanceToMain();
+    }
+}
+
 function onTaperSubstanceChange() {
+    const id = getTaperSubstanceId();
+    if (id) setSelectedSubstanceId(id, { source: 'taper', refresh: false });
     taperEditingPlan = false;
     populateTaperReductionTypeSelect(getTaperSubstanceId());
     toggleTaperPlanTypeFields();
@@ -16083,6 +16239,8 @@ if (typeof window !== 'undefined') {
         restoreLastAutoBackup,
         exportJsonBackup,
         setUseLogFilter,
+        onUseLogSubstanceChange,
+        onInventorySubstanceChange,
         startBulkLinkSessions,
         closeBulkLinkModal,
         applyBulkLinkPreview,
