@@ -1153,16 +1153,24 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .use-history-actions-cell {
+    min-width: 150px;
     white-space: nowrap;
+}
+
+.use-history-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
 }
 
 .use-history-actions-cell .secondary-btn,
 .use-history-actions-cell .delete-btn {
-    padding: 3px 7px;
-    font-size: 0.72rem;
-    margin-left: 4px;
+    padding: 4px 10px;
+    font-size: 0.75rem;
+    margin-left: 0;
     min-height: unset;
     line-height: 1.2;
+    flex-shrink: 0;
 }
 
 /* Taper Plan */
@@ -3796,6 +3804,80 @@ body.locked .bottom-nav {
     margin-bottom: 12px;
 }
 
+.customizable-table {
+    min-width: max-content;
+    table-layout: fixed;
+}
+
+.customizable-table th {
+    position: relative;
+    white-space: nowrap;
+}
+
+.customizable-th-label {
+    display: inline-block;
+    padding-right: 10px;
+}
+
+.column-resize-handle {
+    position: absolute;
+    top: 0;
+    right: 0;
+    width: 10px;
+    height: 100%;
+    cursor: col-resize;
+    touch-action: none;
+    user-select: none;
+}
+
+.column-resize-handle::after {
+    content: '';
+    position: absolute;
+    top: 20%;
+    bottom: 20%;
+    right: 3px;
+    width: 2px;
+    border-radius: 1px;
+    background: var(--border);
+}
+
+.column-resize-handle:hover::after,
+body.table-col-resizing .column-resize-handle::after {
+    background: var(--accent);
+}
+
+body.table-col-resizing {
+    cursor: col-resize;
+    user-select: none;
+}
+
+.use-history-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: nowrap;
+}
+
+.use-history-actions-cell {
+    min-width: 150px;
+    white-space: nowrap;
+}
+
+.use-history-actions-cell .secondary-btn,
+.use-history-actions-cell .delete-btn {
+    flex-shrink: 0;
+}
+
+.column-settings-width-input {
+    width: 72px;
+    padding: 4px 6px;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    background: var(--bg-primary);
+    color: inherit;
+    font-size: 0.85rem;
+}
+
 #purchase-history-list,
 .purchase-history {
     margin-bottom: 12px;
@@ -5330,10 +5412,6 @@ body.locked .bottom-nav {
 }
 
 .purchase-history-actions-cell,
-.use-history-actions-cell {
-    white-space: normal;
-}
-
 .use-history-actions-cell {
     white-space: nowrap;
 }

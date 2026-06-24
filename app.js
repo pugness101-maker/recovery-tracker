@@ -2384,8 +2384,24 @@ function applyCollapsedSections() {
 
 const TABLE_COLUMN_DEFAULTS = {
     useHistory: {
-        order: ['select', 'date', 'start', 'end', 'duration', 'amount', 'unit', 'count', 'rate', 'break', 'supply', 'notes', 'actions'],
-        hidden: []
+        order: ['select', 'date', 'start', 'end', 'duration', 'substance', 'transactionType', 'amount', 'unit', 'count', 'rate', 'inventory', 'notes', 'actions'],
+        hidden: [],
+        widths: {
+            select: 50,
+            date: 130,
+            start: 80,
+            end: 80,
+            duration: 110,
+            substance: 150,
+            transactionType: 130,
+            amount: 100,
+            unit: 80,
+            count: 80,
+            rate: 100,
+            inventory: 160,
+            notes: 220,
+            actions: 150
+        }
     },
     purchaseHistory: {
         order: ['select', 'date', 'substance', 'bought', 'remaining', 'usedPct', 'supplyDuration', 'supply', 'cost', 'store', 'payment', 'notes', 'break', 'actions'],
@@ -2408,20 +2424,92 @@ const TABLE_COLUMN_DEFAULTS = {
         }
     },
     statsWeekly: {
-        order: ['week', 'start', 'end', 'usage', 'monthRunning', 'avgBreak', 'sessions', 'duration', 'avgDur', 'gPerSession', 'gPerHour', 'longBreak', 'shortBreak', 'status'],
-        hidden: []
+        order: ['week', 'start', 'end', 'usage', 'monthRunning', 'avgBreak', 'sessions', 'useDays', 'duration', 'avgDur', 'gPerSession', 'gPerHour', 'longBreak', 'shortBreak', 'cost', 'status'],
+        hidden: ['duration', 'avgDur', 'gPerSession', 'gPerHour', 'longBreak', 'shortBreak'],
+        widths: {
+            week: 100,
+            start: 100,
+            end: 100,
+            usage: 110,
+            monthRunning: 120,
+            avgBreak: 100,
+            sessions: 80,
+            useDays: 80,
+            duration: 100,
+            avgDur: 90,
+            gPerSession: 90,
+            gPerHour: 80,
+            longBreak: 100,
+            shortBreak: 100,
+            cost: 90,
+            status: 100
+        }
     },
     statsMonthly: {
-        order: ['month', 'start', 'end', 'usage', 'purchased', 'cost', 'sessions', 'useDays', 'usePct', 'avgBreak', 'duration', 'avgDur', 'gPerSession', 'gPerUseDay', 'gPerCalDay', 'gPerHour'],
-        hidden: ['gPerUseDay', 'gPerCalDay']
+        order: ['month', 'start', 'end', 'usage', 'purchased', 'cost', 'sessions', 'useDays', 'usePct', 'avgPerDay', 'avgBreak', 'duration', 'avgDur', 'gPerSession', 'gPerUseDay', 'gPerCalDay', 'gPerHour', 'status'],
+        hidden: ['gPerUseDay', 'gPerCalDay', 'duration', 'avgDur', 'gPerSession', 'gPerHour'],
+        widths: {
+            month: 120,
+            start: 100,
+            end: 100,
+            usage: 110,
+            purchased: 100,
+            cost: 90,
+            sessions: 80,
+            useDays: 80,
+            usePct: 80,
+            avgPerDay: 100,
+            avgBreak: 100,
+            duration: 100,
+            avgDur: 90,
+            gPerSession: 90,
+            gPerUseDay: 100,
+            gPerCalDay: 100,
+            gPerHour: 80,
+            status: 100
+        }
     },
     buyWeekly: {
         order: ['startWeek', 'endWeek', 'purchased', 'monthRunning', 'cost', 'costPerUnit', 'gPerDay', 'supplyDuration'],
-        hidden: []
+        hidden: [],
+        widths: {
+            startWeek: 110,
+            endWeek: 110,
+            purchased: 110,
+            monthRunning: 120,
+            cost: 90,
+            costPerUnit: 100,
+            gPerDay: 90,
+            supplyDuration: 120
+        }
     },
     buyMonthly: {
         order: ['startMonth', 'endMonth', 'purchased', 'cost', 'costPerUnit', 'gPerDay', 'supplyDuration'],
-        hidden: []
+        hidden: [],
+        widths: {
+            startMonth: 110,
+            endMonth: 110,
+            purchased: 110,
+            cost: 90,
+            costPerUnit: 100,
+            gPerDay: 90,
+            supplyDuration: 120
+        }
+    },
+    taperByWeek: {
+        order: ['week', 'dates', 'planned', 'used', 'difference', 'runningPlanned', 'runningUsed', 'remaining', 'status'],
+        hidden: [],
+        widths: {
+            week: 70,
+            dates: 170,
+            planned: 100,
+            used: 100,
+            difference: 90,
+            runningPlanned: 120,
+            runningUsed: 110,
+            remaining: 100,
+            status: 100
+        }
     }
 };
 
@@ -2432,10 +2520,13 @@ const TABLE_COLUMN_LABELS = {
         start: 'Start',
         end: 'End',
         duration: 'Duration',
+        substance: 'Substance',
+        transactionType: 'Type',
         amount: 'Amount',
         unit: 'Unit',
         count: 'Count',
         rate: 'Rate',
+        inventory: 'Inventory',
         break: 'Break Since Previous',
         supply: 'Supply',
         notes: 'Notes',
@@ -2465,12 +2556,14 @@ const TABLE_COLUMN_LABELS = {
         monthRunning: 'Month running',
         avgBreak: 'Avg break',
         sessions: 'Sessions',
+        useDays: 'Use days',
         duration: 'Duration',
         avgDur: 'Avg dur',
         gPerSession: 'g/sess',
         gPerHour: 'g/hr',
         longBreak: 'Long break',
         shortBreak: 'Short break',
+        cost: 'Cost',
         status: 'Status'
     },
     statsMonthly: {
@@ -2483,13 +2576,15 @@ const TABLE_COLUMN_LABELS = {
         sessions: 'Sessions',
         useDays: 'Use days',
         usePct: 'Use %',
+        avgPerDay: 'Avg / day',
         avgBreak: 'Avg break',
         duration: 'Duration',
         avgDur: 'Avg dur',
         gPerSession: 'g/sess',
         gPerUseDay: 'g/use day',
         gPerCalDay: 'g/cal day',
-        gPerHour: 'g/hr'
+        gPerHour: 'g/hr',
+        status: 'Status'
     },
     buyWeekly: {
         startWeek: 'Start Week',
@@ -2509,6 +2604,17 @@ const TABLE_COLUMN_LABELS = {
         costPerUnit: 'Cost/g',
         gPerDay: 'g/day',
         supplyDuration: 'Supply Duration'
+    },
+    taperByWeek: {
+        week: 'Week',
+        dates: 'Dates',
+        planned: 'Planned',
+        used: 'Used',
+        difference: '+/-',
+        runningPlanned: 'Running planned',
+        runningUsed: 'Running used',
+        remaining: 'Running +/-',
+        status: 'Status'
     }
 };
 
@@ -2518,12 +2624,21 @@ const COLUMN_MODAL_TITLES = {
     statsWeekly: 'Customize Weekly Summary Columns',
     statsMonthly: 'Customize Monthly Summary Columns',
     buyWeekly: 'Customize Weekly Buy Summary Columns',
-    buyMonthly: 'Customize Monthly Buy Summary Columns'
+    buyMonthly: 'Customize Monthly Buy Summary Columns',
+    taperByWeek: 'Customize Taper by Week Columns'
 };
 
 const TABLE_COLUMNS_REQUIRED = {
     useHistory: ['select', 'actions'],
-    purchaseHistory: ['select', 'actions']
+    purchaseHistory: ['select', 'actions'],
+    taperByWeek: ['week', 'status']
+};
+
+const COLUMN_SETTINGS_STORAGE_KEY = 'recoveryTracker.columnSettings.v1';
+
+const USE_HISTORY_COLUMN_ALIASES = {
+    supply: 'inventory',
+    break: 'break'
 };
 
 const PURCHASE_HISTORY_WIDTH_MAP = {
@@ -2654,57 +2769,182 @@ const inventoryListFilters = {
     vapeOnly: false
 };
 
-function ensureTableColumnSettings(data) {
-    if (!data.settings) data.settings = {};
-    if (!data.settings.tableColumns) {
-        data.settings.tableColumns = JSON.parse(JSON.stringify(TABLE_COLUMN_DEFAULTS));
-        return;
+function loadColumnSettingsStore() {
+    try {
+        const raw = localStorage.getItem(COLUMN_SETTINGS_STORAGE_KEY);
+        return raw ? JSON.parse(raw) : {};
+    } catch {
+        return {};
     }
-    Object.keys(TABLE_COLUMN_DEFAULTS).forEach(tableKey => {
-        const defaults = TABLE_COLUMN_DEFAULTS[tableKey];
-        const stored = data.settings.tableColumns[tableKey] || {};
-        const order = Array.isArray(stored.order) ? stored.order.filter(id => defaults.order.includes(id)) : [];
-        defaults.order.forEach(id => {
-            if (!order.includes(id)) order.push(id);
+}
+
+function saveColumnSettingsStore(store) {
+    localStorage.setItem(COLUMN_SETTINGS_STORAGE_KEY, JSON.stringify(store));
+}
+
+function getDefaultColumnSettings(tableKey) {
+    const defaults = TABLE_COLUMN_DEFAULTS[tableKey];
+    if (!defaults) return { order: [], visible: {}, widths: {} };
+    const visible = {};
+    defaults.order.forEach(id => {
+        visible[id] = !(defaults.hidden || []).includes(id);
+    });
+    return {
+        order: [...defaults.order],
+        visible,
+        widths: { ...(defaults.widths || {}) }
+    };
+}
+
+function remapUseHistoryColumnId(colId) {
+    return USE_HISTORY_COLUMN_ALIASES[colId] || colId;
+}
+
+function normalizeStoredColumnSettings(tableKey, stored) {
+    const defaults = TABLE_COLUMN_DEFAULTS[tableKey];
+    if (!defaults) return getDefaultColumnSettings(tableKey);
+    const base = getDefaultColumnSettings(tableKey);
+
+    let order = Array.isArray(stored?.order)
+        ? stored.order.map(id => tableKey === 'useHistory' ? remapUseHistoryColumnId(id) : id)
+            .filter(id => defaults.order.includes(id))
+        : [];
+    defaults.order.forEach(id => {
+        if (!order.includes(id)) order.push(id);
+    });
+
+    const visible = { ...base.visible };
+    if (stored?.visible && typeof stored.visible === 'object') {
+        Object.entries(stored.visible).forEach(([id, val]) => {
+            const mapped = tableKey === 'useHistory' ? remapUseHistoryColumnId(id) : id;
+            if (defaults.order.includes(mapped)) visible[mapped] = !!val;
         });
-        const hidden = Array.isArray(stored.hidden)
-            ? stored.hidden.filter(id => defaults.order.includes(id) && !(TABLE_COLUMNS_REQUIRED[tableKey] || []).includes(id))
-            : [];
-        if (tableKey === 'purchaseHistory') {
-            const defaultWidths = { ...PURCHASE_HISTORY_COLUMN_WIDTH_DEFAULTS };
-            const storedWidths = stored.widths && typeof stored.widths === 'object' ? stored.widths : {};
-            const widths = { ...defaultWidths };
-            defaults.order.forEach(id => {
-                if (storedWidths[id] != null) widths[id] = storedWidths[id];
+    } else if (Array.isArray(stored?.hidden)) {
+        stored.hidden.forEach(id => {
+            const mapped = tableKey === 'useHistory' ? remapUseHistoryColumnId(id) : id;
+            if (visible[mapped] !== undefined) visible[mapped] = false;
+        });
+    }
+
+    (TABLE_COLUMNS_REQUIRED[tableKey] || []).forEach(id => {
+        visible[id] = true;
+    });
+
+    const widths = { ...base.widths };
+    if (stored?.widths && typeof stored.widths === 'object') {
+        defaults.order.forEach(id => {
+            if (stored.widths[id] != null) widths[id] = stored.widths[id];
+        });
+    }
+
+    return { order, visible, widths };
+}
+
+function migrateLegacyTableColumnsToLocalStorageIfNeeded(data = appData) {
+    const store = loadColumnSettingsStore();
+    if (store.__migratedFromAppData) return;
+    const legacy = data?.settings?.tableColumns;
+    if (legacy && typeof legacy === 'object') {
+        Object.keys(TABLE_COLUMN_DEFAULTS).forEach(tableKey => {
+            if (store[tableKey]) return;
+            const old = legacy[tableKey];
+            if (!old) return;
+            store[tableKey] = normalizeStoredColumnSettings(tableKey, {
+                order: old.order,
+                hidden: old.hidden,
+                widths: old.widths
             });
-            data.settings.tableColumns[tableKey] = { order, hidden, widths };
+        });
+    }
+    store.__migratedFromAppData = true;
+    saveColumnSettingsStore(store);
+}
+
+function ensureTableColumnSettings(data) {
+    migrateLegacyTableColumnsToLocalStorageIfNeeded(data);
+    const store = loadColumnSettingsStore();
+    Object.keys(TABLE_COLUMN_DEFAULTS).forEach(tableKey => {
+        if (!store[tableKey]) {
+            store[tableKey] = getDefaultColumnSettings(tableKey);
         } else {
-            data.settings.tableColumns[tableKey] = { order, hidden };
+            store[tableKey] = normalizeStoredColumnSettings(tableKey, store[tableKey]);
         }
     });
+    saveColumnSettingsStore(store);
 }
 
 function getTableColumnConfig(tableKey) {
     ensureTableColumnSettings(appData);
-    return appData.settings.tableColumns[tableKey] || TABLE_COLUMN_DEFAULTS[tableKey];
+    const store = loadColumnSettingsStore();
+    return store[tableKey] || getDefaultColumnSettings(tableKey);
 }
 
 function getEffectiveColumnOrder(tableKey) {
     const defaults = TABLE_COLUMN_DEFAULTS[tableKey];
     const config = getTableColumnConfig(tableKey);
-    const hidden = new Set(config.hidden || []);
+    const visible = config.visible || {};
     const required = new Set(TABLE_COLUMNS_REQUIRED[tableKey] || []);
     const order = [...config.order];
     defaults.order.forEach(id => {
         if (!order.includes(id)) order.push(id);
     });
-    return order.filter(id => defaults.order.includes(id) && (!hidden.has(id) || required.has(id)));
+    return order.filter(id => defaults.order.includes(id) && (visible[id] !== false || required.has(id)));
 }
 
 function saveTableColumnConfig(tableKey, config) {
-    ensureTableColumnSettings(appData);
-    appData.settings.tableColumns[tableKey] = config;
-    saveData(appData);
+    const store = loadColumnSettingsStore();
+    store[tableKey] = normalizeStoredColumnSettings(tableKey, config);
+    saveColumnSettingsStore(store);
+}
+
+function getTableColumnMinWidth(tableKey, colId) {
+    if (colId === 'actions') return 150;
+    if (colId === 'select') return 40;
+    if (colId === 'notes') return 120;
+    return 60;
+}
+
+function getTableColumnWidthPx(tableKey, colId) {
+    const config = getTableColumnConfig(tableKey);
+    const defaultWidths = TABLE_COLUMN_DEFAULTS[tableKey]?.widths || {};
+    const raw = config.widths?.[colId] ?? defaultWidths[colId];
+    if (typeof raw === 'number' && Number.isFinite(raw) && raw > 0) {
+        return Math.round(raw);
+    }
+    if (typeof raw === 'string' && PURCHASE_HISTORY_WIDTH_TIERS.includes(raw)) {
+        const map = colId === 'actions' ? PURCHASE_HISTORY_ACTIONS_WIDTH_MAP : PURCHASE_HISTORY_WIDTH_MAP;
+        return map[raw] || map.M;
+    }
+    return defaultWidths[colId] || 100;
+}
+
+function saveTableColumnWidth(tableKey, colId, px) {
+    const config = getTableColumnConfig(tableKey);
+    const widths = { ...(config.widths || {}) };
+    widths[colId] = Math.max(getTableColumnMinWidth(tableKey, colId), Math.round(px));
+    saveTableColumnConfig(tableKey, { ...config, widths });
+}
+
+function buildTableColgroup(tableKey, columnIds) {
+    let html = '<colgroup>';
+    columnIds.forEach(colId => {
+        const px = getTableColumnWidthPx(tableKey, colId);
+        html += `<col data-col="${colId}" style="width:${px}px;min-width:${px}px">`;
+    });
+    html += '</colgroup>';
+    return html;
+}
+
+function getTableMinWidth(tableKey, columnIds) {
+    let min = 0;
+    columnIds.forEach(colId => {
+        min += getTableColumnWidthPx(tableKey, colId);
+    });
+    return Math.max(min, 320);
+}
+
+function renderColumnResizeHandle(tableKey, colId, label) {
+    return `<span class="column-resize-handle" data-table-key="${tableKey}" data-col-id="${colId}" role="separator" aria-orientation="vertical" aria-label="Resize ${escapeAttr(label)} column"></span>`;
 }
 
 function getUseStatsDefaultsForSubstance(substanceId) {
@@ -2960,7 +3200,7 @@ function setupUseStatsSettingsModal() {
 }
 
 function resetTableColumnConfig(tableKey) {
-    saveTableColumnConfig(tableKey, JSON.parse(JSON.stringify(TABLE_COLUMN_DEFAULTS[tableKey])));
+    saveTableColumnConfig(tableKey, getDefaultColumnSettings(tableKey));
 }
 
 function openColumnSettingsModal(tableKey) {
@@ -2984,21 +3224,24 @@ function renderColumnSettingsList(tableKey) {
     if (!list) return;
     const config = getTableColumnConfig(tableKey);
     const required = new Set(TABLE_COLUMNS_REQUIRED[tableKey] || []);
-    const hidden = new Set(config.hidden || []);
+    const visible = config.visible || {};
     const order = [...config.order];
     TABLE_COLUMN_DEFAULTS[tableKey].order.forEach(id => {
         if (!order.includes(id)) order.push(id);
     });
 
     list.innerHTML = order.map(colId => {
-        const checked = !hidden.has(colId);
+        const checked = visible[colId] !== false;
         const disabled = required.has(colId) ? 'disabled checked' : (checked ? 'checked' : '');
         const reqNote = required.has(colId) ? ' <span class="column-required-tag">(required)</span>' : '';
         const label = getTableColumnLabelForSubstance(tableKey, colId, currentSubstanceId);
-        const widthControl = tableKey === 'purchaseHistory'
-            ? renderPurchaseHistoryColumnWidthControl(colId)
-            : '';
-        return `<li class="column-settings-item${tableKey === 'purchaseHistory' ? ' column-settings-item-with-width' : ''}" draggable="true" data-col-id="${colId}">
+        const widthPx = getTableColumnWidthPx(tableKey, colId);
+        const widthControl = `<div class="column-settings-width">
+            <label class="column-settings-width-label" for="column-width-${tableKey}-${colId}">Width</label>
+            <input type="number" id="column-width-${tableKey}-${colId}" class="column-settings-width-input" data-col-id="${colId}" min="${getTableColumnMinWidth(tableKey, colId)}" step="1" value="${widthPx}">
+            <span class="column-settings-width-hint">px</span>
+        </div>`;
+        return `<li class="column-settings-item column-settings-item-with-width" draggable="true" data-col-id="${colId}">
             <span class="column-drag-handle" draggable="true" aria-hidden="true">☰</span>
             <label class="column-settings-label">
                 <input type="checkbox" class="column-settings-visible" data-col-id="${colId}" ${disabled}>
@@ -3009,120 +3252,28 @@ function renderColumnSettingsList(tableKey) {
     }).join('');
 }
 
-function renderPurchaseHistoryColumnWidthControl(colId) {
-    const setting = getPurchaseHistoryColumnWidthSetting(colId);
-    const isCustomPx = typeof setting === 'number' && setting > 0;
-    const selectValue = isCustomPx
-        ? findNearestPurchaseHistoryWidthTier(colId, setting)
-        : (PURCHASE_HISTORY_WIDTH_TIERS.includes(setting) ? setting : 'M');
-    const options = PURCHASE_HISTORY_WIDTH_TIERS.map(tier =>
-        `<option value="${tier}"${selectValue === tier ? ' selected' : ''}>${tier}</option>`
-    ).join('');
-    const customHint = isCustomPx
-        ? `<span class="column-settings-width-hint">${Math.round(setting)}px</span>`
-        : '';
-    return `<div class="column-settings-width">
-        <label class="column-settings-width-label" for="column-width-${colId}">Width</label>
-        <select id="column-width-${colId}" class="column-settings-width-select" data-col-id="${colId}" onchange="this.dataset.widthDirty='1'">${options}</select>
-        ${customHint}
-    </div>`;
-}
-
 function getPurchaseHistoryColumnWidthSetting(colId) {
-    const config = getTableColumnConfig('purchaseHistory');
-    const widths = config.widths || PURCHASE_HISTORY_COLUMN_WIDTH_DEFAULTS;
-    if (widths[colId] != null) return widths[colId];
-    return PURCHASE_HISTORY_COLUMN_WIDTH_DEFAULTS[colId] || 'M';
+    return getTableColumnWidthPx('purchaseHistory', colId);
 }
 
 function getPurchaseHistoryColumnWidthPx(colId, widthSetting) {
     if (typeof widthSetting === 'number' && Number.isFinite(widthSetting) && widthSetting > 0) {
         return Math.round(widthSetting);
     }
-    if (typeof widthSetting === 'string' && /^\d+(\.\d+)?px$/.test(widthSetting)) {
-        return Math.round(parseFloat(widthSetting));
-    }
-    const map = colId === 'actions' ? PURCHASE_HISTORY_ACTIONS_WIDTH_MAP : PURCHASE_HISTORY_WIDTH_MAP;
-    const key = PURCHASE_HISTORY_WIDTH_TIERS.includes(widthSetting) ? widthSetting : 'M';
-    return map[key] || map.M;
-}
-
-function findNearestPurchaseHistoryWidthTier(colId, px) {
-    const map = colId === 'actions' ? PURCHASE_HISTORY_ACTIONS_WIDTH_MAP : PURCHASE_HISTORY_WIDTH_MAP;
-    let nearest = 'M';
-    let nearestDiff = Number.POSITIVE_INFINITY;
-    PURCHASE_HISTORY_WIDTH_TIERS.forEach(tier => {
-        const diff = Math.abs(map[tier] - px);
-        if (diff < nearestDiff) {
-            nearestDiff = diff;
-            nearest = tier;
-        }
-    });
-    return nearest;
+    return getTableColumnWidthPx('purchaseHistory', colId);
 }
 
 function getPurchaseHistoryColumnWidthsMap() {
     const config = getTableColumnConfig('purchaseHistory');
-    return { ...(config.widths || PURCHASE_HISTORY_COLUMN_WIDTH_DEFAULTS) };
+    return { ...(config.widths || TABLE_COLUMN_DEFAULTS.purchaseHistory.widths) };
 }
 
 function savePurchaseHistoryColumnWidth(colId, px) {
-    const config = getTableColumnConfig('purchaseHistory');
-    const widths = getPurchaseHistoryColumnWidthsMap();
-    widths[colId] = Math.max(colId === 'actions' ? 180 : 60, Math.round(px));
-    saveTableColumnConfig('purchaseHistory', { ...config, widths });
+    saveTableColumnWidth('purchaseHistory', colId, px);
 }
 
 function buildPurchaseHistoryColgroup(columnIds) {
-    const widths = getPurchaseHistoryColumnWidthsMap();
-    let html = '<colgroup>';
-    columnIds.forEach(colId => {
-        const px = getPurchaseHistoryColumnWidthPx(colId, widths[colId]);
-        html += `<col data-col="${colId}" style="width:${px}px;min-width:${px}px">`;
-    });
-    html += '</colgroup>';
-    return html;
-}
-
-function setupPurchaseHistoryColumnResize() {
-    if (document.documentElement.dataset.purchaseHistoryColResizeBound === '1') return;
-    document.documentElement.dataset.purchaseHistoryColResizeBound = '1';
-
-    let active = null;
-
-    document.addEventListener('mousedown', e => {
-        const handle = e.target.closest('.purchase-history-col-resize');
-        if (!handle) return;
-        e.preventDefault();
-        const colId = handle.dataset.colResize;
-        const table = handle.closest('table.purchase-history-table');
-        const col = table?.querySelector(`colgroup col[data-col="${colId}"]`);
-        if (!table || !col) return;
-        const startWidth = col.getBoundingClientRect().width || getPurchaseHistoryColumnWidthPx(colId, getPurchaseHistoryColumnWidthSetting(colId));
-        active = { colId, col, table, startX: e.clientX, startWidth };
-        document.body.classList.add('purchase-history-col-resizing');
-    });
-
-    document.addEventListener('mousemove', e => {
-        if (!active) return;
-        e.preventDefault();
-        const minW = active.colId === 'actions' ? 180 : 60;
-        const newWidth = Math.max(minW, Math.round(active.startWidth + (e.clientX - active.startX)));
-        active.col.style.width = `${newWidth}px`;
-        active.col.style.minWidth = `${newWidth}px`;
-        const total = [...active.table.querySelectorAll('colgroup col')].reduce((sum, c) => {
-            return sum + (parseInt(c.style.width, 10) || c.getBoundingClientRect().width || 0);
-        }, 0);
-        active.table.style.minWidth = `${Math.max(total, 320)}px`;
-    });
-
-    document.addEventListener('mouseup', () => {
-        if (!active) return;
-        const px = parseInt(active.col.style.width, 10) || active.startWidth;
-        savePurchaseHistoryColumnWidth(active.colId, px);
-        document.body.classList.remove('purchase-history-col-resizing');
-        active = null;
-    });
+    return buildTableColgroup('purchaseHistory', columnIds);
 }
 
 function readColumnSettingsFromModal(tableKey) {
@@ -3130,25 +3281,22 @@ function readColumnSettingsFromModal(tableKey) {
     if (!list) return getTableColumnConfig(tableKey);
     const required = new Set(TABLE_COLUMNS_REQUIRED[tableKey] || []);
     const order = [...list.querySelectorAll('.column-settings-item')].map(li => li.dataset.colId);
-    const hidden = [];
+    const visible = {};
+    order.forEach(id => { visible[id] = true; });
     list.querySelectorAll('.column-settings-visible').forEach(input => {
-        if (!input.checked && !required.has(input.dataset.colId)) {
-            hidden.push(input.dataset.colId);
+        const colId = input.dataset.colId;
+        if (!colId) return;
+        visible[colId] = required.has(colId) ? true : input.checked;
+    });
+    const widths = { ...(getTableColumnConfig(tableKey).widths || {}) };
+    list.querySelectorAll('.column-settings-width-input').forEach(input => {
+        const colId = input.dataset.colId;
+        const px = parseInt(input.value, 10);
+        if (colId && Number.isFinite(px) && px > 0) {
+            widths[colId] = Math.max(getTableColumnMinWidth(tableKey, colId), px);
         }
     });
-    const result = { order, hidden };
-    if (tableKey === 'purchaseHistory') {
-        const widths = getPurchaseHistoryColumnWidthsMap();
-        list.querySelectorAll('.column-settings-width-select').forEach(select => {
-            const colId = select.dataset.colId;
-            if (!colId) return;
-            if (select.dataset.widthDirty === '1' || typeof widths[colId] !== 'number') {
-                widths[colId] = select.value;
-            }
-        });
-        result.widths = widths;
-    }
-    return result;
+    return { order, visible, widths };
 }
 
 function refreshTableAfterColumnChange(tableKey) {
@@ -3172,15 +3320,66 @@ function refreshTableAfterColumnChange(tableKey) {
         case 'buyMonthly':
             renderBuyMonthlySummary(substanceId);
             break;
+        case 'taperByWeek':
+            renderTaperByWeek(getTaperSubstanceId());
+            break;
         default:
             break;
     }
+}
+
+function setupCustomizableTableColumnResize() {
+    if (document.documentElement.dataset.tableColResizeBound === '1') return;
+    document.documentElement.dataset.tableColResizeBound = '1';
+
+    let active = null;
+
+    document.addEventListener('mousedown', e => {
+        const handle = e.target.closest('.column-resize-handle');
+        if (!handle) return;
+        e.preventDefault();
+        const tableKey = handle.dataset.tableKey;
+        const colId = handle.dataset.colId;
+        const table = handle.closest('table.customizable-table');
+        const col = table?.querySelector(`colgroup col[data-col="${colId}"]`);
+        if (!tableKey || !colId || !table || !col) return;
+        const startWidth = col.getBoundingClientRect().width || getTableColumnWidthPx(tableKey, colId);
+        active = { tableKey, colId, col, table, startX: e.clientX, startWidth };
+        document.body.classList.add('table-col-resizing');
+    });
+
+    document.addEventListener('mousemove', e => {
+        if (!active) return;
+        e.preventDefault();
+        const minW = getTableColumnMinWidth(active.tableKey, active.colId);
+        const newWidth = Math.max(minW, Math.round(active.startWidth + (e.clientX - active.startX)));
+        active.col.style.width = `${newWidth}px`;
+        active.col.style.minWidth = `${newWidth}px`;
+        const total = [...active.table.querySelectorAll('colgroup col')].reduce((sum, c) => {
+            return sum + (parseInt(c.style.width, 10) || c.getBoundingClientRect().width || 0);
+        }, 0);
+        active.table.style.minWidth = `${Math.max(total, 320)}px`;
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (!active) return;
+        const px = parseInt(active.col.style.width, 10) || active.startWidth;
+        saveTableColumnWidth(active.tableKey, active.colId, px);
+        document.body.classList.remove('table-col-resizing');
+        active = null;
+    });
 }
 
 function applyColumnSettingsFromModal() {
     if (!columnSettingsTableKey) return;
     const tableKey = columnSettingsTableKey;
     const config = readColumnSettingsFromModal(tableKey);
+    const required = new Set(TABLE_COLUMNS_REQUIRED[tableKey] || []);
+    const visibleDataCols = config.order.filter(id => !required.has(id) && config.visible[id] !== false);
+    if (!visibleDataCols.length) {
+        alert('Keep at least one visible data column.');
+        return;
+    }
     saveTableColumnConfig(tableKey, config);
     closeColumnSettingsModal();
     refreshTableAfterColumnChange(tableKey);
@@ -3212,6 +3411,9 @@ function setupColumnSettingsModal() {
     });
     document.getElementById('buy-monthly-customize-columns')?.addEventListener('click', () => {
         openColumnSettingsModal('buyMonthly');
+    });
+    document.getElementById('taper-by-week-customize-columns')?.addEventListener('click', () => {
+        openColumnSettingsModal('taperByWeek');
     });
     document.getElementById('column-settings-close')?.addEventListener('click', closeColumnSettingsModal);
     document.getElementById('column-settings-apply')?.addEventListener('click', applyColumnSettingsFromModal);
@@ -3261,18 +3463,28 @@ function setupColumnSettingsModal() {
         target.classList.remove('column-settings-drop-target');
     });
 
-    setupPurchaseHistoryColumnResize();
+    setupCustomizableTableColumnResize();
 }
 
 function renderUseHistoryHeaderCell(colId) {
     const labels = TABLE_COLUMN_LABELS.useHistory;
+    const label = labels[colId] || colId;
+    const resize = colId === 'select' ? '' : renderColumnResizeHandle('useHistory', colId, label);
     if (colId === 'select') {
-        return `<th class="use-history-cb-col"><span class="sr-only">${labels.select}</span></th>`;
+        return `<th class="use-history-cb-col" data-col="${colId}"><span class="sr-only">${labels.select}</span></th>`;
     }
     if (colId === 'actions') {
-        return `<th class="actions-cell">${labels.actions}</th>`;
+        return `<th class="actions-cell use-history-actions-header" data-col="${colId}"><span class="customizable-th-label">${labels.actions}</span>${resize}</th>`;
     }
-    return `<th>${labels[colId] || colId}</th>`;
+    return `<th data-col="${colId}"><span class="customizable-th-label">${label}</span>${resize}</th>`;
+}
+
+function formatUseHistoryTransactionType(log) {
+    const tx = getLogTransactionType(log);
+    if (tx === 'gift_given') return 'Gift given';
+    if (tx === 'gift_received') return 'Gift received';
+    if (tx === 'inventory_adjustment') return 'Inventory adj.';
+    return 'Use';
 }
 
 function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
@@ -3281,38 +3493,47 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
     const hideTimeStats = isWeedSimple || isVapeDateOnly;
     const rateStr = (!hideTimeStats && entry.useRate != null) ? `${formatAmount(entry.useRate)}/${sub.defaultUnit}/hr` : '—';
     const checked = useHistorySelectionHas(entry.id) ? 'checked' : '';
+    const label = TABLE_COLUMN_LABELS.useHistory[colId] || colId;
+    const dataLabel = ` data-label="${escapeAttr(label)}"`;
     switch (colId) {
         case 'select':
-            return `<td class="use-history-cb-col"><input type="checkbox" class="use-history-row-cb" data-log-id="${entry.id}" aria-label="Select session" ${checked}></td>`;
+            return `<td class="use-history-cb-col" data-col="${colId}"><input type="checkbox" class="use-history-row-cb" data-log-id="${entry.id}" aria-label="Select session" ${checked}></td>`;
         case 'date':
-            return `<td>${formatDate(entry.date)}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${formatDate(entry.date)}</td>`;
         case 'start':
-            return `<td>${hideTimeStats ? '—' : (entry.startTime || entry.time || '—')}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${hideTimeStats ? '—' : (entry.startTime || entry.time || '—')}</td>`;
         case 'end':
-            return `<td>${hideTimeStats ? '—' : (entry.endTime || '—')}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${hideTimeStats ? '—' : (entry.endTime || '—')}</td>`;
         case 'duration':
-            return `<td>${hideTimeStats ? '—' : formatDurationHours(entry.durationHours)}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${hideTimeStats ? '—' : formatDurationHours(entry.durationHours)}</td>`;
+        case 'substance':
+            return `<td data-col="${colId}"${dataLabel}>${sub.icon || ''} ${sub.name}</td>`;
+        case 'transactionType':
+            return `<td data-col="${colId}"${dataLabel}>${formatUseHistoryTransactionType(entry)}</td>`;
         case 'amount':
-            return `<td>${formatAmount(entry.amount)}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${formatAmount(entry.amount)}</td>`;
         case 'unit':
-            return `<td>${entry.unit}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${entry.unit}</td>`;
         case 'count':
-            return `<td>${isVapeUseLog(entry) ? '—' : (entry.count || '—')}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${isVapeUseLog(entry) ? '—' : (entry.count || '—')}</td>`;
         case 'rate':
-            return `<td>${rateStr}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${rateStr}</td>`;
         case 'break':
-            return `<td>${renderBreakSincePreviousCell(entry)}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${renderBreakSincePreviousCell(entry)}</td>`;
+        case 'inventory':
         case 'supply':
-            return `<td class="supply-cell session-supply-cell">${formatInventoryLinkDisplay(entry)}</td>`;
+            return `<td class="supply-cell session-supply-cell" data-col="inventory"${dataLabel}>${formatInventoryLinkDisplay(entry)}</td>`;
         case 'notes':
-            return `<td class="notes-cell session-notes-cell">${entry.notes || ''}</td>`;
+            return `<td class="notes-cell session-notes-cell" data-col="${colId}"${dataLabel}>${entry.notes || ''}</td>`;
         case 'actions':
-            return `<td class="actions-cell use-history-actions-cell">
-                <button type="button" class="secondary-btn" onclick="editUseEntry(${entry.id})">Edit</button>
-                <button type="button" class="delete-btn" onclick="deleteUseEntry(${entry.id})">×</button>
+            return `<td class="actions-cell use-history-actions-cell" data-col="${colId}">
+                <div class="use-history-actions">
+                    <button type="button" class="secondary-btn" onclick="editUseEntry(${entry.id})">Edit</button>
+                    <button type="button" class="delete-btn" onclick="deleteUseEntry(${entry.id})" aria-label="Delete entry">×</button>
+                </div>
             </td>`;
         default:
-            return '<td>—</td>';
+            return `<td data-col="${colId}">—</td>`;
     }
 }
 
@@ -3331,14 +3552,14 @@ function getPurchaseHistoryTableMinWidth(columns) {
 
 function renderPurchaseHistoryHeaderCell(colId) {
     const label = getPurchaseHistoryColumnLabel(colId);
-    const resize = colId === 'select' ? '' : `<span class="purchase-history-col-resize" data-col-resize="${colId}" role="separator" aria-orientation="vertical" aria-label="Resize ${escapeAttr(label)} column"></span>`;
+    const resize = colId === 'select' ? '' : renderColumnResizeHandle('purchaseHistory', colId, label);
     if (colId === 'select') {
         return `<th class="select-cell" data-col="${colId}"><input type="checkbox" id="inventory-select-all" aria-label="Select all"></th>`;
     }
     if (colId === 'actions') {
-        return `<th class="actions-cell" data-col="${colId}"><span class="purchase-history-th-label">${label}</span>${resize}</th>`;
+        return `<th class="actions-cell" data-col="${colId}"><span class="customizable-th-label">${label}</span>${resize}</th>`;
     }
-    return `<th data-col="${colId}"><span class="purchase-history-th-label">${label}</span>${resize}</th>`;
+    return `<th data-col="${colId}"><span class="customizable-th-label">${label}</span>${resize}</th>`;
 }
 
 function phTd(colId, content, className = '') {
@@ -9175,8 +9396,10 @@ function renderUseHistoryTable(options = {}) {
         return;
     }
 
-    let tableHtml = `<div class="use-history-table-view table-scroll"><table class="session-table history-table use-history-table"><thead><tr>`;
     const useColumns = getEffectiveColumnOrder('useHistory');
+    const tableMinWidth = getTableMinWidth('useHistory', useColumns);
+    const colgroup = buildTableColgroup('useHistory', useColumns);
+    let tableHtml = `<div class="use-history-table-view table-scroll"><table class="session-table history-table use-history-table customizable-table" style="min-width:${tableMinWidth}px;table-layout:fixed">${colgroup}<thead><tr>`;
     useColumns.forEach(colId => {
         tableHtml += renderUseHistoryHeaderCell(colId);
     });
@@ -10601,7 +10824,7 @@ function renderPurchaseHistory(substanceId, containerId = null) {
     const purchaseColumns = getEffectiveColumnOrder('purchaseHistory');
     const tableMinWidth = getPurchaseHistoryTableMinWidth(purchaseColumns);
     const colgroup = buildPurchaseHistoryColgroup(purchaseColumns);
-    let html = `<div class="table-scroll purchase-history-scroll"><table class="session-table history-table purchase-history-table inventory-history-table" style="min-width:${tableMinWidth}px;table-layout:fixed">${colgroup}<thead><tr class="inventory-history-header">`;
+    let html = `<div class="table-scroll purchase-history-scroll"><table class="session-table history-table purchase-history-table inventory-history-table customizable-table" style="min-width:${tableMinWidth}px;table-layout:fixed">${colgroup}<thead><tr class="inventory-history-header">`;
     purchaseColumns.forEach(colId => {
         html += renderPurchaseHistoryHeaderCell(colId);
     });
@@ -12305,19 +12528,24 @@ function renderSheetMetricCard(label, value, badge) {
 function renderConfigurableSheetTable(tableKey, rows, renderCell, substanceId = currentSubstanceId) {
     const order = getEffectiveColumnOrder(tableKey);
     if (!rows.length) return '<p class="empty-hint">No data yet.</p>';
-    let html = '<div class="table-scroll"><table class="sheet-table"><thead><tr>';
+    const tableMinWidth = getTableMinWidth(tableKey, order);
+    const colgroup = buildTableColgroup(tableKey, order);
+    let html = `<div class="table-scroll"><table class="sheet-table customizable-table" data-table-key="${tableKey}" style="min-width:${tableMinWidth}px;table-layout:fixed">${colgroup}<thead><tr>`;
     order.forEach(colId => {
-        html += `<th>${getTableColumnLabelForSubstance(tableKey, colId, substanceId)}</th>`;
+        const label = getTableColumnLabelForSubstance(tableKey, colId, substanceId);
+        const resize = renderColumnResizeHandle(tableKey, colId, label);
+        html += `<th data-col="${colId}"><span class="customizable-th-label">${label}</span>${resize}</th>`;
     });
     html += '</tr></thead><tbody>';
     rows.forEach(rowData => {
         html += '<tr>';
         order.forEach(colId => {
             const cell = renderCell(colId, rowData);
+            const label = getTableColumnLabelForSubstance(tableKey, colId, substanceId);
             if (cell && typeof cell === 'object' && cell.html) {
-                html += `<td>${cell.html}</td>`;
+                html += `<td data-col="${colId}" data-label="${escapeAttr(label)}">${cell.html}</td>`;
             } else {
-                html += `<td>${cell ?? '—'}</td>`;
+                html += `<td data-col="${colId}" data-label="${escapeAttr(label)}">${cell ?? '—'}</td>`;
             }
         });
         html += '</tr>';
@@ -12469,11 +12697,15 @@ function calculateWeeklyTrackingSummary(substanceId, weekStart, weekEnd) {
     const goalUse = getWeeklyLimit(substanceId, weekStart);
     const left = goalUse != null && goalUse > 0 ? goalUse - totalUsage : null;
     const usageBadge = getUsageVsTargetBadge(totalUsage, goalUse);
+    const useDays = new Set(weekEntries.map(e => e.date)).size;
+    const cost = weekEntries.reduce((sum, e) => sum + estimateLogCost(e), 0);
     return {
         weekStart,
         weekEnd,
         totalUsage,
         sessions,
+        useDays,
+        cost,
         totalDurationHours,
         avgDurationHours,
         avgPerSession,
@@ -12731,12 +12963,13 @@ function renderStatsMonthlySummary(substanceId) {
         const dailyGoal = getDailyLimitForDate(substanceId, s.monthStart);
         const monthGoal = dailyGoal != null ? dailyGoal * s.daysInMonth : null;
         const usageBadge = getUsageVsTargetBadge(s.totalUsage, monthGoal);
+        const avgPerDay = s.daysInMonth > 0 ? s.totalUsage / s.daysInMonth : null;
         switch (colId) {
             case 'month': return s.monthLabel;
             case 'start': return formatDate(s.monthStart);
             case 'end': return formatDate(s.monthEnd);
             case 'usage':
-                return { html: `${fmtSheetAmount(s.totalUsage, displayUnit)} ${renderStatusBadge(usageBadge.level, usageBadge.label)}` };
+                return fmtSheetAmount(s.totalUsage, displayUnit);
             case 'purchased': return fmtSheetAmount(
                 s.purchasedAmount,
                 isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit
@@ -12745,6 +12978,7 @@ function renderStatsMonthlySummary(substanceId) {
             case 'sessions': return String(s.sessions);
             case 'useDays': return String(s.useDays);
             case 'usePct': return `${formatAmount(s.useDayPct, 1)}%`;
+            case 'avgPerDay': return fmtSheetAmount(avgPerDay, displayUnit);
             case 'avgBreak': return formatStatsBreakValue(s.avgBreak, substanceId);
             case 'duration': return formatStatsDurationValue(s.totalDurationHours, substanceId);
             case 'avgDur': return formatStatsDurationValue(s.avgDurationHours, substanceId);
@@ -12752,6 +12986,8 @@ function renderStatsMonthlySummary(substanceId) {
             case 'gPerUseDay': return fmtSheetAmount(s.avgPerUseDay, displayUnit);
             case 'gPerCalDay': return fmtSheetAmount(s.avgPerCalendarDay, displayUnit);
             case 'gPerHour': return fmtSheetRate(s.gPerHour, unit, '/hr');
+            case 'status':
+                return { html: renderStatusBadge(usageBadge.level, usageBadge.label) };
             default: return '—';
         }
     });
@@ -12781,12 +13017,14 @@ function renderStatsWeeklySummary(substanceId) {
             case 'monthRunning': return fmtSheetAmount(s.runningTotal, displayUnit);
             case 'avgBreak': return formatStatsBreakValue(s.avgBreak, substanceId);
             case 'sessions': return String(s.sessions);
+            case 'useDays': return String(s.useDays ?? 0);
             case 'duration': return formatStatsDurationValue(s.totalDurationHours, substanceId);
             case 'avgDur': return formatStatsDurationValue(s.avgDurationHours, substanceId);
             case 'gPerSession': return fmtSheetAmount(s.avgPerSession, displayUnit);
             case 'gPerHour': return fmtSheetRate(s.gPerHour, unit, '/hr');
             case 'longBreak': return formatStatsBreakValue(s.longestBreak, substanceId);
             case 'shortBreak': return formatStatsBreakValue(s.shortestBreak, substanceId);
+            case 'cost': return fmtSheetMoney(s.cost || 0, getCurrencySymbol());
             case 'status':
                 return { html: renderStatusBadge(s.usageBadge.level, s.usageBadge.label) };
             default: return '—';
@@ -16329,7 +16567,7 @@ function renderTaperByWeek(substanceId) {
             </tr>`;
         });
         html += '</tbody></table>';
-        tableEl.innerHTML = html;
+        tableEl.innerHTML = `<div class="table-scroll">${html}</div>`;
         return;
     }
 
@@ -16348,39 +16586,42 @@ function renderTaperByWeek(substanceId) {
             </tr>`;
         });
         html += '</tbody></table>';
-        tableEl.innerHTML = html;
+        tableEl.innerHTML = `<div class="table-scroll">${html}</div>`;
         return;
     }
 
-    let html = `<table class="taper-preview-table taper-by-week-table"><thead><tr>
-        <th>Week</th>
-        <th>Dates</th>
-        <th>Planned</th>
-        <th>Used</th>
-        <th>+/-</th>
-        <th>Running Planned</th>
-        <th>Running Used</th>
-        <th>Running +/-</th>
-        <th>Status</th>
-    </tr></thead><tbody>`;
+    let html = `<div class="table-scroll"><table class="taper-preview-table taper-by-week-table customizable-table" data-table-key="taperByWeek" style="min-width:${getTableMinWidth('taperByWeek', getEffectiveColumnOrder('taperByWeek'))}px;table-layout:fixed">`;
+    html += buildTableColgroup('taperByWeek', getEffectiveColumnOrder('taperByWeek'));
+    html += '<thead><tr>';
+    getEffectiveColumnOrder('taperByWeek').forEach(colId => {
+        const label = TABLE_COLUMN_LABELS.taperByWeek[colId] || colId;
+        html += `<th data-col="${colId}"><span class="customizable-th-label">${label}</span>${renderColumnResizeHandle('taperByWeek', colId, label)}</th>`;
+    });
+    html += '</tr></thead><tbody>';
 
     const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
     data.rows.forEach(row => {
         const dateRange = `${formatDate(row.weekStart)} – ${formatDate(row.weekEnd)}`;
-        html += `<tr class="taper-by-week-row taper-by-week-${row.status}${row.isCurrent ? ' taper-by-week-current' : ''}">
-            <td>Week ${row.weekNum}</td>
-            <td class="taper-by-week-dates">${dateRange}</td>
-            <td>${formatTaperAmount(row.planned, displayUnit)}</td>
-            <td>${formatTaperActualAmount(row.used, displayUnit)}</td>
-            <td>${formatTaperWeekDiff(row.diff, displayUnit)}</td>
-            <td>${formatTaperAmount(row.runningPlanned, displayUnit)}</td>
-            <td>${formatTaperActualAmount(row.runningUsed, displayUnit)}</td>
-            <td>${formatTaperWeekDiff(row.runningDiff, displayUnit)}</td>
-            <td><span class="taper-by-week-status taper-by-week-status-${row.status}">${row.statusLabel}</span></td>
-        </tr>`;
+        const cells = {
+            week: `Week ${row.weekNum}`,
+            dates: dateRange,
+            planned: formatTaperAmount(row.planned, displayUnit),
+            used: formatTaperActualAmount(row.used, displayUnit),
+            difference: formatTaperWeekDiff(row.diff, displayUnit),
+            runningPlanned: formatTaperAmount(row.runningPlanned, displayUnit),
+            runningUsed: formatTaperActualAmount(row.runningUsed, displayUnit),
+            remaining: formatTaperWeekDiff(row.runningDiff, displayUnit),
+            status: `<span class="taper-by-week-status taper-by-week-status-${row.status}">${row.statusLabel}</span>`
+        };
+        html += `<tr class="taper-by-week-row taper-by-week-${row.status}${row.isCurrent ? ' taper-by-week-current' : ''}">`;
+        getEffectiveColumnOrder('taperByWeek').forEach(colId => {
+            const label = TABLE_COLUMN_LABELS.taperByWeek[colId] || colId;
+            html += `<td data-col="${colId}" data-label="${escapeAttr(label)}"${colId === 'dates' ? ' class="taper-by-week-dates"' : ''}>${cells[colId] ?? '—'}</td>`;
+        });
+        html += '</tr>';
     });
 
-    html += '</tbody></table>';
+    html += '</tbody></table></div>';
     tableEl.innerHTML = html;
 }
 
