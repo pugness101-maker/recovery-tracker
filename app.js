@@ -290,6 +290,9 @@ function reassignSubstanceIdInData(data, fromId, toId) {
         if (!data.taperPlans[toId]) data.taperPlans[toId] = data.taperPlans[fromId];
         delete data.taperPlans[fromId];
     }
+    (data.taperPlansV2 || []).forEach(plan => {
+        if (plan.substanceId === fromId) plan.substanceId = toId;
+    });
     if (data.recoveryStreaks?.[fromId]) {
         if (!data.recoveryStreaks[toId]) data.recoveryStreaks[toId] = data.recoveryStreaks[fromId];
         delete data.recoveryStreaks[fromId];
@@ -458,12 +461,11 @@ function repairDataConsistency(data) {
     });
     stats.purchasesRecalculated = recalculateAllPurchaseRemaining(data);
 
-    const taperPlans = data.taperPlans || {};
-    Object.keys(taperPlans).forEach(substanceId => {
-        const plan = taperPlans[substanceId];
+    migrateTaperPlansToV2IfNeeded(data);
+    (data.taperPlansV2 || []).forEach(plan => {
         if (!plan) return;
         const before = JSON.stringify((plan.weeklyTargets || []).map(w => w.actualUsed));
-        syncTaperPlanData(substanceId, data);
+        syncTaperPlanDataForPlan(plan, data);
         const after = JSON.stringify((plan.weeklyTargets || []).map(w => w.actualUsed));
         if (before !== after) stats.taperPlansRecalculated++;
     });
@@ -1609,6 +1611,190 @@ function migrateTaperPlansSafely(data) {
     });
 }
 
+const TAPER_PLAN_STATUSES = ['active', 'paused', 'completed', 'archived'];
+
+let selectedTaperPlanId = null;
+let taperFormPlanId = null;
+let showArchivedTaperPlans = false;
+let taperManagePlansFilter = 'active';
+
+function ensureTaperPlansV2(data) {
+    if (!Array.isArray(data.taperPlansV2)) data.taperPlansV2 = [];
+}
+
+function isTaperPlanPaused(plan) {
+    if (!plan) return true;
+    return plan.status === 'paused' || plan.status === 'archived' || !!plan.isPaused;
+}
+
+function getTaperPlanStatus(plan) {
+    if (!plan) return 'active';
+    if (plan.status && TAPER_PLAN_STATUSES.includes(plan.status)) return plan.status;
+    return plan.isPaused ? 'paused' : 'active';
+}
+
+function getTaperPlanStatusLabel(status) {
+    return { active: 'Active', paused: 'Paused', completed: 'Completed', archived: 'Archived' }[status] || status;
+}
+
+function setTaperPlanStatus(plan, status) {
+    if (!plan) return;
+    plan.status = status;
+    plan.isPaused = status === 'paused';
+    plan.updatedAt = new Date().toISOString();
+}
+
+function getTaperPlanById(planId, data = appData) {
+    if (!planId) return null;
+    return (data.taperPlansV2 || []).find(p => p.id === planId) || null;
+}
+
+function getTaperPlansForSubstance(substanceId, data = appData, { includeArchived = false } = {}) {
+    ensureTaperPlansV2(data);
+    return (data.taperPlansV2 || []).filter(p => {
+        if (p.substanceId !== substanceId) return false;
+        if (!includeArchived && p.status === 'archived') return false;
+        return true;
+    });
+}
+
+function getDefaultTaperPlanName(substanceId, data = appData) {
+    const sub = (data.substances || []).find(s => s.id === substanceId);
+    const monthYear = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
+    return `${sub?.name || substanceId} taper - ${monthYear}`;
+}
+
+function resolveDefaultTaperPlanForSubstance(substanceId, data = appData) {
+    return getPrimaryTaperPlan(substanceId, data);
+}
+
+function getPrimaryTaperPlan(substanceId, data = appData) {
+    ensureTaperPlansV2(data);
+    const plans = (data.taperPlansV2 || []).filter(p => p.substanceId === substanceId);
+    if (!plans.length) return null;
+    let plan = plans.find(p => p.isPrimary && p.status === 'active');
+    if (!plan) {
+        plan = plans
+            .filter(p => p.status === 'active')
+            .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))[0];
+    }
+    if (!plan) {
+        plan = plans
+            .filter(p => p.status !== 'archived')
+            .sort((a, b) => (b.updatedAt || b.createdAt || '').localeCompare(a.updatedAt || a.createdAt || ''))[0];
+    }
+    return plan || null;
+}
+
+function getSelectedTaperPlan(data = appData) {
+    ensureTaperPlansV2(data);
+    if (selectedTaperPlanId) {
+        const plan = getTaperPlanById(selectedTaperPlanId, data);
+        if (plan) return plan;
+    }
+    const substanceId = getTaperSubstanceId();
+    return resolveDefaultTaperPlanForSubstance(substanceId, data);
+}
+
+function ensureSinglePrimaryPerSubstance(data) {
+    ensureTaperPlansV2(data);
+    const bySubstance = {};
+    (data.taperPlansV2 || []).forEach(plan => {
+        if (!bySubstance[plan.substanceId]) bySubstance[plan.substanceId] = [];
+        bySubstance[plan.substanceId].push(plan);
+    });
+    Object.values(bySubstance).forEach(plans => {
+        const primaries = plans.filter(p => p.isPrimary);
+        if (!primaries.length && plans.length) {
+            const pick = plans.find(p => p.status === 'active') || plans[0];
+            pick.isPrimary = true;
+        } else if (primaries.length > 1) {
+            primaries.slice(1).forEach(p => { p.isPrimary = false; });
+        }
+    });
+}
+
+function legacyPlanToV2(legacyPlan, substanceId, data) {
+    const sub = (data.substances || []).find(s => s.id === substanceId);
+    const now = new Date().toISOString();
+    const copy = JSON.parse(JSON.stringify(legacyPlan));
+    return {
+        ...copy,
+        id: copy.id ? String(copy.id) : `taper-${substanceId}-${Date.now()}`,
+        substanceId,
+        name: copy.name || `${sub?.name || substanceId} taper plan`,
+        status: copy.isPaused ? 'paused' : (copy.status || 'active'),
+        isPrimary: copy.isPrimary !== false,
+        createdAt: copy.createdAt || now,
+        updatedAt: copy.updatedAt || now
+    };
+}
+
+function syncLegacyTaperPlansFromV2(data) {
+    if (!data.taperPlans) data.taperPlans = {};
+    const substanceIds = new Set((data.taperPlansV2 || []).map(p => p.substanceId));
+    substanceIds.forEach(substanceId => {
+        const primary = getPrimaryTaperPlan(substanceId, data);
+        if (primary) data.taperPlans[substanceId] = primary;
+        else delete data.taperPlans[substanceId];
+    });
+}
+
+function migrateTaperPlansToV2IfNeeded(data) {
+    ensureTaperPlansV2(data);
+    migrateTaperPlansSafely(data);
+    const legacy = data.taperPlans || {};
+    const hasLegacy = Object.keys(legacy).some(k => legacy[k]);
+    if (!data.taperPlansV2.length && hasLegacy) {
+        Object.entries(legacy).forEach(([substanceId, plan]) => {
+            if (!plan || typeof plan !== 'object') return;
+            try {
+                migrateTaperPlan(plan, substanceId, data);
+                data.taperPlansV2.push(legacyPlanToV2(plan, substanceId, data));
+            } catch (err) {
+                console.warn('taperPlansV2 migration failed for', substanceId, err);
+            }
+        });
+    }
+    (data.taperPlansV2 || []).forEach(plan => {
+        if (!plan.status) plan.status = plan.isPaused ? 'paused' : 'active';
+        if (plan.isPrimary == null) plan.isPrimary = false;
+        if (!plan.name) plan.name = getDefaultTaperPlanName(plan.substanceId, data);
+    });
+    ensureSinglePrimaryPerSubstance(data);
+    syncLegacyTaperPlansFromV2(data);
+    ensureAppDataMigrations(data);
+    data.migrations.taperPlansV2 = true;
+}
+
+function setTaperPlanPrimary(planId, substanceId = null) {
+    const plan = getTaperPlanById(planId);
+    if (!plan) return;
+    const sid = substanceId || plan.substanceId;
+    (appData.taperPlansV2 || []).forEach(p => {
+        if (p.substanceId === sid) p.isPrimary = p.id === planId;
+    });
+    plan.isPrimary = true;
+    plan.updatedAt = new Date().toISOString();
+    syncLegacyTaperPlansFromV2(appData);
+}
+
+function formatTaperPlanOptionLabel(plan) {
+    const status = getTaperPlanStatus(plan);
+    const statusSuffix = status !== 'active' ? ` [${getTaperPlanStatusLabel(status)}]` : '';
+    const range = plan.startDate && plan.endDate
+        ? ` (${formatDate(plan.startDate)} – ${formatDate(plan.endDate)})`
+        : '';
+    const primary = plan.isPrimary ? ' ★' : '';
+    return `${plan.name || 'Taper plan'}${statusSuffix}${range}${primary}`;
+}
+
+function formatTaperPlanDateRange(plan) {
+    if (!plan?.startDate && !plan?.endDate) return '—';
+    if (plan.startDate && plan.endDate) return `${formatDate(plan.startDate)} – ${formatDate(plan.endDate)}`;
+    return formatDate(plan.startDate || plan.endDate);
+}
+
 const RECOVERY_TAPER_LABELS = {
     under: 'On track',
     close: 'Near plan',
@@ -1756,6 +1942,7 @@ const defaultData = {
         vapeTaperCountMode: 'log-date'
     },
     taperPlans: {},
+    taperPlansV2: [],
     recoveryStreaks: {},
     privacy: {
         enabled: false,
@@ -2050,6 +2237,16 @@ function normalizeAppData(data) {
     migrateInventorySubstanceFields(data);
     normalizeMainSubstances(data);
     migrateTaperPlansSafely(data);
+    migrateTaperPlansToV2IfNeeded(data);
+    (data.taperPlansV2 || []).forEach(plan => {
+        if (!plan?.substanceId) return;
+        try {
+            migrateTaperPlan(plan, plan.substanceId, data);
+            syncTaperPlanDataForPlan(plan, data);
+        } catch (err) {
+            console.warn('taperPlansV2 normalize failed for', plan.id, err);
+        }
+    });
     recalculateAllBreaksForData(data);
     recalculateAllBuyBreaksForData(data);
     delete data.supportContacts;
@@ -3640,7 +3837,7 @@ function getAveragePurchaseCostPerUnit(substanceId) {
 }
 
 function getTaperStartingDailyAverage(substanceId) {
-    const plan = appData.taperPlans?.[substanceId];
+    const plan = getPrimaryTaperPlan(substanceId);
     if (!plan) return null;
     const val = plan.startingDailyAverage ?? plan.currentAvg;
     return val != null && val !== '' ? parseFloat(val) : null;
@@ -4167,6 +4364,12 @@ function deleteSubstance(id) {
     appData.substances = appData.substances.filter(s => s.id !== id);
     delete appData.settings.substanceSettings[id];
     delete appData.taperPlans[id];
+    if (Array.isArray(appData.taperPlansV2)) {
+        appData.taperPlansV2 = appData.taperPlansV2.filter(p => p.substanceId !== id);
+    }
+    if (selectedTaperPlanId && getTaperPlanById(selectedTaperPlanId)?.substanceId === id) {
+        selectedTaperPlanId = null;
+    }
     delete appData.recoveryStreaks[id];
     normalizeMainSubstances(appData);
     if (currentSubstanceId === id) currentSubstanceId = getMainSubstanceId() || getActiveSubstances()[0]?.id || DASHBOARD_ALL;
@@ -10529,9 +10732,13 @@ function getWeekPersonalUseTotal(substanceId, dateStr = getLocalDateString()) {
         .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
 }
 
-function getMonthlyLimit(substanceId, dateStr = getLocalDateString()) {
-    const plan = appData.taperPlans[substanceId];
-    if (!plan || plan.isPaused) return null;
+function getWeekRowForDate(plan, dateStr) {
+    return plan?.weeklyTargets?.find(w => dateStr >= w.weekStart && dateStr <= w.weekEnd);
+}
+
+function getMonthlyLimit(substanceId, dateStr = getLocalDateString(), plan = null) {
+    plan = resolveTaperPlanForLimits(substanceId, plan);
+    if (!plan || isTaperPlanPaused(plan)) return null;
     if (plan.monthlyMax != null && plan.monthlyMax > 0) {
         return roundTaperValue(plan.monthlyMax);
     }
@@ -10549,7 +10756,7 @@ function getMonthlyLimit(substanceId, dateStr = getLocalDateString()) {
         }
     });
     if (hasWeek && weekSum > 0) return roundTaperValue(weekSum);
-    const daily = getDailyLimitForDate(substanceId, dateStr);
+    const daily = getDailyLimitForDate(substanceId, dateStr, plan);
     if (daily == null) return null;
     const start = parseLocalDate(monthStart);
     const end = parseLocalDate(monthEnd);
@@ -10815,15 +11022,15 @@ function getNextBestAction(substanceId) {
         };
     }
     const today = getLocalDateString();
-    const plan = appData.taperPlans?.[substanceId];
-    const weekUsed = plan && !plan.isPaused
+    const plan = getPrimaryTaperPlan(substanceId);
+    const weekUsed = plan && !isTaperPlanPaused(plan)
         ? getUsedAmountForTaperWeek(substanceId, today)
         : getWeekPersonalUseTotal(substanceId, today);
-    const weekLimit = getWeeklyLimit(substanceId, today);
+    const weekLimit = getWeeklyLimit(substanceId, today, plan);
     const todayUsed = getUsedAmount(substanceId, today);
-    const dailyLimit = getDailyLimitForDate(substanceId, today);
+    const dailyLimit = getDailyLimitForDate(substanceId, today, plan);
     const monthUsed = getMonthPersonalUseTotal(substanceId, today);
-    const monthLimit = getMonthlyLimit(substanceId, today);
+    const monthLimit = getMonthlyLimit(substanceId, today, plan);
 
     if (monthLimit != null && monthUsed > monthLimit) {
         return {
@@ -12834,8 +13041,8 @@ function renderStatsLimitGoal(substanceId, useStats, bounds, unit, cur) {
     if (taperStart != null && taperStart > 0) {
         reductionPct = `${Math.max(0, Math.round((1 - avgPerDay / taperStart) * 100))}%`;
     }
-    const plan = appData.taperPlans[substanceId];
-    const byWeek = buildTaperByWeekData(substanceId);
+    const plan = getPrimaryTaperPlan(substanceId);
+    const byWeek = buildTaperByWeekData(substanceId, plan);
     const trackBadge = byWeek
         ? getUsageVsTargetBadge(byWeek.totalUsed, byWeek.totalPlanned)
         : null;
@@ -12859,13 +13066,13 @@ function renderStatsLimitGoal(substanceId, useStats, bounds, unit, cur) {
 function renderTaperWeeklyCalendar(substanceId) {
     const container = document.getElementById('taper-weekly-calendar');
     if (!container) return;
-    const plan = appData.taperPlans[substanceId];
+    const plan = getSelectedTaperPlan();
     const sub = getSubstance(substanceId);
-    if (!plan?.weeklyTargets?.length || !sub) {
+    if (!plan || plan.substanceId !== substanceId || !plan.weeklyTargets?.length || !sub) {
         container.innerHTML = '<p class="empty-hint">No taper plan weeks to preview.</p>';
         return;
     }
-    syncTaperPlanData(substanceId);
+    syncTaperPlanDataForPlan(plan);
     const unit = getTaperTrackingUnit(plan, substanceId);
     const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
     const enriched = buildEnrichedUseEntries(substanceId);
@@ -12888,7 +13095,7 @@ function renderTaperWeeklyCalendar(substanceId) {
             let dayDur = 0;
             dayLogs.forEach(e => { if (e.durationHours) dayDur += e.durationHours; });
             const breakH = dayLogs[0]?.breakDurationHours ?? null;
-            const limit = getDailyLimitForDate(substanceId, dateStr);
+            const limit = getDailyLimitForDate(substanceId, dateStr, plan);
             const { status: dayStatus } = getTaperLimitStatus(dayUsed, limit);
             const badge = mapTaperStatusToBadge(dayStatus);
             const inPlan = dateStr >= weekRow.weekStart && dateStr <= weekRow.weekEnd;
@@ -13071,7 +13278,7 @@ function renderSubstanceStatsBreakdown() {
         const uses = logs.reduce((s, l) => s + l.amount, 0);
         const { days } = computeRecoveryStreakDays(sub.id);
         const best = appData.recoveryStreaks[sub.id]?.best || days;
-        const taper = appData.taperPlans[sub.id];
+        const taper = getPrimaryTaperPlan(sub.id);
         let taperPct = '—';
         if (taper && sub.taperTrackingEnabled) {
             const start = new Date(taper.startDate);
@@ -13372,16 +13579,16 @@ function shouldUseVapeStatsUsage(substanceId, plan) {
         && (isReducePuffsPlan(plan) || isManualWeeklyPlan(plan));
 }
 
-function getTaperDayUsage(substanceId, dateStr, excludeLogId = null, data = appData) {
-    const plan = data?.taperPlans?.[substanceId];
+function getTaperDayUsage(substanceId, dateStr, excludeLogId = null, data = appData, plan = null) {
+    plan = plan || getPrimaryTaperPlan(substanceId, data);
     if (shouldUseVapeStatsUsage(substanceId, plan)) {
         return getStatsUsageOnDate(substanceId, dateStr, data);
     }
     return getUsedAmount(substanceId, dateStr, excludeLogId, data);
 }
 
-function getTaperWeekUsage(substanceId, dateStr, excludeLogId = null, data = appData) {
-    const plan = data?.taperPlans?.[substanceId];
+function getTaperWeekUsage(substanceId, dateStr, excludeLogId = null, data = appData, plan = null) {
+    plan = plan || getPrimaryTaperPlan(substanceId, data);
     const bounds = plan ? getTaperWeekBounds(plan, dateStr) : null;
     const weekStart = bounds?.weekStart || getWeekStartDateStr(dateStr);
     const weekEnd = bounds?.weekEnd || addDaysToDateStr(getWeekStartDateStr(dateStr), 6);
@@ -14280,10 +14487,9 @@ function expandDailyTargetsFromWeekly(plan) {
     plan.dailyTargets = daily;
 }
 
-function syncTaperPlanData(substanceId, data = appData) {
-    const plan = data?.taperPlans?.[substanceId];
+function syncTaperPlanDataForPlan(plan, data = appData) {
     if (!plan) return;
-
+    const substanceId = plan.substanceId;
     if (isReduceBuyingPlan(plan)) {
         const today = getLocalDateString();
         const purchases = getPurchasesForSubstance(substanceId, data);
@@ -14372,13 +14578,18 @@ function syncTaperPlanData(substanceId, data = appData) {
     });
 }
 
-function getWeekRowForDate(plan, dateStr) {
-    return plan?.weeklyTargets?.find(w => dateStr >= w.weekStart && dateStr <= w.weekEnd);
+function syncTaperPlanData(substanceId, data = appData) {
+    const plan = getPrimaryTaperPlan(substanceId, data) || data?.taperPlans?.[substanceId];
+    syncTaperPlanDataForPlan(plan, data);
 }
 
-function getDailyLimitForDate(substanceId, dateStr) {
-    const plan = appData.taperPlans[substanceId];
-    if (!plan || plan.isPaused) return null;
+function resolveTaperPlanForLimits(substanceId, plan) {
+    return plan || getPrimaryTaperPlan(substanceId);
+}
+
+function getDailyLimitForDate(substanceId, dateStr, plan = null) {
+    plan = resolveTaperPlanForLimits(substanceId, plan);
+    if (!plan || isTaperPlanPaused(plan)) return null;
     if (isReduceBuyingPlan(plan) || isReduceNicotinePlan(plan)) return null;
 
     if (isManualWeeklyPlan(plan)) {
@@ -14393,9 +14604,9 @@ function getDailyLimitForDate(substanceId, dateStr) {
     return day ? (day.limit ?? day.target) : null;
 }
 
-function getWeeklyLimit(substanceId, dateStr) {
-    const plan = appData.taperPlans[substanceId];
-    if (!plan || plan.isPaused) return null;
+function getWeeklyLimit(substanceId, dateStr, plan = null) {
+    plan = resolveTaperPlanForLimits(substanceId, plan);
+    if (!plan || isTaperPlanPaused(plan)) return null;
     if (isReduceBuyingPlan(plan) || isReduceNicotinePlan(plan)) return null;
 
     if (isManualWeeklyPlan(plan)) {
@@ -14407,7 +14618,7 @@ function getWeeklyLimit(substanceId, dateStr) {
     const week = getWeekRowForDate(plan, dateStr);
     if (week?.weeklyMax > 0) return week.weeklyMax;
     if (plan.weeklyMax > 0) return plan.weeklyMax;
-    const daily = getDailyLimitForDate(substanceId, dateStr);
+    const daily = getDailyLimitForDate(substanceId, dateStr, plan);
     return daily != null ? roundTaperValue(daily * 7) : null;
 }
 
@@ -14467,7 +14678,7 @@ function getTaperCalculatedMetrics(plan, substanceId) {
         const weeks = plan.weeklyTargets?.length || 1;
         weeklyReduction = weeks > 0 ? totalReduction / weeks : 0;
     }
-    const todayTarget = getDailyLimitForDate(substanceId, today);
+    const todayTarget = getDailyLimitForDate(substanceId, today, plan);
     const currentWeek = getWeekRowForDate(plan, today);
     const nextWeekStart = currentWeek ? addDaysToDateStr(currentWeek.weekEnd, 1) : null;
     const nextWeek = nextWeekStart ? plan.weeklyTargets.find(w => w.weekStart === nextWeekStart) : null;
@@ -14497,14 +14708,14 @@ function confirmTaperBeforeLog(substanceId, amount, isQuickLog, excludeLogId = n
     const sub = getSubstance(substanceId);
     if (!sub?.taperTrackingEnabled) return true;
 
-    const plan = appData.taperPlans[substanceId];
-    if (!plan || plan.isPaused) return true;
+    const plan = getPrimaryTaperPlan(substanceId);
+    if (!plan || isTaperPlanPaused(plan)) return true;
 
     const checkDate = entryDate || getLocalDateString();
     const weekUsed = getUsedAmountForWeek(substanceId, checkDate, excludeLogId);
     const projectedWeek = weekUsed + amount;
 
-    const weeklyLimit = getWeeklyLimit(substanceId, checkDate);
+    const weeklyLimit = getWeeklyLimit(substanceId, checkDate, plan);
     if (plan.doNotSurpassWeekly && weeklyLimit != null && projectedWeek > weeklyLimit) {
         if (!confirm('This entry will exceed your weekly taper target. Log anyway?')) return false;
     }
@@ -14531,8 +14742,11 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
         : parseOptionalTaperNumber(document.getElementById('goal-avg'));
 
     const plan = {
-        id: existingPlan?.id || `${substanceId}-${Date.now()}`,
+        id: existingPlan?.id || generateUniqueId('taper'),
         substanceId,
+        name: existingPlan?.name || getDefaultTaperPlanName(substanceId),
+        status: existingPlan ? getTaperPlanStatus(existingPlan) : 'active',
+        isPrimary: existingPlan?.isPrimary || false,
         startDate,
         endDate: document.getElementById('end-date')?.value || null,
         startingDailyAverage,
@@ -14545,7 +14759,7 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
         doNotSurpassDaily: document.getElementById('do-not-surpass-daily')?.checked !== false,
         doNotSurpassWeekly: !!document.getElementById('do-not-surpass-weekly')?.checked,
         notes: document.getElementById('taper-notes')?.value || '',
-        isPaused: existingPlan?.isPaused || false,
+        isPaused: existingPlan ? isTaperPlanPaused(existingPlan) : false,
         createdAt: existingPlan?.createdAt || now,
         updatedAt: now
     };
@@ -14606,9 +14820,324 @@ function onTaperSubstanceChange() {
     const id = getTaperSubstanceId();
     if (id) setSelectedSubstanceId(id, { source: 'taper', refresh: false });
     taperEditingPlan = false;
+    taperFormPlanId = null;
+    const defaultPlan = resolveDefaultTaperPlanForSubstance(id);
+    selectedTaperPlanId = defaultPlan?.id || null;
     populateTaperReductionTypeSelect(getTaperSubstanceId());
     toggleTaperPlanTypeFields();
     prefillVapeTaperDefaults(getTaperSubstanceId());
+    refreshTaperDashboard();
+}
+
+function onTaperPlanChange() {
+    const select = document.getElementById('taper-plan-select');
+    selectedTaperPlanId = select?.value || null;
+    taperEditingPlan = false;
+    refreshTaperDashboard();
+}
+
+function onTaperShowArchivedChange() {
+    showArchivedTaperPlans = !!document.getElementById('taper-show-archived')?.checked;
+    populateTaperPlanDropdown();
+    refreshTaperDashboard();
+}
+
+function populateTaperPlanDropdown() {
+    const select = document.getElementById('taper-plan-select');
+    const toolbar = document.getElementById('taper-plan-toolbar');
+    if (!select) return;
+    const substanceId = getTaperSubstanceId();
+    const plans = getTaperPlansForSubstance(substanceId, appData, { includeArchived: showArchivedTaperPlans });
+    const allCount = getTaperPlansForSubstance(substanceId, appData, { includeArchived: true }).length;
+    const countEl = document.getElementById('taper-plan-count');
+    if (countEl) countEl.textContent = allCount ? `${allCount} plan${allCount === 1 ? '' : 's'}` : '';
+
+    select.innerHTML = '';
+    if (!plans.length) {
+        select.innerHTML = '<option value="">No plans</option>';
+        if (toolbar) toolbar.classList.toggle('hidden', false);
+        return;
+    }
+    plans.forEach(plan => {
+        const opt = document.createElement('option');
+        opt.value = plan.id;
+        opt.textContent = formatTaperPlanOptionLabel(plan);
+        select.appendChild(opt);
+    });
+    const valid = plans.some(p => p.id === selectedTaperPlanId);
+    if (!valid) {
+        const defaultPlan = resolveDefaultTaperPlanForSubstance(substanceId);
+        selectedTaperPlanId = defaultPlan?.id && plans.some(p => p.id === defaultPlan.id)
+            ? defaultPlan.id
+            : plans[0].id;
+    }
+    select.value = selectedTaperPlanId || '';
+    if (toolbar) toolbar.classList.remove('hidden');
+}
+
+function showNewTaperPlan() {
+    taperFormPlanId = null;
+    taperEditingPlan = true;
+    setText('taper-setup-title', 'Create Taper Plan');
+    setText('taper-generate-btn', 'Save Plan');
+    document.getElementById('taper-dashboard')?.classList.add('hidden');
+    document.getElementById('taper-no-plan')?.classList.add('hidden');
+    document.getElementById('taper-setup')?.classList.remove('hidden');
+    const substanceId = getTaperSubstanceId();
+    populateTaperReductionTypeSelect(substanceId);
+    setInputValue('taper-plan-name', getDefaultTaperPlanName(substanceId));
+    const setPrimaryEl = document.getElementById('taper-set-primary');
+    if (setPrimaryEl) {
+        setPrimaryEl.checked = !getTaperPlansForSubstance(substanceId).some(p => p.isPrimary && p.status === 'active');
+    }
+    setDefaultTaperEndDate();
+    toggleTaperPlanTypeFields();
+    prefillVapeTaperDefaults(substanceId);
+}
+
+function duplicateSelectedTaperPlan() {
+    const plan = getSelectedTaperPlan();
+    if (!plan) return;
+    duplicateTaperPlanById(plan.id);
+}
+
+function duplicateTaperPlanById(planId) {
+    const plan = getTaperPlanById(planId);
+    if (!plan) return;
+    const copy = JSON.parse(JSON.stringify(plan));
+    copy.id = generateUniqueId('taper');
+    copy.name = `${plan.name} copy`;
+    copy.status = 'active';
+    copy.isPrimary = false;
+    copy.isPaused = false;
+    const now = new Date().toISOString();
+    copy.createdAt = now;
+    copy.updatedAt = now;
+    ensureTaperPlansV2(appData);
+    appData.taperPlansV2.push(copy);
+    syncLegacyTaperPlansFromV2(appData);
+    saveData(appData);
+    selectedTaperPlanId = copy.id;
+    refreshTaperDashboard();
+}
+
+function renameSelectedTaperPlan() {
+    const plan = getSelectedTaperPlan();
+    if (!plan) return;
+    const name = prompt('Rename taper plan:', plan.name);
+    if (!name?.trim()) return;
+    plan.name = name.trim();
+    plan.updatedAt = new Date().toISOString();
+    saveData(appData);
+    populateTaperPlanDropdown();
+    renderTaperPlanSummary(plan.substanceId);
+}
+
+function archiveSelectedTaperPlan() {
+    const plan = getSelectedTaperPlan();
+    if (!plan) return;
+    if (!confirm(`Archive "${plan.name}"? It will be hidden from the default plan list.`)) return;
+    setTaperPlanStatus(plan, 'archived');
+    if (plan.isPrimary) {
+        plan.isPrimary = false;
+        const next = getTaperPlansForSubstance(plan.substanceId).find(p => p.id !== plan.id && p.status === 'active');
+        if (next) setTaperPlanPrimary(next.id, plan.substanceId);
+    }
+    syncLegacyTaperPlansFromV2(appData);
+    saveData(appData);
+    selectedTaperPlanId = resolveDefaultTaperPlanForSubstance(plan.substanceId)?.id || null;
+    refreshTaperDashboard();
+}
+
+function setSelectedTaperPlanPrimary() {
+    const plan = getSelectedTaperPlan();
+    if (!plan) return;
+    setTaperPlanPrimary(plan.id, plan.substanceId);
+    saveData(appData);
+    populateTaperPlanDropdown();
+    refreshTaperDashboard();
+}
+
+function openManageTaperPlansModal() {
+    taperManagePlansFilter = 'active';
+    document.querySelectorAll('.manage-taper-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === taperManagePlansFilter);
+    });
+    const archivedToggle = document.getElementById('manage-taper-show-archived');
+    if (archivedToggle) archivedToggle.checked = showArchivedTaperPlans;
+    renderManageTaperPlansList();
+    document.getElementById('manage-taper-plans-modal')?.classList.remove('hidden');
+}
+
+function closeManageTaperPlansModal() {
+    document.getElementById('manage-taper-plans-modal')?.classList.add('hidden');
+}
+
+function setManageTaperPlansFilter(filter) {
+    taperManagePlansFilter = filter;
+    document.querySelectorAll('.manage-taper-filter-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === filter);
+    });
+    renderManageTaperPlansList();
+}
+
+function renderManageTaperPlansList() {
+    const container = document.getElementById('manage-taper-plans-list');
+    if (!container) return;
+    const substanceId = getTaperSubstanceId();
+    const sub = getSubstance(substanceId);
+    let plans = getTaperPlansForSubstance(substanceId, appData, { includeArchived: true });
+    if (taperManagePlansFilter !== 'all') {
+        plans = plans.filter(p => getTaperPlanStatus(p) === taperManagePlansFilter);
+    }
+    if (!plans.length) {
+        container.innerHTML = '<p class="empty-hint">No taper plans match this filter.</p>';
+        return;
+    }
+    const today = getLocalDateString();
+    const unit = sub?.defaultUnit || 'units';
+    container.innerHTML = plans.map(plan => {
+        syncTaperPlanDataForPlan(plan);
+        const weekRow = getWeekRowForDate(plan, today);
+        const weekNum = weekRow ? getTaperPlanWeekNumber(plan, today) : '—';
+        const usedWeek = weekRow ? roundTaperActual(weekRow.actualUsed || 0) : 0;
+        const weeklyTarget = weekRow ? getPlannedWeeklyTarget(plan, weekRow) : null;
+        const remainingWeek = weeklyTarget != null ? Math.max(0, weeklyTarget - usedWeek) : null;
+        const monthLimit = plan.monthlyMax > 0 ? plan.monthlyMax : getMonthlyLimit(substanceId, today, plan);
+        const monthUsed = getTaperMonthUsage(substanceId, today);
+        const status = getTaperPlanStatus(plan);
+        const badges = [
+            plan.isPrimary ? '<span class="taper-plan-badge taper-plan-badge-primary">Primary</span>' : '',
+            `<span class="taper-plan-badge taper-plan-badge-${status}">${getTaperPlanStatusLabel(status)}</span>`
+        ].filter(Boolean).join(' ');
+        return `<article class="manage-taper-plan-card" data-plan-id="${plan.id}">
+            <header class="manage-taper-plan-header">
+                <h4>${plan.name}</h4>
+                <div class="manage-taper-plan-badges">${badges}</div>
+            </header>
+            <div class="manage-taper-plan-metrics">
+                <div><span>Date range</span><strong>${formatTaperPlanDateRange(plan)}</strong></div>
+                <div><span>Current week</span><strong>Week ${weekNum}</strong></div>
+                <div><span>Used this week</span><strong>${formatTaperAmount(usedWeek, unit)}</strong></div>
+                <div><span>Remaining this week</span><strong>${remainingWeek != null ? formatTaperAmount(remainingWeek, unit) : '—'}</strong></div>
+                <div><span>Monthly cap</span><strong>${monthLimit != null ? formatTaperAmount(monthLimit, unit) : '—'}</strong></div>
+                <div><span>Month remaining</span><strong>${monthLimit != null ? formatTaperAmount(Math.max(0, monthLimit - monthUsed), unit) : '—'}</strong></div>
+            </div>
+            <div class="manage-taper-plan-actions">
+                <button type="button" class="taper-chip-btn" onclick="openTaperPlanFromManage('${plan.id}')">Open</button>
+                <button type="button" class="taper-chip-btn" onclick="editTaperPlanById('${plan.id}')">Edit</button>
+                <button type="button" class="taper-chip-btn" onclick="duplicateTaperPlanById('${plan.id}')">Duplicate</button>
+                ${status === 'paused'
+                    ? `<button type="button" class="taper-chip-btn" onclick="resumeTaperPlanById('${plan.id}')">Resume</button>`
+                    : status === 'active'
+                        ? `<button type="button" class="taper-chip-btn" onclick="pauseTaperPlanById('${plan.id}')">Pause</button>`
+                        : ''}
+                ${status !== 'completed' ? `<button type="button" class="taper-chip-btn" onclick="completeTaperPlanById('${plan.id}')">Complete</button>` : ''}
+                ${status !== 'archived' ? `<button type="button" class="taper-chip-btn" onclick="archiveTaperPlanById('${plan.id}')">Archive</button>` : ''}
+                <button type="button" class="taper-chip-btn taper-chip-danger" onclick="deleteTaperPlanById('${plan.id}')">Delete</button>
+            </div>
+        </article>`;
+    }).join('');
+}
+
+function openTaperPlanFromManage(planId) {
+    selectedTaperPlanId = planId;
+    closeManageTaperPlansModal();
+    populateTaperPlanDropdown();
+    refreshTaperDashboard();
+}
+
+function editTaperPlanById(planId) {
+    const plan = getTaperPlanById(planId);
+    if (!plan) return;
+    selectedTaperPlanId = planId;
+    taperFormPlanId = planId;
+    taperEditingPlan = true;
+    fillTaperFormFromPlan(plan);
+    setText('taper-setup-title', 'Edit Taper Plan');
+    setText('taper-generate-btn', 'Save Changes');
+    closeManageTaperPlansModal();
+    document.getElementById('taper-dashboard')?.classList.add('hidden');
+    document.getElementById('taper-no-plan')?.classList.add('hidden');
+    document.getElementById('taper-setup')?.classList.remove('hidden');
+}
+
+function pauseTaperPlanById(planId) {
+    const plan = getTaperPlanById(planId);
+    if (!plan) return;
+    setTaperPlanStatus(plan, 'paused');
+    syncLegacyTaperPlansFromV2(appData);
+    saveData(appData);
+    renderManageTaperPlansList();
+    refreshTaperDashboard();
+}
+
+function resumeTaperPlanById(planId) {
+    const plan = getTaperPlanById(planId);
+    if (!plan) return;
+    setTaperPlanStatus(plan, 'active');
+    syncLegacyTaperPlansFromV2(appData);
+    saveData(appData);
+    renderManageTaperPlansList();
+    refreshTaperDashboard();
+}
+
+function completeTaperPlanById(planId) {
+    const plan = getTaperPlanById(planId);
+    if (!plan) return;
+    setTaperPlanStatus(plan, 'completed');
+    if (plan.isPrimary) {
+        plan.isPrimary = false;
+        const next = getTaperPlansForSubstance(plan.substanceId).find(p => p.id !== plan.id && p.status === 'active');
+        if (next) setTaperPlanPrimary(next.id, plan.substanceId);
+    }
+    syncLegacyTaperPlansFromV2(appData);
+    saveData(appData);
+    renderManageTaperPlansList();
+    refreshTaperDashboard();
+}
+
+function archiveTaperPlanById(planId) {
+    const plan = getTaperPlanById(planId);
+    if (!plan) return;
+    if (!confirm(`Archive "${plan.name}"?`)) return;
+    setTaperPlanStatus(plan, 'archived');
+    if (plan.isPrimary) {
+        plan.isPrimary = false;
+        const next = getTaperPlansForSubstance(plan.substanceId).find(p => p.id !== plan.id && p.status === 'active');
+        if (next) setTaperPlanPrimary(next.id, plan.substanceId);
+    }
+    syncLegacyTaperPlansFromV2(appData);
+    saveData(appData);
+    if (selectedTaperPlanId === planId) {
+        selectedTaperPlanId = resolveDefaultTaperPlanForSubstance(plan.substanceId)?.id || null;
+    }
+    renderManageTaperPlansList();
+    refreshTaperDashboard();
+}
+
+function deleteTaperPlanById(planId) {
+    const plan = getTaperPlanById(planId);
+    if (!plan) return;
+    if (!confirm('Delete this taper plan? This cannot be undone.')) return;
+    const substanceId = plan.substanceId;
+    const wasPrimary = plan.isPrimary;
+    appData.taperPlansV2 = (appData.taperPlansV2 || []).filter(p => p.id !== planId);
+    if (wasPrimary) {
+        const next = getTaperPlansForSubstance(substanceId).find(p => p.status === 'active')
+            || getTaperPlansForSubstance(substanceId, appData, { includeArchived: true })[0];
+        if (next) setTaperPlanPrimary(next.id, substanceId);
+    }
+    if (selectedTaperPlanId === planId) {
+        selectedTaperPlanId = resolveDefaultTaperPlanForSubstance(substanceId)?.id || null;
+    }
+    if (taperFormPlanId === planId) {
+        taperFormPlanId = null;
+        taperEditingPlan = false;
+    }
+    syncLegacyTaperPlansFromV2(appData);
+    saveData(appData);
+    renderManageTaperPlansList();
     refreshTaperDashboard();
 }
 
@@ -14718,6 +15247,9 @@ function toggleTaperPlanTypeFields() {
 function fillTaperFormFromPlan(plan) {
     if (!plan) return;
     const substanceId = plan.substanceId || getTaperSubstanceId();
+    setInputValue('taper-plan-name', plan.name || getDefaultTaperPlanName(substanceId));
+    const setPrimaryEl = document.getElementById('taper-set-primary');
+    if (setPrimaryEl) setPrimaryEl.checked = !!plan.isPrimary;
     populateTaperReductionTypeSelect(substanceId, plan.reductionType || 'reduce-amount');
     setInputValue('start-date', plan.startDate || (plan.createdAt ? getLocalDateFromIso(plan.createdAt) : ''));
     const startVal = plan.startingDailyAverage ?? plan.currentAvg;
@@ -14771,16 +15303,7 @@ function setDefaultTaperEndDate() {
 }
 
 function showTaperSetup() {
-    taperEditingPlan = true;
-    setText('taper-setup-title', 'Create Taper Plan');
-    setText('taper-generate-btn', 'Save Plan');
-    document.getElementById('taper-dashboard')?.classList.add('hidden');
-    document.getElementById('taper-no-plan')?.classList.add('hidden');
-    document.getElementById('taper-setup')?.classList.remove('hidden');
-    populateTaperReductionTypeSelect(getTaperSubstanceId());
-    setDefaultTaperEndDate();
-    toggleTaperPlanTypeFields();
-    prefillVapeTaperDefaults(getTaperSubstanceId());
+    showNewTaperPlan();
 }
 
 function taperMetricTile(label, value) {
@@ -14830,11 +15353,11 @@ function updateTaperKpiLabels(plan, substanceId) {
 }
 
 function renderTaperKpiRow(substanceId) {
-    const plan = appData.taperPlans[substanceId];
+    const plan = getSelectedTaperPlan();
     const sub = getSubstance(substanceId);
-    if (!plan || !sub) return;
+    if (!plan || !sub || plan.substanceId !== substanceId) return;
 
-    syncTaperPlanData(substanceId);
+    syncTaperPlanDataForPlan(plan);
     updateTaperKpiLabels(plan, substanceId);
 
     const set = (id, text) => {
@@ -14850,7 +15373,7 @@ function renderTaperKpiRow(substanceId) {
     ];
     statusTiles.forEach(id => document.getElementById(id)?.classList.remove('taper-kpi-under', 'taper-kpi-close', 'taper-kpi-over'));
 
-    if (plan.isPaused) {
+    if (isTaperPlanPaused(plan)) {
         set('taper-kpi-used-today-val', '—');
         set('taper-kpi-used-week-val', '—');
         set('taper-kpi-remaining-week-val', '—');
@@ -14899,9 +15422,9 @@ function renderTaperKpiRow(substanceId) {
         return;
     }
 
-    const usedToday = getTaperDayUsage(substanceId, today);
-    const weeklyLimit = getWeeklyLimit(substanceId, today);
-    const usedWeek = getTaperWeekUsage(substanceId, today);
+    const usedToday = getTaperDayUsage(substanceId, today, null, appData, plan);
+    const weeklyLimit = getWeeklyLimit(substanceId, today, plan);
+    const usedWeek = getTaperWeekUsage(substanceId, today, null, appData, plan);
 
     if (isVapeNicotineSubstanceId(substanceId)) {
         set('taper-kpi-used-today-val', formatTaperAmount(usedToday, 'puffs'));
@@ -14931,15 +15454,15 @@ function renderTaperKpiRow(substanceId) {
 }
 
 function renderTaperProgressCard(substanceId) {
-    const plan = appData.taperPlans[substanceId];
+    const plan = getSelectedTaperPlan();
     const sub = getSubstance(substanceId);
-    if (!plan || !sub) return;
-    syncTaperPlanData(substanceId);
+    if (!plan || !sub || plan.substanceId !== substanceId) return;
+    syncTaperPlanDataForPlan(plan);
     const today = getLocalDateString();
     const unit = getTaperTrackingUnit(plan, substanceId);
     const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
 
-    if (plan.isPaused) {
+    if (isTaperPlanPaused(plan)) {
         setTaperStatusBadge(document.getElementById('taper-weekly-status'), 'close', 'Paused');
         return;
     }
@@ -14996,10 +15519,10 @@ function renderTaperProgressCard(substanceId) {
         return;
     }
 
-    const weeklyLimit = getWeeklyLimit(substanceId, today);
-    const weeklyUsed = getTaperWeekUsage(substanceId, today);
+    const weeklyLimit = getWeeklyLimit(substanceId, today, plan);
+    const weeklyUsed = getTaperWeekUsage(substanceId, today, null, appData, plan);
 
-    const monthLimit = getMonthlyLimit(substanceId, today);
+    const monthLimit = getMonthlyLimit(substanceId, today, plan);
     const monthUsed = getTaperMonthUsage(substanceId, today);
     const monthUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : sub.defaultUnit;
     set('taper-monthly-cap-val', monthLimit != null ? formatTaperAmount(monthLimit, monthUnit) : '—');
@@ -15069,7 +15592,7 @@ function getTaperWeeklySummary(plan, substanceId) {
         start = first;
         totalReduction = Math.max(0, first - last);
     }
-    const currentDaily = currentWeek?.dailyTarget ?? getDailyLimitForDate(substanceId, today) ?? start;
+    const currentDaily = currentWeek?.dailyTarget ?? getDailyLimitForDate(substanceId, today, plan) ?? start;
     const reductionCompleted = isManualWeeklyPlan(plan)
         ? Math.max(0, start - (currentWeek?.targetAmount ?? currentWeek?.weeklyMax ?? currentDaily))
         : Math.max(0, start - currentDaily);
@@ -15079,12 +15602,12 @@ function getTaperWeeklySummary(plan, substanceId) {
     if (currentWeek) {
         let d = currentWeek.weekStart;
         while (d <= today && d <= currentWeek.weekEnd) {
-            avgThis += getTaperDayUsage(substanceId, d);
+            avgThis += getTaperDayUsage(substanceId, d, null, appData, plan);
             daysThis++;
             d = addDaysToDateStr(d, 1);
         }
     }
-    avgThis = daysThis ? avgThis / daysThis : getTaperDayUsage(substanceId, today);
+    avgThis = daysThis ? avgThis / daysThis : getTaperDayUsage(substanceId, today, null, appData, plan);
 
     const prevStart = currentWeek ? addDaysToDateStr(getWeekStartDateStr(currentWeek.weekStart), -7) : null;
     const prevWeek = prevStart ? plan.weeklyTargets.find(w => w.weekStart === getWeekStartDateStr(prevStart)) : null;
@@ -15093,7 +15616,7 @@ function getTaperWeeklySummary(plan, substanceId) {
         let d = prevWeek.weekStart;
         let cnt = 0;
         while (d <= prevWeek.weekEnd) {
-            avgLast += getTaperDayUsage(substanceId, d);
+            avgLast += getTaperDayUsage(substanceId, d, null, appData, plan);
             cnt++;
             d = addDaysToDateStr(d, 1);
         }
@@ -15113,18 +15636,18 @@ function getTaperWeeklySummary(plan, substanceId) {
 }
 
 function renderTaperWeeklyPlan(substanceId) {
-    const plan = appData.taperPlans[substanceId];
+    const plan = getSelectedTaperPlan();
     const sub = getSubstance(substanceId);
     const table = document.getElementById('taper-weekly-table');
     const summary = document.getElementById('taper-weekly-summary');
     const planCardTitle = document.querySelector('#taper-weekly-plan-card h3');
-    if (!plan || !sub || !table) return;
+    if (!plan || plan.substanceId !== substanceId || !sub || !table) return;
 
     if (planCardTitle) {
         planCardTitle.textContent = isManualWeeklyPlan(plan) ? 'Weekly Plan Progress' : 'Weekly Plan';
     }
 
-    syncTaperPlanData(substanceId);
+    syncTaperPlanDataForPlan(plan);
     const unit = getTaperTrackingUnit(plan, substanceId);
     const sum = getTaperWeeklySummary(plan, substanceId);
 
@@ -15447,11 +15970,12 @@ function renderMonthlyTracking(substanceId) {
 }
 
 function renderTaperPlanSummary(substanceId) {
-    const plan = appData.taperPlans[substanceId];
+    const plan = getSelectedTaperPlan();
     const sub = getSubstance(substanceId);
-    if (!plan || !sub) return;
+    if (!plan || !sub || plan.substanceId !== substanceId) return;
     const summary = document.getElementById('taper-plan-summary-text');
     const icon = document.getElementById('taper-plan-icon');
+    const badgesEl = document.getElementById('taper-plan-badges');
     const today = getLocalDateString();
     const set = (id, text) => {
         const el = document.getElementById(id);
@@ -15460,7 +15984,15 @@ function renderTaperPlanSummary(substanceId) {
 
     if (icon) icon.textContent = sub.icon || '📉';
     if (summary) {
-        summary.textContent = `${sub.name} · ${TAPER_REDUCTION_LABELS[plan.reductionType] || plan.reductionType}`;
+        summary.textContent = `${sub.icon || ''} ${sub.name} · ${plan.name}`.trim();
+    }
+    if (badgesEl) {
+        const status = getTaperPlanStatus(plan);
+        const badges = [
+            plan.isPrimary ? '<span class="taper-plan-badge taper-plan-badge-primary">Primary</span>' : '',
+            `<span class="taper-plan-badge taper-plan-badge-${status}">${getTaperPlanStatusLabel(status)}</span>`
+        ].filter(Boolean).join('');
+        badgesEl.innerHTML = badges;
     }
 
     const weekCount = isManualWeeklyPlan(plan)
@@ -15473,8 +16005,8 @@ function renderTaperPlanSummary(substanceId) {
     set('taper-plan-current-week', `Week ${getTaperPlanWeekNumber(plan, today)}`);
 
     const pauseBtn = document.getElementById('taper-pause-btn');
-    if (pauseBtn) pauseBtn.textContent = plan.isPaused ? '▶ Resume' : '⏸ Pause';
-    document.getElementById('taper-paused-banner')?.classList.toggle('hidden', !plan.isPaused);
+    if (pauseBtn) pauseBtn.textContent = isTaperPlanPaused(plan) ? '▶ Resume' : '⏸ Pause';
+    document.getElementById('taper-paused-banner')?.classList.toggle('hidden', !isTaperPlanPaused(plan));
 
     const fill = document.getElementById('taper-plan-pct-fill');
     const pctLabel = document.getElementById('taper-plan-pct-label');
@@ -15495,8 +16027,10 @@ function handleTaperSubmit(e) {
     const substanceId = document.getElementById('taper-substance')?.value;
     const sub = getSubstance(substanceId);
     if (!sub?.taperTrackingEnabled) return alert('Taper tracking is disabled for this substance.');
+    const planName = document.getElementById('taper-plan-name')?.value?.trim();
+    if (!planName) return alert('Plan name is required.');
     const reductionType = document.getElementById('reduction-type')?.value;
-    const existingPlan = appData.taperPlans[substanceId];
+    const existingPlan = taperFormPlanId ? getTaperPlanById(taperFormPlanId) : null;
     const startDate = document.getElementById('start-date')?.value
         || existingPlan?.startDate
         || (existingPlan?.createdAt ? getLocalDateFromIso(existingPlan.createdAt) : null)
@@ -15548,10 +16082,32 @@ function handleTaperSubmit(e) {
             return alert('End date must be after the start date.');
         }
     }
-    const wasEdit = !!appData.taperPlans[substanceId];
-    appData.taperPlans[substanceId] = buildTaperPlanFromForm(substanceId, appData.taperPlans[substanceId]);
+
+    ensureTaperPlansV2(appData);
+    const built = buildTaperPlanFromForm(substanceId, existingPlan);
+    built.name = planName;
+    const setPrimary = !!document.getElementById('taper-set-primary')?.checked;
+    const wasEdit = !!existingPlan;
+
+    if (existingPlan) {
+        Object.assign(existingPlan, built);
+        existingPlan.id = taperFormPlanId;
+        if (setPrimary) setTaperPlanPrimary(existingPlan.id, substanceId);
+        selectedTaperPlanId = existingPlan.id;
+    } else {
+        built.id = generateUniqueId('taper');
+        built.status = 'active';
+        const hasPrimary = getTaperPlansForSubstance(substanceId).some(p => p.isPrimary && p.status === 'active');
+        built.isPrimary = setPrimary || !hasPrimary;
+        appData.taperPlansV2.push(built);
+        if (built.isPrimary) setTaperPlanPrimary(built.id, substanceId);
+        selectedTaperPlanId = built.id;
+    }
+
+    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
     taperEditingPlan = false;
+    taperFormPlanId = null;
     document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
     setText('taper-generate-btn', 'Save Plan');
     refreshTaperDashboard();
@@ -15567,7 +16123,9 @@ function getTaperSubstanceId() {
 function renderTaperPlan() {
     const substanceId = getTaperSubstanceId();
     const sub = getSubstance(substanceId);
-    const plan = appData.taperPlans[substanceId];
+    populateTaperPlanDropdown();
+    const plans = getTaperPlansForSubstance(substanceId, appData, { includeArchived: showArchivedTaperPlans });
+    const plan = getSelectedTaperPlan();
     const dashboard = document.getElementById('taper-dashboard');
     const setup = document.getElementById('taper-setup');
     const noPlan = document.getElementById('taper-no-plan');
@@ -15580,22 +16138,32 @@ function renderTaperPlan() {
         setup?.classList.add('hidden');
         noPlan?.classList.add('hidden');
         noTaper?.classList.remove('hidden');
+        document.getElementById('taper-plan-toolbar')?.classList.add('hidden');
         return;
     }
     noTaper?.classList.add('hidden');
 
-    if (!plan && !taperEditingPlan) {
+    if (!plans.length && !taperEditingPlan) {
         dashboard?.classList.add('hidden');
         setup?.classList.add('hidden');
         noPlan?.classList.remove('hidden');
+        document.getElementById('taper-plan-toolbar')?.classList.add('hidden');
         return;
     }
 
     noPlan?.classList.add('hidden');
+    document.getElementById('taper-plan-toolbar')?.classList.remove('hidden');
 
     if (taperEditingPlan) {
         dashboard?.classList.add('hidden');
         setup?.classList.remove('hidden');
+        return;
+    }
+
+    if (!plan || plan.substanceId !== substanceId) {
+        dashboard?.classList.add('hidden');
+        setup?.classList.add('hidden');
+        noPlan?.classList.remove('hidden');
         return;
     }
 
@@ -15644,11 +16212,11 @@ function formatTaperWeekDiff(value, unit) {
     return `${rounded}${unit ? ` ${unit}` : ''}`;
 }
 
-function buildTaperByWeekData(substanceId) {
-    const plan = appData.taperPlans[substanceId];
-    if (!plan?.weeklyTargets?.length) return null;
+function buildTaperByWeekData(substanceId, plan = null) {
+    plan = plan || getSelectedTaperPlan();
+    if (!plan || plan.substanceId !== substanceId || !plan.weeklyTargets?.length) return null;
 
-    syncTaperPlanData(substanceId);
+    syncTaperPlanDataForPlan(plan);
     const today = getLocalDateString();
     let runningPlanned = 0;
     let runningUsed = 0;
@@ -15704,9 +16272,9 @@ function renderTaperByWeek(substanceId) {
     const tableEl = document.getElementById('taper-by-week-table');
     if (!summaryEl || !tableEl) return;
 
-    const plan = appData.taperPlans[substanceId];
+    const plan = getSelectedTaperPlan();
     const sub = getSubstance(substanceId);
-    if (!plan || !sub) {
+    if (!plan || plan.substanceId !== substanceId || !sub) {
         summaryEl.innerHTML = '';
         tableEl.innerHTML = '<p class="empty-hint">No taper plan for this substance.</p>';
         return;
@@ -15819,9 +16387,9 @@ function renderTaperByWeek(substanceId) {
 function renderTaperInsights(substanceId) {
     const container = document.getElementById('taper-insights');
     if (!container) return;
-    const plan = appData.taperPlans[substanceId];
+    const plan = getSelectedTaperPlan();
     const sub = getSubstance(substanceId);
-    if (!plan || !sub) {
+    if (!plan || plan.substanceId !== substanceId || !sub) {
         container.innerHTML = '<p class="empty-hint">No insights yet.</p>';
         return;
     }
@@ -15833,7 +16401,7 @@ function renderTaperInsights(substanceId) {
             ['Goal buy frequency', plan.goalBuyFrequencyDays != null ? `Every ${plan.goalBuyFrequencyDays} days` : '—'],
             ['Monthly vape cap', plan.monthlyMax != null ? formatTaperVapesPerMonth(plan.monthlyMax) : '—'],
             ['Weekly spend cap', plan.weeklySpendCap != null ? formatTaperMoney(plan.weeklySpendCap) : '—'],
-            ['Status', plan.isPaused ? 'Paused' : 'Active']
+            ['Status', getTaperPlanStatusLabel(getTaperPlanStatus(plan))]
         ];
     } else if (isReduceNicotinePlan(plan)) {
         items = [
@@ -15842,7 +16410,7 @@ function renderTaperInsights(substanceId) {
             ['Goal strength', formatTaperNicotineStrength(plan.goalNicotineMgPerMl)],
             ['Step-down', plan.nicotineStepDownMgPerMl != null ? `${plan.nicotineStepDownMgPerMl} mg/mL` : '—'],
             ['Interval', plan.nicotineStepDownInterval || 'weekly'],
-            ['Status', plan.isPaused ? 'Paused' : 'Active']
+            ['Status', getTaperPlanStatusLabel(getTaperPlanStatus(plan))]
         ];
     } else if (isReducePuffsPlan(plan)) {
         items = [
@@ -15853,7 +16421,7 @@ function renderTaperInsights(substanceId) {
                 ? `${plan.reductionPercent || 0}% per week`
                 : `${plan.reductionAmount || 0} puffs/day per week`],
             ['Target end', plan.endDate ? formatDate(plan.endDate) : '—'],
-            ['Status', plan.isPaused ? 'Paused' : 'Active']
+            ['Status', getTaperPlanStatusLabel(getTaperPlanStatus(plan))]
         ];
     } else {
         const unit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : sub.defaultUnit;
@@ -15863,7 +16431,7 @@ function renderTaperInsights(substanceId) {
             ['Goal average', plan.goalDailyAverage != null ? `${plan.goalDailyAverage} ${unit}/day` : '—'],
             ['Target end', plan.endDate ? formatDate(plan.endDate) : '—'],
             ['Weekly max', plan.weeklyMax != null ? `${plan.weeklyMax} ${unit}` : '—'],
-            ['Status', plan.isPaused ? 'Paused' : 'Active']
+            ['Status', getTaperPlanStatusLabel(getTaperPlanStatus(plan))]
         ];
     }
     container.innerHTML = items.map(([label, val]) =>
@@ -15872,21 +16440,14 @@ function renderTaperInsights(substanceId) {
 }
 
 function editTaperPlan() {
-    const substanceId = getTaperSubstanceId();
-    const plan = appData.taperPlans[substanceId];
+    const plan = getSelectedTaperPlan();
     if (!plan) return;
-    taperEditingPlan = true;
-    fillTaperFormFromPlan(plan);
-    setText('taper-setup-title', 'Edit Taper Plan');
-    setText('taper-generate-btn', 'Save Changes');
-    document.getElementById('taper-dashboard')?.classList.add('hidden');
-    document.getElementById('taper-no-plan')?.classList.add('hidden');
-    document.getElementById('taper-setup')?.classList.remove('hidden');
-    document.getElementById('taper-setup')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    editTaperPlanById(plan.id);
 }
 
 function cancelTaperEdit() {
     taperEditingPlan = false;
+    taperFormPlanId = null;
     document.getElementById('taper-setup')?.classList.add('hidden');
     setText('taper-generate-btn', 'Save Plan');
     setText('taper-setup-title', 'Create Taper Plan');
@@ -15894,22 +16455,19 @@ function cancelTaperEdit() {
 }
 
 function pauseTaper() {
-    const id = getTaperSubstanceId();
-    const plan = appData.taperPlans[id];
+    const plan = getSelectedTaperPlan();
     if (!plan) return;
-    plan.isPaused = !plan.isPaused;
-    plan.updatedAt = new Date().toISOString();
-    saveData(appData);
-    refreshTaperDashboard();
+    if (isTaperPlanPaused(plan)) {
+        resumeTaperPlanById(plan.id);
+    } else {
+        pauseTaperPlanById(plan.id);
+    }
 }
 
 function resetTaper() {
-    const id = getTaperSubstanceId();
-    if (!confirm('Reset taper plan? This cannot be undone.')) return;
-    delete appData.taperPlans[id];
-    taperEditingPlan = false;
-    saveData(appData);
-    refreshTaperDashboard();
+    const plan = getSelectedTaperPlan();
+    if (!plan) return;
+    deleteTaperPlanById(plan.id);
 }
 
 function checkTaperTarget() {
@@ -16092,6 +16650,7 @@ function cleanExportData(data) {
         })),
 
         taperPlans: data.taperPlans || {},
+        taperPlansV2: (data.taperPlansV2 || []).map(p => ({ ...p })),
 
         settings: {
             currency: '$'
@@ -16198,6 +16757,9 @@ function mergeImportedData(current, imported) {
         }
     };
     merged.taperPlans = { ...(merged.taperPlans || {}), ...(imported.taperPlans || {}) };
+    if (Array.isArray(imported.taperPlansV2)) {
+        merged.taperPlansV2 = mergeArrayById(merged.taperPlansV2 || [], imported.taperPlansV2);
+    }
     merged.recoveryStreaks = { ...(merged.recoveryStreaks || {}), ...(imported.recoveryStreaks || {}) };
     if (imported.privacy && typeof imported.privacy === 'object') {
         merged.privacy = { ...merged.privacy, ...imported.privacy };

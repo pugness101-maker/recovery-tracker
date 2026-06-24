@@ -767,6 +767,28 @@
                     </div>
                 </div>
 
+                <div id="taper-plan-toolbar" class="taper-plan-toolbar hidden">
+                    <div class="taper-plan-toolbar-left">
+                        <div class="page-substance-selector substance-select-card taper-plan-select-card">
+                            <label for="taper-plan-select" class="page-substance-label">Plan</label>
+                            <select id="taper-plan-select" class="page-substance-select" onchange="onTaperPlanChange()"></select>
+                        </div>
+                        <span id="taper-plan-count" class="taper-plan-count"></span>
+                        <label class="taper-show-archived-toggle">
+                            <input type="checkbox" id="taper-show-archived" onchange="onTaperShowArchivedChange()">
+                            Show archived
+                        </label>
+                    </div>
+                    <div class="taper-plan-actions-bar">
+                        <button type="button" class="taper-chip-btn" onclick="showNewTaperPlan()">+ New Plan</button>
+                        <button type="button" class="taper-chip-btn" onclick="duplicateSelectedTaperPlan()">Duplicate</button>
+                        <button type="button" class="taper-chip-btn" onclick="renameSelectedTaperPlan()">Rename</button>
+                        <button type="button" class="taper-chip-btn" onclick="archiveSelectedTaperPlan()">Archive</button>
+                        <button type="button" class="taper-chip-btn" onclick="setSelectedTaperPlanPrimary()">Set Primary</button>
+                        <button type="button" class="taper-chip-btn" onclick="openManageTaperPlansModal()">Manage Plans</button>
+                    </div>
+                </div>
+
                 <p id="taper-disabled-msg" class="taper-empty-state hidden">Taper tracking is disabled for this substance. Enable it in <strong>Settings → Manage Substances</strong>.</p>
 
                 <div id="taper-dashboard" class="taper-dashboard hidden">
@@ -806,6 +828,7 @@
                             <span class="taper-plan-icon" id="taper-plan-icon">📉</span>
                             <div class="taper-plan-strip-copy">
                                 <p id="taper-plan-summary-text" class="taper-plan-strip-title">—</p>
+                                <div id="taper-plan-badges" class="taper-plan-badges"></div>
                                 <div class="taper-plan-meta-grid">
                                     <div class="taper-plan-meta-item">
                                         <span>Start</span>
@@ -907,9 +930,9 @@
 
                 <div id="taper-no-plan" class="taper-empty-dashboard hidden">
                     <div class="taper-empty-icon">📉</div>
-                    <h3>No taper plan yet</h3>
+                    <h3>No taper plans for this substance yet.</h3>
                     <p>Set starting and goal averages, pick a reduction style, and track progress week by week.</p>
-                    <button type="button" class="submit-btn" onclick="showTaperSetup()">Create Taper Plan</button>
+                    <button type="button" class="submit-btn" onclick="showNewTaperPlan()">Create taper plan</button>
                 </div>
 
                 <div id="taper-setup" class="taper-editor-panel hidden">
@@ -918,6 +941,14 @@
                         <button type="button" class="taper-chip-btn" onclick="cancelTaperEdit()">← Back to dashboard</button>
                     </div>
                     <form id="taper-form" class="taper-form-compact">
+                        <div class="form-group">
+                            <label for="taper-plan-name">Plan name</label>
+                            <input type="text" id="taper-plan-name" required placeholder="e.g. June manual weekly plan">
+                        </div>
+                        <label class="checkbox-label taper-set-primary-label">
+                            <input type="checkbox" id="taper-set-primary">
+                            Set as primary plan for this substance
+                        </label>
                         <div class="form-row" id="taper-date-row">
                             <div class="form-group" id="start-date-group">
                                 <label for="start-date">Start Date</label>
@@ -1594,6 +1625,25 @@
                 <button type="button" class="secondary-btn" id="use-stats-settings-reset">Reset to Default</button>
                 <button type="button" class="secondary-btn" id="use-stats-settings-close">Cancel</button>
                 <button type="button" class="submit-btn" id="use-stats-settings-apply">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manage Taper Plans Modal -->
+    <div id="manage-taper-plans-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <h2>Manage Taper Plans</h2>
+            <p class="settings-hint">Plans for the selected substance. Archived plans are hidden from the default dropdown unless you enable Show archived.</p>
+            <div class="manage-taper-filter-bar">
+                <button type="button" class="secondary-btn manage-taper-filter-btn active" data-filter="active" onclick="setManageTaperPlansFilter('active')">Active</button>
+                <button type="button" class="secondary-btn manage-taper-filter-btn" data-filter="paused" onclick="setManageTaperPlansFilter('paused')">Paused</button>
+                <button type="button" class="secondary-btn manage-taper-filter-btn" data-filter="completed" onclick="setManageTaperPlansFilter('completed')">Completed</button>
+                <button type="button" class="secondary-btn manage-taper-filter-btn" data-filter="archived" onclick="setManageTaperPlansFilter('archived')">Archived</button>
+                <button type="button" class="secondary-btn manage-taper-filter-btn" data-filter="all" onclick="setManageTaperPlansFilter('all')">All</button>
+            </div>
+            <div id="manage-taper-plans-list" class="manage-taper-plans-list"></div>
+            <div class="modal-actions">
+                <button type="button" class="secondary-btn" onclick="closeManageTaperPlansModal()">Close</button>
             </div>
         </div>
     </div>
