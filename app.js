@@ -555,6 +555,16 @@ function repairDataConsistency(data) {
             log.endDate = inferEndDate(log.date, log.startTime, log.endTime);
             if (log.endDate !== log.date) stats.logsEndDateFixed++;
         }
+        if (log.endTime && log.date) {
+            const startTime = log.startTime || log.time;
+            if (startTime) {
+                const inferred = inferEndDate(log.date, startTime, log.endTime);
+                if (inferred !== log.date && (!log.endDate || log.endDate === log.date)) {
+                    log.endDate = inferred;
+                    stats.logsEndDateFixed++;
+                }
+            }
+        }
     });
 
     (data.purchases || []).forEach(purchase => {
@@ -5890,8 +5900,14 @@ function getLogEndDateTime(log) {
     }
     if (!log?.endTime) return null;
     const startTime = log.startTime || log.time;
-    const endDate = log.endDate || inferEndDate(log.date, startTime, log.endTime);
-    return parseUseDateTime(endDate, log.endTime);
+    let endDate = log.endDate || inferEndDate(log.date, startTime, log.endTime);
+    let end = parseUseDateTime(endDate, log.endTime);
+    const start = getLogStartDateTime(log);
+    if (start && end && end <= start) {
+        endDate = inferEndDate(log.date, startTime, log.endTime);
+        end = parseUseDateTime(endDate, log.endTime);
+    }
+    return end;
 }
 
 function getUseLogStartedAt(log) {
@@ -5941,10 +5957,48 @@ function differenceInMinutes(end, start) {
 }
 
 function startOfNextDay(dt) {
-    const d = parseLocalDate(getLocalDateString(dt));
-    if (!d) return null;
-    d.setDate(d.getDate() + 1);
-    return d;
+    const dateStr = getLocalDateString(dt);
+    const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+    if (!match) return null;
+    const y = Number(match[1]);
+    const m = Number(match[2]) - 1;
+    const day = Number(match[3]);
+    return new Date(y, m, day + 1, 0, 0, 0, 0);
+}
+
+function splitLogAcrossDays(log, data = appData) {
+    return splitTimedLogByDay(log, data);
+}
+
+function getUsageSegments(logs, { substanceId, excludeLogId = null, data = appData } = {}) {
+    const source = logs || getUseEntries(data);
+    return source
+        .filter(log => isPersonalUseLog(log))
+        .filter(log => !excludeLogId || !logIdEquals(log.id, excludeLogId))
+        .filter(log => !substanceId || logMatchesSubstance(log, substanceId, data))
+        .flatMap(log => splitLogAcrossDays(log, data));
+}
+
+function sumSegmentsForDate(substanceId, dateStr, excludeLogId = null, data = appData) {
+    return sumUseAmountForDate(substanceId, dateStr, excludeLogId, data);
+}
+
+function sumSegmentsForRange(substanceId, startDate, endDate, excludeLogId = null, data = appData) {
+    return sumUseAmountForRange(substanceId, startDate, endDate, excludeLogId, data);
+}
+
+function logOverlapsDateRange(log, startDate, endDate, data = appData) {
+    if (!log?.date) return false;
+    if (!isPersonalUseLog(log)) {
+        if (startDate && log.date < startDate) return false;
+        if (endDate && log.date > endDate) return false;
+        return true;
+    }
+    return splitLogAcrossDays(log, data).some(seg => {
+        if (startDate && seg.date < startDate) return false;
+        if (endDate && seg.date > endDate) return false;
+        return seg.amount > INVENTORY_EPS;
+    });
 }
 
 function splitTimedLogByDay(log, data = appData) {
@@ -6036,19 +6090,14 @@ function estimateSegmentCostFromLog(log, segmentAmount, substanceId, data = appD
 }
 
 function getDailyUseSegments(logs, substanceId, { excludeLogId = null, data = appData } = {}) {
-    const source = logs || getUseEntries(data);
-    return source
-        .filter(log => isPersonalUseLog(log))
-        .filter(log => !excludeLogId || !logIdEquals(log.id, excludeLogId))
-        .filter(log => !substanceId || logMatchesSubstance(log, substanceId, data))
-        .flatMap(log => splitTimedLogByDay(log, data));
+    return getUsageSegments(logs, { substanceId, excludeLogId, data });
 }
 
 function sumUseAmountForDate(substanceId, dateStr, excludeLogId = null, data = appData) {
     if (isVapeNicotineSubstanceId(substanceId, data)) {
         return getVapeDistributedUsageMap(substanceId, data).get(dateStr) || 0;
     }
-    return getDailyUseSegments(null, substanceId, { excludeLogId, data })
+    return getUsageSegments(null, { substanceId, excludeLogId, data })
         .filter(seg => seg.date === dateStr)
         .reduce((sum, seg) => sum + seg.amount, 0);
 }
@@ -6057,7 +6106,7 @@ function sumUseAmountForRange(substanceId, startDate, endDate, excludeLogId = nu
     if (isVapeNicotineSubstanceId(substanceId, data)) {
         return getStatsUsageInRange(substanceId, startDate, endDate, data);
     }
-    return getDailyUseSegments(null, substanceId, { excludeLogId, data })
+    return getUsageSegments(null, { substanceId, excludeLogId, data })
         .filter(seg => {
             if (startDate && seg.date < startDate) return false;
             if (endDate && seg.date > endDate) return false;
@@ -6121,7 +6170,7 @@ function formatOvernightSplitNote(log, substanceId, data = appData) {
     const parts = segments
         .filter(s => s.amount > INVENTORY_EPS)
         .map(s => `${formatDate(s.date)} ${formatAmount(s.amount)} ${unit}`);
-    return parts.length > 1 ? `Split: ${parts.join(' · ')}` : '';
+    return parts.length > 1 ? `Daily split: ${parts.join(' · ')}` : '';
 }
 
 function ensureVapeUseFormDefaults() {
@@ -9974,6 +10023,7 @@ function renderRecentUseList() {
             ? formatVapeRecentUseDetailLines(log).map(line => `<div class="use-recent-detail">${line}</div>`).join('')
             : '';
         const linkedLine = isVape ? formatVapeLinkedPurchaseLine(log) : formatInventoryLinkDisplay(log);
+        const splitNote = !isVape ? formatOvernightSplitNote(log, substanceId) : '';
         const item = document.createElement('div');
         item.className = 'use-recent-card';
         item.innerHTML = `
@@ -9991,6 +10041,7 @@ function renderRecentUseList() {
                 ${log.trigger ? `<div class="use-recent-detail">Trigger: ${log.trigger}</div>` : ''}
                 ${log.cravingLevel != null ? `<div class="use-recent-detail">Craving: ${log.cravingLevel}/10</div>` : ''}
                 ${log.stressLevel != null ? `<div class="use-recent-detail">Stress: ${log.stressLevel}/10</div>` : ''}
+                ${splitNote ? `<div class="use-recent-detail use-history-split-note cal-muted">${splitNote}</div>` : ''}
                 <div class="use-recent-supply">${linkedLine}</div>
             </div>
             <div class="use-recent-actions">
@@ -11597,12 +11648,7 @@ function getMonthEndDateStr(dateStr) {
 
 function getPersonalUseInRange(substanceId, startDate, endDate, data = appData) {
     return getUseLogsForSubstance(substanceId, { sortAsc: true, personalUseOnly: true, data })
-        .filter(l => {
-            if (!l.date) return false;
-            if (startDate && l.date < startDate) return false;
-            if (endDate && l.date > endDate) return false;
-            return true;
-        });
+        .filter(l => logOverlapsDateRange(l, startDate, endDate, data));
 }
 
 function getMonthPersonalUseTotal(substanceId, dateStr = getLocalDateString(), data = appData) {
@@ -11694,11 +11740,7 @@ function logMatchesUseLogFilter(log, filter = useLogDateFilter) {
     const { startDate, endDate } = getUseLogFilterBounds(filter);
     if (!startDate && !endDate) return true;
     if (isPersonalUseLog(log) && (startDate || endDate)) {
-        return splitTimedLogByDay(log).some(seg => {
-            if (startDate && seg.date < startDate) return false;
-            if (endDate && seg.date > endDate) return false;
-            return seg.amount > INVENTORY_EPS;
-        });
+        return logOverlapsDateRange(log, startDate, endDate);
     }
     if (startDate && log.date < startDate) return false;
     if (endDate && log.date > endDate) return false;
@@ -12612,6 +12654,16 @@ function renderSubstanceCompare() {
 }
 
 // ——— Recovery streaks ———
+function getLastPersonalUseEndMs(substanceId, data = appData) {
+    let lastMs = 0;
+    getUseLogsForSubstance(substanceId, { personalUseOnly: true, data }).forEach(log => {
+        const end = getLogEndDateTime(log) || getLogStartDateTime(log);
+        const ms = end ? end.getTime() : getLogDatetimeMs(log);
+        if (ms > lastMs) lastMs = ms;
+    });
+    return lastMs;
+}
+
 function getLastUseForSubstance(substanceId) {
     return getUseEntries()
         .filter(l => logMatchesSubstance(l, substanceId) && isPersonalUseLog(l))
@@ -12619,9 +12671,9 @@ function getLastUseForSubstance(substanceId) {
 }
 
 function computeRecoveryStreakDays(substanceId) {
-    const lastUse = getLastUseForSubstance(substanceId);
-    if (!lastUse) return { days: 0, sinceLabel: 'No use logged yet' };
-    const diffMs = Date.now() - getLogDatetimeMs(lastUse);
+    const lastMs = getLastPersonalUseEndMs(substanceId);
+    if (!lastMs) return { days: 0, sinceLabel: 'No use logged yet' };
+    const diffMs = Date.now() - lastMs;
     const days = Math.floor(diffMs / 86400000);
     const hours = Math.floor((diffMs % 86400000) / 3600000);
     const sinceLabel = days === 0 ? (hours > 0 ? `${hours}h since last use` : 'Just now') : `${days} day${days !== 1 ? 's' : ''} since last use`;
@@ -12717,12 +12769,7 @@ function getStatsDateRange() {
 }
 
 function filterLogsByDateRange(logs, startDate, endDate) {
-    return (logs || []).filter(l => {
-        if (!l.date) return false;
-        if (startDate && l.date < startDate) return false;
-        if (endDate && l.date > endDate) return false;
-        return true;
-    });
+    return (logs || []).filter(l => logOverlapsDateRange(l, startDate, endDate));
 }
 
 function resolveStatsRangeBounds(startDate, endDate, logs) {
@@ -12810,8 +12857,15 @@ function buildUseStatsMetrics(logs, daysInRange, substanceId, bounds = null) {
     let useDays;
     let totalAmount = base.totalAmount;
     if (bounds && substanceId && !isWeedTrackingMode(substanceId)) {
-        totalAmount = sumUseAmountForRange(substanceId, bounds.startDate, bounds.endDate);
+        totalAmount = sumSegmentsForRange(substanceId, bounds.startDate, bounds.endDate);
         useDays = getUseDayCountFromSegments(substanceId, bounds.startDate, bounds.endDate);
+    } else if (bounds && substanceId) {
+        totalAmount = sumSegmentsForRange(substanceId, bounds.startDate, bounds.endDate);
+        useDays = getUseDayCountFromSegments(substanceId, bounds.startDate, bounds.endDate);
+    } else if (substanceId) {
+        totalAmount = getUsageSegments(null, { substanceId })
+            .reduce((sum, seg) => sum + seg.amount, 0);
+        useDays = getUseDayCountFromSegments(substanceId, null, null);
     } else {
         useDays = new Set(personalLogs.map(l => l.date)).size;
     }
@@ -13340,7 +13394,9 @@ function enrichMonthlySummaryWithBuyData(summary, substanceId) {
 
 function calculateWeeklyTrackingSummary(substanceId, weekStart, weekEnd) {
     const enriched = buildEnrichedUseEntries(substanceId);
-    const weekEntries = enriched.filter(e => isPersonalUseLog(e) && e.date >= weekStart && e.date <= weekEnd);
+    const weekEntries = enriched.filter(e =>
+        isPersonalUseLog(e) && logOverlapsDateRange(e, weekStart, weekEnd)
+    );
     const isVape = isVapeNicotineSubstanceId(substanceId);
 
     let totalUsage;
@@ -13477,7 +13533,10 @@ function getWeeklyTrackingSummaries(substanceId, limit = 12) {
         baseRows = buildMonthSplitWeeklyRows(rangeSource, e => e.amount || 0, e => e.date, limit);
     } else {
         if (!logs.length) return [];
-        baseRows = buildMonthSplitWeeklyRows(logs, log => log.amount, log => log.date, limit);
+        const segmentEntries = getUsageSegments(logs, { substanceId })
+            .filter(seg => seg.amount > INVENTORY_EPS)
+            .map(seg => ({ date: seg.date, amount: seg.amount }));
+        baseRows = buildMonthSplitWeeklyRows(segmentEntries, e => e.amount, e => e.date, limit);
     }
     return baseRows.slice().reverse().map(row => ({
         ...calculateWeeklyTrackingSummary(substanceId, row.weekStart, row.weekEnd),
@@ -14971,7 +15030,8 @@ function renderSubstanceStatsBreakdown() {
     getActiveSubstances().forEach(sub => {
         const logs = appData.logs.filter(l => l.substanceId === sub.id && isPersonalUseLog(l));
         const spent = getSubstancePurchaseSpend(sub.id);
-        const uses = logs.reduce((s, l) => s + l.amount, 0);
+        const uses = getUsageSegments(logs, { substanceId: sub.id })
+            .reduce((s, seg) => s + seg.amount, 0);
         const { days } = computeRecoveryStreakDays(sub.id);
         const best = appData.recoveryStreaks[sub.id]?.best || days;
         const taper = getPrimaryTaperPlan(sub.id);
@@ -17477,7 +17537,7 @@ function calculateMonthlyTrackingSummary(substanceId, year, monthIndex) {
     const { monthStart, monthEnd, daysInMonth } = getTaperCalendarMonthBounds(year, monthIndex);
     const enriched = buildEnrichedUseEntries(substanceId);
     const monthEntries = enriched.filter(e =>
-        isPersonalUseLog(e) && e.date >= monthStart && e.date <= monthEnd
+        isPersonalUseLog(e) && logOverlapsDateRange(e, monthStart, monthEnd)
     );
     const isVape = isVapeNicotineSubstanceId(substanceId);
 
@@ -18165,7 +18225,7 @@ function addDaysToDateStr(dateStr, days) {
 }
 
 function getUsedAmountForDate(substanceId, date, excludeLogId = null, data = appData) {
-    return sumUseAmountForDate(substanceId, date, excludeLogId, data);
+    return sumSegmentsForDate(substanceId, date, excludeLogId, data);
 }
 
 function getUsedAmountForWeek(substanceId, date, excludeLogId = null, data = appData) {
