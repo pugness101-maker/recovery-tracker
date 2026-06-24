@@ -2294,6 +2294,7 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     buyMetrics: true,
     statsDateRange: false,
     statsSummaryDashboard: false,
+    statsCalendarView: false,
     statsMonthlySummary: false,
     statsWeeklySummary: true,
     statsUseAnalytics: false,
@@ -2510,6 +2511,20 @@ const TABLE_COLUMN_DEFAULTS = {
             remaining: 100,
             status: 100
         }
+    },
+    statsCalendarYearSummary: {
+        order: ['month', 'usage', 'cost', 'useDays', 'avgPerDay', 'sessions', 'purchased', 'status'],
+        hidden: [],
+        widths: {
+            month: 120,
+            usage: 110,
+            cost: 90,
+            useDays: 80,
+            avgPerDay: 100,
+            sessions: 80,
+            purchased: 100,
+            status: 100
+        }
     }
 };
 
@@ -2615,6 +2630,16 @@ const TABLE_COLUMN_LABELS = {
         runningUsed: 'Running used',
         remaining: 'Running +/-',
         status: 'Status'
+    },
+    statsCalendarYearSummary: {
+        month: 'Month',
+        usage: 'Total use',
+        cost: 'Cost',
+        useDays: 'Use days',
+        avgPerDay: 'Avg/day',
+        sessions: 'Sessions',
+        purchased: 'Purchased',
+        status: 'Status'
     }
 };
 
@@ -2625,7 +2650,8 @@ const COLUMN_MODAL_TITLES = {
     statsMonthly: 'Customize Monthly Summary Columns',
     buyWeekly: 'Customize Weekly Buy Summary Columns',
     buyMonthly: 'Customize Monthly Buy Summary Columns',
-    taperByWeek: 'Customize Taper by Week Columns'
+    taperByWeek: 'Customize Taper by Week Columns',
+    statsCalendarYearSummary: 'Customize Year Summary Columns'
 };
 
 const TABLE_COLUMNS_REQUIRED = {
@@ -3323,6 +3349,9 @@ function refreshTableAfterColumnChange(tableKey) {
         case 'taperByWeek':
             renderTaperByWeek(getTaperSubstanceId());
             break;
+        case 'statsCalendarYearSummary':
+            renderStatsCalendarView();
+            break;
         default:
             break;
     }
@@ -3414,6 +3443,9 @@ function setupColumnSettingsModal() {
     });
     document.getElementById('taper-by-week-customize-columns')?.addEventListener('click', () => {
         openColumnSettingsModal('taperByWeek');
+    });
+    document.getElementById('stats-calendar-year-customize-columns')?.addEventListener('click', () => {
+        openColumnSettingsModal('statsCalendarYearSummary');
     });
     document.getElementById('column-settings-close')?.addEventListener('click', closeColumnSettingsModal);
     document.getElementById('column-settings-apply')?.addEventListener('click', applyColumnSettingsFromModal);
@@ -3907,6 +3939,20 @@ let statsDateRangePreset = 'last-7';
 let statsCustomStartDate = '';
 let statsCustomEndDate = '';
 
+const STATS_CALENDAR_STORAGE_KEY = 'recoveryTracker.statsCalendar.v1';
+let statsCalendarViewMode = 'month';
+let statsCalendarAnchorDate = getLocalDateString();
+let statsCalendarYearViewType = 'mini';
+let statsCalendarCompact = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 768px)')?.matches;
+let statsCalendarShow = {
+    amount: true,
+    duration: true,
+    break: true,
+    next: true,
+    cost: false,
+    taper: true
+};
+
 document.addEventListener('DOMContentLoaded', () => {
     try {
         initializeApp();
@@ -4208,6 +4254,10 @@ function switchStatsSubstance(substanceId) {
     currentSubstanceId = substanceId;
     const dash = document.getElementById('dashboard-substance');
     if (dash) dash.value = substanceId;
+    const calSel = document.getElementById('stats-calendar-substance');
+    if (calSel && [...calSel.options].some(o => o.value === substanceId)) {
+        calSel.value = substanceId;
+    }
     updateStats();
 }
 
@@ -10263,6 +10313,14 @@ function escapeAttr(str) {
         .replace(/</g, '&lt;');
 }
 
+function escapeHtml(str) {
+    return String(str ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;');
+}
+
 function getLogSupplyStartDate(log) {
     return parseUseDateTime(log.date, log.startTime || log.time);
 }
@@ -10910,6 +10968,7 @@ function setupEventListeners() {
     setupManualBulkLinkListeners();
     setupColumnSettingsModal();
     setupUseStatsSettingsModal();
+    setupStatsCalendarControls();
     migrateLegacyUseStatsLayoutIfNeeded();
     document.getElementById('taper-form')?.addEventListener('submit', handleTaperSubmit);
     setupSubstanceForm();
@@ -13463,6 +13522,773 @@ function renderBuyMonthlySummary(substanceId) {
     }, substanceId);
 }
 
+// ——— Stats Calendar View ———
+let statsCalendarDayModalDate = null;
+let statsCalendarDayModalSubstanceId = null;
+
+function loadStatsCalendarPrefs() {
+    try {
+        const raw = localStorage.getItem(STATS_CALENDAR_STORAGE_KEY);
+        if (!raw) return;
+        const prefs = JSON.parse(raw);
+        if (prefs.viewMode) statsCalendarViewMode = prefs.viewMode;
+        if (prefs.anchorDate) statsCalendarAnchorDate = prefs.anchorDate;
+        if (prefs.yearViewType) statsCalendarYearViewType = prefs.yearViewType;
+        if (typeof prefs.compact === 'boolean') statsCalendarCompact = prefs.compact;
+        if (prefs.show) statsCalendarShow = { ...statsCalendarShow, ...prefs.show };
+    } catch (_) { /* ignore */ }
+}
+
+function saveStatsCalendarPrefs() {
+    try {
+        localStorage.setItem(STATS_CALENDAR_STORAGE_KEY, JSON.stringify({
+            viewMode: statsCalendarViewMode,
+            anchorDate: statsCalendarAnchorDate,
+            yearViewType: statsCalendarYearViewType,
+            compact: statsCalendarCompact,
+            show: statsCalendarShow
+        }));
+    } catch (_) { /* ignore */ }
+}
+
+function iterateDatesInRange(startDate, endDate) {
+    const dates = [];
+    if (!startDate || !endDate) return dates;
+    let d = startDate;
+    while (d <= endDate) {
+        dates.push(d);
+        d = addDaysToDateStr(d, 1);
+    }
+    return dates;
+}
+
+function estimateLogCostWithFallback(log, substanceId) {
+    const direct = estimateLogCost(log);
+    if (direct > 0) return direct;
+    const avg = getAveragePurchaseCostPerUnit(substanceId);
+    if (avg == null) return 0;
+    return (parseFloat(log.amount) || 0) * avg;
+}
+
+function formatCalendarDayLabel(dateStr) {
+    const d = parseLocalDate(dateStr);
+    if (!d) return dateStr;
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' });
+}
+
+function formatCalendarUseAmount(amount, substanceId, unit) {
+    if (amount == null || Number.isNaN(amount) || amount <= INVENTORY_EPS) return null;
+    if (isVapeNicotineSubstanceId(substanceId)) {
+        return `${Math.round(amount).toLocaleString('en-US')} puffs`;
+    }
+    return fmtSheetAmount(amount, unit);
+}
+
+function formatCalendarDuration(hours, substanceId) {
+    if (isVapeNicotineSubstanceId(substanceId) || isWeedTrackingMode(substanceId)) return null;
+    if (hours == null || hours <= 0) return null;
+    return formatDurationHMS(hours);
+}
+
+function formatCalendarBreak(day, substanceId) {
+    if (day.breakHours == null) return '—';
+    if (isVapeNicotineSubstanceId(substanceId) || isWeedTrackingMode(substanceId)) {
+        const days = Math.round(day.breakHours / 24);
+        return days <= 0 ? '< 1 day' : `${days} day${days === 1 ? '' : 's'}`;
+    }
+    return formatBreakFromHours(day.breakHours);
+}
+
+function formatCalendarNextUse(day) {
+    if (!day.nextUse) return '—';
+    const { date, time } = day.nextUse;
+    const dateLabel = formatDate(date);
+    if (time) return `${dateLabel} ${time}`;
+    return dateLabel;
+}
+
+function getCalendarDayStatusClass(day) {
+    const classes = ['stats-cal-day'];
+    if (day.isToday) classes.push('cal-today');
+    if (day.isFuture) classes.push('cal-future');
+    if (day.inMonth === false) classes.push('cal-outside-month');
+    if (!day.hasUse) {
+        classes.push('cal-no-use');
+        return classes.join(' ');
+    }
+    const status = day.taperStatus || 'none';
+    if (status === 'over') classes.push('cal-over');
+    else if (status === 'close') classes.push('cal-close');
+    else if (status === 'under') classes.push('cal-under');
+    else classes.push('cal-has-use');
+    return classes.join(' ');
+}
+
+function getMiniCalendarDayClass(day) {
+    const classes = ['stats-cal-mini-day'];
+    if (day.isToday) classes.push('cal-today');
+    if (day.inMonth === false) classes.push('cal-outside-month');
+    if (!day.hasUse) {
+        classes.push('cal-no-use');
+        return classes.join(' ');
+    }
+    const status = day.taperStatus || 'none';
+    if (status === 'over') classes.push('cal-over');
+    else if (status === 'close') classes.push('cal-close');
+    else if (status === 'under') classes.push('cal-under');
+    else classes.push('cal-has-use');
+    return classes.join(' ');
+}
+
+function findNextUseForDay(personalLogs, dateStr, lastLogOfDay) {
+    if (lastLogOfDay) {
+        const idx = personalLogs.findIndex(e => e.id === lastLogOfDay.id);
+        if (idx >= 0 && idx < personalLogs.length - 1) {
+            const next = personalLogs[idx + 1];
+            return {
+                date: next.date,
+                time: next.startTime || next.time || null,
+                gapHours: next.breakDurationHours
+            };
+        }
+        return null;
+    }
+    const after = personalLogs.find(e => e.date > dateStr);
+    if (!after) return null;
+    const start = parseLocalDate(dateStr);
+    const end = parseLocalDate(after.date);
+    const gapHours = start && end ? ((end - start) / 86400000) * 24 : null;
+    return {
+        date: after.date,
+        time: after.startTime || after.time || null,
+        gapHours
+    };
+}
+
+function getDailyUseMetrics({ logs, purchases, substanceId, dateRange, data = appData }) {
+    void logs;
+    void purchases;
+    const { startDate, endDate } = dateRange || {};
+    if (!substanceId || !startDate || !endDate) return new Map();
+
+    const enriched = buildEnrichedUseEntries(substanceId);
+    const personalLogs = enriched.filter(isPersonalUseLog);
+    const isVape = isVapeNicotineSubstanceId(substanceId);
+    const isWeed = isWeedTrackingMode(substanceId);
+    const skipDuration = isVape || isWeed;
+    const sub = getSubstance(substanceId, data);
+    const unit = getStatsDisplayUnit(substanceId, sub?.defaultUnit || 'units');
+    const today = getLocalDateString();
+    const metrics = new Map();
+
+    iterateDatesInRange(startDate, endDate).forEach(dateStr => {
+        const logsForDay = personalLogs.filter(e => e.date === dateStr);
+        const totalAmount = isVape
+            ? getStatsUsageOnDate(substanceId, dateStr, data)
+            : logsForDay.reduce((s, e) => s + (parseFloat(e.amount) || 0), 0);
+        const hasUse = totalAmount > INVENTORY_EPS || logsForDay.length > 0;
+        const durationHours = skipDuration
+            ? null
+            : logsForDay.reduce((s, e) => s + (e.durationHours || 0), 0);
+        const cost = logsForDay.reduce((s, e) => s + estimateLogCostWithFallback(e, substanceId), 0);
+        const firstLog = logsForDay[0] || null;
+        const lastLog = logsForDay.length ? logsForDay[logsForDay.length - 1] : null;
+        const breakHours = firstLog?.breakDurationHours ?? null;
+        const nextUse = hasUse ? findNextUseForDay(personalLogs, dateStr, lastLog) : null;
+        let percentLeft = null;
+        if (isVape && logsForDay.length) {
+            for (let i = logsForDay.length - 1; i >= 0; i--) {
+                const pct = logsForDay[i].percentLeftAfter ?? logsForDay[i].percentRemaining;
+                if (pct != null && pct !== '') {
+                    percentLeft = Math.round(parseFloat(pct));
+                    break;
+                }
+            }
+        }
+        const dailyLimit = getDailyLimitForDate(substanceId, dateStr);
+        const taperInfo = getTaperLimitStatus(totalAmount, dailyLimit);
+        metrics.set(dateStr, {
+            date: dateStr,
+            logs: logsForDay,
+            totalAmount,
+            unit,
+            entries: logsForDay.length,
+            durationHours: durationHours > 0 ? durationHours : null,
+            cost,
+            breakHours,
+            nextUse,
+            taperStatus: taperInfo.status,
+            taperLabel: taperInfo.label,
+            percentLeft,
+            hasUse,
+            isFuture: dateStr > today,
+            isToday: dateStr === today,
+            inMonth: true
+        });
+    });
+    return metrics;
+}
+
+function getMonthGridDates(year, monthIndex) {
+    const monthStart = `${year}-${String(monthIndex + 1).padStart(2, '0')}-01`;
+    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+    const monthEnd = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`;
+    const firstDow = new Date(year, monthIndex, 1).getDay();
+    const dates = [];
+    for (let i = firstDow - 1; i >= 0; i--) {
+        dates.push({ date: addDaysToDateStr(monthStart, -(i + 1)), inMonth: false });
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+        const dateStr = `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+        dates.push({ date: dateStr, inMonth: true });
+    }
+    while (dates.length % 7 !== 0) {
+        const last = dates[dates.length - 1].date;
+        dates.push({ date: addDaysToDateStr(last, 1), inMonth: false });
+    }
+    return { monthStart, monthEnd, gridDates: dates };
+}
+
+function buildCalendarDayCellHtml(day, substanceId, opts) {
+    const { showAmount, showDuration, showBreak, showNext, showCost, showTaper, compact } = opts;
+    const lines = [];
+    const d = parseLocalDate(day.date);
+    const dayNum = d ? d.getDate() : day.date;
+
+    if (!compact && day.inMonth !== false) {
+        lines.push(`<div class="cal-line cal-line-detailed cal-date-label">${formatCalendarDayLabel(day.date)}</div>`);
+    }
+
+    if (showAmount && day.hasUse) {
+        const amt = formatCalendarUseAmount(day.totalAmount, substanceId, day.unit);
+        if (amt) lines.push(`<div class="cal-line cal-status-use">Use: ${amt}</div>`);
+    } else if (compact && day.hasUse) {
+        const amt = formatCalendarUseAmount(day.totalAmount, substanceId, day.unit);
+        if (amt) lines.push(`<div class="cal-line cal-status-use">${amt}</div>`);
+    }
+
+    if (showDuration && !compact) {
+        const dur = formatCalendarDuration(day.durationHours, substanceId);
+        lines.push(`<div class="cal-line cal-line-detailed">Dur: ${dur || '—'}</div>`);
+    }
+
+    if (showBreak && !compact) {
+        lines.push(`<div class="cal-line cal-line-detailed">Break: ${day.hasUse ? formatCalendarBreak(day, substanceId) : '—'}</div>`);
+    }
+
+    if (showNext && !compact) {
+        lines.push(`<div class="cal-line cal-line-detailed">Next: ${day.hasUse ? formatCalendarNextUse(day) : '—'}</div>`);
+    }
+
+    if (showCost && !compact && day.hasUse) {
+        lines.push(`<div class="cal-line cal-line-detailed">Cost: ${fmtSheetMoney(day.cost, getCurrencySymbol())}</div>`);
+    }
+
+    if (isVapeNicotineSubstanceId(substanceId) && day.percentLeft != null && !compact) {
+        lines.push(`<div class="cal-line cal-line-detailed">Left: ${day.percentLeft}%</div>`);
+    }
+
+    if (showTaper && !compact && day.hasUse && day.taperStatus !== 'none') {
+        lines.push(`<div class="cal-line cal-line-detailed cal-status-taper">${day.taperLabel}</div>`);
+    }
+
+    const body = lines.length
+        ? lines.join('')
+        : (compact ? '' : '<span class="cal-muted">—</span>');
+
+    return `
+        <button type="button" class="${getCalendarDayStatusClass(day)}"
+            data-date="${escapeAttr(day.date)}"
+            onclick="openStatsCalendarDayModal('${escapeAttr(day.date)}', '${escapeAttr(substanceId)}')">
+            <span class="stats-cal-day-num">${dayNum}</span>
+            <div class="stats-cal-day-body">${body}</div>
+        </button>`;
+}
+
+function renderStatsCalendarMonth(substanceId, anchorDate) {
+    const d = parseLocalDate(anchorDate) || new Date();
+    const year = d.getFullYear();
+    const monthIndex = d.getMonth();
+    const { monthStart, monthEnd, gridDates } = getMonthGridDates(year, monthIndex);
+    const metricsMap = getDailyUseMetrics({
+        logs: appData.logs,
+        purchases: appData.purchases,
+        substanceId,
+        dateRange: { startDate: gridDates[0].date, endDate: gridDates[gridDates.length - 1].date }
+    });
+    const opts = { ...statsCalendarShow, compact: statsCalendarCompact };
+    const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    let html = `<div class="stats-cal-grid${statsCalendarCompact ? ' compact' : ''}">`;
+    weekdays.forEach(w => { html += `<div class="stats-cal-header">${w}</div>`; });
+    gridDates.forEach(cell => {
+        let day = metricsMap.get(cell.date);
+        if (!day) {
+            day = {
+                date: cell.date,
+                hasUse: false,
+                isToday: cell.date === getLocalDateString(),
+                isFuture: cell.date > getLocalDateString(),
+                totalAmount: 0,
+                unit: getStatsDisplayUnit(substanceId, getSubstance(substanceId)?.defaultUnit || 'units'),
+                taperStatus: 'none'
+            };
+        }
+        day.inMonth = cell.inMonth;
+        html += buildCalendarDayCellHtml(day, substanceId, opts);
+    });
+    html += '</div>';
+    return html;
+}
+
+function renderStatsCalendarWeek(substanceId, anchorDate) {
+    const weekStart = getWeekStartDateStr(anchorDate);
+    const weekEnd = addDaysToDateStr(weekStart, 6);
+    const metricsMap = getDailyUseMetrics({
+        logs: appData.logs,
+        purchases: appData.purchases,
+        substanceId,
+        dateRange: { startDate: weekStart, endDate: weekEnd }
+    });
+    const opts = { ...statsCalendarShow, compact: statsCalendarCompact };
+    const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    let html = `<div class="stats-cal-grid${statsCalendarCompact ? ' compact' : ''}">`;
+    weekdays.forEach(w => { html += `<div class="stats-cal-header">${w}</div>`; });
+    const weekDays = [];
+    for (let i = 0; i < 7; i++) {
+        const dateStr = addDaysToDateStr(weekStart, i);
+        const day = metricsMap.get(dateStr) || {
+            date: dateStr,
+            hasUse: false,
+            isToday: dateStr === getLocalDateString(),
+            isFuture: dateStr > getLocalDateString(),
+            inMonth: true,
+            totalAmount: 0,
+            taperStatus: 'none',
+            unit: getStatsDisplayUnit(substanceId, getSubstance(substanceId)?.defaultUnit || 'units')
+        };
+        weekDays.push(day);
+        html += buildCalendarDayCellHtml(day, substanceId, opts);
+    }
+    html += '</div>';
+
+    const useDays = weekDays.filter(d => d.hasUse).length;
+    const totalUse = weekDays.reduce((s, d) => s + (d.totalAmount || 0), 0);
+    const totalCost = weekDays.reduce((s, d) => s + (d.cost || 0), 0);
+    const displayUnit = getStatsDisplayUnit(substanceId, getSubstance(substanceId)?.defaultUnit || 'units');
+    const cur = getCurrencySymbol();
+    const breakHours = weekDays.map(d => d.breakHours).filter(h => h != null && h >= 0);
+    const longestBreak = breakHours.length ? Math.max(...breakHours) : null;
+    const weeklyLimit = getWeeklyLimit(substanceId, anchorDate);
+    const weeklyUsed = getStatsUsageInRange(substanceId, weekStart, weekEnd);
+    const taperRemaining = weeklyLimit != null ? Math.max(0, weeklyLimit - weeklyUsed) : null;
+
+    html += `<div class="stats-cal-week-summary">
+        <div class="stats-cal-week-card"><span>Total use</span><strong>${fmtSheetAmount(totalUse, displayUnit)}</strong></div>
+        <div class="stats-cal-week-card"><span>Total cost</span><strong>${fmtSheetMoney(totalCost, cur)}</strong></div>
+        <div class="stats-cal-week-card"><span>Use days</span><strong>${useDays}</strong></div>
+        <div class="stats-cal-week-card"><span>Avg/day</span><strong>${fmtSheetAmount(useDays > 0 ? totalUse / useDays : 0, displayUnit)}</strong></div>
+        <div class="stats-cal-week-card"><span>Longest break</span><strong>${formatStatsBreakValue(longestBreak, substanceId)}</strong></div>
+        <div class="stats-cal-week-card"><span>Taper</span><strong>${weeklyLimit != null ? `${fmtSheetAmount(weeklyUsed, displayUnit)} / ${fmtSheetAmount(weeklyLimit, displayUnit)} (${fmtSheetAmount(taperRemaining, displayUnit)} left)` : '—'}</strong></div>
+    </div>`;
+    return html;
+}
+
+function renderStatsCalendarYearMini(substanceId, year) {
+    const months = [];
+    for (let m = 0; m < 12; m++) {
+        const { gridDates } = getMonthGridDates(year, m);
+        const metricsMap = getDailyUseMetrics({
+            logs: appData.logs,
+            purchases: appData.purchases,
+            substanceId,
+            dateRange: { startDate: gridDates[0].date, endDate: gridDates[gridDates.length - 1].date }
+        });
+        const label = new Date(year, m, 1).toLocaleDateString('en-US', { month: 'short' });
+        let grid = '<div class="stats-cal-mini-grid">';
+        ['S', 'M', 'T', 'W', 'T', 'F', 'S'].forEach(w => {
+            grid += `<div class="stats-cal-mini-header">${w}</div>`;
+        });
+        gridDates.forEach(cell => {
+            const day = metricsMap.get(cell.date) || {
+                date: cell.date,
+                hasUse: false,
+                taperStatus: 'none',
+                isToday: cell.date === getLocalDateString()
+            };
+            day.inMonth = cell.inMonth;
+            const d = parseLocalDate(cell.date);
+            const num = d ? d.getDate() : '';
+            grid += `<button type="button" class="${getMiniCalendarDayClass(day)}"
+                title="${formatCalendarDayLabel(cell.date)}"
+                onclick="openStatsCalendarDayModal('${escapeAttr(cell.date)}', '${escapeAttr(substanceId)}')">${cell.inMonth ? num : ''}</button>`;
+        });
+        grid += '</div>';
+        months.push(`<div class="stats-cal-mini-month"><h4>${label}</h4>${grid}</div>`);
+    }
+    return `<div class="stats-cal-year-grid">${months.join('')}</div>`;
+}
+
+function renderStatsCalendarYearSummary(substanceId, year) {
+    const summaries = [];
+    for (let m = 0; m < 12; m++) {
+        const summary = calculateMonthlyTrackingSummary(substanceId, year, m);
+        const enriched = enrichMonthlySummaryWithBuyData(summary, substanceId);
+        summaries.push(enriched);
+    }
+    const displayUnit = getStatsDisplayUnit(substanceId, getSubstance(substanceId)?.defaultUnit || 'units');
+    const cur = getCurrencySymbol();
+    return renderConfigurableSheetTable('statsCalendarYearSummary', summaries, (colId, s) => {
+        const dailyGoal = getDailyLimitForDate(substanceId, s.monthStart);
+        const monthGoal = dailyGoal != null ? dailyGoal * s.daysInMonth : null;
+        const usageBadge = getUsageVsTargetBadge(s.totalUsage, monthGoal);
+        const avgPerDay = s.daysInMonth > 0 ? s.totalUsage / s.daysInMonth : null;
+        switch (colId) {
+            case 'month': return s.monthLabel;
+            case 'usage': return fmtSheetAmount(s.totalUsage, displayUnit);
+            case 'cost': return fmtSheetMoney(s.cost || 0, cur);
+            case 'useDays': return String(s.useDays);
+            case 'avgPerDay': return fmtSheetAmount(avgPerDay, displayUnit);
+            case 'sessions': return String(s.sessions);
+            case 'purchased': return fmtSheetAmount(s.purchasedAmount, displayUnit);
+            case 'status': return { html: renderStatusBadge(usageBadge.level, usageBadge.label) };
+            default: return '—';
+        }
+    });
+}
+
+function syncStatsCalendarPeriodInput() {
+    const group = document.getElementById('stats-calendar-period-group');
+    const label = document.getElementById('stats-calendar-period-label');
+    const input = document.getElementById('stats-calendar-period');
+    if (!input || !label) return;
+    const d = parseLocalDate(statsCalendarAnchorDate) || new Date();
+    if (statsCalendarViewMode === 'month') {
+        label.textContent = 'Month';
+        input.type = 'month';
+        input.value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    } else if (statsCalendarViewMode === 'week') {
+        label.textContent = 'Week of';
+        input.type = 'date';
+        input.value = statsCalendarAnchorDate;
+    } else {
+        label.textContent = 'Year';
+        input.type = 'number';
+        input.min = '2000';
+        input.max = '2100';
+        input.value = String(d.getFullYear());
+    }
+    const yearTypeRow = document.getElementById('stats-calendar-year-type-row');
+    yearTypeRow?.classList.toggle('hidden', statsCalendarViewMode !== 'year');
+    document.getElementById('stats-calendar-year-summary-toolbar')?.classList.toggle(
+        'hidden',
+        statsCalendarViewMode !== 'year' || statsCalendarYearViewType !== 'summary'
+    );
+}
+
+function syncStatsCalendarControlsFromState() {
+    document.querySelectorAll('.stats-cal-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === statsCalendarViewMode);
+    });
+    document.querySelectorAll('.stats-cal-year-type-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.type === statsCalendarYearViewType);
+    });
+    const compactEl = document.getElementById('stats-cal-compact');
+    if (compactEl) compactEl.checked = statsCalendarCompact;
+    Object.entries({
+        'stats-cal-show-amount': 'amount',
+        'stats-cal-show-duration': 'duration',
+        'stats-cal-show-break': 'break',
+        'stats-cal-show-next': 'next',
+        'stats-cal-show-cost': 'cost',
+        'stats-cal-show-taper': 'taper'
+    }).forEach(([id, key]) => {
+        const el = document.getElementById(id);
+        if (el) el.checked = !!statsCalendarShow[key];
+    });
+    syncStatsCalendarPeriodInput();
+    populateSelect('stats-calendar-substance', getActiveSubstances(), { currentValue: currentSubstanceId });
+}
+
+function renderStatsCalendarView() {
+    const container = document.getElementById('stats-calendar-container');
+    if (!container) return;
+    if (isAllSubstancesView()) {
+        container.innerHTML = '<p class="empty-hint">Select a single substance to view the calendar.</p>';
+        return;
+    }
+    const substanceId = currentSubstanceId;
+    const sub = getSubstance(substanceId);
+    if (!sub) {
+        container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
+        return;
+    }
+    syncStatsCalendarControlsFromState();
+    container.classList.toggle('compact', statsCalendarCompact);
+
+    const d = parseLocalDate(statsCalendarAnchorDate) || new Date();
+    let html = '';
+    if (statsCalendarViewMode === 'week') {
+        html = renderStatsCalendarWeek(substanceId, statsCalendarAnchorDate);
+    } else if (statsCalendarViewMode === 'year') {
+        const year = d.getFullYear();
+        html = statsCalendarYearViewType === 'summary'
+            ? `<div class="sheet-table-wrap">${renderStatsCalendarYearSummary(substanceId, year)}</div>`
+            : renderStatsCalendarYearMini(substanceId, year);
+    } else {
+        html = renderStatsCalendarMonth(substanceId, statsCalendarAnchorDate);
+    }
+    container.innerHTML = html;
+}
+
+function openStatsCalendarDayModal(dateStr, substanceId) {
+    statsCalendarDayModalDate = dateStr;
+    statsCalendarDayModalSubstanceId = substanceId;
+    const modal = document.getElementById('stats-calendar-day-modal');
+    const sub = getSubstance(substanceId);
+    if (!modal || !sub) return;
+
+    const metricsMap = getDailyUseMetrics({
+        logs: appData.logs,
+        purchases: appData.purchases,
+        substanceId,
+        dateRange: { startDate: dateStr, endDate: dateStr }
+    });
+    const day = metricsMap.get(dateStr) || {
+        date: dateStr,
+        logs: [],
+        totalAmount: 0,
+        hasUse: false,
+        cost: 0,
+        durationHours: null,
+        unit: getStatsDisplayUnit(substanceId, sub.defaultUnit || 'units')
+    };
+    const cur = getCurrencySymbol();
+    const title = document.getElementById('stats-calendar-day-modal-title');
+    if (title) title.textContent = `${sub.icon} ${sub.name} — ${formatDate(dateStr)}`;
+
+    const summaryEl = document.getElementById('stats-calendar-day-modal-summary');
+    if (summaryEl) {
+        summaryEl.innerHTML = [
+            ['Total amount', day.hasUse ? formatCalendarUseAmount(day.totalAmount, substanceId, day.unit) : '—'],
+            ['Duration', formatCalendarDuration(day.durationHours, substanceId) || '—'],
+            ['Cost', fmtSheetMoney(day.cost, cur)],
+            ['Entries', String(day.entries || 0)],
+            ['Break', day.hasUse ? formatCalendarBreak(day, substanceId) : '—'],
+            ['Next use', day.hasUse ? formatCalendarNextUse(day) : '—']
+        ].map(([label, value]) =>
+            `<div class="stats-cal-day-modal-metric"><span>${label}</span><strong>${value}</strong></div>`
+        ).join('');
+    }
+
+    const logsEl = document.getElementById('stats-calendar-day-modal-logs');
+    if (logsEl) {
+        if (!day.logs?.length) {
+            logsEl.innerHTML = '<p class="empty-hint">No logs for this date.</p>';
+        } else {
+            logsEl.innerHTML = day.logs.map(log => {
+                const time = log.startTime || log.time || '';
+                const notes = log.notes ? `<div class="cal-muted">${escapeHtml(log.notes)}</div>` : '';
+                const purchaseId = getLogPurchaseId(log);
+                const purchaseNote = purchaseId
+                    ? `<div class="cal-muted">Purchase: #${escapeHtml(String(purchaseId))}</div>` : '';
+                return `<div class="stats-cal-day-log-row">
+                    <div>
+                        <strong>${escapeHtml(time || '—')} — ${fmtSheetAmount(log.amount, log.unit || day.unit)}</strong>
+                        ${notes}${purchaseNote}
+                    </div>
+                    <button type="button" class="secondary-btn btn-sm" onclick="editUseEntry(${log.id}); closeStatsCalendarDayModal();">Edit</button>
+                </div>`;
+            }).join('');
+        }
+    }
+
+    const addBtn = document.getElementById('stats-calendar-day-add-log-btn');
+    if (addBtn) {
+        addBtn.onclick = () => addLogForCalendarDate(dateStr, substanceId);
+    }
+    modal.classList.remove('hidden');
+}
+
+function closeStatsCalendarDayModal() {
+    document.getElementById('stats-calendar-day-modal')?.classList.add('hidden');
+    statsCalendarDayModalDate = null;
+    statsCalendarDayModalSubstanceId = null;
+}
+
+function addLogForCalendarDate(dateStr, substanceId = currentSubstanceId) {
+    closeStatsCalendarDayModal();
+    editingUseId = null;
+    setSelectedSubstanceId(substanceId, { source: 'stats-calendar' });
+    switchTab('use-log-tab');
+    setInputValue('use-date', dateStr);
+    if (isWeedTrackingMode(substanceId) || isVapeNicotineSubstanceId(substanceId)) {
+        setInputValue('use-start-time', '');
+    }
+    document.getElementById('use-log-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function goStatsCalendarToday() {
+    statsCalendarAnchorDate = getLocalDateString();
+    saveStatsCalendarPrefs();
+    syncStatsCalendarPeriodInput();
+    renderStatsCalendarView();
+}
+
+function exportStatsCalendarCsv() {
+    if (isAllSubstancesView()) return;
+    const substanceId = currentSubstanceId;
+    const sub = getSubstance(substanceId);
+    if (!sub) return;
+    const d = parseLocalDate(statsCalendarAnchorDate) || new Date();
+    let rows = [];
+    let filename = 'calendar';
+
+    if (statsCalendarViewMode === 'month') {
+        const { gridDates } = getMonthGridDates(d.getFullYear(), d.getMonth());
+        const metricsMap = getDailyUseMetrics({
+            logs: appData.logs,
+            purchases: appData.purchases,
+            substanceId,
+            dateRange: { startDate: gridDates[0].date, endDate: gridDates[gridDates.length - 1].date }
+        });
+        rows = [['Date', 'Use', 'Duration', 'Break', 'Next', 'Cost', 'Taper Status']];
+        gridDates.filter(c => c.inMonth).forEach(cell => {
+            const day = metricsMap.get(cell.date);
+            rows.push([
+                cell.date,
+                day?.hasUse ? day.totalAmount : '',
+                day?.durationHours ?? '',
+                day?.breakHours ?? '',
+                day?.nextUse?.date ?? '',
+                day?.cost ?? '',
+                day?.taperLabel ?? ''
+            ]);
+        });
+        filename = `calendar-month-${sub.name}-${d.getFullYear()}-${d.getMonth() + 1}`;
+    } else if (statsCalendarViewMode === 'week') {
+        const weekStart = getWeekStartDateStr(statsCalendarAnchorDate);
+        const weekEnd = addDaysToDateStr(weekStart, 6);
+        const metricsMap = getDailyUseMetrics({
+            logs: appData.logs,
+            purchases: appData.purchases,
+            substanceId,
+            dateRange: { startDate: weekStart, endDate: weekEnd }
+        });
+        rows = [['Date', 'Use', 'Duration', 'Break', 'Next', 'Cost', 'Taper Status']];
+        iterateDatesInRange(weekStart, weekEnd).forEach(dateStr => {
+            const day = metricsMap.get(dateStr);
+            rows.push([
+                dateStr,
+                day?.hasUse ? day.totalAmount : '',
+                day?.durationHours ?? '',
+                day?.breakHours ?? '',
+                day?.nextUse?.date ?? '',
+                day?.cost ?? '',
+                day?.taperLabel ?? ''
+            ]);
+        });
+        filename = `calendar-week-${sub.name}-${weekStart}`;
+    } else {
+        const year = d.getFullYear();
+        rows = [['Month', 'Total Use', 'Cost', 'Use Days', 'Avg/Day', 'Sessions']];
+        for (let m = 0; m < 12; m++) {
+            const summary = enrichMonthlySummaryWithBuyData(
+                calculateMonthlyTrackingSummary(substanceId, year, m),
+                substanceId
+            );
+            rows.push([
+                summary.monthLabel,
+                summary.totalUsage,
+                summary.cost || 0,
+                summary.useDays,
+                summary.daysInMonth > 0 ? summary.totalUsage / summary.daysInMonth : '',
+                summary.sessions
+            ]);
+        }
+        filename = `calendar-year-${sub.name}-${year}`;
+    }
+
+    const csv = rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
+    downloadBlob(new Blob([csv], { type: 'text/csv' }), `${filename}.csv`);
+}
+
+function setupStatsCalendarControls() {
+    if (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 768px)')?.matches) {
+        if (!localStorage.getItem(STATS_CALENDAR_STORAGE_KEY)) {
+            statsCalendarCompact = true;
+        }
+    }
+    loadStatsCalendarPrefs();
+
+    document.querySelectorAll('.stats-cal-mode-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            statsCalendarViewMode = btn.dataset.mode || 'month';
+            saveStatsCalendarPrefs();
+            syncStatsCalendarPeriodInput();
+            renderStatsCalendarView();
+        });
+    });
+
+    document.querySelectorAll('.stats-cal-year-type-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+            statsCalendarYearViewType = btn.dataset.type || 'mini';
+            saveStatsCalendarPrefs();
+            syncStatsCalendarPeriodInput();
+            renderStatsCalendarView();
+        });
+    });
+
+    document.getElementById('stats-calendar-period')?.addEventListener('change', (e) => {
+        const val = e.target.value;
+        if (statsCalendarViewMode === 'month' && val) {
+            statsCalendarAnchorDate = `${val}-01`;
+        } else if (statsCalendarViewMode === 'week' && val) {
+            statsCalendarAnchorDate = val;
+        } else if (statsCalendarViewMode === 'year' && val) {
+            const year = parseInt(val, 10);
+            if (Number.isFinite(year)) {
+                statsCalendarAnchorDate = `${year}-01-01`;
+            }
+        }
+        saveStatsCalendarPrefs();
+        renderStatsCalendarView();
+    });
+
+    document.getElementById('stats-calendar-substance')?.addEventListener('change', (e) => {
+        switchStatsSubstance(e.target.value);
+        const statsSel = document.getElementById('stats-substance');
+        if (statsSel) statsSel.value = e.target.value;
+    });
+
+    document.getElementById('stats-calendar-today-btn')?.addEventListener('click', goStatsCalendarToday);
+    document.getElementById('stats-calendar-export-btn')?.addEventListener('click', exportStatsCalendarCsv);
+
+    document.getElementById('stats-cal-compact')?.addEventListener('change', (e) => {
+        statsCalendarCompact = e.target.checked;
+        saveStatsCalendarPrefs();
+        renderStatsCalendarView();
+    });
+
+    Object.entries({
+        'stats-cal-show-amount': 'amount',
+        'stats-cal-show-duration': 'duration',
+        'stats-cal-show-break': 'break',
+        'stats-cal-show-next': 'next',
+        'stats-cal-show-cost': 'cost',
+        'stats-cal-show-taper': 'taper'
+    }).forEach(([id, key]) => {
+        document.getElementById(id)?.addEventListener('change', (e) => {
+            statsCalendarShow[key] = e.target.checked;
+            saveStatsCalendarPrefs();
+            renderStatsCalendarView();
+        });
+    });
+
+    document.getElementById('stats-calendar-day-modal')?.addEventListener('click', (e) => {
+        if (e.target.id === 'stats-calendar-day-modal') closeStatsCalendarDayModal();
+    });
+}
+
 function updateStats() {
     if (isAllSubstancesView()) {
         document.querySelector('.stats-date-range-toolbar')?.classList.add('hidden');
@@ -13489,6 +14315,7 @@ function updateStats() {
     if (summaryEl) summaryEl.textContent = getStatsRangeLabel(preset, bounds.startDate, bounds.endDate);
 
     renderStatsSummaryDashboard(currentSubstanceId, useStats, bounds, displayUnit, cur);
+    renderStatsCalendarView();
     renderStatsMonthlySummary(currentSubstanceId);
     renderStatsWeeklySummary(currentSubstanceId);
 

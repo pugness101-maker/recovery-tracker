@@ -632,6 +632,64 @@
                     </div>
                 </div>
 
+                <div class="collapsible-section" data-section="statsCalendarView">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsCalendarView')">
+                        <span>Calendar View</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="stats-calendar-toolbar">
+                            <div class="stats-calendar-toolbar-row">
+                                <div class="form-group stats-cal-mode-group">
+                                    <label>View mode</label>
+                                    <div class="stats-cal-mode-btns" id="stats-calendar-mode-btns">
+                                        <button type="button" class="secondary-btn stats-cal-mode-btn" data-mode="week">Week</button>
+                                        <button type="button" class="secondary-btn stats-cal-mode-btn active" data-mode="month">Month</button>
+                                        <button type="button" class="secondary-btn stats-cal-mode-btn" data-mode="year">Year</button>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="stats-calendar-substance">Substance</label>
+                                    <select id="stats-calendar-substance"></select>
+                                </div>
+                                <div class="form-group" id="stats-calendar-period-group">
+                                    <label for="stats-calendar-period" id="stats-calendar-period-label">Month</label>
+                                    <input type="month" id="stats-calendar-period" class="stats-calendar-period-input">
+                                </div>
+                                <div class="form-group stats-cal-actions-group">
+                                    <label>&nbsp;</label>
+                                    <div class="stats-cal-action-btns">
+                                        <button type="button" class="secondary-btn" id="stats-calendar-today-btn">Today</button>
+                                        <button type="button" class="secondary-btn" id="stats-calendar-export-btn">Export CSV</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="stats-calendar-toolbar-row stats-calendar-toggles-row">
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-amount" checked> Show use amount</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-duration" checked> Show duration</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-break" checked> Show break</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-next" checked> Show next use</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-cost"> Show cost</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-taper" checked> Show taper status</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-compact"> Compact</label>
+                            </div>
+                            <div class="stats-calendar-toolbar-row hidden" id="stats-calendar-year-type-row">
+                                <div class="form-group">
+                                    <label>Year layout</label>
+                                    <div class="stats-cal-mode-btns" id="stats-calendar-year-type-btns">
+                                        <button type="button" class="secondary-btn stats-cal-year-type-btn active" data-type="mini">Mini calendar</button>
+                                        <button type="button" class="secondary-btn stats-cal-year-type-btn" data-type="summary">Summary table</button>
+                                    </div>
+                                </div>
+                                <div class="sheet-table-toolbar hidden" id="stats-calendar-year-summary-toolbar">
+                                    <button type="button" class="secondary-btn table-columns-btn" id="stats-calendar-year-customize-columns">Customize Columns</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="stats-calendar-container" class="stats-calendar-container"></div>
+                    </div>
+                </div>
+
                 <div class="collapsible-section" data-section="statsMonthlySummary">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsMonthlySummary')">
                         <span>Monthly Summary</span>
@@ -1647,6 +1705,18 @@
             <div id="manage-taper-plans-list" class="manage-taper-plans-list"></div>
             <div class="modal-actions">
                 <button type="button" class="secondary-btn" onclick="closeManageTaperPlansModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="stats-calendar-day-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <h3 id="stats-calendar-day-modal-title">Day Details</h3>
+            <div id="stats-calendar-day-modal-summary" class="stats-cal-day-modal-summary"></div>
+            <div id="stats-calendar-day-modal-logs" class="stats-cal-day-modal-logs"></div>
+            <div class="modal-actions">
+                <button type="button" class="primary-btn" id="stats-calendar-day-add-log-btn">Add log for this date</button>
+                <button type="button" class="secondary-btn" onclick="closeStatsCalendarDayModal()">Close</button>
             </div>
         </div>
     </div>
