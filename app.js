@@ -15475,7 +15475,11 @@ const PURCHASE_TAPER_MODES = [
 
 const PURCHASE_TAPER_FORM_MODE_MAP = {
     reduce_buy_amount: 'weekly_buy_amount',
-    reduce_buy_spend: 'weekly_spend'
+    reduce_buy_spend: 'weekly_spend',
+    fixed_weekly_purchase_limit: 'weekly_buy_amount',
+    fixed_weekly_spending_limit: 'weekly_spend',
+    fixed_monthly_purchase_cap: 'monthly_buy_amount',
+    fixed_monthly_spending_cap: 'monthly_spend'
 };
 
 const PURCHASE_TAPER_MODE_LABELS = {
@@ -15489,6 +15493,24 @@ const PURCHASE_TAPER_MODE_LABELS = {
     manual_weekly_buy_amount: 'Manual weekly buy plan',
     manual_weekly_spend: 'Manual weekly spending plan'
 };
+
+function getPurchaseTaperUiFlags(formMode) {
+    const raw = formMode || 'none';
+    const mode = normalizePurchaseReductionMode(PURCHASE_TAPER_FORM_MODE_MAP[raw] || raw);
+    return {
+        formMode: raw,
+        mode,
+        showProgressiveBuy: raw === 'reduce_buy_amount',
+        showProgressiveSpend: raw === 'reduce_buy_spend',
+        showWeeklyBuy: raw === 'weekly_buy_amount' || raw === 'fixed_weekly_purchase_limit',
+        showWeeklySpend: raw === 'weekly_spend' || raw === 'fixed_weekly_spending_limit',
+        showMonthlyBuy: raw === 'monthly_buy_amount' || raw === 'fixed_monthly_purchase_cap',
+        showMonthlySpend: raw === 'monthly_spend' || raw === 'fixed_monthly_spending_cap',
+        showManualBuy: raw === 'manual_weekly_buy_amount',
+        showManualSpend: raw === 'manual_weekly_spend',
+        showReductionFields: raw === 'reduce_buy_amount' || raw === 'reduce_buy_spend'
+    };
+}
 
 function normalizePurchaseReductionMode(mode) {
     if (!mode || mode === 'none') return 'none';
@@ -15723,31 +15745,55 @@ function getPurchaseTaperMetrics(plan, substanceId, data = appData, dateStr = ge
 function renderManualPurchaseTargetsEditor(targets, mode) {
     const container = document.getElementById('manual-purchase-targets-list');
     if (!container) return;
+    const startDate = document.getElementById('start-date')?.value || getLocalDateString();
     const list = targets?.length ? targets : [{ weekNumber: 1, amountTarget: '', spendTarget: '' }];
     const showAmount = mode === 'manual_weekly_buy_amount';
     const showSpend = mode === 'manual_weekly_spend';
-    container.innerHTML = list.map((entry, index) => {
+    const targetHeader = showAmount ? 'Buy amount' : 'Spend ($)';
+    let html = `<div class="manual-purchase-header manual-week-row">
+        <span>Week</span><span>Start</span><span>End</span><span>${targetHeader}</span>
+    </div>`;
+    html += list.map((entry, index) => {
         const weekNum = entry.weekNumber ?? entry.week ?? index + 1;
+        const weekStart = entry.startDate || addDaysToDateStr(startDate, (weekNum - 1) * 7);
+        const weekEnd = entry.endDate || addDaysToDateStr(weekStart, 6);
         return `<div class="manual-week-row manual-purchase-week-row" data-week="${weekNum}">
-            <label>Week ${weekNum}</label>
+            <span class="manual-purchase-week-label">Week ${weekNum}</span>
+            <input type="date" class="manual-purchase-start-input" data-week="${weekNum}" value="${weekStart}">
+            <input type="date" class="manual-purchase-end-input" data-week="${weekNum}" value="${weekEnd}">
             ${showAmount ? `<input type="number" class="manual-purchase-amount-input" data-week="${weekNum}" min="0" step="0.1" value="${entry.amountTarget ?? ''}" placeholder="Amount">` : ''}
             ${showSpend ? `<input type="number" class="manual-purchase-spend-input" data-week="${weekNum}" min="0" step="0.01" value="${entry.spendTarget ?? ''}" placeholder="Spend">` : ''}
         </div>`;
     }).join('');
+    container.innerHTML = html;
 }
 
 function collectManualPurchaseTargetsFromForm(mode) {
     if (mode === 'manual_weekly_buy_amount') {
-        return [...document.querySelectorAll('.manual-purchase-amount-input')].map((input, index) => ({
-            weekNumber: parseInt(input.dataset.week, 10) || index + 1,
-            amountTarget: parseOptionalTaperNumber({ value: input.value })
-        }));
+        return [...document.querySelectorAll('.manual-purchase-amount-input')].map((input, index) => {
+            const weekNumber = parseInt(input.dataset.week, 10) || index + 1;
+            const startInput = document.querySelector(`.manual-purchase-start-input[data-week="${weekNumber}"]`);
+            const endInput = document.querySelector(`.manual-purchase-end-input[data-week="${weekNumber}"]`);
+            return {
+                weekNumber,
+                startDate: startInput?.value || null,
+                endDate: endInput?.value || null,
+                amountTarget: parseOptionalTaperNumber({ value: input.value })
+            };
+        });
     }
     if (mode === 'manual_weekly_spend') {
-        return [...document.querySelectorAll('.manual-purchase-spend-input')].map((input, index) => ({
-            weekNumber: parseInt(input.dataset.week, 10) || index + 1,
-            spendTarget: parseOptionalTaperNumber({ value: input.value })
-        }));
+        return [...document.querySelectorAll('.manual-purchase-spend-input')].map((input, index) => {
+            const weekNumber = parseInt(input.dataset.week, 10) || index + 1;
+            const startInput = document.querySelector(`.manual-purchase-start-input[data-week="${weekNumber}"]`);
+            const endInput = document.querySelector(`.manual-purchase-end-input[data-week="${weekNumber}"]`);
+            return {
+                weekNumber,
+                startDate: startInput?.value || null,
+                endDate: endInput?.value || null,
+                spendTarget: parseOptionalTaperNumber({ value: input.value })
+            };
+        });
     }
     return [];
 }
@@ -15784,47 +15830,36 @@ function togglePurchaseTaperFields() {
     const sub = getSubstance(substanceId);
     const unit = sub?.defaultUnit || 'g';
     const formMode = document.getElementById('purchase-reduction-mode')?.value || 'none';
-    const mode = normalizePurchaseReductionMode(PURCHASE_TAPER_FORM_MODE_MAP[formMode] || formMode);
+    const flags = getPurchaseTaperUiFlags(formMode);
 
     const setLabel = (id, text) => {
         const el = document.getElementById(id);
         if (el) el.textContent = text;
     };
     setLabel('purchase-start-amount-label', `Starting weekly purchase amount (${unit})`);
-    setLabel('purchase-weekly-amount-label', `Weekly purchase target (${unit})`);
-    setLabel('purchase-monthly-amount-label', `Monthly purchase cap (${unit})`);
+    setLabel('purchase-weekly-amount-label', `Weekly purchase amount limit (${unit})`);
+    setLabel('purchase-monthly-amount-label', `Monthly purchase amount cap (${unit})`);
     setLabel('purchase-start-spend-label', 'Starting weekly spend ($)');
-    setLabel('purchase-weekly-spend-label', 'Weekly spending target ($)');
+    setLabel('purchase-weekly-spend-label', 'Weekly spending limit ($)');
     setLabel('purchase-monthly-spend-label', 'Monthly spending cap ($)');
-    setLabel('purchase-reduction-amount-label', progressiveSpend
+    setLabel('purchase-reduction-amount-label', flags.showProgressiveSpend
         ? 'Reduction spend per week ($)'
         : `Reduction amount per week (${unit})`);
-    setLabel('purchase-reduction-percent-label', progressiveSpend
+    setLabel('purchase-reduction-percent-label', flags.showProgressiveSpend
         ? 'Reduction spend percent per week'
         : 'Reduction percent per week');
 
-    const progressiveBuy = formMode === 'reduce_buy_amount';
-    const progressiveSpend = formMode === 'reduce_buy_spend';
-    const fixedWeeklyBuy = formMode === 'weekly_buy_amount';
-    const fixedWeeklySpend = formMode === 'weekly_spend';
-    const monthlyBuy = formMode === 'monthly_buy_amount';
-    const monthlySpend = formMode === 'monthly_spend';
-    const manualBuy = formMode === 'manual_weekly_buy_amount';
-    const manualSpend = formMode === 'manual_weekly_spend';
+    document.getElementById('purchase-start-amount-group')?.classList.toggle('hidden', !flags.showProgressiveBuy);
+    document.getElementById('purchase-start-spend-group')?.classList.toggle('hidden', !flags.showProgressiveSpend);
+    document.getElementById('purchase-weekly-amount-group')?.classList.toggle('hidden', !flags.showWeeklyBuy);
+    document.getElementById('purchase-weekly-spend-group')?.classList.toggle('hidden', !flags.showWeeklySpend);
+    document.getElementById('purchase-monthly-amount-group')?.classList.toggle('hidden', !flags.showMonthlyBuy);
+    document.getElementById('purchase-monthly-spend-group')?.classList.toggle('hidden', !flags.showMonthlySpend);
+    document.getElementById('purchase-reduction-amount-group')?.classList.toggle('hidden', !flags.showReductionFields);
+    document.getElementById('purchase-reduction-percent-group')?.classList.toggle('hidden', !flags.showReductionFields);
+    document.getElementById('manual-purchase-plan-section')?.classList.toggle('hidden', !flags.showManualBuy && !flags.showManualSpend);
 
-    document.getElementById('purchase-start-amount-group')?.classList.toggle('hidden', !progressiveBuy);
-    document.getElementById('purchase-start-spend-group')?.classList.toggle('hidden', !progressiveSpend);
-    document.getElementById('purchase-weekly-amount-group')?.classList.toggle('hidden', !fixedWeeklyBuy);
-    document.getElementById('purchase-weekly-spend-group')?.classList.toggle('hidden', !fixedWeeklySpend);
-    document.getElementById('purchase-monthly-amount-group')?.classList.toggle('hidden', !monthlyBuy);
-    document.getElementById('purchase-monthly-spend-group')?.classList.toggle('hidden', !monthlySpend);
-    document.getElementById('purchase-reduction-amount-group')?.classList.toggle('hidden', !progressiveBuy && !progressiveSpend);
-    document.getElementById('purchase-reduction-percent-group')?.classList.toggle('hidden', !progressiveBuy && !progressiveSpend);
-    document.getElementById('purchase-reduction-spend-group')?.classList.add('hidden');
-    document.getElementById('purchase-reduction-spend-percent-group')?.classList.add('hidden');
-    document.getElementById('manual-purchase-plan-section')?.classList.toggle('hidden', !manualBuy && !manualSpend);
-
-    if (manualBuy || manualSpend) {
+    if (flags.showManualBuy || flags.showManualSpend) {
         if (!document.querySelector('.manual-purchase-amount-input, .manual-purchase-spend-input')) {
             renderManualPurchaseTargetsEditor([], formMode);
         }
@@ -18568,19 +18603,20 @@ function handleTaperSubmit(e) {
 
     if (document.getElementById('purchase-taper-enabled')?.checked && supportsPurchaseTaper(substanceId)) {
         const formMode = document.getElementById('purchase-reduction-mode')?.value || 'none';
-        if (formMode === 'weekly_spend') {
+        const flags = getPurchaseTaperUiFlags(formMode);
+        if (flags.showWeeklySpend) {
             const target = parseOptionalTaperNumber(document.getElementById('purchase-weekly-spend'));
-            if (target == null || target <= 0) return alert('Enter a weekly spending target.');
-        } else if (formMode === 'weekly_buy_amount') {
+            if (target == null || target <= 0) return alert('Enter a weekly spending limit.');
+        } else if (flags.showWeeklyBuy) {
             const target = parseOptionalTaperNumber(document.getElementById('purchase-weekly-amount'));
-            if (target == null || target <= 0) return alert('Enter a weekly purchase target.');
-        } else if (formMode === 'monthly_spend') {
+            if (target == null || target <= 0) return alert('Enter a weekly purchase amount limit.');
+        } else if (flags.showMonthlySpend) {
             const cap = parseOptionalTaperNumber(document.getElementById('purchase-monthly-spend'));
             if (cap == null || cap <= 0) return alert('Enter a monthly spending cap.');
-        } else if (formMode === 'monthly_buy_amount') {
+        } else if (flags.showMonthlyBuy) {
             const cap = parseOptionalTaperNumber(document.getElementById('purchase-monthly-amount'));
-            if (cap == null || cap <= 0) return alert('Enter a monthly purchase cap.');
-        } else if (formMode === 'reduce_buy_amount') {
+            if (cap == null || cap <= 0) return alert('Enter a monthly purchase amount cap.');
+        } else if (flags.showProgressiveBuy) {
             const startAmt = parseOptionalTaperNumber(document.getElementById('purchase-start-amount'));
             const redAmt = parseOptionalTaperNumber(document.getElementById('purchase-reduction-amount'));
             const redPct = parseOptionalTaperNumber(document.getElementById('purchase-reduction-percent'));
@@ -18588,7 +18624,7 @@ function handleTaperSubmit(e) {
             if ((redAmt == null || redAmt <= 0) && (redPct == null || redPct <= 0)) {
                 return alert('Enter a reduction amount or percent per week.');
             }
-        } else if (formMode === 'reduce_buy_spend') {
+        } else if (flags.showProgressiveSpend) {
             const startSpend = parseOptionalTaperNumber(document.getElementById('purchase-start-spend'));
             const redAmt = parseOptionalTaperNumber(document.getElementById('purchase-reduction-amount'));
             const redPct = parseOptionalTaperNumber(document.getElementById('purchase-reduction-percent'));
@@ -18596,10 +18632,10 @@ function handleTaperSubmit(e) {
             if ((redAmt == null || redAmt <= 0) && (redPct == null || redPct <= 0)) {
                 return alert('Enter a reduction amount or percent per week.');
             }
-        } else if (formMode === 'manual_weekly_buy_amount' || formMode === 'manual_weekly_spend') {
+        } else if (flags.showManualBuy || flags.showManualSpend) {
             const targets = collectManualPurchaseTargetsFromForm(formMode);
             if (!targets.length) return alert('Add at least one manual purchase week.');
-            if (formMode === 'manual_weekly_buy_amount') {
+            if (flags.showManualBuy) {
                 if (!targets.some(t => (parseFloat(t.amountTarget) || 0) > 0)) {
                     return alert('Enter at least one weekly purchase amount target.');
                 }
