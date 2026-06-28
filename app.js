@@ -2699,6 +2699,7 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     buyMonthlySummary: false,
     dashRecovery: false,
     dashRecoveryDetails: true,
+    dashVapeSection: true,
     settingsSubstances: false,
     settingsAppearance: false,
     settingsStores: true,
@@ -9084,14 +9085,14 @@ function updateCurrentSupplyDashboard() {
     const allContainer = document.getElementById('dash-supply-all-substances');
 
     if (isAllSubstancesView()) {
-        if (titleEl) titleEl.textContent = 'Current Inventory by Substance';
+        if (titleEl) titleEl.textContent = 'Inventory (all)';
         standardRows?.classList.add('hidden');
         allContainer?.classList.remove('hidden');
         renderAllSubstancesInventoryDashboard(allContainer);
         return;
     }
 
-    if (titleEl) titleEl.textContent = 'Current Inventory';
+    if (titleEl) titleEl.textContent = 'Inventory';
     standardRows?.classList.remove('hidden');
     allContainer?.classList.add('hidden');
 
@@ -11922,82 +11923,9 @@ function renderBuySpendingTrend(substanceId) {
 }
 
 function renderBuyTrackerTab() {
-    const filterId = getSelectedSubstanceFilterId();
-    const stats = getBuyStats(filterId);
-    const set = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
-
-    const durationStats = stats.supplyDuration || getSubstanceSupplyDurationStats(filterId);
-    set('buy-longest-supply-duration', durationStats.longestMs != null
-        ? formatTimeSinceMs(durationStats.longestMs)
-        : '—');
-    set('buy-avg-supply-duration', durationStats.averageMs != null
-        ? formatTimeSinceMs(durationStats.averageMs)
-        : '—');
-    set('buy-shortest-supply-duration', durationStats.shortestMs != null
-        ? formatTimeSinceMs(durationStats.shortestMs)
-        : '—');
-    set('buy-avg-days-between-purchases', durationStats.avgDaysBetweenPurchases != null
-        ? `~${durationStats.avgDaysBetweenPurchases.toFixed(1)} days`
-        : '—');
-
-    set('buy-spent-today', `${stats.cur}${stats.spentToday.toFixed(2)}`);
-    set('buy-spent-week', `${stats.cur}${stats.spentWeek.toFixed(2)}`);
-    set('buy-spent-month', `${stats.cur}${stats.spentMonth.toFixed(2)}`);
-    set('buy-count-week', String(stats.countWeek));
-    set('buy-count-month', String(stats.countMonth));
-    set('buy-avg-cost-unit', stats.avgCostUnit != null ? `${stats.cur}${stats.avgCostUnit.toFixed(2)}` : '—');
-    if (stats.lastPurchase) {
-        const sub = getSubstance(getPurchaseSubstanceId(stats.lastPurchase));
-        set('buy-last-date', `${formatDate(stats.lastPurchase.date)} · ${sub?.name || ''}`);
-    } else {
-        set('buy-last-date', '—');
-    }
-    set('buy-days-supply', stats.daysSupply != null ? `~${stats.daysSupply} days` : '—');
-
-    if (filterId) {
-        const buyMetrics = getBuyBreakMetrics(filterId);
-        set('buy-since-last', buyMetrics.timeSinceLastBuy?.text || '—');
-        set('buy-break-longest', formatBuyBreakFromHours(buyMetrics.longest));
-        set('buy-break-average', formatBuyBreakFromHours(buyMetrics.average));
-        set('buy-break-shortest', formatBuyBreakFromHours(buyMetrics.shortest));
-        set('buy-break-avg-30', formatBuyBreakFromHours(buyMetrics.avg30Days));
-        set('buy-est-next', buyMetrics.estimatedNextBuy?.label || '—');
-    } else {
-        set('buy-since-last', 'Select substance');
-        set('buy-break-longest', '—');
-        set('buy-break-average', '—');
-        set('buy-break-shortest', '—');
-        set('buy-break-avg-30', '—');
-        set('buy-est-next', '—');
-        set('buy-last-supply-used', '—');
-        set('buy-since-last-supply-use', '—');
-        set('buy-oldest-active-supply', '—');
-        set('buy-active-supplies-count', '—');
-    }
-
-    if (filterId) {
-        const supplyUse = stats.supplyUse || getSubstanceSupplyUseMetrics(filterId);
-        set('buy-last-supply-used', supplyUse.lastSupplyUseAt
-            ? formatDatetimeShort(supplyUse.lastSupplyUseAt)
-            : 'Never');
-        set('buy-since-last-supply-use', supplyUse.timeSinceLastSupplyUse != null
-            ? formatTimeSinceMs(supplyUse.timeSinceLastSupplyUse)
-            : '—');
-        if (supplyUse.oldestActive) {
-            const store = supplyUse.oldestActive.store || supplyUse.oldestActive.location || '';
-            set('buy-oldest-active-supply', `${formatDate(supplyUse.oldestActive.date)}${store ? ` · ${store}` : ''}`);
-        } else {
-            set('buy-oldest-active-supply', '—');
-        }
-        set('buy-active-supplies-count', String(supplyUse.activeCount));
-    }
-
-    renderBuySpendingTrend(filterId);
     renderInventorySummaryCards();
     renderPurchaseHistory(null);
     updateInventoryFiltersPanelUI();
-    renderBuyWeeklySummary(filterId);
-    renderBuyMonthlySummary(filterId);
     renderStoresList();
     applyCollapsedSections();
 }
@@ -12881,8 +12809,11 @@ function buildVapeDashboardMetrics(substanceId, data = appData) {
 
 function renderVapeDashboardSection(substanceId) {
     const section = document.getElementById('vape-dashboard-section');
+    const wrap = document.querySelector('[data-section="dashVapeSection"]');
+    const show = !!(substanceId && isVapeNicotineSubstanceId(substanceId));
+    if (wrap) wrap.classList.toggle('hidden', !show);
     if (!section) return;
-    if (!substanceId || !isVapeNicotineSubstanceId(substanceId)) {
+    if (!show) {
         section.classList.add('hidden');
         return;
     }
@@ -15583,6 +15514,9 @@ function updateStats() {
     renderGiftAnalytics(bounds);
     renderStatsBuyAnalyticsCards(currentSubstanceId, bounds);
     renderStatsLimitGoal(currentSubstanceId, useStats, bounds, displayUnit, cur);
+    renderBuySpendingTrend(currentSubstanceId);
+    renderBuyWeeklySummary(currentSubstanceId);
+    renderBuyMonthlySummary(currentSubstanceId);
     updateRecoveryStreakDisplay(currentSubstanceId);
     applyCollapsedSections();
 }
