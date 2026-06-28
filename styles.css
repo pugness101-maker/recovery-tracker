@@ -4111,7 +4111,81 @@ body.table-col-resizing {
 
 .buy-stats-section,
 .buy-trend-section {
-    margin-top: 24px;
+    margin-top: 16px;
+}
+
+.buy-spending-trend-chart {
+    display: flex;
+    align-items: flex-end;
+    justify-content: space-between;
+    gap: 6px;
+    min-height: 130px;
+    padding: 4px 0 0;
+}
+
+.buy-spending-trend-col {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+}
+
+.buy-spending-trend-amount {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    line-height: 1.2;
+    text-align: center;
+    white-space: nowrap;
+}
+
+.buy-spending-trend-bar-wrap {
+    width: 100%;
+    max-width: 40px;
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+}
+
+.buy-spending-trend-bar {
+    width: 100%;
+    background: var(--warning);
+    border-radius: 4px 4px 0 0;
+    transition: height 0.25s ease;
+}
+
+.buy-spending-trend-col.is-zero .buy-spending-trend-bar {
+    background: var(--border);
+    opacity: 0.65;
+}
+
+.buy-spending-trend-col.is-zero .buy-spending-trend-amount {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.buy-spending-trend-day {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+.buy-spending-trend-empty {
+    margin: 0;
+    padding: 8px 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+    text-align: center;
+}
+
+#buy-spending-trend.chart-container {
+    height: auto;
+    min-height: 130px;
+    align-items: stretch;
+    padding-top: 0;
 }
 
 .mini-bar-chart {

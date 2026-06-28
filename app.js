@@ -1378,6 +1378,7 @@ function setSelectedSubstanceId(id, { source = null, refresh = true } = {}) {
     renderUseLogTab();
     renderInventorySummaryCards();
     renderPurchaseHistory(null);
+    renderBuyTrackerTab();
     if (source !== 'taper' && getTaperSubstances().some(s => s.id === selectedSubstanceId)) {
         refreshTaperDashboard();
     }
@@ -10449,6 +10450,55 @@ function getPurchaseTotalCost(purchase) {
     return c != null && c !== '' ? c : '';
 }
 
+function getPurchaseSpendAmount(purchase) {
+    if (!purchase) return 0;
+    const direct = purchase.totalCost ?? purchase.cost ?? purchase.price;
+    if (direct != null && direct !== '') {
+        const parsed = parseFloat(direct);
+        if (Number.isFinite(parsed)) return Math.max(0, parsed);
+    }
+    const qty = parseFloat(getPurchaseQuantityBought(purchase) ?? getPurchaseQuantity(purchase)) || 0;
+    const cpu = parseFloat(purchase.costPerUnit);
+    if (qty > 0 && Number.isFinite(cpu) && cpu > 0) return qty * cpu;
+    return 0;
+}
+
+function getPurchasesForBuyMetrics(substanceId, data = appData) {
+    let list = [...(data.purchases || [])];
+    if (substanceId) {
+        list = list.filter(p => getPurchaseSubstanceId(p) === substanceId);
+    }
+    return list;
+}
+
+function purchaseOnDate(purchase, dateStr) {
+    return !!purchase?.date && purchase.date === dateStr;
+}
+
+function purchaseInDateRange(purchase, startDate, endDate) {
+    const d = purchase?.date;
+    if (!d) return false;
+    if (startDate && d < startDate) return false;
+    if (endDate && d > endDate) return false;
+    return true;
+}
+
+function buildDailyPurchaseSpendBuckets(substanceId, days = 7, data = appData) {
+    const today = getLocalDateString();
+    const purchases = getPurchasesForBuyMetrics(substanceId, data);
+    const buckets = [];
+    for (let i = days - 1; i >= 0; i--) {
+        const dateStr = addDaysToDateStr(today, -i);
+        const d = parseLocalDate(dateStr);
+        const label = d ? d.toLocaleDateString('en-US', { weekday: 'short' }) : dateStr.slice(5);
+        const total = purchases
+            .filter(p => p.date === dateStr)
+            .reduce((sum, p) => sum + getPurchaseSpendAmount(p), 0);
+        buckets.push({ date: dateStr, label, total });
+    }
+    return buckets;
+}
+
 function getSubstancePurchaseSpend(substanceId, filterFn) {
     return (appData.purchases || [])
         .filter(p => p.substanceId === substanceId && (!filterFn || filterFn(p)))
@@ -11606,25 +11656,30 @@ function togglePurchaseLinkedLogs(purchaseId) {
 }
 
 function getBuyStats(substanceId) {
-    const purchases = getPurchasesFiltered(substanceId);
+    const purchasesForMetrics = getPurchasesForBuyMetrics(substanceId);
+    console.log('Buy metrics purchases used:', purchasesForMetrics);
+
     const today = getLocalDateString();
     const weekStart = getWeekStartDateStr(today);
-    const monthStart = today.slice(0, 7) + '-01';
+    const monthStart = getMonthStartDateStr(today);
     const cur = getCurrencySymbol();
 
-    const purchaseCost = p => p.totalCost ?? p.cost ?? 0;
-    const spentToday = purchases.filter(p => p.date === today).reduce((s, p) => s + purchaseCost(p), 0);
-    const spentWeek = purchases.filter(p => p.date >= weekStart).reduce((s, p) => s + purchaseCost(p), 0);
-    const spentMonth = purchases.filter(p => p.date >= monthStart).reduce((s, p) => s + purchaseCost(p), 0);
-    const countWeek = purchases.filter(p => p.date >= weekStart).length;
-    const countMonth = purchases.filter(p => p.date >= monthStart).length;
+    const weekPurchases = purchasesForMetrics.filter(p => purchaseInDateRange(p, weekStart, today));
+    const monthPurchases = purchasesForMetrics.filter(p => purchaseInDateRange(p, monthStart, today));
 
-    const withCpu = purchases.filter(p => p.costPerUnit > 0);
-    const avgCostUnit = withCpu.length
-        ? withCpu.reduce((s, p) => s + p.costPerUnit, 0) / withCpu.length
-        : null;
+    const spentToday = purchasesForMetrics
+        .filter(p => purchaseOnDate(p, today))
+        .reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
+    const spentWeek = weekPurchases.reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
+    const spentMonth = monthPurchases.reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
+    const countWeek = weekPurchases.length;
+    const countMonth = monthPurchases.length;
 
-    const sorted = [...purchases].sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
+    const totalSpent = purchasesForMetrics.reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
+    const totalQty = purchasesForMetrics.reduce((s, p) => s + getPurchaseQuantityBought(p), 0);
+    const avgCostUnit = totalQty > INVENTORY_EPS ? totalSpent / totalQty : null;
+
+    const sorted = [...purchasesForMetrics].sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
     const lastPurchase = sorted[0] || null;
 
     let daysSupply = null;
@@ -11636,29 +11691,51 @@ function getBuyStats(substanceId) {
         }
     }
 
-    return { spentToday, spentWeek, spentMonth, countWeek, countMonth, avgCostUnit, lastPurchase, daysSupply, purchases, cur,
+    return {
+        spentToday,
+        spentWeek,
+        spentMonth,
+        countWeek,
+        countMonth,
+        avgCostUnit,
+        lastPurchase,
+        daysSupply,
+        purchases: purchasesForMetrics,
+        cur,
         supplyUse: getSubstanceSupplyUseMetrics(substanceId && substanceId !== DASHBOARD_ALL ? substanceId : null),
-        supplyDuration: getSubstanceSupplyDurationStats(substanceId) };
+        supplyDuration: getSubstanceSupplyDurationStats(substanceId)
+    };
 }
 
 function renderBuySpendingTrend(substanceId) {
     const container = document.getElementById('buy-spending-trend');
     if (!container) return;
-    const purchases = getPurchasesFiltered(substanceId);
-    const today = new Date();
-    const days = [];
-    for (let i = 6; i >= 0; i--) {
-        const d = new Date(today);
-        d.setDate(d.getDate() - i);
-        days.push(getLocalDateString(d));
+
+    const buckets = buildDailyPurchaseSpendBuckets(substanceId, 7);
+    const hasAnySpend = buckets.some(b => b.total > INVENTORY_EPS);
+    if (!hasAnySpend) {
+        container.innerHTML = '<p class="buy-spending-trend-empty">No purchases in the last 7 days.</p>';
+        return;
     }
-    const totals = days.map(day => purchases.filter(p => p.date === day).reduce((s, p) => s + (p.totalCost ?? p.cost ?? 0), 0));
-    const max = Math.max(...totals, 1);
-    container.innerHTML = '<div class="mini-bar-chart">' + days.map((day, i) => {
-        const h = Math.round((totals[i] / max) * 100);
-        const label = parseLocalDate(day)?.toLocaleDateString('en-US', { weekday: 'short' }) || day;
-        return `<div class="mini-bar" title="${getCurrencySymbol()}${totals[i].toFixed(2)}"><div class="mini-bar-fill" style="height:${h}%"></div><span>${label}</span></div>`;
-    }).join('') + '</div>';
+
+    const max = Math.max(...buckets.map(b => b.total), INVENTORY_EPS);
+    const cur = getCurrencySymbol();
+    const barAreaPx = 88;
+
+    container.innerHTML = `<div class="buy-spending-trend-chart">${buckets.map(b => {
+        const isZero = b.total <= INVENTORY_EPS;
+        const barPx = isZero
+            ? 3
+            : Math.max(Math.round((b.total / max) * barAreaPx), 8);
+        const amountLabel = `${cur}${formatAmount(b.total)}`;
+        return `<div class="buy-spending-trend-col${isZero ? ' is-zero' : ''}">
+            <span class="buy-spending-trend-amount">${amountLabel}</span>
+            <div class="buy-spending-trend-bar-wrap" style="height:${barAreaPx}px">
+                <div class="buy-spending-trend-bar" style="height:${barPx}px"></div>
+            </div>
+            <span class="buy-spending-trend-day">${escapeHtml(b.label)}</span>
+        </div>`;
+    }).join('')}</div>`;
 }
 
 function renderBuyTrackerTab() {
