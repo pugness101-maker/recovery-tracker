@@ -1326,11 +1326,8 @@
             <!-- Buy Tracker Tab -->
             <section id="buy-tracker-tab" class="tab">
                 <div class="page-header-row inventory-page-header">
-                    <div class="page-title-block">
-                        <h2>Inventory</h2>
-                        <p class="page-subtitle settings-hint">Track inventory purchases — amount bought, remaining, cost, and notes.</p>
-                    </div>
-                    <div class="page-substance-selector substance-select-card">
+                    <h2>Inventory</h2>
+                    <div class="page-substance-selector substance-select-card inventory-substance-field">
                         <label for="inventory-substance" class="page-substance-label">Substance</label>
                         <select id="inventory-substance" class="page-substance-select" onchange="onInventorySubstanceChange()"></select>
                     </div>
@@ -1339,15 +1336,21 @@
                 <div id="inventory-summary-cards" class="inventory-summary-wrap"></div>
 
                 <section class="inventory-filter-card">
-                    <button type="button" id="inventory-filter-toggle" class="inventory-filter-toggle section-toggle" onclick="toggleInventoryFiltersPanel()">
-                        <span>Search &amp; Filters</span>
-                        <span id="inventory-filter-count"></span>
-                        <span class="chevron">⌄</span>
-                    </button>
+                    <div class="inventory-toolbar">
+                        <input type="search" id="inventory-search" class="inventory-search-input" placeholder="Search store, notes…" oninput="applyInventorySearchFilters()">
+                        <select id="inventory-filter-status" class="inventory-status-select" onchange="applyInventorySearchFilters()" aria-label="Status">
+                            <option value="all" selected>All status</option>
+                            <option value="active">Active</option>
+                            <option value="depleted">Depleted</option>
+                            <option value="hidden">Hidden</option>
+                        </select>
+                        <button type="button" id="inventory-filter-toggle" class="inventory-more-filters-btn secondary-btn btn-sm" onclick="toggleInventoryFiltersPanel()">
+                            More filters<span id="inventory-filter-count"></span>
+                        </button>
+                    </div>
                     <div id="inventory-filter-chips" class="inventory-filter-chips hidden"></div>
                     <div id="inventory-filter-panel" class="inventory-filter-panel hidden">
                         <div class="inventory-filter-grid">
-                            <input type="search" id="inventory-search" class="inventory-search-input" placeholder="Search store, notes, substance…" oninput="applyInventorySearchFilters()">
                             <div class="inventory-filter-field">
                                 <label for="inventory-filter-date-start">From date</label>
                                 <input type="date" id="inventory-filter-date-start" onchange="applyInventorySearchFilters()">
@@ -1355,15 +1358,6 @@
                             <div class="inventory-filter-field">
                                 <label for="inventory-filter-date-end">To date</label>
                                 <input type="date" id="inventory-filter-date-end" onchange="applyInventorySearchFilters()">
-                            </div>
-                            <div class="inventory-filter-field">
-                                <label for="inventory-filter-status">Status</label>
-                                <select id="inventory-filter-status" onchange="applyInventorySearchFilters()">
-                                    <option value="all" selected>All / Any status</option>
-                                    <option value="active">Active</option>
-                                    <option value="depleted">Depleted</option>
-                                    <option value="hidden">Hidden</option>
-                                </select>
                             </div>
                             <div class="inventory-filter-field">
                                 <label for="inventory-filter-payment">Payment</label>
@@ -1393,20 +1387,34 @@
                             </div>
                             <label class="inventory-filter-check"><input type="checkbox" id="inventory-filter-vape-only" onchange="applyInventorySearchFilters()"> Vape only</label>
                             <div class="inventory-filter-actions">
-                                <button type="button" class="secondary-btn btn-sm" onclick="clearInventoryFilters()">Clear Filters</button>
+                                <button type="button" class="secondary-btn btn-sm" onclick="clearInventoryFilters()">Clear filters</button>
                             </div>
                         </div>
                     </div>
                 </section>
 
-                <div class="inventory-bulk-bar">
-                    <span class="inventory-bulk-label">Bulk:</span>
-                    <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('active')">Mark Active</button>
-                    <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('depleted')">Mark Depleted</button>
-                    <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('hide')">Hide</button>
-                    <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('unhide')">Unhide</button>
-                    <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('recalculate')">Recalculate</button>
-                    <button type="button" class="delete-btn btn-sm" onclick="runInventoryBulkAction('delete')">Delete</button>
+                <div class="collapsible-section" data-section="purchaseHistory">
+                    <button type="button" class="section-toggle" onclick="toggleSection('purchaseHistory')">
+                        <span>Purchase History</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content" id="purchase-history-content">
+                        <div id="inventory-bulk-bar" class="inventory-bulk-bar hidden">
+                            <span id="inventory-bulk-count" class="inventory-bulk-count"></span>
+                            <div class="inventory-bulk-actions">
+                                <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('active')">Active</button>
+                                <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('depleted')">Depleted</button>
+                                <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('hide')">Hide</button>
+                                <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('unhide')">Unhide</button>
+                                <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('recalculate')">Recalc</button>
+                                <button type="button" class="delete-btn btn-sm" onclick="runInventoryBulkAction('delete')">Delete</button>
+                            </div>
+                        </div>
+                        <div class="purchase-history-header">
+                            <button type="button" class="secondary-btn btn-sm" id="purchase-history-customize-columns">Columns</button>
+                        </div>
+                        <div id="purchase-history-list"></div>
+                    </div>
                 </div>
 
                 <div class="collapsible-section" data-section="purchaseForm">
@@ -1559,16 +1567,13 @@
                     </button>
                     <div class="section-content">
                 <div class="buy-stats-section">
-                    <h3>Supply Analytics</h3>
                     <div class="stats-grid buy-supply-duration-grid">
-                        <div class="stat-card highlight"><h3>Longest Lasting Supply</h3><p class="stat-value" id="buy-longest-supply-duration">—</p></div>
-                        <div class="stat-card"><h3>Average Supply Duration</h3><p class="stat-value" id="buy-avg-supply-duration">—</p></div>
-                        <div class="stat-card"><h3>Shortest Supply Duration</h3><p class="stat-value" id="buy-shortest-supply-duration">—</p></div>
-                        <div class="stat-card"><h3>Avg Days Between Purchases</h3><p class="stat-value" id="buy-avg-days-between-purchases">—</p></div>
+                        <div class="stat-card highlight"><h3>Longest Supply</h3><p class="stat-value" id="buy-longest-supply-duration">—</p></div>
+                        <div class="stat-card"><h3>Avg Supply Duration</h3><p class="stat-value" id="buy-avg-supply-duration">—</p></div>
+                        <div class="stat-card"><h3>Shortest Supply</h3><p class="stat-value" id="buy-shortest-supply-duration">—</p></div>
+                        <div class="stat-card"><h3>Avg Days Between Buys</h3><p class="stat-value" id="buy-avg-days-between-purchases">—</p></div>
                     </div>
-                    <p class="buy-supply-duration-note settings-hint">Supply duration stats use purchases with 2+ linked logs.</p>
 
-                    <h3>Buy Tracker Stats</h3>
                     <div class="stats-grid">
                         <div class="stat-card"><h3>Spent Today</h3><p class="stat-value" id="buy-spent-today">$0</p></div>
                         <div class="stat-card"><h3>Spent This Week</h3><p class="stat-value" id="buy-spent-week">$0</p></div>
@@ -1631,18 +1636,6 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="purchaseHistory">
-                    <button type="button" class="section-toggle" onclick="toggleSection('purchaseHistory')">
-                        <span>Inventory Purchase History</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content" id="purchase-history-content">
-                        <div class="purchase-history-header">
-                            <button type="button" class="secondary-btn" id="purchase-history-customize-columns">Customize Columns</button>
-                        </div>
-                        <div id="purchase-history-list"></div>
-                    </div>
-                </div>
             </section>
 
             <!-- Settings Tab -->

@@ -1105,35 +1105,27 @@ function renderInventorySummaryCards() {
     const statusScoped = getInventoryPurchasesForStatusView(selectedId || null);
     const m = getInventorySummary(selectedId || null, appData, statusScoped);
     const cur = getCurrencySymbol();
-    const oldestLabel = m.oldestActive
-        ? `${formatDate(m.oldestActive.date)}${m.oldestActive.store ? ` · ${m.oldestActive.store}` : ''}`
-        : '—';
 
-    const cards = [
-        `<div class="stat-card"><h3>Active</h3><p class="stat-value">${m.activeCount}</p></div>`,
-        `<div class="stat-card"><h3>Depleted</h3><p class="stat-value">${m.depletedCount}</p></div>`,
-        `<div class="stat-card"><h3>Hidden</h3><p class="stat-value">${m.hiddenCount}</p></div>`,
-        `<div class="stat-card"><h3>Inventory Value (est.)</h3><p class="stat-value">${fmtSheetMoney(m.inventoryValue, cur)}</p></div>`
-    ];
+    const metaParts = [`Value <strong>${fmtSheetMoney(m.inventoryValue, cur)}</strong>`];
 
     if (shouldShowTotalRemainingInventoryCard(selectedId)) {
-        cards.push(
-            `<div class="stat-card"><h3>${getInventoryTotalRemainingLabel(selectedId)}</h3><p class="stat-value stat-value-sm">${formatInventoryTotalRemainingValue(m, selectedId)}</p></div>`
-        );
+        const rem = formatInventoryTotalRemainingValue(m, selectedId);
+        metaParts.push(`Remaining <strong>${rem}</strong>`);
     }
-
     if (shouldShowVapeInventorySummaryCards(selectedId)) {
-        cards.push(
-            `<div class="stat-card"><h3>Vape Puffs Left</h3><p class="stat-value">${formatAmountWithUnit(m.vapePuffsLeft, 'puffs')}</p></div>`,
-            `<div class="stat-card"><h3>Active Vapes</h3><p class="stat-value">${m.vapeActiveCount}</p></div>`
-        );
+        metaParts.push(`Puffs <strong>${formatAmountWithUnit(m.vapePuffsLeft, 'puffs')}</strong>`);
+        metaParts.push(`Vapes <strong>${m.vapeActiveCount}</strong>`);
     }
 
-    cards.push(
-        `<div class="stat-card"><h3>Oldest Active</h3><p class="stat-value stat-value-sm">${oldestLabel}</p></div>`
-    );
-
-    container.innerHTML = `<div class="inventory-summary-grid">${cards.join('')}</div>`;
+    container.innerHTML = `
+        <div class="inventory-summary-compact">
+            <div class="inventory-status-counts">
+                <span class="inventory-count-pill"><span class="inventory-count-label">Active</span><strong>${m.activeCount}</strong></span>
+                <span class="inventory-count-pill"><span class="inventory-count-label">Depleted</span><strong>${m.depletedCount}</strong></span>
+                <span class="inventory-count-pill"><span class="inventory-count-label">Hidden</span><strong>${m.hiddenCount}</strong></span>
+            </div>
+            <div class="inventory-summary-meta">${metaParts.join('<span class="inventory-meta-sep">·</span>')}</div>
+        </div>`;
 }
 
 function getInventoryStatusFilterLabel() {
@@ -1161,9 +1153,7 @@ function syncInventoryStatusFilterUI() {
 
 function countActiveInventoryFilters() {
     let count = 0;
-    if (inventorySearchQuery) count++;
     if (inventoryListFilters.dateStart || inventoryListFilters.dateEnd) count++;
-    if (inventoryTabFilter !== 'all') count++;
     if (inventoryListFilters.paymentMethod) count++;
     if (inventoryListFilters.hasRemaining) count++;
     if (inventoryListFilters.hasCost) count++;
@@ -1238,6 +1228,14 @@ function toggleInventoryFiltersPanel() {
     inventoryFiltersPanelOpen = !inventoryFiltersPanelOpen;
     saveInventoryFilterState();
     updateInventoryFiltersPanelUI();
+}
+
+function updateInventoryBulkBarUI() {
+    const bar = document.getElementById('inventory-bulk-bar');
+    const countEl = document.getElementById('inventory-bulk-count');
+    const n = inventorySelectedIds.size;
+    if (bar) bar.classList.toggle('hidden', n === 0);
+    if (countEl) countEl.textContent = n ? `${n} selected` : '';
 }
 
 function renderInventoryFilterChips() {
@@ -1362,6 +1360,7 @@ function runInventoryBulkAction(action) {
     });
     saveData(appData);
     inventorySelectedIds.clear();
+    updateInventoryBulkBarUI();
     refreshBuyTrackerRelatedViews();
 }
 
@@ -2680,7 +2679,7 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     recentUse: false,
     bulkActions: true,
     useHistory: false,
-    purchaseForm: false,
+    purchaseForm: true,
     purchaseHistory: false,
     buySpendingTrend: true,
     buyMetrics: true,
@@ -5937,6 +5936,7 @@ function setupPurchaseHistoryActions() {
         const id = cb.getAttribute('data-inventory-select');
         if (cb.checked) inventorySelectedIds.add(id);
         else inventorySelectedIds.delete(id);
+        updateInventoryBulkBarUI();
     });
 }
 
@@ -12095,6 +12095,7 @@ function renderPurchaseHistory(substanceId, containerId = null) {
         });
         renderPurchaseHistory(filterId, containerId);
     });
+    updateInventoryBulkBarUI();
     applyCollapsedSections();
 }
 
