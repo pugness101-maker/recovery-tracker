@@ -926,54 +926,6 @@ function markVapePurchaseFinishedNow(purchaseId) {
     return true;
 }
 
-function getDataQualityReport(data = appData) {
-    const purchases = data.purchases || [];
-    const logs = data.logs || [];
-    return {
-        sessionTransactionType: logs.filter(l => l?.transactionType === 'session').length,
-        substanceNameMismatch: purchases.filter(p => {
-            const sub = getSubstance(getPurchaseSubstanceId(p), data);
-            return sub?.name && p.substanceName && p.substanceName !== sub.name;
-        }).length,
-        activeNoRemaining: purchases.filter(p =>
-            p.inventoryStatus === 'active'
-            && !p.inventoryHidden
-            && getPurchaseRemainingAmount(p) <= INVENTORY_EPS
-        ).length,
-        vapeMissingPuffCount: purchases.filter(p =>
-            isVapePuffPurchase(p, data) && !getVapeFullPuffCount(p)
-        ).length,
-        vapeMissingNicotine: purchases.filter(p =>
-            isVapePuffPurchase(p, data)
-            && (!getVapeELiquidCapacityMl(p) || !getVapeNicotineMgPerMl(p))
-        ).length,
-        overnightMissingEndDate: logs.filter(l =>
-            l.startTime && l.endTime && !l.endDate && l.date
-            && useTimeToMinutes(l.endTime) < useTimeToMinutes(l.startTime)
-        ).length
-    };
-}
-
-function renderDataQualityPanel() {
-    const container = document.getElementById('data-quality-panel');
-    if (!container) return;
-    const r = getDataQualityReport();
-    const rows = [
-        ['Logs with transactionType "session"', r.sessionTransactionType],
-        ['Purchases with mismatched substance name', r.substanceNameMismatch],
-        ['Active purchases with no remaining', r.activeNoRemaining],
-        ['Vape purchases missing puff count', r.vapeMissingPuffCount],
-        ['Vape purchases missing nicotine fields', r.vapeMissingNicotine],
-        ['Overnight logs missing endDate', r.overnightMissingEndDate]
-    ];
-    const totalIssues = rows.reduce((s, [, n]) => s + n, 0);
-    container.innerHTML = `
-        <p class="settings-hint">${totalIssues ? `${totalIssues} potential issue(s) found.` : 'No data quality issues detected.'}</p>
-        <ul class="data-quality-list">
-            ${rows.map(([label, count]) => `<li><span>${label}</span><strong>${count}</strong></li>`).join('')}
-        </ul>`;
-}
-
 function isInventoryAllSubstancesFilter(selectedSubstanceId) {
     return !selectedSubstanceId || selectedSubstanceId === DASHBOARD_ALL;
 }
@@ -2681,8 +2633,6 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     useHistory: false,
     purchaseForm: true,
     purchaseHistory: false,
-    buySpendingTrend: true,
-    buyMetrics: true,
     statsDateRange: false,
     statsSummaryDashboard: false,
     statsCalendarView: false,
@@ -2693,8 +2643,6 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     taperWeeklyPlan: false,
     taperByWeek: false,
     taperWeeklyCalendar: false,
-    buyWeeklySummary: false,
-    buyMonthlySummary: false,
     dashRecovery: false,
     dashRecoveryDetails: true,
     dashVapeSection: true,
@@ -2702,7 +2650,6 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     settingsAppearance: false,
     settingsStores: true,
     settingsBackup: true,
-    settingsDataQuality: false,
     settingsDangerZone: true
 };
 
@@ -3754,12 +3701,6 @@ function refreshTableAfterColumnChange(tableKey) {
         case 'statsMonthly':
             renderStatsMonthlySummary(currentSubstanceId);
             break;
-        case 'buyWeekly':
-            renderBuyWeeklySummary(substanceId);
-            break;
-        case 'buyMonthly':
-            renderBuyMonthlySummary(substanceId);
-            break;
         case 'taperByWeek':
             renderTaperByWeek(getTaperSubstanceId());
             break;
@@ -3848,12 +3789,6 @@ function setupColumnSettingsModal() {
     });
     document.getElementById('stats-monthly-customize-columns')?.addEventListener('click', () => {
         openColumnSettingsModal('statsMonthly');
-    });
-    document.getElementById('buy-weekly-customize-columns')?.addEventListener('click', () => {
-        openColumnSettingsModal('buyWeekly');
-    });
-    document.getElementById('buy-monthly-customize-columns')?.addEventListener('click', () => {
-        openColumnSettingsModal('buyMonthly');
     });
     document.getElementById('taper-by-week-customize-columns')?.addEventListener('click', () => {
         openColumnSettingsModal('taperByWeek');
@@ -4310,7 +4245,6 @@ function repairAppData() {
     const stats = repairDataConsistency(appData);
     saveData(appData);
     refreshAppAfterDataChange();
-    renderDataQualityPanel();
     alert(`Data repair complete.\n\n${formatRepairSummary(stats)}`);
 }
 
@@ -4428,9 +4362,6 @@ function initializeApp() {
     refreshTaperDashboard();
     renderSubstancesList();
     renderStoresList();
-    renderDataQualityPanel();
-    updateVapeTaperModeNote();
-    syncVapeTaperCountModeSelect();
     setupBuyTrackerForm();
     loadInventoryFiltersPanelState();
     updateInventoryFiltersPanelUI();
@@ -4474,7 +4405,6 @@ function refreshAppAfterDataChange() {
     refreshTaperDashboard();
     renderSubstancesList();
     renderStoresList();
-    renderDataQualityPanel();
     refreshAllRecoveryStreaks();
     renderPurchaseHistory(null);
     renderDashboardRecoveryInsights();
@@ -10665,22 +10595,6 @@ function purchaseInDateRange(purchase, startDate, endDate) {
     return true;
 }
 
-function buildDailyPurchaseSpendBuckets(substanceId, days = 7, data = appData) {
-    const today = getLocalDateString();
-    const purchases = getPurchasesForBuyMetrics(substanceId, data);
-    const buckets = [];
-    for (let i = days - 1; i >= 0; i--) {
-        const dateStr = addDaysToDateStr(today, -i);
-        const d = parseLocalDate(dateStr);
-        const label = d ? d.toLocaleDateString('en-US', { weekday: 'short' }) : dateStr.slice(5);
-        const total = purchases
-            .filter(p => getPurchaseDateStr(p) === dateStr)
-            .reduce((sum, p) => sum + getPurchaseSpendAmount(p), 0);
-        buckets.push({ date: dateStr, label, total });
-    }
-    return buckets;
-}
-
 function getSubstancePurchaseSpend(substanceId, filterFn) {
     return (appData.purchases || [])
         .filter(p => p.substanceId === substanceId && (!filterFn || filterFn(p)))
@@ -11889,37 +11803,6 @@ function getBuyStats(substanceId) {
     };
 }
 
-function renderBuySpendingTrend(substanceId) {
-    const container = document.getElementById('buy-spending-trend');
-    if (!container) return;
-
-    const buckets = buildDailyPurchaseSpendBuckets(substanceId, 7);
-    const hasAnySpend = buckets.some(b => b.total > INVENTORY_EPS);
-    if (!hasAnySpend) {
-        container.innerHTML = '<p class="buy-spending-trend-empty">No purchases in the last 7 days.</p>';
-        return;
-    }
-
-    const max = Math.max(...buckets.map(b => b.total), INVENTORY_EPS);
-    const cur = getCurrencySymbol();
-    const barAreaPx = 88;
-
-    container.innerHTML = `<div class="buy-spending-trend-chart">${buckets.map(b => {
-        const isZero = b.total <= INVENTORY_EPS;
-        const barPx = isZero
-            ? 3
-            : Math.max(Math.round((b.total / max) * barAreaPx), 8);
-        const amountLabel = `${cur}${formatAmount(b.total)}`;
-        return `<div class="buy-spending-trend-col${isZero ? ' is-zero' : ''}">
-            <span class="buy-spending-trend-amount">${amountLabel}</span>
-            <div class="buy-spending-trend-bar-wrap" style="height:${barAreaPx}px">
-                <div class="buy-spending-trend-bar" style="height:${barPx}px"></div>
-            </div>
-            <span class="buy-spending-trend-day">${escapeHtml(b.label)}</span>
-        </div>`;
-    }).join('')}</div>`;
-}
-
 function renderBuyTrackerTab() {
     renderInventorySummaryCards();
     renderPurchaseHistory(null);
@@ -12984,57 +12867,6 @@ function renderBreakLengthChart(metrics) {
         const hoursLabel = formatBreakFromHours(item.hours);
         const dateLabel = item.label || (item.date ? formatDate(item.date) : '—');
         bar.innerHTML = `<span class="chart-bar-value">${hoursLabel}</span><span class="chart-bar-label">${dateLabel}</span>`;
-        container.appendChild(bar);
-    });
-}
-
-function updateBuyBreakStats() {
-    const metrics = getBuyBreakMetrics(currentSubstanceId);
-    const set = (id, text) => {
-        const el = document.getElementById(id);
-        if (el) el.textContent = text;
-    };
-
-    set('stats-buy-break-longest', formatBuyBreakFromHours(metrics.longest));
-    set('stats-buy-break-average', formatBuyBreakFromHours(metrics.average));
-    set('stats-buy-break-shortest', formatBuyBreakFromHours(metrics.shortest));
-    set('stats-buy-since-last', metrics.timeSinceLastBuy?.text || '—');
-
-    const trendEl = document.getElementById('buy-break-trend-list');
-    if (trendEl) {
-        if (!metrics.trend.length) {
-            trendEl.innerHTML = '<p class="empty-hint">Log at least two purchases to see buy break trends</p>';
-        } else {
-            trendEl.innerHTML = metrics.trend.map(item => `
-                <div class="break-trend-row">
-                    <span>${item.label || item.date || '—'}</span>
-                    <span class="buy-break-trend-value ${getBuyBreakColorClass(item.hours)}">${item.text || formatBuyBreakFromHours(item.hours)}</span>
-                </div>
-            `).join('');
-        }
-    }
-
-    renderBuyBreakFrequencyChart(metrics);
-}
-
-function renderBuyBreakFrequencyChart(metrics) {
-    const container = document.getElementById('buy-break-frequency-chart');
-    if (!container) return;
-    container.innerHTML = '';
-
-    if (!metrics.trend.length) {
-        container.innerHTML = '<p class="empty-hint">Log at least two purchases to chart buy frequency</p>';
-        return;
-    }
-
-    const maxHours = Math.max(...metrics.trend.map(t => t.hours), 0.1);
-    metrics.trend.forEach(item => {
-        const bar = document.createElement('div');
-        bar.className = 'chart-bar chart-bar-buy-break';
-        bar.style.height = `${Math.max((item.hours / maxHours) * 100, 4)}%`;
-        const daysLabel = formatBuyBreakFromHours(item.hours);
-        const dateLabel = item.label || (item.date ? formatDate(item.date) : '—');
-        bar.innerHTML = `<span class="chart-bar-value">${daysLabel}</span><span class="chart-bar-label">${dateLabel}</span>`;
         container.appendChild(bar);
     });
 }
@@ -14282,7 +14114,6 @@ function renderStatsBuyAnalyticsCards(substanceId, bounds) {
     if (!container) return;
     const sub = getSubstance(substanceId);
     const unit = sub?.defaultUnit || 'units';
-    const displayUnit = getStatsDisplayUnit(substanceId, unit);
     const cur = getCurrencySymbol();
     const inRange = p => p.date >= bounds.startDate && p.date <= bounds.endDate;
     const purchases = (appData.purchases || []).filter(p =>
@@ -14303,144 +14134,52 @@ function renderStatsBuyAnalyticsCards(substanceId, bounds) {
     );
     const weekCost = weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
     const monthCost = monthPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
-    const storeSummaries = getStoreBuySummaries(substanceId, bounds);
-    const topStore = storeSummaries[0];
-    const supplyDuration = getAverageSupplyDurationDays(substanceId);
+    const buyMetrics = getBuyBreakMetrics(substanceId);
+    const sinceLastBuy = buyMetrics.timeSinceLastBuy?.text || '—';
+    const storeSummaries = getStoreBuySummaries(substanceId, bounds).slice(0, 5);
 
     if (isVapeNicotineSubstanceId(substanceId)) {
         const vapePurchases = purchases.filter(isVapePuffPurchase);
         const vapeCount = vapePurchases.length;
-        const avgCostPerVape = vapeCount > 0 ? cost / vapeCount : null;
         const rangePuffs = getStatsUsageInRange(substanceId, bounds.startDate, bounds.endDate);
         const costPerPuff = rangePuffs > INVENTORY_EPS && cost > 0 ? cost / rangePuffs : null;
-        const cards = [
-            renderSheetMetricCard('Vape count (range)', String(vapeCount), null),
-            renderSheetMetricCard('Range cost', fmtSheetMoney(cost, cur), null),
-            renderSheetMetricCard('Avg cost/vape', formatCostPerVape(avgCostPerVape, cur), null),
+        container.innerHTML = [
+            renderSheetMetricCard('Spent (range)', fmtSheetMoney(cost, cur), null),
+            renderSheetMetricCard('This week', fmtSheetMoney(weekCost, cur), null),
+            renderSheetMetricCard('This month', fmtSheetMoney(monthCost, cur), null),
+            renderSheetMetricCard('Vapes (range)', String(vapeCount), null),
             renderSheetMetricCard('Cost/puff', costPerPuff != null ? `${cur}${costPerPuff.toFixed(4)}/puff` : '—', null),
-            renderSheetMetricCard('Weekly cost', fmtSheetMoney(weekCost, cur), null),
-            renderSheetMetricCard('Monthly cost', fmtSheetMoney(monthCost, cur), null),
-            renderSheetMetricCard('Days per vape', supplyDuration != null ? formatSupplyDurationDays(supplyDuration) : '—', null),
-            renderSheetMetricCard('Remaining puffs', remaining != null ? `${formatStatsPuffs(remaining)} puffs` : '—', supplyBadge),
-            renderSheetMetricCard('Top store', topStore ? `${topStore.store} (${fmtSheetMoney(topStore.cost, cur)})` : '—', null)
-        ];
-        container.innerHTML = cards.join('');
-        const storeContainer = document.getElementById('stats-buy-store-summary');
-        if (storeContainer) {
-            if (!storeSummaries.length) {
-                storeContainer.innerHTML = '';
-            } else {
-                storeContainer.innerHTML = renderSheetTable(
-                    ['Store / Location', 'Vapes', 'Cost', 'Purchases'],
-                    storeSummaries.map(s => [
-                        s.store,
-                        String(s.count),
-                        fmtSheetMoney(s.cost, cur),
-                        String(s.count)
-                    ])
-                );
-            }
-        }
-        return;
+            renderSheetMetricCard('Since last buy', sinceLastBuy, null),
+            renderSheetMetricCard('Remaining puffs', remaining != null ? `${formatStatsPuffs(remaining)} puffs` : '—', supplyBadge)
+        ].join('');
+    } else {
+        const costPerUnit = purchased > 0 ? cost / purchased : getAveragePurchaseCostPerUnit(substanceId);
+        container.innerHTML = [
+            renderSheetMetricCard('Spent (range)', fmtSheetMoney(cost, cur), null),
+            renderSheetMetricCard('Purchased (range)', fmtSheetAmount(purchased, unit), null),
+            renderSheetMetricCard('This week', fmtSheetMoney(weekCost, cur), null),
+            renderSheetMetricCard('This month', fmtSheetMoney(monthCost, cur), null),
+            renderSheetMetricCard('Cost / unit', costPerUnit != null ? fmtSheetMoney(costPerUnit, cur) : '—', null),
+            renderSheetMetricCard('Since last buy', sinceLastBuy, null),
+            renderSheetMetricCard('Remaining supply', remaining != null ? fmtSheetAmount(remaining, unit) : '—', supplyBadge)
+        ].join('');
     }
-
-    const costPerUnit = purchased > 0 ? cost / purchased : getAveragePurchaseCostPerUnit(substanceId);
-    const daysInRange = countDaysInRange(bounds.startDate, bounds.endDate);
-    const gPerDaySupply = daysInRange > 0 ? purchased / daysInRange : null;
-    const weekPurchased = weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
-    const monthPurchased = monthPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
-    const allPurchases = (appData.purchases || []).filter(p => getPurchaseSubstanceId(p) === substanceId);
-    const totalPurchased = allPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
-    const totalCost = allPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
-    const avgCostPerUnit = totalPurchased > 0 ? totalCost / totalPurchased : null;
-
-    const cards = [
-        renderSheetMetricCard('Total purchased', fmtSheetAmount(totalPurchased, unit), null),
-        renderSheetMetricCard('Total cost', fmtSheetMoney(totalCost, cur), null),
-        renderSheetMetricCard('Avg cost/g', avgCostPerUnit != null ? fmtSheetMoney(avgCostPerUnit, cur) : '—', null),
-        renderSheetMetricCard('Weekly purchased', fmtSheetAmount(weekPurchased, unit), null),
-        renderSheetMetricCard('Weekly cost', fmtSheetMoney(weekCost, cur), null),
-        renderSheetMetricCard('Monthly purchased', fmtSheetAmount(monthPurchased, unit), null),
-        renderSheetMetricCard('Monthly cost', fmtSheetMoney(monthCost, cur), null),
-        renderSheetMetricCard('Range purchased', fmtSheetAmount(purchased, unit), null),
-        renderSheetMetricCard('Range cost', fmtSheetMoney(cost, cur), null),
-        renderSheetMetricCard('Cost / unit', costPerUnit != null ? fmtSheetMoney(costPerUnit, cur) : '—', null),
-        renderSheetMetricCard('g / day supply', gPerDaySupply != null ? fmtSheetRate(gPerDaySupply, unit, '/day') : '—', null),
-        renderSheetMetricCard('Supply duration', supplyDuration != null ? formatSupplyDurationDays(supplyDuration) : '—', null),
-        renderSheetMetricCard('Remaining supply', remaining != null ? fmtSheetAmount(remaining, unit) : '—', supplyBadge),
-        renderSheetMetricCard('Top store', topStore ? `${topStore.store} (${fmtSheetMoney(topStore.cost, cur)})` : '—', null)
-    ];
-
-    if (isAlcoholTrackingMode(substanceId)) {
-        const alcoholStats = getAlcoholInventoryAnalytics(purchases);
-        if (alcoholStats.totalPureAlcoholMl > 0) {
-            cards.push(renderSheetMetricCard(
-                'Pure alcohol (range)',
-                fmtSheetAmount(alcoholStats.totalPureAlcoholMl, 'mL'),
-                null
-            ));
-        }
-        const allAlcoholStats = getAlcoholInventoryAnalytics(allPurchases);
-        if (allAlcoholStats.totalPureAlcoholMl > 0) {
-            cards.push(renderSheetMetricCard(
-                'Pure alcohol (all time)',
-                fmtSheetAmount(allAlcoholStats.totalPureAlcoholMl, 'mL'),
-                null
-            ));
-        }
-    }
-
-    if (isWeedTrackingMode(substanceId)) {
-        const weedStats = getWeedInventoryAnalytics(purchases);
-        if (weedStats.budGrams > 0) {
-            cards.push(renderSheetMetricCard('Bud purchased (range)', fmtSheetAmount(weedStats.budGrams, 'g'), null));
-        }
-        if (weedStats.cartGrams > 0) {
-            cards.push(renderSheetMetricCard('Cart purchased (range)', fmtSheetAmount(weedStats.cartGrams, 'g'), null));
-        }
-        if (weedStats.ediblesMg > 0) {
-            cards.push(renderSheetMetricCard('Edibles purchased (range)', fmtSheetAmount(weedStats.ediblesMg, 'mg'), null));
-        }
-        if (weedStats.preRollGrams > 0) {
-            cards.push(renderSheetMetricCard('Pre-rolls purchased (range)', fmtSheetAmount(weedStats.preRollGrams, 'g'), null));
-        }
-    }
-
-    if (isCigarettesTrackingMode(substanceId)) {
-        const cigStats = getCigarettesInventoryAnalytics(purchases);
-        if (cigStats.totalNicotineMg > 0) {
-            cards.push(renderSheetMetricCard(
-                'Nicotine purchased (range)',
-                fmtSheetAmount(cigStats.totalNicotineMg, 'mg'),
-                null
-            ));
-        } else if (cigStats.perUnitSamples > 0) {
-            cards.push(renderSheetMetricCard(
-                'Nicotine per unit',
-                'See inventory entries',
-                null
-            ));
-        }
-    }
-
-    container.innerHTML = cards.join('');
 
     const storeContainer = document.getElementById('stats-buy-store-summary');
-    if (storeContainer) {
-        if (!storeSummaries.length) {
-            storeContainer.innerHTML = '';
-        } else {
-            storeContainer.innerHTML = renderSheetTable(
-                ['Store / Location', 'Purchased', 'Cost', 'Purchases'],
-                storeSummaries.map(s => [
-                    s.store,
-                    fmtSheetAmount(s.purchased, unit),
-                    fmtSheetMoney(s.cost, cur),
-                    String(s.count)
-                ])
-            );
-        }
+    if (!storeContainer) return;
+    if (!storeSummaries.length) {
+        storeContainer.innerHTML = '';
+        return;
     }
+    const storeCols = isVapeNicotineSubstanceId(substanceId)
+        ? ['Store / Location', 'Vapes', 'Cost']
+        : ['Store / Location', 'Purchased', 'Cost'];
+    storeContainer.innerHTML = renderSheetTable(
+        storeCols,
+        storeSummaries.map(s => isVapeNicotineSubstanceId(substanceId)
+            ? [s.store, String(s.count), fmtSheetMoney(s.cost, cur)]
+            : [s.store, fmtSheetAmount(s.purchased, unit), fmtSheetMoney(s.cost, cur)])
+    );
 }
 
 function renderStatsLimitGoal(substanceId, useStats, bounds, unit, cur) {
@@ -14570,80 +14309,6 @@ function renderTaperWeeklyCalendar(substanceId) {
         </div>`;
     });
     container.innerHTML = html;
-}
-
-function renderBuyWeeklySummary(substanceId) {
-    const container = document.getElementById('buy-weekly-summary');
-    if (!container) return;
-    if (!substanceId) {
-        container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
-        return;
-    }
-    const summaries = getBuyWeeklySummaries(substanceId);
-    if (!summaries.length) {
-        container.innerHTML = '<p class="empty-hint">No purchases yet.</p>';
-        return;
-    }
-    container.innerHTML = renderConfigurableSheetTable('buyWeekly', summaries, (colId, s) => {
-        switch (colId) {
-            case 'startWeek': return formatDate(s.weekStart);
-            case 'endWeek': return formatDate(s.weekEnd);
-            case 'purchased': return fmtSheetAmount(
-                s.purchased,
-                isVapeNicotineSubstanceId(substanceId) ? 'puffs' : s.unit
-            );
-            case 'monthRunning': return fmtSheetAmount(
-                s.monthRunning,
-                isVapeNicotineSubstanceId(substanceId) ? 'puffs' : s.unit
-            );
-            case 'cost': return fmtSheetMoney(s.cost, s.cur);
-            case 'costPerUnit': return isVapeNicotineSubstanceId(substanceId)
-                ? formatCostPerVape(s.costPerUnit, s.cur)
-                : (s.costPerUnit != null ? fmtSheetMoney(s.costPerUnit, s.cur) : '—');
-            case 'gPerDay': return s.gPerDay != null
-                ? (isVapeNicotineSubstanceId(substanceId)
-                    ? `${formatStatsPuffs(s.gPerDay)}/day`
-                    : fmtSheetRate(s.gPerDay, s.unit, '/day'))
-                : '—';
-            case 'supplyDuration': return formatSupplyDurationDays(s.supplyDuration);
-            default: return '—';
-        }
-    }, substanceId);
-}
-
-function renderBuyMonthlySummary(substanceId) {
-    const container = document.getElementById('buy-monthly-summary');
-    if (!container) return;
-    if (!substanceId) {
-        container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
-        return;
-    }
-    const summaries = getBuyMonthlySummaries(substanceId);
-    if (!summaries.length) {
-        container.innerHTML = '<p class="empty-hint">No purchases yet.</p>';
-        return;
-    }
-    container.innerHTML = renderConfigurableSheetTable('buyMonthly', summaries, (colId, s) => {
-        switch (colId) {
-            case 'startMonth': return formatBuySheetDate(s.monthStart);
-            case 'endMonth': return formatBuySheetDate(s.monthEnd);
-            case 'purchased': return fmtSheetAmount(
-                s.purchased,
-                isVapeNicotineSubstanceId(substanceId) ? 'puffs' : s.unit
-            );
-            case 'cost': return fmtSheetMoney(s.cost, s.cur);
-            case 'costPerUnit': return isVapeNicotineSubstanceId(substanceId)
-                ? formatCostPerVape(s.costPerUnit, s.cur)
-                : (s.costPerUnit != null ? fmtSheetMoney(s.costPerUnit, s.cur) : '—');
-            case 'gPerDay': return s.gPerDay != null
-                ? (isVapeNicotineSubstanceId(substanceId)
-                    ? `${formatStatsPuffs(s.gPerDay)}/day`
-                    : formatAmount(s.gPerDay))
-                : '—';
-            case 'supplyDuration': return formatSupplyDurationDaysHours(s.supplyDurationDays);
-            default: return '—';
-        }
-    }, substanceId);
 }
 
 // ——— Stats Calendar View ———
@@ -15504,11 +15169,7 @@ function updateStats() {
     renderStatsWeeklySummary(currentSubstanceId);
 
     renderSpendingChart(bounds);
-    updateBuyBreakStats();
     renderStatsBuyAnalyticsCards(currentSubstanceId, bounds);
-    renderBuySpendingTrend(currentSubstanceId);
-    renderBuyWeeklySummary(currentSubstanceId);
-    renderBuyMonthlySummary(currentSubstanceId);
     updateRecoveryStreakDisplay(currentSubstanceId);
     applyCollapsedSections();
 }

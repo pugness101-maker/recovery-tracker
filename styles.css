@@ -6773,14 +6773,6 @@ body.purchase-history-col-resizing {
     gap: 6px;
 }
 .btn-sm { padding: 4px 8px; font-size: 0.75rem; }
-.data-quality-list { list-style: none; padding: 0; margin: 8px 0; }
-.data-quality-list li {
-    display: flex;
-    justify-content: space-between;
-    padding: 6px 0;
-    border-bottom: 1px solid var(--border);
-    font-size: 0.85rem;
-}
 
 /* Purchase history column mins */
 .purchase-history-table.inventory-history-table th,

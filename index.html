@@ -765,35 +765,6 @@
                             <h3 id="spending-chart-title">Spending in range</h3>
                             <div id="spending-per-day-chart" class="chart-container"></div>
                         </div>
-                        <div class="stats-section">
-                            <h4>Spending trend (last 7 days)</h4>
-                            <div id="buy-spending-trend" class="chart-container"></div>
-                        </div>
-                        <div class="stats-section" id="buy-break-analytics-section">
-                            <h3>Buy break analytics</h3>
-                            <div class="stats-grid">
-                                <div class="stat-card"><h3>Longest Time Between Buys</h3><p class="stat-value" id="stats-buy-break-longest">—</p></div>
-                                <div class="stat-card"><h3>Average Time Between Buys</h3><p class="stat-value" id="stats-buy-break-average">—</p></div>
-                                <div class="stat-card"><h3>Shortest Time Between Buys</h3><p class="stat-value" id="stats-buy-break-shortest">—</p></div>
-                                <div class="stat-card highlight"><h3>Time Since Last Buy</h3><p class="stat-value" id="stats-buy-since-last">—</p></div>
-                            </div>
-                            <div id="buy-break-trend-list" class="break-trend-list"></div>
-                            <div id="buy-break-frequency-chart" class="chart-container buy-break-frequency-chart"></div>
-                        </div>
-                        <div class="stats-section">
-                            <div class="sheet-table-toolbar">
-                                <h4 class="stats-inline-heading">Weekly purchase summary</h4>
-                                <button type="button" class="secondary-btn table-columns-btn" id="buy-weekly-customize-columns">Columns</button>
-                            </div>
-                            <div id="buy-weekly-summary" class="buy-weekly-summary-wrap sheet-table-wrap"></div>
-                        </div>
-                        <div class="stats-section">
-                            <div class="sheet-table-toolbar">
-                                <h4 class="stats-inline-heading">Monthly purchase summary</h4>
-                                <button type="button" class="secondary-btn table-columns-btn" id="buy-monthly-customize-columns">Columns</button>
-                            </div>
-                            <div id="buy-monthly-summary" class="buy-monthly-summary-wrap sheet-table-wrap"></div>
-                        </div>
                     </div>
                 </div>
 
@@ -1552,27 +1523,6 @@
                 <div class="settings-section">
                     <p class="settings-hint">Saved from Buy Tracker purchases. Add new stores when logging a purchase.</p>
                     <div id="settings-stores-list"></div>
-                </div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="settingsDataQuality">
-                    <button type="button" class="section-toggle" onclick="toggleSection('settingsDataQuality')">
-                        <span>Data Quality</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                <div class="settings-section">
-                    <div id="data-quality-panel"></div>
-                    <div class="form-group">
-                        <label for="vape-taper-count-mode">Vape taper count mode</label>
-                        <select id="vape-taper-count-mode" onchange="setVapeTaperCountMode(this.value)">
-                            <option value="log-date">Count on log date (default)</option>
-                            <option value="spread-across-days">Spread across days</option>
-                        </select>
-                        <p id="vape-taper-mode-note" class="settings-hint hidden">Vape use is estimated and spread across days based on percent-left changes.</p>
-                    </div>
-                    <button type="button" class="secondary-btn" onclick="repairAppData()">Repair Data</button>
                 </div>
                     </div>
                 </div>
