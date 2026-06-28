@@ -5301,8 +5301,10 @@ function formatBreakText(minutes) {
     const hours = Math.floor((total % 1440) / 60);
     const mins = total % 60;
     if (days > 0) {
-        if (hours > 0) return `${days}d ${hours}h`;
-        return `${days}d`;
+        const parts = [`${days}d`];
+        if (hours > 0) parts.push(`${hours}h`);
+        if (mins > 0) parts.push(`${mins}m`);
+        return parts.join(' ');
     }
     if (hours > 0) {
         if (mins > 0) return `${hours}h ${mins}m`;
@@ -14547,12 +14549,8 @@ function formatCalendarDuration(hours, substanceId) {
     return formatDurationHMS(hours);
 }
 
-function formatCalendarBreak(day, substanceId) {
-    if (day.breakHours == null) return '—';
-    if (isVapeNicotineSubstanceId(substanceId) || isWeedTrackingMode(substanceId)) {
-        const days = Math.round(day.breakHours / 24);
-        return days <= 0 ? '< 1 day' : `${days} day${days === 1 ? '' : 's'}`;
-    }
+function formatCalendarBreak(day) {
+    if (day.breakHours == null || !Number.isFinite(day.breakHours)) return '—';
     return formatBreakFromHours(day.breakHours);
 }
 
@@ -14597,28 +14595,61 @@ function getMiniCalendarDayClass(day) {
     return classes.join(' ');
 }
 
-function findNextUseForDay(personalLogs, dateStr, lastLogOfDay) {
-    if (lastLogOfDay) {
-        const idx = personalLogs.findIndex(e => e.id === lastLogOfDay.id);
-        if (idx >= 0 && idx < personalLogs.length - 1) {
-            const next = personalLogs[idx + 1];
+function getStatsCalendarDisplayOpts() {
+    return {
+        showAmount: !!statsCalendarShow.amount,
+        showDuration: !!statsCalendarShow.duration,
+        showBreak: !!statsCalendarShow.break,
+        showNext: !!statsCalendarShow.next,
+        showCost: !!statsCalendarShow.cost,
+        showTaper: !!statsCalendarShow.taper,
+        compact: statsCalendarCompact
+    };
+}
+
+function getDayLastUseEndDatetime(logsForDay) {
+    let latest = null;
+    logsForDay.forEach(log => {
+        const end = getUseEndDatetime(log);
+        if (end && (!latest || end.getTime() > latest.getTime())) {
+            latest = end;
+        }
+    });
+    return latest;
+}
+
+function findNextPersonalUseAfter(personalLogs, afterMs) {
+    if (afterMs == null || !Number.isFinite(afterMs)) return null;
+    for (const log of personalLogs) {
+        const startMs = getLogDatetimeMs(log);
+        if (startMs > afterMs) {
             return {
-                date: next.date,
-                time: next.startTime || next.time || null,
-                gapHours: next.breakDurationHours
+                log,
+                date: log.date,
+                time: log.startTime || log.time || null,
+                startMs
             };
         }
-        return null;
     }
-    const after = personalLogs.find(e => e.date > dateStr);
-    if (!after) return null;
-    const start = parseLocalDate(dateStr);
-    const end = parseLocalDate(after.date);
-    const gapHours = start && end ? ((end - start) / 86400000) * 24 : null;
+    return null;
+}
+
+function computeCalendarDayBreakNext(logsForDay, personalLogs) {
+    const lastEnd = getDayLastUseEndDatetime(logsForDay);
+    if (!lastEnd) return { breakHours: null, nextUse: null };
+    const lastEndMs = lastEnd.getTime();
+    const next = findNextPersonalUseAfter(personalLogs, lastEndMs);
+    if (!next) return { breakHours: null, nextUse: null };
+    const breakMs = next.startMs - lastEndMs;
+    if (breakMs < 0) return { breakHours: null, nextUse: null };
+    const breakHours = breakMs / 3600000;
     return {
-        date: after.date,
-        time: after.startTime || after.time || null,
-        gapHours
+        breakHours,
+        nextUse: {
+            date: next.date,
+            time: next.time,
+            gapHours: breakHours
+        }
     };
 }
 
@@ -14648,16 +14679,17 @@ function getDailyUseMetrics({ logs, purchases, substanceId, dateRange, data = ap
             ? { amount: getStatsUsageOnDate(substanceId, dateStr, data), minutes: 0, cost: 0 }
             : sumUsageForDate(null, dateStr, substanceId, { data });
         const totalAmount = dayTotals.amount;
-        const logsForDay = personalLogs.filter(log => logHasUseSegmentOnDate(log, dateStr, data));
+        const logsForDay = personalLogs
+            .filter(log => logHasUseSegmentOnDate(log, dateStr, data))
+            .sort((a, b) => getLogDatetimeMs(a) - getLogDatetimeMs(b));
         const hasUse = totalAmount > INVENTORY_EPS;
         const durationHours = skipDuration
             ? null
             : dayTotals.minutes / 60;
         const cost = dayTotals.cost;
-        const firstLog = logsForDay[0] || null;
-        const lastLog = logsForDay.length ? logsForDay[logsForDay.length - 1] : null;
-        const breakHours = firstLog?.breakDurationHours ?? null;
-        const nextUse = hasUse ? findNextUseForDay(personalLogs, dateStr, lastLog) : null;
+        const { breakHours, nextUse } = hasUse
+            ? computeCalendarDayBreakNext(logsForDay, personalLogs)
+            : { breakHours: null, nextUse: null };
         let percentLeft = null;
         if (isVape && logsForDay.length) {
             for (let i = logsForDay.length - 1; i >= 0; i--) {
@@ -14737,7 +14769,7 @@ function buildCalendarDayCellHtml(day, substanceId, opts) {
     }
 
     if (showBreak && !compact) {
-        lines.push(`<div class="cal-line cal-line-detailed">Break: ${day.hasUse ? formatCalendarBreak(day, substanceId) : '—'}</div>`);
+        lines.push(`<div class="cal-line cal-line-detailed">Break: ${day.hasUse ? formatCalendarBreak(day) : '—'}</div>`);
     }
 
     if (showNext && !compact) {
@@ -14780,7 +14812,7 @@ function renderStatsCalendarMonth(substanceId, anchorDate) {
         substanceId,
         dateRange: { startDate: gridDates[0].date, endDate: gridDates[gridDates.length - 1].date }
     });
-    const opts = { ...statsCalendarShow, compact: statsCalendarCompact };
+    const opts = getStatsCalendarDisplayOpts();
     const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     let html = `<div class="stats-cal-grid${statsCalendarCompact ? ' compact' : ''}">`;
     weekdays.forEach(w => { html += `<div class="stats-cal-header">${w}</div>`; });
@@ -14813,7 +14845,7 @@ function renderStatsCalendarWeek(substanceId, anchorDate) {
         substanceId,
         dateRange: { startDate: weekStart, endDate: weekEnd }
     });
-    const opts = { ...statsCalendarShow, compact: statsCalendarCompact };
+    const opts = getStatsCalendarDisplayOpts();
     const weekdays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
     let html = `<div class="stats-cal-grid${statsCalendarCompact ? ' compact' : ''}">`;
     weekdays.forEach(w => { html += `<div class="stats-cal-header">${w}</div>`; });
@@ -15006,6 +15038,12 @@ function renderStatsCalendarView() {
     container.innerHTML = html;
 }
 
+function refreshStatsCalendarDayModalIfOpen() {
+    if (statsCalendarDayModalDate && statsCalendarDayModalSubstanceId) {
+        openStatsCalendarDayModal(statsCalendarDayModalDate, statsCalendarDayModalSubstanceId);
+    }
+}
+
 function openStatsCalendarDayModal(dateStr, substanceId) {
     statsCalendarDayModalDate = dateStr;
     statsCalendarDayModalSubstanceId = substanceId;
@@ -15029,19 +15067,22 @@ function openStatsCalendarDayModal(dateStr, substanceId) {
         unit: getStatsDisplayUnit(substanceId, sub.defaultUnit || 'units')
     };
     const cur = getCurrencySymbol();
+    const display = getStatsCalendarDisplayOpts();
     const title = document.getElementById('stats-calendar-day-modal-title');
     if (title) title.textContent = `${sub.icon} ${sub.name} — ${formatDate(dateStr)}`;
 
     const summaryEl = document.getElementById('stats-calendar-day-modal-summary');
     if (summaryEl) {
-        summaryEl.innerHTML = [
-            ['Total amount', day.hasUse ? formatCalendarUseAmount(day.totalAmount, substanceId, day.unit) : '—'],
-            ['Duration', formatCalendarDuration(day.durationHours, substanceId) || '—'],
-            ['Cost', fmtSheetMoney(day.cost, cur)],
+        const metrics = [
+            display.showAmount && ['Total amount', day.hasUse ? formatCalendarUseAmount(day.totalAmount, substanceId, day.unit) : '—'],
+            display.showDuration && ['Duration', formatCalendarDuration(day.durationHours, substanceId) || '—'],
+            display.showCost && ['Cost', fmtSheetMoney(day.cost, cur)],
             ['Entries', String(day.entries || 0)],
-            ['Break', day.hasUse ? formatCalendarBreak(day, substanceId) : '—'],
-            ['Next use', day.hasUse ? formatCalendarNextUse(day) : '—']
-        ].map(([label, value]) =>
+            display.showBreak && ['Break', day.hasUse ? formatCalendarBreak(day) : '—'],
+            display.showNext && ['Next use', day.hasUse ? formatCalendarNextUse(day) : '—'],
+            display.showTaper && day.hasUse && day.taperStatus !== 'none' && ['Taper', day.taperLabel || '—']
+        ].filter(Boolean);
+        summaryEl.innerHTML = metrics.map(([label, value]) =>
             `<div class="stats-cal-day-modal-metric"><span>${label}</span><strong>${value}</strong></div>`
         ).join('');
     }
@@ -15247,7 +15288,13 @@ function setupStatsCalendarControls() {
         statsCalendarCompact = e.target.checked;
         saveStatsCalendarPrefs();
         renderStatsCalendarView();
+        refreshStatsCalendarDayModalIfOpen();
     });
+
+    const refreshCalendarDisplay = () => {
+        renderStatsCalendarView();
+        refreshStatsCalendarDayModalIfOpen();
+    };
 
     Object.entries({
         'stats-cal-show-amount': 'amount',
@@ -15260,7 +15307,7 @@ function setupStatsCalendarControls() {
         document.getElementById(id)?.addEventListener('change', (e) => {
             statsCalendarShow[key] = e.target.checked;
             saveStatsCalendarPrefs();
-            renderStatsCalendarView();
+            refreshCalendarDisplay();
         });
     });
 
