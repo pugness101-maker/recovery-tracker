@@ -283,35 +283,48 @@
                     <span class="hidden" id="dash-break-streak-no-use"></span>
                 </div>
 
-                <div class="collapsible-section" data-section="dashRecoveryInsights">
+                <div class="collapsible-section dash-recovery-insights-section" data-section="dashRecoveryInsights">
                     <button type="button" class="section-toggle" onclick="toggleSection('dashRecoveryInsights')">
                         <span>Recovery Insights</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
                         <div id="dash-recovery-insights" class="dash-insights-wrap">
+                            <div id="dash-recovery-insights-all" class="hidden"></div>
+                            <div id="dash-recovery-insights-detail">
                             <div class="dash-insight-stats">
                                 <div class="dash-insight-stat"><span>Avg daily use</span><strong id="insight-avg-daily">—</strong></div>
                                 <div class="dash-insight-stat"><span>Highest-use day</span><strong id="insight-highest-day">—</strong></div>
                                 <div class="dash-insight-stat"><span>No-use days (month)</span><strong id="insight-no-use-days">—</strong></div>
                             </div>
-                            <div class="dash-insight-charts">
-                                <div class="dash-insight-chart-block">
+                            <div class="dash-insight-toggles">
+                                <label class="dash-insight-toggle">
+                                    <input type="checkbox" id="insight-show-zero-usage" checked>
+                                    Show zero-use days
+                                </label>
+                                <label class="dash-insight-toggle">
+                                    <input type="checkbox" id="insight-show-zero-cost">
+                                    Show $0 purchase days
+                                </label>
+                            </div>
+                            <div class="dash-insight-sections">
+                                <div class="dash-insight-section">
                                     <h4>Usage by day</h4>
-                                    <div id="insight-chart-day" class="chart-container chart-container-sm"></div>
+                                    <div id="insight-rows-day" class="dash-insight-rows"></div>
                                 </div>
-                                <div class="dash-insight-chart-block">
+                                <div class="dash-insight-section">
                                     <h4>Usage by week</h4>
-                                    <div id="insight-chart-week" class="chart-container chart-container-sm"></div>
+                                    <div id="insight-rows-week" class="dash-insight-rows"></div>
                                 </div>
-                                <div class="dash-insight-chart-block">
+                                <div class="dash-insight-section">
                                     <h4>Usage by month</h4>
-                                    <div id="insight-chart-month" class="chart-container chart-container-sm"></div>
+                                    <div id="insight-rows-month" class="dash-insight-rows"></div>
                                 </div>
-                                <div class="dash-insight-chart-block">
+                                <div class="dash-insight-section dash-insight-section-cost">
                                     <h4>Cost over time</h4>
-                                    <div id="insight-chart-cost" class="chart-container chart-container-sm"></div>
+                                    <div id="insight-rows-cost" class="dash-insight-rows dash-insight-rows-cost"></div>
                                 </div>
+                            </div>
                             </div>
                         </div>
                     </div>

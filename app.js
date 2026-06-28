@@ -2607,6 +2607,7 @@ function ensureAppDataSettings(data) {
     if (!data.settings.vapeTaperCountMode) {
         data.settings.vapeTaperCountMode = 'log-date';
     }
+    ensureInsightPrefs(data);
     ensureTableColumnSettings(data);
     ensureUseStatsConfig(data);
     ensureCollapsedSections(data);
@@ -11857,6 +11858,7 @@ function setupEventListeners() {
     setupColumnSettingsModal();
     setupUseStatsSettingsModal();
     setupStatsCalendarControls();
+    setupDashboardInsightControls();
     migrateLegacyUseStatsLayoutIfNeeded();
     document.getElementById('taper-form')?.addEventListener('submit', handleTaperSubmit);
     setupSubstanceForm();
@@ -12394,6 +12396,99 @@ function renderMiniUsageChart(containerId, buckets, emptyHint = 'No data yet') {
     });
 }
 
+function ensureInsightPrefs(data = appData) {
+    ensureAppDataSettings(data);
+    if (!data.settings.insightPrefs) {
+        data.settings.insightPrefs = {
+            showZeroDaysUsage: true,
+            showZeroDaysCost: false
+        };
+    }
+}
+
+function getInsightPrefs(data = appData) {
+    ensureInsightPrefs(data);
+    return data.settings.insightPrefs;
+}
+
+function syncInsightToggleControls() {
+    const prefs = getInsightPrefs();
+    const usageEl = document.getElementById('insight-show-zero-usage');
+    const costEl = document.getElementById('insight-show-zero-cost');
+    if (usageEl) usageEl.checked = !!prefs.showZeroDaysUsage;
+    if (costEl) costEl.checked = !!prefs.showZeroDaysCost;
+}
+
+function setupDashboardInsightControls() {
+    syncInsightToggleControls();
+    const usageEl = document.getElementById('insight-show-zero-usage');
+    const costEl = document.getElementById('insight-show-zero-cost');
+    if (usageEl && usageEl.dataset.bound !== '1') {
+        usageEl.dataset.bound = '1';
+        usageEl.addEventListener('change', () => {
+            getInsightPrefs().showZeroDaysUsage = usageEl.checked;
+            saveData(appData);
+            if (!isAllSubstancesView()) {
+                renderDashboardRecoveryInsights(currentSubstanceId);
+            }
+        });
+    }
+    if (costEl && costEl.dataset.bound !== '1') {
+        costEl.dataset.bound = '1';
+        costEl.addEventListener('change', () => {
+            getInsightPrefs().showZeroDaysCost = costEl.checked;
+            saveData(appData);
+            if (!isAllSubstancesView()) {
+                renderDashboardRecoveryInsights(currentSubstanceId);
+            }
+        });
+    }
+}
+
+function renderInsightBarRows(containerId, buckets, {
+    unit = '',
+    isCost = false,
+    showZero = true,
+    emptyHint = 'No data in range'
+} = {}) {
+    const container = document.getElementById(containerId);
+    if (!container) return;
+    container.innerHTML = '';
+    if (!buckets.length) {
+        container.innerHTML = `<p class="dash-insight-empty">${emptyHint}</p>`;
+        return;
+    }
+
+    const visible = showZero
+        ? buckets
+        : buckets.filter(b => (parseFloat(b.value) || 0) > INVENTORY_EPS);
+    if (!visible.length) {
+        container.innerHTML = `<p class="dash-insight-empty">${emptyHint}</p>`;
+        return;
+    }
+
+    const max = Math.max(...visible.map(b => parseFloat(b.value) || 0), isCost ? 0.01 : INVENTORY_EPS);
+    const cur = getCurrencySymbol();
+
+    visible.forEach(data => {
+        const value = parseFloat(data.value) || 0;
+        const isZero = value <= INVENTORY_EPS;
+        const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
+        const valueText = isCost
+            ? fmtSheetMoney(value, cur)
+            : `${formatAmount(value)}${unit ? ` ${unit}` : ''}`;
+        const row = document.createElement('div');
+        row.className = `dash-insight-row${isZero ? ' is-zero' : ''}`;
+        row.innerHTML = `
+            <span class="dash-insight-row-label">${escapeHtml(data.label)}</span>
+            <span class="dash-insight-row-value">${valueText}</span>
+            <div class="dash-insight-row-bar" aria-hidden="true">
+                <div class="dash-insight-row-fill${isCost ? ' is-cost' : ''}" style="width:${isZero ? 0 : Math.max(pct, 3)}%"></div>
+            </div>`;
+        container.appendChild(row);
+    });
+}
+
 function buildDailyUsageBuckets(substanceId, days = 7) {
     const today = getLocalDateString();
     const buckets = [];
@@ -12418,7 +12513,7 @@ function buildWeeklyUsageBuckets(substanceId, weeks = 4) {
         const weekEnd = addDaysToDateStr(getWeekStartDateStr(today), -i * 7 + 6);
         const weekStart = addDaysToDateStr(weekEnd, -6);
         const used = getStatsUsageInRange(substanceId, weekStart, weekEnd);
-        buckets.push({ label: `W${weeks - i}`, value: used });
+        buckets.push({ label: formatShortMonthDay(weekStart), value: used });
     }
     return buckets;
 }
@@ -12486,6 +12581,11 @@ function getRecoveryInsightStats(substanceId) {
 function renderDashboardRecoveryInsights(substanceId) {
     const wrap = document.getElementById('dash-recovery-insights');
     if (!wrap) return;
+    syncInsightToggleControls();
+    const prefs = getInsightPrefs();
+    const allViewEl = document.getElementById('dash-recovery-insights-all');
+    const detailEl = document.getElementById('dash-recovery-insights-detail');
+
     if (isAllSubstancesView()) {
         const today = getLocalDateString();
         const entries = buildAllSubstancesUsageEntries(today, today);
@@ -12493,49 +12593,53 @@ function renderDashboardRecoveryInsights(substanceId) {
         const insight = top
             ? `Highest use today: ${top.name} ${formatAmount(top.amount)} ${top.unit}.`
             : 'No personal use logged today across substances.';
-        wrap.innerHTML = `<p class="dash-all-insight">${insight}</p><p class="settings-hint">Select a single substance for detailed taper/recovery insights.</p>`;
-        ['insight-avg-daily', 'insight-highest-day', 'insight-no-use-days'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.textContent = '—';
-        });
-        ['insight-chart-day', 'insight-chart-week', 'insight-chart-month', 'insight-chart-cost'].forEach(id => {
-            const el = document.getElementById(id);
-            if (el) el.innerHTML = '';
-        });
+        if (allViewEl) {
+            allViewEl.innerHTML = `<p class="dash-all-insight">${insight}</p><p class="settings-hint">Select a single substance for detailed taper/recovery insights.</p>`;
+            allViewEl.classList.remove('hidden');
+        }
+        detailEl?.classList.add('hidden');
         return;
     }
+
+    allViewEl?.classList.add('hidden');
+    detailEl?.classList.remove('hidden');
+
     if (!substanceId) {
-        wrap.innerHTML = '<p class="empty-hint">Select a substance to view recovery insights.</p>';
+        ['insight-rows-day', 'insight-rows-week', 'insight-rows-month', 'insight-rows-cost'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.innerHTML = '<p class="dash-insight-empty">Select a substance to view recovery insights.</p>';
+        });
         return;
     }
+
     const stats = getRecoveryInsightStats(substanceId);
     const sub = getSubstance(substanceId);
-    const unit = sub?.defaultUnit || 'units';
+    const unit = getStatsDisplayUnit(substanceId, sub?.defaultUnit || 'units');
     const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
     set('insight-avg-daily', `${formatAmount(stats.avgDaily)} ${unit}`);
     set('insight-highest-day', stats.highestAmt > 0 ? `${stats.highestDay} (${formatAmount(stats.highestAmt)} ${unit})` : '—');
     set('insight-no-use-days', String(stats.noUseDays));
-    renderMiniUsageChart('insight-chart-day', buildDailyUsageBuckets(substanceId, 7));
-    renderMiniUsageChart('insight-chart-week', buildWeeklyUsageBuckets(substanceId, 4));
-    renderMiniUsageChart('insight-chart-month', buildMonthlyUsageBuckets(substanceId, 3));
-    const costBuckets = buildCostOverTimeBuckets(substanceId, 14);
-    const costContainer = document.getElementById('insight-chart-cost');
-    if (costContainer) {
-        costContainer.innerHTML = '';
-        if (!costBuckets.some(b => b.value > 0)) {
-            costContainer.innerHTML = '<p class="empty-hint">No purchases in range</p>';
-        } else {
-            const max = Math.max(...costBuckets.map(b => b.value), 0.01);
-            const cur = getCurrencySymbol();
-            costBuckets.forEach(data => {
-                const bar = document.createElement('div');
-                bar.className = 'chart-bar chart-bar-insight chart-bar-spend';
-                bar.style.height = `${Math.max((data.value / max) * 100, 4)}%`;
-                bar.innerHTML = `<span class="chart-bar-value">${cur}${formatAmount(data.value)}</span><span class="chart-bar-label">${data.label}</span>`;
-                costContainer.appendChild(bar);
-            });
-        }
-    }
+
+    renderInsightBarRows('insight-rows-day', buildDailyUsageBuckets(substanceId, 7), {
+        unit,
+        showZero: prefs.showZeroDaysUsage,
+        emptyHint: 'No usage logged this week'
+    });
+    renderInsightBarRows('insight-rows-week', buildWeeklyUsageBuckets(substanceId, 4), {
+        unit,
+        showZero: prefs.showZeroDaysUsage,
+        emptyHint: 'No weekly usage yet'
+    });
+    renderInsightBarRows('insight-rows-month', buildMonthlyUsageBuckets(substanceId, 3), {
+        unit,
+        showZero: prefs.showZeroDaysUsage,
+        emptyHint: 'No monthly usage yet'
+    });
+    renderInsightBarRows('insight-rows-cost', buildCostOverTimeBuckets(substanceId, 14), {
+        isCost: true,
+        showZero: prefs.showZeroDaysCost,
+        emptyHint: 'No purchases in range'
+    });
 }
 
 function updateInventoryLowWarning(substanceId) {

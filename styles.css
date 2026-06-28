@@ -6160,7 +6160,15 @@ body.purchase-history-col-resizing {
 .dash-insights-wrap {
     display: flex;
     flex-direction: column;
-    gap: 12px;
+    gap: 10px;
+}
+
+.dash-recovery-insights-section {
+    margin-bottom: 6px;
+}
+
+.dash-recovery-insights-section + .dash-supply-card {
+    margin-top: 0;
 }
 
 .dash-insight-stats {
@@ -6177,13 +6185,134 @@ body.purchase-history-col-resizing {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    font-size: 0.8rem;
+    font-size: 0.82rem;
     color: var(--text-secondary);
 }
 
 .dash-insight-stat strong {
     color: var(--text-primary);
+    font-size: 0.98rem;
+    font-weight: 600;
+    line-height: 1.25;
+}
+
+.dash-insight-toggles {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    padding: 2px 0;
+}
+
+.dash-insight-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    cursor: pointer;
+    user-select: none;
+}
+
+.dash-insight-toggle input {
+    accent-color: var(--accent);
+}
+
+.dash-insight-sections {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.dash-insight-section {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+}
+
+.dash-insight-section h4 {
+    margin: 0 0 8px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: 0.01em;
+}
+
+.dash-insight-rows {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.dash-insight-row {
+    display: grid;
+    grid-template-columns: minmax(44px, 64px) minmax(56px, 88px) minmax(0, 1fr);
+    gap: 8px;
+    align-items: center;
+    padding: 4px 0;
+}
+
+.dash-insight-row-label {
+    font-size: 0.84rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    white-space: nowrap;
+}
+
+.dash-insight-row-value {
+    font-size: 0.84rem;
+    font-weight: 600;
+    color: var(--text-primary);
+    text-align: right;
+    white-space: nowrap;
+}
+
+.dash-insight-row-bar {
+    background: var(--bg-card);
+    border-radius: 4px;
+    height: 8px;
+    overflow: hidden;
+    border: 1px solid var(--border);
+}
+
+.dash-insight-row-fill {
+    height: 100%;
+    background: var(--accent);
+    border-radius: 3px;
+    transition: width 0.25s ease;
+    min-width: 0;
+}
+
+.dash-insight-row-fill.is-cost {
+    background: var(--warning);
+}
+
+.dash-insight-row.is-zero .dash-insight-row-label,
+.dash-insight-row.is-zero .dash-insight-row-value {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.dash-insight-row.is-zero .dash-insight-row-bar {
+    opacity: 0.55;
+}
+
+.dash-insight-empty {
+    margin: 0;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+    padding: 4px 0;
+}
+
+.dash-insight-rows-cost .dash-insight-row {
+    grid-template-columns: minmax(44px, 56px) minmax(56px, 88px) minmax(0, 1fr);
+}
+
+.dash-all-insight {
+    margin: 0 0 6px;
     font-size: 0.92rem;
+    color: var(--text-primary);
+    line-height: 1.45;
 }
 
 .dash-insight-charts {
@@ -6272,6 +6401,29 @@ body.purchase-history-col-resizing {
     .dash-insight-stats {
         grid-template-columns: repeat(3, 1fr);
     }
+
+    .dash-insight-sections {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+    }
+
+    .dash-insight-section-cost {
+        grid-column: 1 / -1;
+    }
+}
+
+@media (max-width: 360px) {
+    .dash-insight-row {
+        grid-template-columns: minmax(40px, 1fr) auto;
+        grid-template-areas:
+            "label value"
+            "bar bar";
+    }
+
+    .dash-insight-row-label { grid-area: label; }
+    .dash-insight-row-value { grid-area: value; }
+    .dash-insight-row-bar { grid-area: bar; }
 }
 
 /* Vape dashboard */
