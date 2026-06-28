@@ -179,7 +179,26 @@
                     <div class="dash-metric-card"><span class="dash-metric-label">Current Streak</span><strong id="dash-card-streak">0 days</strong></div>
                     <div class="dash-metric-card"><span class="dash-metric-label">Remaining Monthly Cap</span><strong id="dash-card-month-cap">—</strong></div>
                 </div>
-                <p id="dash-inventory-warning" class="dash-inventory-warning hidden" role="status"></p>
+
+                <!-- Quick Actions -->
+                <div class="quick-actions dash-quick-actions">
+                    <button id="quick-log-btn" class="quick-btn primary" onclick="logOneUse()">
+                        <span class="quick-icon">⚡</span>
+                        <span class="quick-label">Quick Use</span>
+                    </button>
+                    <button class="quick-btn secondary" onclick="openUseLogSession()">
+                        <span>⏱️</span>
+                        <span>Session</span>
+                    </button>
+                    <button class="quick-btn success" onclick="openBuyTrackerModal()">
+                        <span>🛒</span>
+                        <span>Buy</span>
+                    </button>
+                    <button class="quick-btn danger" onclick="undoLastUse()">
+                        <span>↩️</span>
+                        <span>Undo</span>
+                    </button>
+                </div>
 
                 <div id="vape-dashboard-section" class="hidden vape-dashboard-section">
                     <h3 class="dash-card-title">Vape / Nicotine</h3>
@@ -230,8 +249,6 @@
                     </div>
                 </div>
 
-                <div id="dash-next-action" class="dash-card dash-next-action-card dash-next-action-steady"></div>
-
                 <!-- Legacy today detail (hidden, for JS compatibility) -->
                 <span class="hidden" id="dash-today-total-use"></span>
                 <span class="hidden" id="dash-today-session-count"></span>
@@ -239,26 +256,6 @@
                 <span class="hidden" id="dash-today-avg-session"></span>
                 <span class="hidden" id="dash-supply-total"></span>
                 <span class="hidden" id="dash-time-since-last-use"></span>
-
-                <!-- Quick Actions -->
-                <div class="quick-actions dash-quick-actions">
-                    <button id="quick-log-btn" class="quick-btn primary" onclick="logOneUse()">
-                        <span class="quick-icon">⚡</span>
-                        <span class="quick-label">Quick Use</span>
-                    </button>
-                    <button class="quick-btn secondary" onclick="openUseLogSession()">
-                        <span>⏱️</span>
-                        <span>Session</span>
-                    </button>
-                    <button class="quick-btn success" onclick="openBuyTrackerModal()">
-                        <span>🛒</span>
-                        <span>Buy</span>
-                    </button>
-                    <button class="quick-btn danger" onclick="undoLastUse()">
-                        <span>↩️</span>
-                        <span>Undo</span>
-                    </button>
-                </div>
 
                 <!-- Recovery Summary -->
                 <div class="dash-card dash-recovery-card" id="break-metrics-section">
@@ -1333,13 +1330,6 @@
 
                 <div id="inventory-summary-cards" class="inventory-summary-wrap"></div>
 
-                <div class="inventory-tab-bar">
-                    <button type="button" class="inventory-tab-btn active" data-inventory-tab="active" onclick="setInventoryTab('active')">Active</button>
-                    <button type="button" class="inventory-tab-btn" data-inventory-tab="depleted" onclick="setInventoryTab('depleted')">Depleted</button>
-                    <button type="button" class="inventory-tab-btn" data-inventory-tab="hidden" onclick="setInventoryTab('hidden')">Hidden</button>
-                    <button type="button" class="inventory-tab-btn" data-inventory-tab="all" onclick="setInventoryTab('all')">All</button>
-                </div>
-
                 <section class="inventory-filter-card">
                     <button type="button" id="inventory-filter-toggle" class="inventory-filter-toggle section-toggle" onclick="toggleInventoryFiltersPanel()">
                         <span>Search &amp; Filters</span>
@@ -1361,10 +1351,10 @@
                             <div class="inventory-filter-field">
                                 <label for="inventory-filter-status">Status</label>
                                 <select id="inventory-filter-status" onchange="applyInventorySearchFilters()">
-                                    <option value="">Any status</option>
                                     <option value="active">Active</option>
                                     <option value="depleted">Depleted</option>
                                     <option value="hidden">Hidden</option>
+                                    <option value="all">All / Any status</option>
                                 </select>
                             </div>
                             <div class="inventory-filter-field">

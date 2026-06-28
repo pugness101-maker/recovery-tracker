@@ -409,7 +409,7 @@ h3 {
     display: grid;
     grid-template-columns: repeat(4, 1fr);
     gap: 8px;
-    margin-bottom: 14px;
+    margin-bottom: 10px;
 }
 
 .dash-quick-actions .quick-btn {
@@ -6193,44 +6193,6 @@ body.purchase-history-col-resizing {
     word-break: break-word;
 }
 
-.dash-inventory-warning {
-    background: rgba(255, 152, 0, 0.12);
-    border: 1px solid rgba(255, 152, 0, 0.35);
-    color: #ffcc80;
-    border-radius: 10px;
-    padding: 10px 12px;
-    font-size: 0.85rem;
-    margin-bottom: 10px;
-}
-
-.dash-next-action-card {
-    margin-bottom: 12px;
-    padding: 14px 16px;
-}
-
-.dash-next-action-encourage {
-    border-color: rgba(76, 175, 80, 0.45);
-    background: rgba(76, 175, 80, 0.08);
-}
-
-.dash-next-action-reset {
-    border-color: rgba(66, 165, 245, 0.4);
-    background: rgba(66, 165, 245, 0.08);
-}
-
-.dash-next-action-title {
-    font-weight: 700;
-    font-size: 1rem;
-    margin: 6px 0 4px;
-}
-
-.dash-next-action-message {
-    font-size: 0.9rem;
-    color: var(--text-secondary);
-    margin: 0;
-    line-height: 1.45;
-}
-
 .dash-insights-wrap {
     display: flex;
     flex-direction: column;
@@ -6537,21 +6499,6 @@ body.purchase-history-col-resizing {
     gap: 10px;
     margin-bottom: 12px;
 }
-.inventory-tab-bar {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 6px;
-    margin-bottom: 10px;
-}
-.inventory-tab-btn {
-    padding: 6px 12px;
-    border: 1px solid var(--border);
-    border-radius: 999px;
-    background: var(--bg-card);
-    font-size: 0.8rem;
-    cursor: pointer;
-}
-.inventory-tab-btn.active { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
 .inventory-filter-card {
     margin-bottom: 10px;
     border: 1px solid var(--border);

@@ -746,7 +746,6 @@ function purchaseMatchesInventoryFilters(purchase, filters = inventoryListFilter
     if (filters.substanceId && getPurchaseSubstanceId(purchase) !== filters.substanceId) return false;
     if (filters.dateStart && purchase.date < filters.dateStart) return false;
     if (filters.dateEnd && purchase.date > filters.dateEnd) return false;
-    if (filters.status && getPurchaseInventoryTab(purchase) !== filters.status) return false;
     if (filters.paymentMethod && (purchase.paymentMethod || '') !== filters.paymentMethod) return false;
     if (filters.hasRemaining === 'yes' && getPurchaseRemainingAmount(purchase) <= INVENTORY_EPS) return false;
     if (filters.hasRemaining === 'no' && getPurchaseRemainingAmount(purchase) > INVENTORY_EPS) return false;
@@ -1010,8 +1009,19 @@ function getInventoryPurchaseEstimatedValue(purchase, data = appData) {
     return rem * cpu;
 }
 
-function getInventorySummary(selectedSubstanceId, data = appData) {
-    const scope = getFilteredPurchases(data.purchases || [], selectedSubstanceId, null, data);
+function getInventoryPurchasesForStatusView(substanceId, data = appData) {
+    let list = [...(data.purchases || [])];
+    if (substanceId && substanceId !== DASHBOARD_ALL) {
+        list = list.filter(p => getPurchaseSubstanceId(p) === substanceId);
+    }
+    if (inventoryTabFilter !== 'all') {
+        list = list.filter(p => getPurchaseInventoryTab(p) === inventoryTabFilter);
+    }
+    return list;
+}
+
+function getInventorySummary(selectedSubstanceId, data = appData, purchaseList = null) {
+    const scope = purchaseList ?? getFilteredPurchases(data.purchases || [], selectedSubstanceId, null, data);
     const active = scope.filter(p => getPurchaseInventoryTab(p) === 'active');
     const depleted = scope.filter(p => getPurchaseInventoryTab(p) === 'depleted');
     const hidden = scope.filter(p => getPurchaseInventoryTab(p) === 'hidden');
@@ -1092,7 +1102,8 @@ function renderInventorySummaryCards() {
     const container = document.getElementById('inventory-summary-cards');
     if (!container) return;
     const selectedId = getInventorySubstanceFilterId();
-    const m = getInventorySummary(selectedId || null);
+    const statusScoped = getInventoryPurchasesForStatusView(selectedId || null);
+    const m = getInventorySummary(selectedId || null, appData, statusScoped);
     const cur = getCurrencySymbol();
     const oldestLabel = m.oldestActive
         ? `${formatDate(m.oldestActive.date)}${m.oldestActive.store ? ` · ${m.oldestActive.store}` : ''}`
@@ -1125,24 +1136,27 @@ function renderInventorySummaryCards() {
     container.innerHTML = `<div class="inventory-summary-grid">${cards.join('')}</div>`;
 }
 
-function syncInventoryTabButtons() {
-    document.querySelectorAll('.inventory-tab-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.inventoryTab === inventoryTabFilter);
-    });
-}
-
-function syncInventoryStatusFilterFromTab() {
-    inventoryListFilters.status = inventoryTabFilter === 'all' ? '' : inventoryTabFilter;
-    const statusEl = document.getElementById('inventory-filter-status');
-    if (statusEl && statusEl.value !== inventoryListFilters.status) {
-        statusEl.value = inventoryListFilters.status;
+function getInventoryStatusFilterLabel() {
+    switch (inventoryTabFilter) {
+        case 'all': return 'Any status';
+        case 'depleted': return 'Depleted';
+        case 'hidden': return 'Hidden';
+        case 'active':
+        default: return 'Active';
     }
 }
 
-function syncInventoryTabFromStatusFilter() {
-    const statusVal = inventoryListFilters.status || '';
-    inventoryTabFilter = statusVal || 'all';
-    syncInventoryTabButtons();
+function normalizeInventoryStatusFilter(value) {
+    const status = value === 'stored' ? 'active' : (value || 'active');
+    return ['active', 'depleted', 'hidden', 'all'].includes(status) ? status : 'active';
+}
+
+function syncInventoryStatusFilterUI() {
+    inventoryTabFilter = normalizeInventoryStatusFilter(inventoryTabFilter);
+    const statusEl = document.getElementById('inventory-filter-status');
+    if (statusEl && statusEl.value !== inventoryTabFilter) {
+        statusEl.value = inventoryTabFilter;
+    }
 }
 
 function countActiveInventoryFilters() {
@@ -1162,13 +1176,40 @@ function hasActiveInventoryFilters() {
 }
 
 function loadInventoryFiltersPanelState() {
-    if (inventoryTabFilter === 'stored') inventoryTabFilter = 'active';
+    inventoryTabFilter = normalizeInventoryStatusFilter(inventoryTabFilter);
     try {
+        const raw = localStorage.getItem(INVENTORY_FILTERS_STORAGE_KEY);
+        if (raw) {
+            const saved = JSON.parse(raw);
+            if (saved.status != null) inventoryTabFilter = normalizeInventoryStatusFilter(saved.status);
+            if (typeof saved.search === 'string') inventorySearchQuery = saved.search;
+            if (saved.dateStart != null) inventoryListFilters.dateStart = saved.dateStart;
+            if (saved.dateEnd != null) inventoryListFilters.dateEnd = saved.dateEnd;
+            if (saved.paymentMethod != null) inventoryListFilters.paymentMethod = saved.paymentMethod;
+            if (saved.hasRemaining != null) inventoryListFilters.hasRemaining = saved.hasRemaining;
+            if (saved.hasCost != null) inventoryListFilters.hasCost = saved.hasCost;
+            if (typeof saved.vapeOnly === 'boolean') inventoryListFilters.vapeOnly = saved.vapeOnly;
+        }
         if (localStorage.getItem(INVENTORY_FILTERS_PANEL_KEY) === '1') {
             inventoryFiltersPanelOpen = true;
         }
     } catch (_) { /* ignore */ }
     if (hasActiveInventoryFilters()) inventoryFiltersPanelOpen = true;
+    syncInventoryStatusFilterUI();
+    const searchEl = document.getElementById('inventory-search');
+    if (searchEl) searchEl.value = inventorySearchQuery;
+    ['inventory-filter-date-start', 'inventory-filter-date-end', 'inventory-filter-payment',
+        'inventory-filter-remaining', 'inventory-filter-cost'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (id === 'inventory-filter-date-start') el.value = inventoryListFilters.dateStart;
+        else if (id === 'inventory-filter-date-end') el.value = inventoryListFilters.dateEnd;
+        else if (id === 'inventory-filter-payment') el.value = inventoryListFilters.paymentMethod;
+        else if (id === 'inventory-filter-remaining') el.value = inventoryListFilters.hasRemaining;
+        else if (id === 'inventory-filter-cost') el.value = inventoryListFilters.hasCost;
+    });
+    const vapeOnlyEl = document.getElementById('inventory-filter-vape-only');
+    if (vapeOnlyEl) vapeOnlyEl.checked = inventoryListFilters.vapeOnly;
 }
 
 function saveInventoryFiltersPanelState() {
@@ -1177,9 +1218,25 @@ function saveInventoryFiltersPanelState() {
     } catch (_) { /* ignore */ }
 }
 
+function saveInventoryFilterState() {
+    saveInventoryFiltersPanelState();
+    try {
+        localStorage.setItem(INVENTORY_FILTERS_STORAGE_KEY, JSON.stringify({
+            status: inventoryTabFilter,
+            search: inventorySearchQuery,
+            dateStart: inventoryListFilters.dateStart,
+            dateEnd: inventoryListFilters.dateEnd,
+            paymentMethod: inventoryListFilters.paymentMethod,
+            hasRemaining: inventoryListFilters.hasRemaining,
+            hasCost: inventoryListFilters.hasCost,
+            vapeOnly: inventoryListFilters.vapeOnly
+        }));
+    } catch (_) { /* ignore */ }
+}
+
 function toggleInventoryFiltersPanel() {
     inventoryFiltersPanelOpen = !inventoryFiltersPanelOpen;
-    saveInventoryFiltersPanelState();
+    saveInventoryFilterState();
     updateInventoryFiltersPanelUI();
 }
 
@@ -1195,12 +1252,7 @@ function renderInventoryFilterChips() {
         const end = inventoryListFilters.dateEnd ? formatDate(inventoryListFilters.dateEnd) : '…';
         chips.push(`<span class="inventory-filter-chip">Date: ${start}–${end}</span>`);
     }
-    if (inventoryTabFilter !== 'active') {
-        const label = inventoryTabFilter === 'all'
-            ? 'Any status'
-            : inventoryTabFilter.charAt(0).toUpperCase() + inventoryTabFilter.slice(1);
-        chips.push(`<span class="inventory-filter-chip">Status: ${label}</span>`);
-    }
+    chips.push(`<span class="inventory-filter-chip">Status: ${escapeHtml(getInventoryStatusFilterLabel())}</span>`);
     if (inventoryListFilters.paymentMethod) {
         chips.push(`<span class="inventory-filter-chip">Payment: ${escapeHtml(inventoryListFilters.paymentMethod)}</span>`);
     }
@@ -1236,36 +1288,33 @@ function clearInventoryFilters() {
     inventorySearchQuery = '';
     inventoryListFilters.dateStart = '';
     inventoryListFilters.dateEnd = '';
-    inventoryListFilters.status = '';
     inventoryListFilters.paymentMethod = '';
     inventoryListFilters.hasRemaining = '';
     inventoryListFilters.hasCost = '';
     inventoryListFilters.vapeOnly = false;
     inventoryTabFilter = 'active';
     inventoryFiltersPanelOpen = false;
-    saveInventoryFiltersPanelState();
     const searchEl = document.getElementById('inventory-search');
     if (searchEl) searchEl.value = '';
-    ['inventory-filter-date-start', 'inventory-filter-date-end', 'inventory-filter-status',
-        'inventory-filter-payment', 'inventory-filter-remaining', 'inventory-filter-cost'].forEach(id => {
+    ['inventory-filter-date-start', 'inventory-filter-date-end', 'inventory-filter-payment',
+        'inventory-filter-remaining', 'inventory-filter-cost'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
     const vapeOnlyEl = document.getElementById('inventory-filter-vape-only');
     if (vapeOnlyEl) vapeOnlyEl.checked = false;
     syncInventorySubstanceFilterState();
-    syncInventoryStatusFilterFromTab();
-    syncInventoryTabButtons();
+    syncInventoryStatusFilterUI();
+    saveInventoryFilterState();
     renderPurchaseHistory(null);
     renderInventorySummaryCards();
     updateInventoryFiltersPanelUI();
 }
 
 function setInventoryTab(tab) {
-    if (tab === 'stored') tab = 'active';
-    inventoryTabFilter = tab;
-    syncInventoryStatusFilterFromTab();
-    syncInventoryTabButtons();
+    inventoryTabFilter = normalizeInventoryStatusFilter(tab);
+    syncInventoryStatusFilterUI();
+    saveInventoryFilterState();
     renderPurchaseHistory(null);
     renderInventorySummaryCards();
     updateInventoryFiltersPanelUI();
@@ -1275,14 +1324,17 @@ function applyInventorySearchFilters() {
     inventorySearchQuery = document.getElementById('inventory-search')?.value?.trim() || '';
     inventoryListFilters.dateStart = document.getElementById('inventory-filter-date-start')?.value || '';
     inventoryListFilters.dateEnd = document.getElementById('inventory-filter-date-end')?.value || '';
-    inventoryListFilters.status = document.getElementById('inventory-filter-status')?.value || '';
+    inventoryTabFilter = normalizeInventoryStatusFilter(
+        document.getElementById('inventory-filter-status')?.value || 'active'
+    );
     inventoryListFilters.paymentMethod = document.getElementById('inventory-filter-payment')?.value || '';
     inventoryListFilters.hasRemaining = document.getElementById('inventory-filter-remaining')?.value || '';
     inventoryListFilters.hasCost = document.getElementById('inventory-filter-cost')?.value || '';
     inventoryListFilters.vapeOnly = !!document.getElementById('inventory-filter-vape-only')?.checked;
     syncInventorySubstanceFilterState();
-    syncInventoryTabFromStatusFilter();
+    syncInventoryStatusFilterUI();
     if (hasActiveInventoryFilters()) inventoryFiltersPanelOpen = true;
+    saveInventoryFilterState();
     renderPurchaseHistory(null);
     renderInventorySummaryCards();
     updateInventoryFiltersPanelUI();
@@ -2379,7 +2431,7 @@ function loadAutoBackupAppData() {
         const parsed = safeParseStoredJson(raw);
         const backupData = parsed?.data;
         const validation = validateBackupData(backupData);
-        return validation.ok ? backupData : null;
+        return validation.ok ? validation.data : null;
     } catch (err) {
         console.error('Failed to read automatic backup:', err);
         return null;
@@ -3140,7 +3192,6 @@ const inventoryListFilters = {
     substanceId: '',
     dateStart: '',
     dateEnd: '',
-    status: '',
     paymentMethod: '',
     hasRemaining: '',
     hasCost: '',
@@ -3148,6 +3199,7 @@ const inventoryListFilters = {
 };
 let inventoryFiltersPanelOpen = false;
 const INVENTORY_FILTERS_PANEL_KEY = 'recoveryTracker.inventoryFiltersPanel.v1';
+const INVENTORY_FILTERS_STORAGE_KEY = 'recoveryTracker.inventoryFilters.v1';
 
 function loadColumnSettingsStore() {
     try {
@@ -4229,13 +4281,14 @@ function restoreLastAutoBackup() {
     const backupData = parsed?.data;
     const validation = validateBackupData(backupData);
     if (!validation.ok) {
-        alert(validation.error || 'Automatic backup is invalid.');
+        alert(validation.message || 'Automatic backup is invalid.');
         return;
     }
     if (!confirm('Restore the last automatic backup? Current data will be replaced.')) return;
     createAutoBackup('before-restore');
-    appData = backupData;
+    appData = validation.data;
     normalizeAppData(appData);
+    repairAppDataAfterImport(appData);
     saveData(appData);
     refreshAppAfterDataChange();
     alert('Restored from last automatic backup.');
@@ -4369,8 +4422,6 @@ function initializeApp() {
     syncVapeTaperCountModeSelect();
     setupBuyTrackerForm();
     loadInventoryFiltersPanelState();
-    syncInventoryStatusFilterFromTab();
-    syncInventoryTabButtons();
     updateInventoryFiltersPanelUI();
     setupUseLogForm();
     setupSubstanceForm();
@@ -4414,6 +4465,10 @@ function refreshAppAfterDataChange() {
     renderStoresList();
     renderDataQualityPanel();
     refreshAllRecoveryStreaks();
+    renderPurchaseHistory(null);
+    renderDashboardRecoveryInsights();
+    updateLastSavedDisplay();
+    applyCollapsedSections();
 }
 
 // ——— Substance helpers ———
@@ -11837,7 +11892,6 @@ function renderBuyTrackerTab() {
     renderBuySpendingTrend(filterId);
     renderInventorySummaryCards();
     renderPurchaseHistory(null);
-    syncInventoryTabButtons();
     updateInventoryFiltersPanelUI();
     renderBuyWeeklySummary(filterId);
     renderBuyMonthlySummary(filterId);
@@ -12195,25 +12249,6 @@ function getAllSubstancesBestStreak(data = appData) {
     return best;
 }
 
-function getAllSubstancesLowInventoryWarnings(data = appData) {
-    const warnings = [];
-    getActiveSubstances(data).forEach(sub => {
-        const remaining = getTotalRemainingSupply(sub.id);
-        const unit = getSubstanceDisplayUnit(sub.id, data);
-        const name = getSubstanceDisplayName(sub, data);
-        const purchases = (data.purchases || []).filter(p => getPurchaseSubstanceId(p) === sub.id);
-        if (!purchases.length) return;
-        const totalBought = purchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
-        const pct = totalBought > 0 && remaining != null ? remaining / totalBought : null;
-        if (pct != null && pct <= 0.15 && remaining > INVENTORY_EPS) {
-            warnings.push(`Low inventory: ${name} about ${formatAmount(remaining)} ${unit} remaining.`);
-        } else if (remaining != null && remaining <= INVENTORY_EPS) {
-            warnings.push(`${name} inventory is depleted.`);
-        }
-    });
-    return warnings;
-}
-
 function setDashboardMetricLabel(metricId, labelText) {
     const metric = document.getElementById(metricId);
     const label = metric?.closest('.dash-metric-card')?.querySelector('.dash-metric-label');
@@ -12283,138 +12318,6 @@ function pickSubstanceForQuickAction(actionLabel) {
         return null;
     }
     return subs[idx].id;
-}
-
-function getNextBestAction(substanceId) {
-    if (isAllSubstancesView()) {
-        const today = getLocalDateString();
-        const entries = buildAllSubstancesUsageEntries(today, today);
-        const top = entries.find(e => e.amount > 0);
-        if (top) {
-            return {
-                tone: 'steady',
-                title: 'All substances',
-                message: `Highest use today: ${top.name} ${formatAmount(top.amount)} ${top.unit}. Select a single substance for detailed taper/recovery insights.`
-            };
-        }
-        return {
-            tone: 'steady',
-            title: 'All substances',
-            message: 'Select a single substance for detailed taper/recovery insights.'
-        };
-    }
-    if (!substanceId) {
-        return {
-            tone: 'steady',
-            title: 'Choose a substance',
-            message: 'Select a substance to see personalized recovery guidance.'
-        };
-    }
-    const today = getLocalDateString();
-    const plan = getPrimaryTaperPlan(substanceId);
-    const weekUsed = plan && !isTaperPlanPaused(plan)
-        ? getUsedAmountForTaperWeek(substanceId, today)
-        : getWeekPersonalUseTotal(substanceId, today);
-    const weekLimit = getWeeklyLimit(substanceId, today, plan);
-    const todayUsed = getUsedAmount(substanceId, today);
-    const dailyLimit = getDailyLimitForDate(substanceId, today, plan);
-    const monthUsed = getMonthPersonalUseTotal(substanceId, today);
-    const monthLimit = getMonthlyLimit(substanceId, today, plan);
-
-    if (monthLimit != null && monthUsed > monthLimit) {
-        return {
-            tone: 'reset',
-            title: 'Room to adjust',
-            message: 'This month is above your monthly plan. That does not erase progress — consider a lighter day when you are ready.'
-        };
-    }
-    if (weekLimit != null && weekUsed > weekLimit) {
-        return {
-            tone: 'reset',
-            title: 'Gentle reset',
-            message: 'This week is above your weekly plan. One heavier day does not define you — a smaller day tomorrow can help you reset.'
-        };
-    }
-    if (dailyLimit != null && todayUsed > dailyLimit) {
-        return {
-            tone: 'reset',
-            title: 'Tomorrow is fresh',
-            message: 'Today went above your daily plan. Take a breath — try a lighter amount tomorrow if that feels right.'
-        };
-    }
-    if (weekLimit != null && weekUsed <= weekLimit * 0.75) {
-        return {
-            tone: 'encourage',
-            title: 'You are on track',
-            message: 'You are below your weekly plan so far. Notice what is helping you — small wins matter.'
-        };
-    }
-
-    const purchaseMetrics = plan?.purchaseTaperEnabled && !isTaperPlanPaused(plan)
-        ? getPurchaseTaperMetrics(plan, substanceId)
-        : null;
-    if (purchaseMetrics) {
-        if (purchaseMetrics.spendWeekDiff != null && purchaseMetrics.spendWeekDiff > 0) {
-            return {
-                tone: 'reset',
-                title: 'Spending check-in',
-                message: `You are over weekly spending target by ${formatTaperMoney(purchaseMetrics.spendWeekDiff)}.`
-            };
-        }
-        if (purchaseMetrics.buyWeekDiff != null && purchaseMetrics.buyWeekDiff > 0) {
-            const sub = getSubstance(substanceId);
-            return {
-                tone: 'reset',
-                title: 'Buying check-in',
-                message: `You are over weekly purchase target by ${formatTaperActualAmount(purchaseMetrics.buyWeekDiff, sub?.defaultUnit || 'units')}.`
-            };
-        }
-        const parts = [];
-        if (purchaseMetrics.buyWeekRemaining != null && isPurchaseTaperWeeklyAmountMode(plan)) {
-            parts.push(`${formatTaperAmount(purchaseMetrics.buyWeekRemaining, purchaseMetrics.unit)} left to buy this week`);
-        }
-        if (purchaseMetrics.spendWeekRemaining != null && isPurchaseTaperWeeklySpendMode(plan)) {
-            parts.push(`${formatTaperMoney(purchaseMetrics.spendWeekRemaining)} spending left this week`);
-        }
-        if (parts.length) {
-            return {
-                tone: 'encourage',
-                title: 'Buying goal on track',
-                message: `You are on track for buying amount. Buying goal remaining this week: ${parts.join(' · ')}.`
-            };
-        }
-        if (isPurchaseTaperWeeklyAmountMode(plan) && purchaseMetrics.buyWeekStatus === 'under') {
-            return {
-                tone: 'encourage',
-                title: 'Buying on track',
-                message: 'You are on track for buying amount this week.'
-            };
-        }
-    }
-
-    if (dailyLimit != null && todayUsed > 0 && todayUsed <= dailyLimit * 0.8) {
-        return {
-            tone: 'encourage',
-            title: 'Steady day',
-            message: 'Today is within your daily plan. Keep logging honestly — awareness supports recovery.'
-        };
-    }
-    return {
-        tone: 'steady',
-        title: 'Stay curious',
-        message: 'Check in with mood and triggers when you log. Honest data helps you see patterns without judgment.'
-    };
-}
-
-function renderNextBestAction(substanceId) {
-    const card = document.getElementById('dash-next-action');
-    if (!card) return;
-    const action = getNextBestAction(substanceId);
-    card.className = `dash-card dash-next-action-card dash-next-action-${action.tone}`;
-    card.innerHTML = `
-        <h3 class="dash-card-title">Next Best Action</h3>
-        <p class="dash-next-action-title">${action.title}</p>
-        <p class="dash-next-action-message">${action.message}</p>`;
 }
 
 function renderDashboardSummaryCards(substanceId) {
@@ -12793,41 +12696,6 @@ function renderDashboardRecoveryInsights() {
     }
 }
 
-function updateInventoryLowWarning(substanceId) {
-    const el = document.getElementById('dash-inventory-warning');
-    if (!el) return;
-    if (isAllSubstancesView()) {
-        const warnings = getAllSubstancesLowInventoryWarnings();
-        if (warnings.length) {
-            el.textContent = warnings.join(' ');
-            el.classList.remove('hidden');
-        } else {
-            el.classList.add('hidden');
-        }
-        return;
-    }
-    if (!substanceId) {
-        el.classList.add('hidden');
-        return;
-    }
-    const remaining = getTotalRemainingSupply(substanceId);
-    const sub = getSubstance(substanceId);
-    const unit = getSubstanceDisplayUnit(substanceId);
-    const name = getSubstanceDisplayName(sub);
-    const purchases = (appData.purchases || []).filter(p => getPurchaseSubstanceId(p) === substanceId);
-    const totalBought = purchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
-    const pct = totalBought > 0 && remaining != null ? remaining / totalBought : null;
-    if (pct != null && pct <= 0.15 && remaining > 0) {
-        el.textContent = `Low inventory: ${name} about ${formatAmount(remaining)} ${unit} remaining.`;
-        el.classList.remove('hidden');
-    } else if (remaining != null && remaining <= INVENTORY_EPS) {
-        el.textContent = `${name} inventory is depleted — log a purchase when you restock.`;
-        el.classList.remove('hidden');
-    } else {
-        el.classList.add('hidden');
-    }
-}
-
 function buildVapeDashboardMetrics(substanceId, data = appData) {
     const today = getLocalDateString();
     const weekStart = getWeekStartDateStr(today);
@@ -12999,9 +12867,7 @@ function updateDashboard() {
     const dashSubId = isDashboardAllSubstancesSelected() ? null : (resolveDashboardInsightSubstanceId() || currentSubstanceId);
     renderDashboardSummaryCards(dashSubId);
     renderVapeDashboardSection(dashSubId);
-    renderNextBestAction(dashSubId);
     renderDashboardRecoveryInsights();
-    updateInventoryLowWarning(dashSubId);
 }
 
 function formatBreakFromHours(hours) {
@@ -19659,9 +19525,6 @@ function downloadBlob(blob, filename) {
 
 function cleanExportData(data) {
     return {
-        version: 'recovery-tracker-v2',
-        exportedAt: new Date().toISOString(),
-
         substances: (data.substances || []).map(s => ({
             id: s.id,
             name: s.name,
@@ -19753,21 +19616,38 @@ function cleanExportData(data) {
             updatedAt: p.updatedAt || null
         })),
 
+        cravings: (data.cravings || []).map(c => ({
+            id: c.id,
+            substanceId: c.substanceId || c.substance || '',
+            date: c.date,
+            time: c.time || '',
+            intensity: c.intensity ?? null,
+            notes: c.notes || '',
+            createdAt: c.createdAt || null,
+            updatedAt: c.updatedAt || null
+        })),
+
+        settings: JSON.parse(JSON.stringify(data.settings || defaultData.settings)),
+
         taperPlans: data.taperPlans || {},
         taperPlansV2: (data.taperPlansV2 || []).map(p => ({ ...p })),
 
-        settings: {
-            currency: '$'
-        },
-
         recoveryStreaks: data.recoveryStreaks || {},
+        privacy: JSON.parse(JSON.stringify(data.privacy || defaultData.privacy)),
         migrations: data.migrations || {}
     };
 }
 
 function exportJsonBackup() {
-    const exportObject = cleanExportData(appData);
+    const appDataExport = cleanExportData(appData);
+    const exportObject = {
+        app: 'recovery-tracker',
+        version: 2,
+        exportedAt: new Date().toISOString(),
+        appData: appDataExport
+    };
     const dataStr = JSON.stringify(exportObject, null, 2);
+    JSON.parse(dataStr);
     const blob = new Blob([dataStr], { type: 'application/json' });
     downloadBlob(blob, `recovery-tracker-backup-${getLocalDateString()}.json`);
 }
@@ -19817,20 +19697,94 @@ function exportDataCsv() {
     downloadBlob(blob, `recovery-tracker-export-${getLocalDateString()}.csv`);
 }
 
-function validateBackupData(data) {
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-        return { ok: false, error: 'Invalid backup file format.' };
+function stripJsonBom(text) {
+    if (typeof text !== 'string') return '';
+    return text.replace(/^\uFEFF/, '').trim();
+}
+
+function isRecognizableBackupPayload(parsed) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+    if (parsed.app === 'recovery-tracker') return true;
+    if (parsed.appData && typeof parsed.appData === 'object' && !Array.isArray(parsed.appData)) return true;
+    if (parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data)) return true;
+    return (
+        'substances' in parsed ||
+        'logs' in parsed ||
+        'useLogs' in parsed ||
+        'purchases' in parsed ||
+        'settings' in parsed ||
+        'taperPlans' in parsed ||
+        'taperPlansV2' in parsed
+    );
+}
+
+function extractAppDataFromBackup(parsed) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    if (parsed.appData && typeof parsed.appData === 'object' && !Array.isArray(parsed.appData)) {
+        return parsed.appData;
     }
-    if (!Array.isArray(data.substances)) return { ok: false, error: 'Backup is missing a substances list.' };
+    if (parsed.data && typeof parsed.data === 'object' && !Array.isArray(parsed.data)) {
+        return parsed.data;
+    }
+    if (isRecognizableBackupPayload(parsed)) {
+        return parsed;
+    }
+    return null;
+}
+
+function normalizeImportedAppData(raw) {
+    const data = raw && typeof raw === 'object' && !Array.isArray(raw)
+        ? JSON.parse(JSON.stringify(raw))
+        : {};
+
     if (!Array.isArray(data.logs) && Array.isArray(data.useLogs)) {
         data.logs = data.useLogs;
     }
-    if (!Array.isArray(data.logs)) return { ok: false, error: 'Backup is missing a logs list.' };
-    if (!Array.isArray(data.purchases)) return { ok: false, error: 'Backup is missing a purchases list.' };
-    if (!data.settings || typeof data.settings !== 'object') {
-        return { ok: false, error: 'Backup is missing settings.' };
+    if (!Array.isArray(data.logs)) data.logs = [];
+    if (!Array.isArray(data.purchases)) data.purchases = [];
+    if (!Array.isArray(data.cravings)) data.cravings = [];
+    if (!Array.isArray(data.substances) || !data.substances.length) {
+        data.substances = getDefaultSubstances();
     }
-    return { ok: true };
+    if (!data.settings || typeof data.settings !== 'object' || Array.isArray(data.settings)) {
+        data.settings = JSON.parse(JSON.stringify(defaultData.settings));
+    }
+    if (!data.taperPlans || typeof data.taperPlans !== 'object' || Array.isArray(data.taperPlans)) {
+        data.taperPlans = {};
+    }
+    if (!Array.isArray(data.taperPlansV2)) data.taperPlansV2 = [];
+    if (!data.recoveryStreaks || typeof data.recoveryStreaks !== 'object' || Array.isArray(data.recoveryStreaks)) {
+        data.recoveryStreaks = {};
+    }
+    if (!data.privacy || typeof data.privacy !== 'object' || Array.isArray(data.privacy)) {
+        data.privacy = JSON.parse(JSON.stringify(defaultData.privacy));
+    }
+    if (!data.migrations || typeof data.migrations !== 'object' || Array.isArray(data.migrations)) {
+        data.migrations = {};
+    }
+
+    delete data.useLogs;
+    delete data.version;
+    delete data.exportedAt;
+    delete data.app;
+    delete data.savedAt;
+    delete data.reason;
+    return data;
+}
+
+function validateBackupData(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) {
+        return {
+            ok: false,
+            message: 'This JSON opened, but it does not look like a Recovery Tracker backup.'
+        };
+    }
+    return { ok: true, data: normalizeImportedAppData(data) };
+}
+
+function repairAppDataAfterImport(data) {
+    repairVapeInventoryLinks(data);
+    repairDataConsistency(data);
 }
 
 function mergeArrayById(existing, incoming) {
@@ -19873,12 +19827,14 @@ function mergeImportedData(current, imported) {
 
 function applyImportedBackup(imported, mode) {
     createAutoBackup(mode === 'replace' ? 'before-import-replace' : 'before-import-merge');
+    const normalized = normalizeImportedAppData(imported);
     if (mode === 'replace') {
-        appData = imported;
+        appData = normalized;
     } else {
-        appData = mergeImportedData(appData, imported);
+        appData = mergeImportedData(appData, normalized);
     }
     normalizeAppData(appData);
+    repairAppDataAfterImport(appData);
     saveData(appData);
     refreshAppAfterDataChange();
 }
@@ -19887,47 +19843,69 @@ function triggerImportJsonBackup() {
     document.getElementById('import-json-input')?.click();
 }
 
-function handleImportJsonFile(event) {
+async function handleImportJsonFile(event) {
     const input = event.target;
     const file = input.files?.[0];
-    input.value = '';
     if (!file) return;
 
-    const reader = new FileReader();
-    reader.onload = () => {
-        try {
-            const parsed = JSON.parse(reader.result);
-            const validation = validateBackupData(parsed);
-            if (!validation.ok) {
-                alert(validation.error);
-                return;
-            }
-
-            const logCount = parsed.logs?.length ?? 0;
-            const purchaseCount = parsed.purchases?.length ?? 0;
-            const substanceCount = parsed.substances?.length ?? 0;
-            const summary = `${substanceCount} substance(s), ${logCount} use log(s), ${purchaseCount} purchase(s).`;
-
-            if (!confirm(`Import this backup?\n\n${summary}`)) return;
-
-            const merge = confirm(
-                'How should this backup be applied?\n\nOK = Merge with current data (matching IDs are updated)\nCancel = Replace all current data'
-            );
-            if (merge) {
-                applyImportedBackup(parsed, 'merge');
-                alert('Backup merged successfully.');
-            } else {
-                if (!confirm('Replace ALL current data with this backup? This cannot be undone except by importing another backup.')) return;
-                applyImportedBackup(parsed, 'replace');
-                alert('Backup imported. Your data was replaced.');
-            }
-        } catch (err) {
-            console.error(err);
-            alert('Could not read backup file. Make sure it is valid JSON.');
+    try {
+        const raw = stripJsonBom(await file.text());
+        if (!raw) {
+            alert('The selected file is empty.');
+            return;
         }
-    };
-    reader.onerror = () => alert('Could not read the selected file.');
-    reader.readAsText(file);
+
+        let parsed;
+        try {
+            parsed = JSON.parse(raw);
+        } catch (parseErr) {
+            console.error('Import JSON parse failed:', parseErr);
+            alert('This file is not valid JSON. Export a fresh JSON backup from Recovery Tracker and try again.');
+            return;
+        }
+
+        if (!isRecognizableBackupPayload(parsed)) {
+            alert('This JSON opened, but it does not look like a Recovery Tracker backup.');
+            return;
+        }
+
+        const extracted = extractAppDataFromBackup(parsed);
+        if (!extracted) {
+            alert('This JSON opened, but it does not look like a Recovery Tracker backup.');
+            return;
+        }
+
+        const validation = validateBackupData(extracted);
+        if (!validation.ok) {
+            alert(validation.message || 'This JSON opened, but it does not look like a Recovery Tracker backup.');
+            return;
+        }
+
+        const imported = validation.data;
+        const logCount = imported.logs.length;
+        const purchaseCount = imported.purchases.length;
+        const substanceCount = imported.substances.length;
+        const summary = `${substanceCount} substance(s), ${logCount} use log(s), ${purchaseCount} purchase(s).`;
+
+        if (!confirm(`Import this backup?\n\n${summary}`)) return;
+
+        const merge = confirm(
+            'How should this backup be applied?\n\nOK = Merge with current data (matching IDs are updated)\nCancel = Replace all current data'
+        );
+        if (merge) {
+            applyImportedBackup(imported, 'merge');
+            alert('Backup merged successfully.');
+        } else {
+            if (!confirm('Replace ALL current data with this backup? This cannot be undone except by importing another backup.')) return;
+            applyImportedBackup(imported, 'replace');
+            alert('Backup imported. Your data was replaced.');
+        }
+    } catch (err) {
+        console.error('Import failed:', err);
+        alert('Could not import backup file. Export a fresh JSON backup from Recovery Tracker and try again.');
+    } finally {
+        input.value = '';
+    }
 }
 
 function clearAllData() {
@@ -19959,6 +19937,8 @@ if (typeof window !== 'undefined') {
         deleteSubstance,
         restoreLastAutoBackup,
         exportJsonBackup,
+        triggerImportJsonBackup,
+        handleImportJsonFile,
         setUseLogFilter,
         onUseLogSubstanceChange,
         onInventorySubstanceChange,
