@@ -2688,9 +2688,7 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     statsCalendarView: false,
     statsMonthlySummary: false,
     statsWeeklySummary: true,
-    statsUseAnalytics: false,
     statsBuyAnalytics: true,
-    statsLimitGoal: true,
     taperTodayStatus: false,
     taperWeeklyPlan: false,
     taperByWeek: false,
@@ -15505,15 +15503,9 @@ function updateStats() {
     renderStatsMonthlySummary(currentSubstanceId);
     renderStatsWeeklySummary(currentSubstanceId);
 
-    renderUsageChart(bounds);
     renderSpendingChart(bounds);
-    renderUseStatsCards(useStats, displayUnit);
-    updateLongestTimeBetween();
-    updateBreakStats();
     updateBuyBreakStats();
-    renderGiftAnalytics(bounds);
     renderStatsBuyAnalyticsCards(currentSubstanceId, bounds);
-    renderStatsLimitGoal(currentSubstanceId, useStats, bounds, displayUnit, cur);
     renderBuySpendingTrend(currentSubstanceId);
     renderBuyWeeklySummary(currentSubstanceId);
     renderBuyMonthlySummary(currentSubstanceId);
