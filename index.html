@@ -760,10 +760,35 @@
                     </button>
                     <div class="section-content">
                         <div id="stats-buy-analytics-cards" class="sheet-summary-grid"></div>
-                        <div id="stats-buy-store-summary" class="sheet-table-wrap"></div>
+
                         <div class="stats-section">
-                            <h3 id="spending-chart-title">Spending in range</h3>
-                            <div id="spending-per-day-chart" class="chart-container"></div>
+                            <h4 class="stats-inline-heading">Week Summary</h4>
+                            <div id="stats-buy-week-summary" class="sheet-table-wrap"></div>
+                        </div>
+
+                        <div class="stats-section">
+                            <h4 class="stats-inline-heading">Month Summary</h4>
+                            <div id="stats-buy-month-summary" class="sheet-table-wrap"></div>
+                        </div>
+
+                        <div class="collapsible-section stats-buy-nested" data-section="statsBuyStoreBreakdown">
+                            <button type="button" class="section-toggle" onclick="toggleSection('statsBuyStoreBreakdown')">
+                                <span>Store Breakdown</span>
+                                <span class="chevron">⌄</span>
+                            </button>
+                            <div class="section-content">
+                                <div id="stats-buy-store-summary" class="sheet-table-wrap"></div>
+                            </div>
+                        </div>
+
+                        <div class="collapsible-section stats-buy-nested" data-section="statsBuyAdvanced">
+                            <button type="button" class="section-toggle" onclick="toggleSection('statsBuyAdvanced')">
+                                <span>Advanced purchase metrics</span>
+                                <span class="chevron">⌄</span>
+                            </button>
+                            <div class="section-content">
+                                <div id="stats-buy-advanced-metrics" class="sheet-summary-grid"></div>
+                            </div>
                         </div>
                     </div>
                 </div>

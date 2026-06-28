@@ -600,6 +600,24 @@ h3 {
     font-size: 0.88rem;
     font-weight: 600;
 }
+
+.collapsible-section[data-section="statsBuyAnalytics"] .stats-buy-nested {
+    margin-top: 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-secondary);
+}
+
+.collapsible-section[data-section="statsBuyAnalytics"] .stats-buy-nested .section-toggle {
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.collapsible-section[data-section="statsBuyAnalytics"] .stats-buy-nested .section-content {
+    padding: 0 10px 10px;
+}
+
 .dash-vape-section.hidden {
     display: none;
 }
@@ -3449,14 +3467,6 @@ input[type="range"]::-webkit-slider-thumb {
     height: 100%;
     border-radius: 4px;
     transition: width 0.3s ease;
-}
-
-.chart-bar-spend {
-    background: var(--warning);
-}
-
-.chart-bar-spend:hover {
-    background: #ffb74d;
 }
 
 .chart-bar-break {
