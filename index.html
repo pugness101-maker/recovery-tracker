@@ -257,74 +257,82 @@
                 <span class="hidden" id="dash-supply-total"></span>
                 <span class="hidden" id="dash-time-since-last-use"></span>
 
-                <!-- Recovery Summary -->
-                <div class="dash-card dash-recovery-card" id="break-metrics-section">
-                    <h3 class="dash-card-title">Recovery</h3>
-                    <div class="dash-recovery-grid">
-                        <div class="dash-recovery-item">
-                            <span class="dash-recovery-label">Streak</span>
-                            <span class="dash-recovery-value" id="recovery-streak-current">0 days</span>
-                            <span class="dash-recovery-sub" id="recovery-streak-since">—</span>
-                        </div>
-                        <div class="dash-recovery-item dash-recovery-breaks">
-                            <span class="dash-recovery-label">Break Metrics</span>
-                            <div class="dash-break-rows">
-                                <div class="dash-break-row"><span>Current</span><strong id="dash-break-current">—</strong></div>
-                                <div class="dash-break-row"><span>Longest</span><strong id="dash-break-longest">—</strong></div>
-                                <div class="dash-break-row"><span>30-day avg</span><strong id="dash-break-avg-30">—</strong></div>
+                <!-- Recovery (metrics + insights) -->
+                <div class="collapsible-section dash-recovery-section" data-section="dashRecovery">
+                    <button type="button" class="section-toggle" onclick="toggleSection('dashRecovery')">
+                        <span>Recovery</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="dash-recovery-insights" class="dash-insights-wrap">
+                            <div class="dash-recovery-top-row">
+                                <div class="dash-recovery-stat">
+                                    <span class="dash-recovery-label">Streak</span>
+                                    <strong class="dash-recovery-value" id="recovery-streak-current">0 days</strong>
+                                    <span class="dash-recovery-sub" id="recovery-streak-since">—</span>
+                                </div>
+                                <div class="dash-recovery-stat">
+                                    <span class="dash-recovery-label">Current break</span>
+                                    <strong class="dash-recovery-value" id="dash-break-current">—</strong>
+                                </div>
+                                <div class="dash-recovery-stat">
+                                    <span class="dash-recovery-label">Longest break</span>
+                                    <strong class="dash-recovery-value" id="dash-break-longest">—</strong>
+                                </div>
+                                <div class="dash-recovery-stat">
+                                    <span class="dash-recovery-label">30-day avg break</span>
+                                    <strong class="dash-recovery-value" id="dash-break-avg-30">—</strong>
+                                </div>
+                            </div>
+                            <div id="dash-recovery-insights-all" class="hidden"></div>
+                            <div id="dash-recovery-insights-detail">
+                                <div class="dash-insight-stats">
+                                    <div class="dash-insight-stat"><span>Avg daily use</span><strong id="insight-avg-daily">—</strong></div>
+                                    <div class="dash-insight-stat"><span>Highest-use day</span><strong id="insight-highest-day">—</strong></div>
+                                    <div class="dash-insight-stat"><span>No-use days this month</span><strong id="insight-no-use-days">—</strong></div>
+                                </div>
+                                <div class="collapsible-section dash-recovery-details-section" data-section="dashRecoveryDetails">
+                                    <button type="button" class="section-toggle" onclick="toggleSection('dashRecoveryDetails')">
+                                        <span>Usage &amp; cost details</span>
+                                        <span class="chevron">⌄</span>
+                                    </button>
+                                    <div class="section-content">
+                                        <div class="dash-insight-toggles">
+                                            <label class="dash-insight-toggle">
+                                                <input type="checkbox" id="insight-show-zero-usage" checked>
+                                                Show zero-use days
+                                            </label>
+                                            <label class="dash-insight-toggle">
+                                                <input type="checkbox" id="insight-show-zero-cost">
+                                                Show $0 purchase days
+                                            </label>
+                                        </div>
+                                        <div class="dash-insight-sections">
+                                            <div class="dash-insight-section">
+                                                <h4>Usage by day</h4>
+                                                <div id="insight-rows-day" class="dash-insight-rows"></div>
+                                            </div>
+                                            <div class="dash-insight-section">
+                                                <h4>Usage by week</h4>
+                                                <div id="insight-rows-week" class="dash-insight-rows"></div>
+                                            </div>
+                                            <div class="dash-insight-section">
+                                                <h4>Usage by month</h4>
+                                                <div id="insight-rows-month" class="dash-insight-rows"></div>
+                                            </div>
+                                            <div class="dash-insight-section dash-insight-section-cost">
+                                                <h4>Cost over time</h4>
+                                                <div id="insight-rows-cost" class="dash-insight-rows dash-insight-rows-cost"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
                     <span class="hidden" id="recovery-streak-best"></span>
                     <span class="hidden" id="dash-break-average"></span>
                     <span class="hidden" id="dash-break-streak-no-use"></span>
-                </div>
-
-                <div class="collapsible-section dash-recovery-insights-section" data-section="dashRecoveryInsights">
-                    <button type="button" class="section-toggle" onclick="toggleSection('dashRecoveryInsights')">
-                        <span>Recovery Insights</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                        <div id="dash-recovery-insights" class="dash-insights-wrap">
-                            <div id="dash-recovery-insights-all" class="hidden"></div>
-                            <div id="dash-recovery-insights-detail">
-                            <div class="dash-insight-stats">
-                                <div class="dash-insight-stat"><span>Avg daily use</span><strong id="insight-avg-daily">—</strong></div>
-                                <div class="dash-insight-stat"><span>Highest-use day</span><strong id="insight-highest-day">—</strong></div>
-                                <div class="dash-insight-stat"><span>No-use days (month)</span><strong id="insight-no-use-days">—</strong></div>
-                            </div>
-                            <div class="dash-insight-toggles">
-                                <label class="dash-insight-toggle">
-                                    <input type="checkbox" id="insight-show-zero-usage" checked>
-                                    Show zero-use days
-                                </label>
-                                <label class="dash-insight-toggle">
-                                    <input type="checkbox" id="insight-show-zero-cost">
-                                    Show $0 purchase days
-                                </label>
-                            </div>
-                            <div class="dash-insight-sections">
-                                <div class="dash-insight-section">
-                                    <h4>Usage by day</h4>
-                                    <div id="insight-rows-day" class="dash-insight-rows"></div>
-                                </div>
-                                <div class="dash-insight-section">
-                                    <h4>Usage by week</h4>
-                                    <div id="insight-rows-week" class="dash-insight-rows"></div>
-                                </div>
-                                <div class="dash-insight-section">
-                                    <h4>Usage by month</h4>
-                                    <div id="insight-rows-month" class="dash-insight-rows"></div>
-                                </div>
-                                <div class="dash-insight-section dash-insight-section-cost">
-                                    <h4>Cost over time</h4>
-                                    <div id="insight-rows-cost" class="dash-insight-rows dash-insight-rows-cost"></div>
-                                </div>
-                            </div>
-                            </div>
-                        </div>
-                    </div>
                 </div>
 
                 <!-- Current Inventory -->
@@ -1351,10 +1359,10 @@
                             <div class="inventory-filter-field">
                                 <label for="inventory-filter-status">Status</label>
                                 <select id="inventory-filter-status" onchange="applyInventorySearchFilters()">
+                                    <option value="all" selected>All / Any status</option>
                                     <option value="active">Active</option>
                                     <option value="depleted">Depleted</option>
                                     <option value="hidden">Hidden</option>
-                                    <option value="all">All / Any status</option>
                                 </select>
                             </div>
                             <div class="inventory-filter-field">

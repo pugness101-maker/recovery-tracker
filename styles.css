@@ -489,40 +489,49 @@ h3 {
     font-size: 0.88rem;
 }
 
-.dash-recovery-grid {
+.dash-recovery-top-row {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr);
-    gap: 10px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
 }
 
-.dash-recovery-item {
+.dash-recovery-stat {
     background: var(--bg-secondary);
     border-radius: 10px;
-    padding: 10px;
-    min-height: 72px;
+    padding: 8px 10px;
+    min-height: 0;
 }
 
 .dash-recovery-label {
     display: block;
-    font-size: 0.72rem;
+    font-size: 0.68rem;
     text-transform: uppercase;
     letter-spacing: 0.03em;
     color: var(--text-secondary);
-    margin-bottom: 4px;
+    margin-bottom: 2px;
+    line-height: 1.2;
 }
 
 .dash-recovery-value {
     display: block;
-    font-size: 1.2rem;
+    font-size: 1rem;
     font-weight: 700;
     color: var(--accent);
+    line-height: 1.2;
 }
 
 .dash-recovery-sub {
     display: block;
-    font-size: 0.72rem;
+    font-size: 0.68rem;
     color: var(--text-secondary);
     margin-top: 2px;
+    line-height: 1.2;
+}
+
+@media (min-width: 480px) {
+    .dash-recovery-top-row {
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+    }
 }
 
 .dash-break-rows {
@@ -6196,47 +6205,65 @@ body.purchase-history-col-resizing {
 .dash-insights-wrap {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
 }
 
-.dash-recovery-insights-section {
+.dash-recovery-section {
     margin-bottom: 6px;
 }
 
-.dash-recovery-insights-section + .dash-supply-card {
+.dash-recovery-section + .dash-supply-card {
     margin-top: 0;
+}
+
+.dash-recovery-section .dash-recovery-details-section {
+    margin-top: 4px;
+    margin-bottom: 0;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-secondary);
+}
+
+.dash-recovery-section .dash-recovery-details-section .section-toggle {
+    padding: 10px 12px;
+    font-size: 0.85rem;
+    font-weight: 600;
+}
+
+.dash-recovery-section .dash-recovery-details-section .section-content {
+    padding: 0 10px 10px;
 }
 
 .dash-insight-stats {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 8px;
+    gap: 6px;
 }
 
 .dash-insight-stat {
     background: var(--bg-secondary);
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 10px 12px;
+    padding: 8px 10px;
     display: flex;
     flex-direction: column;
-    gap: 4px;
-    font-size: 0.82rem;
+    gap: 2px;
+    font-size: 0.78rem;
     color: var(--text-secondary);
 }
 
 .dash-insight-stat strong {
     color: var(--text-primary);
-    font-size: 0.98rem;
+    font-size: 0.92rem;
     font-weight: 600;
-    line-height: 1.25;
+    line-height: 1.2;
 }
 
 .dash-insight-toggles {
     display: flex;
     flex-wrap: wrap;
-    gap: 8px 14px;
-    padding: 2px 0;
+    gap: 6px 12px;
+    padding: 0 0 6px;
 }
 
 .dash-insight-toggle {
@@ -6256,19 +6283,19 @@ body.purchase-history-col-resizing {
 .dash-insight-sections {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 8px;
 }
 
 .dash-insight-section {
-    background: var(--bg-secondary);
+    background: var(--bg-card);
     border: 1px solid var(--border);
     border-radius: 10px;
-    padding: 10px 12px;
+    padding: 8px 10px;
 }
 
 .dash-insight-section h4 {
-    margin: 0 0 8px;
-    font-size: 0.88rem;
+    margin: 0 0 6px;
+    font-size: 0.82rem;
     font-weight: 600;
     color: var(--text-primary);
     letter-spacing: 0.01em;

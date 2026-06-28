@@ -1147,8 +1147,8 @@ function getInventoryStatusFilterLabel() {
 }
 
 function normalizeInventoryStatusFilter(value) {
-    const status = value === 'stored' ? 'active' : (value || 'active');
-    return ['active', 'depleted', 'hidden', 'all'].includes(status) ? status : 'active';
+    const status = value === 'stored' ? 'active' : (value || 'all');
+    return ['active', 'depleted', 'hidden', 'all'].includes(status) ? status : 'all';
 }
 
 function syncInventoryStatusFilterUI() {
@@ -1163,7 +1163,7 @@ function countActiveInventoryFilters() {
     let count = 0;
     if (inventorySearchQuery) count++;
     if (inventoryListFilters.dateStart || inventoryListFilters.dateEnd) count++;
-    if (inventoryTabFilter !== 'active') count++;
+    if (inventoryTabFilter !== 'all') count++;
     if (inventoryListFilters.paymentMethod) count++;
     if (inventoryListFilters.hasRemaining) count++;
     if (inventoryListFilters.hasCost) count++;
@@ -1252,7 +1252,9 @@ function renderInventoryFilterChips() {
         const end = inventoryListFilters.dateEnd ? formatDate(inventoryListFilters.dateEnd) : '…';
         chips.push(`<span class="inventory-filter-chip">Date: ${start}–${end}</span>`);
     }
-    chips.push(`<span class="inventory-filter-chip">Status: ${escapeHtml(getInventoryStatusFilterLabel())}</span>`);
+    if (inventoryTabFilter !== 'all') {
+        chips.push(`<span class="inventory-filter-chip">Status: ${escapeHtml(getInventoryStatusFilterLabel())}</span>`);
+    }
     if (inventoryListFilters.paymentMethod) {
         chips.push(`<span class="inventory-filter-chip">Payment: ${escapeHtml(inventoryListFilters.paymentMethod)}</span>`);
     }
@@ -1292,7 +1294,7 @@ function clearInventoryFilters() {
     inventoryListFilters.hasRemaining = '';
     inventoryListFilters.hasCost = '';
     inventoryListFilters.vapeOnly = false;
-    inventoryTabFilter = 'active';
+    inventoryTabFilter = 'all';
     inventoryFiltersPanelOpen = false;
     const searchEl = document.getElementById('inventory-search');
     if (searchEl) searchEl.value = '';
@@ -1325,7 +1327,7 @@ function applyInventorySearchFilters() {
     inventoryListFilters.dateStart = document.getElementById('inventory-filter-date-start')?.value || '';
     inventoryListFilters.dateEnd = document.getElementById('inventory-filter-date-end')?.value || '';
     inventoryTabFilter = normalizeInventoryStatusFilter(
-        document.getElementById('inventory-filter-status')?.value || 'active'
+        document.getElementById('inventory-filter-status')?.value || 'all'
     );
     inventoryListFilters.paymentMethod = document.getElementById('inventory-filter-payment')?.value || '';
     inventoryListFilters.hasRemaining = document.getElementById('inventory-filter-remaining')?.value || '';
@@ -2443,12 +2445,13 @@ function normalizeAppDataSafe(data) {
         return normalizeAppData(data);
     } catch (err) {
         console.error('Failed to normalize app data:', err);
+        ensureAppDataSubstancesReady(data);
         return data;
     }
 }
 
 function ensureLoadedDataDefaults(data) {
-    if (!data.substances?.length) data.substances = getDefaultSubstances();
+    ensureAppDataSubstancesReady(data);
     if (!data.privacy) data.privacy = { ...defaultData.privacy };
     if (!data.recoveryStreaks) data.recoveryStreaks = {};
     return data;
@@ -2617,6 +2620,7 @@ function normalizeAppData(data) {
 
     ensureAppDataSettings(data);
     ensureAppDataMigrations(data);
+    normalizeSubstanceRecords(data);
     ensureDefaultSubstances(data);
     ensureDefaultSubstanceSettings(data);
     migrateSubstanceTrackingModes(data);
@@ -2694,7 +2698,8 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     taperWeeklyCalendar: false,
     buyWeeklySummary: false,
     buyMonthlySummary: false,
-    dashRecoveryInsights: false,
+    dashRecovery: false,
+    dashRecoveryDetails: true,
     settingsSubstances: false,
     settingsAppearance: false,
     settingsStores: true,
@@ -2734,6 +2739,10 @@ function ensureCollapsedSections(data) {
     if (stored.statsBuyMetrics !== undefined && stored.statsBuyAnalytics === undefined) {
         stored.statsBuyAnalytics = stored.statsBuyMetrics;
     }
+    if (stored.dashRecovery === undefined && stored.dashRecoveryInsights !== undefined) {
+        stored.dashRecovery = stored.dashRecoveryInsights;
+    }
+    delete stored.dashRecoveryInsights;
     if (stored.taperCalendarPreview !== undefined && stored.taperWeeklyCalendar === undefined) {
         stored.taperWeeklyCalendar = stored.taperCalendarPreview;
     }
@@ -2749,7 +2758,8 @@ function toggleSection(sectionKey) {
     if (sectionKey === 'purchaseHistory') {
         renderPurchaseHistory();
     }
-    if (sectionKey === 'dashRecoveryInsights' && !appData.settings.collapsedSections[sectionKey]) {
+    if ((sectionKey === 'dashRecovery' || sectionKey === 'dashRecoveryDetails')
+        && !appData.settings.collapsedSections[sectionKey]) {
         renderDashboardRecoveryInsights();
     }
 }
@@ -3185,7 +3195,7 @@ const USE_STATS_LABELS = {
 
 let columnSettingsTableKey = null;
 let useLogDateFilter = 'all';
-let inventoryTabFilter = 'active';
+let inventoryTabFilter = 'all';
 let inventorySearchQuery = '';
 const inventorySelectedIds = new Set();
 const inventoryListFilters = {
@@ -4157,10 +4167,11 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
 
 function normalizeMainSubstances(data) {
     if (!data.substances?.length) return;
+    normalizeSubstanceRecords(data);
     data.substances.forEach(s => {
         if (s.isMain === undefined) s.isMain = false;
     });
-    const active = data.substances.filter(s => s.active);
+    const active = data.substances.filter(isSubstanceActive);
     if (!active.length) {
         data.substances.forEach(s => { s.isMain = false; });
         return;
@@ -4173,7 +4184,7 @@ function normalizeMainSubstances(data) {
         main.isMain = true;
     }
     data.substances.forEach(s => {
-        s.isMain = s.active && s.id === main.id;
+        s.isMain = isSubstanceActive(s) && s.id === main.id;
     });
 }
 
@@ -4317,7 +4328,7 @@ function setInputValue(id, value) {
 
 function getMainSubstance() {
     if (!appData?.substances?.length) return null;
-    return appData.substances.find(s => s.active && s.isMain) || getActiveSubstances()[0] || null;
+    return appData.substances.find(s => isSubstanceActive(s) && s.isMain) || getActiveSubstances()[0] || null;
 }
 
 function getMainSubstanceId() {
@@ -4325,11 +4336,16 @@ function getMainSubstanceId() {
     return getMainSubstance()?.id || DEFAULT_MAIN_SUBSTANCE_ID;
 }
 
+function resolveStartupSubstanceId() {
+    return resolveDashboardViewSubstanceId();
+}
+
 function resolveDefaultSelectedSubstanceId() {
+    ensureAppDataSubstancesReady(appData);
     if (!appData?.substances?.length) return DASHBOARD_ALL;
     const mainId = getMainSubstanceId();
-    if (mainId) return mainId;
-    return getActiveSubstances()[0]?.id || DASHBOARD_ALL;
+    if (mainId && substanceIsDashboardViewOption(mainId)) return mainId;
+    return getActiveSubstances()[0]?.id || appData.substances[0]?.id || DASHBOARD_ALL;
 }
 
 function isSelectedAllSubstances() {
@@ -4338,13 +4354,6 @@ function isSelectedAllSubstances() {
 
 function getSelectedSubstanceFilterId() {
     return isSelectedAllSubstances() ? null : selectedSubstanceId;
-}
-
-function resolveStartupSubstanceId() {
-    if (!appData?.substances?.length) return DEFAULT_MAIN_SUBSTANCE_ID;
-    const mainId = getMainSubstanceId();
-    if (mainId) return mainId;
-    return appData.substances.find(s => s.active)?.id || DEFAULT_MAIN_SUBSTANCE_ID;
 }
 
 function sortSubstancesMainFirst(list) {
@@ -4377,8 +4386,10 @@ try {
     }
 }
 
-let currentSubstanceId = resolveStartupSubstanceId();
-let selectedSubstanceId = resolveDefaultSelectedSubstanceId();
+ensureAppDataSubstancesReady(appData);
+
+let currentSubstanceId = resolveStartupSubstanceId() || DASHBOARD_ALL;
+let selectedSubstanceId = resolveDefaultSelectedSubstanceId() || DASHBOARD_ALL;
 let statsDateRangePreset = 'last-7';
 let statsCustomStartDate = '';
 let statsCustomEndDate = '';
@@ -4408,8 +4419,10 @@ document.addEventListener('DOMContentLoaded', () => {
 function initializeApp() {
     initTheme();
     setupEventListeners();
-    populateAllSubstanceDropdowns();
-    syncSubstanceSelectors();
+    ensureAppDataSubstancesReady(appData);
+    ensureDashboardSubstanceDropdownReady();
+    selectedSubstanceId = resolveDefaultSelectedSubstanceId() || DASHBOARD_ALL;
+    ensureSelectedSubstanceIdValid();
     syncUseLogFormFromSelectedSubstance();
     syncBuyFormFromSelectedSubstance();
     updateDashboard();
@@ -4444,11 +4457,11 @@ function initializeApp() {
 function refreshAppAfterDataChange() {
     recalculateAllBreaks();
     recalculateAllBuyBreaks();
-    currentSubstanceId = resolveStartupSubstanceId();
+    ensureAppDataSubstancesReady(appData);
+    ensureDashboardSubstanceDropdownReady();
+    selectedSubstanceId = resolveDefaultSelectedSubstanceId() || DASHBOARD_ALL;
     ensureSelectedSubstanceIdValid();
-    populateAllSubstanceDropdowns();
     populatePageSubstanceDropdowns();
-    syncSubstanceSelectors();
     syncUseLogFormFromSelectedSubstance();
     applyMainSubstanceToForms();
     applyMainSubstanceToViewSelectors();
@@ -4482,8 +4495,99 @@ function getSubstanceName(id) {
     return getSubstance(id)?.name || 'Unknown';
 }
 
+function isSubstanceActive(sub) {
+    return !!sub && sub.active !== false && !sub.archived;
+}
+
+function normalizeSubstanceRecords(data) {
+    if (!Array.isArray(data.substances)) data.substances = [];
+    data.substances.forEach(sub => {
+        if (sub.active === undefined && !sub.archived) sub.active = true;
+        if (sub.isMain === undefined) sub.isMain = false;
+    });
+}
+
+function ensureAppDataSubstancesReady(data = appData) {
+    if (!data || typeof data !== 'object') return;
+    if (!Array.isArray(data.substances)) data.substances = [];
+    if (!data.substances.length) {
+        data.substances = getDefaultSubstances();
+    }
+    normalizeSubstanceRecords(data);
+    ensureDefaultSubstances(data);
+    normalizeMainSubstances(data);
+}
+
+function substanceIsDashboardViewOption(substanceId, data = appData) {
+    if (!substanceId || substanceId === DASHBOARD_ALL) return substanceId === DASHBOARD_ALL;
+    const resolved = normalizeSubstanceRef(substanceId, data);
+    return getActiveSubstances(data).some(s => s.id === resolved);
+}
+
+function resolveDashboardViewSubstanceId(data = appData) {
+    ensureAppDataSubstancesReady(data);
+    ensureAppDataSettings(data);
+
+    const saved = data.settings?.dashboardSubstanceId;
+    if (saved === DASHBOARD_ALL) return DASHBOARD_ALL;
+    if (saved && substanceIsDashboardViewOption(saved, data)) {
+        return normalizeSubstanceRef(saved, data) || saved;
+    }
+
+    const active = getActiveSubstances(data);
+    const mainId = getMainSubstanceId();
+    if (mainId && active.some(s => s.id === mainId)) return mainId;
+
+    if (currentSubstanceId && currentSubstanceId !== DASHBOARD_ALL) {
+        const resolved = normalizeSubstanceRef(currentSubstanceId, data);
+        if (active.some(s => s.id === resolved)) return resolved;
+    }
+
+    if (active[0]?.id) return active[0].id;
+    if (data.substances?.[0]?.id) return data.substances[0].id;
+    return DASHBOARD_ALL;
+}
+
+function saveDashboardViewSubstanceId(substanceId) {
+    ensureAppDataSettings(appData);
+    appData.settings.dashboardSubstanceId = substanceId || DASHBOARD_ALL;
+    saveData(appData);
+}
+
+function ensureDashboardSubstanceDropdownReady() {
+    ensureAppDataSubstancesReady(appData);
+    currentSubstanceId = resolveDashboardViewSubstanceId();
+    populateAllSubstanceDropdowns();
+    syncSubstanceSelectors();
+
+    const dash = document.getElementById('dashboard-substance');
+    const substanceOptionCount = dash
+        ? [...dash.options].filter(o => o.value && o.value !== DASHBOARD_ALL).length
+        : 0;
+
+    if (!substanceOptionCount) {
+        ensureAppDataSubstancesReady(appData);
+        if (!appData.substances.length) {
+            appData.substances = getDefaultSubstances();
+        }
+        normalizeSubstanceRecords(appData);
+        normalizeMainSubstances(appData);
+        currentSubstanceId = resolveDashboardViewSubstanceId();
+        populateAllSubstanceDropdowns();
+        syncSubstanceSelectors();
+    }
+
+    if (dash && [...dash.options].some(o => o.value === currentSubstanceId)) {
+        dash.value = currentSubstanceId;
+    } else if (dash) {
+        const fallback = getActiveSubstances()[0]?.id || DASHBOARD_ALL;
+        currentSubstanceId = fallback;
+        dash.value = fallback;
+    }
+}
+
 function getActiveSubstances(data = appData) {
-    return sortSubstancesMainFirst((data.substances || []).filter(s => s.active));
+    return sortSubstancesMainFirst((data.substances || []).filter(isSubstanceActive));
 }
 
 function setMainSubstance(id) {
@@ -4522,13 +4626,9 @@ function applyMainSubstanceToForms() {
 }
 
 function applyMainSubstanceToViewSelectors() {
+    syncSubstanceSelectors();
     const mainId = getMainSubstanceId();
     if (!mainId) return;
-    currentSubstanceId = mainId;
-    ['dashboard-substance', 'stats-substance'].forEach(selectId => {
-        const el = document.getElementById(selectId);
-        if (el && [...el.options].some(o => o.value === mainId)) el.value = mainId;
-    });
     const taperEl = document.getElementById('taper-substance');
     if (taperEl && [...taperEl.options].some(o => o.value === mainId)) taperEl.value = mainId;
 }
@@ -4588,13 +4688,14 @@ function populateSelect(selectId, substances, { includeAll = false, currentValue
     }
     substances.forEach(sub => dropdown.appendChild(buildSubstanceOption(sub)));
     const valid = [...dropdown.options].some(o => o.value === prev);
-    dropdown.value = valid ? prev : (substances[0]?.id || '');
+    const fallback = substances[0]?.id || (includeAll ? DASHBOARD_ALL : '');
+    dropdown.value = valid ? prev : fallback;
 }
 
 function populateAllSubstanceDropdowns() {
-    const mainId = getMainSubstanceId();
     const active = getActiveSubstances();
-    const viewDefault = mainId || currentSubstanceId;
+    const viewDefault = resolveDashboardViewSubstanceId();
+    const mainId = getMainSubstanceId();
 
     populateSelect('dashboard-substance', active, { includeAll: true, currentValue: viewDefault });
     populateSelect('stats-substance', active, { includeAll: true, currentValue: viewDefault });
@@ -4694,18 +4795,20 @@ function updateQuickActions() {
 }
 
 function switchSubstance(substanceId) {
-    currentSubstanceId = substanceId;
+    currentSubstanceId = substanceId || DASHBOARD_ALL;
+    saveDashboardViewSubstanceId(currentSubstanceId);
     const dashSelect = document.getElementById('dashboard-substance');
-    if (dashSelect) dashSelect.value = substanceId;
+    if (dashSelect) dashSelect.value = currentSubstanceId;
     const statsSelect = document.getElementById('stats-substance');
-    if (statsSelect) statsSelect.value = substanceId;
+    if (statsSelect) statsSelect.value = currentSubstanceId;
     updateDashboard();
     checkTaperTarget();
     updateQuickActions();
 }
 
 function switchStatsSubstance(substanceId) {
-    currentSubstanceId = substanceId;
+    currentSubstanceId = substanceId || DASHBOARD_ALL;
+    saveDashboardViewSubstanceId(currentSubstanceId);
     const dash = document.getElementById('dashboard-substance');
     if (dash) dash.value = substanceId;
     const calSel = document.getElementById('stats-calendar-substance');
@@ -5139,7 +5242,7 @@ function switchTab(tabId) {
     document.getElementById(tabId)?.classList.add('active');
 
     if (tabId === 'dashboard-tab') {
-        applyMainSubstanceToViewSelectors();
+        ensureDashboardSubstanceDropdownReady();
         updateDashboard();
     } else if (tabId === 'stats-tab') {
         applyMainSubstanceToViewSelectors();
@@ -12649,10 +12752,10 @@ function renderDashboardRecoveryInsights() {
         detailEl?.classList.remove('hidden');
 
         if (!substanceId) {
-            set('insight-avg-daily', '—');
-            set('insight-highest-day', '—');
-            set('insight-no-use-days', '—');
-            emptyRows('Select a substance to view recovery insights.');
+            set('insight-avg-daily', 'No data yet');
+            set('insight-highest-day', 'No data yet');
+            set('insight-no-use-days', 'No data yet');
+            emptyRows('No data yet');
             return;
         }
 
@@ -12663,8 +12766,13 @@ function renderDashboardRecoveryInsights() {
         const stats = getRecoveryInsightStats(substanceId);
         const sub = getSubstance(substanceId);
         const unit = getStatsDisplayUnit(substanceId, sub?.defaultUnit || 'units');
-        set('insight-avg-daily', `${formatAmount(stats.avgDaily)} ${unit}`);
-        set('insight-highest-day', stats.highestAmt > 0 ? `${stats.highestDay} (${formatAmount(stats.highestAmt)} ${unit})` : '—');
+        const noData = 'No data yet';
+        set('insight-avg-daily', stats.avgDaily > INVENTORY_EPS
+            ? `${formatAmount(stats.avgDaily)} ${unit}`
+            : noData);
+        set('insight-highest-day', stats.highestAmt > 0
+            ? `${stats.highestDay} (${formatAmount(stats.highestAmt)} ${unit})`
+            : noData);
         set('insight-no-use-days', String(stats.noUseDays));
 
         renderInsightBarRows('insight-rows-day', buildDailyUsageBuckets(substanceId, 7), {
@@ -13042,11 +13150,7 @@ function renderSubstanceCompare() {
             ${sub.costTrackingEnabled ? `<div class="compare-stat"><span>Spent</span><strong>${getCurrencySymbol()}${spent.toFixed(2)}</strong></div>` : ''}
             <div class="compare-stat"><span>Streak</span><strong>${days}d</strong></div>
         `;
-        card.onclick = () => {
-            currentSubstanceId = sub.id;
-            setInputValue('dashboard-substance', sub.id);
-            updateDashboard();
-        };
+        card.onclick = () => switchSubstance(sub.id);
         grid.appendChild(card);
     });
 
@@ -19743,9 +19847,8 @@ function normalizeImportedAppData(raw) {
     if (!Array.isArray(data.logs)) data.logs = [];
     if (!Array.isArray(data.purchases)) data.purchases = [];
     if (!Array.isArray(data.cravings)) data.cravings = [];
-    if (!Array.isArray(data.substances) || !data.substances.length) {
-        data.substances = getDefaultSubstances();
-    }
+    if (!Array.isArray(data.substances)) data.substances = [];
+    ensureAppDataSubstancesReady(data);
     if (!data.settings || typeof data.settings !== 'object' || Array.isArray(data.settings)) {
         data.settings = JSON.parse(JSON.stringify(defaultData.settings));
     }
@@ -19822,6 +19925,7 @@ function mergeImportedData(current, imported) {
     if (imported.privacy && typeof imported.privacy === 'object') {
         merged.privacy = { ...merged.privacy, ...imported.privacy };
     }
+    ensureAppDataSubstancesReady(merged);
     return merged;
 }
 
