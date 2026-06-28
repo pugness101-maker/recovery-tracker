@@ -2697,6 +2697,9 @@ function toggleSection(sectionKey) {
     if (sectionKey === 'purchaseHistory') {
         renderPurchaseHistory();
     }
+    if (sectionKey === 'dashRecoveryInsights' && !appData.settings.collapsedSections[sectionKey]) {
+        renderDashboardRecoveryInsights();
+    }
 }
 
 function applyCollapsedSections() {
@@ -4637,6 +4640,8 @@ function updateQuickActions() {
 
 function switchSubstance(substanceId) {
     currentSubstanceId = substanceId;
+    const dashSelect = document.getElementById('dashboard-substance');
+    if (dashSelect) dashSelect.value = substanceId;
     const statsSelect = document.getElementById('stats-substance');
     if (statsSelect) statsSelect.value = substanceId;
     updateDashboard();
@@ -10481,8 +10486,18 @@ function getPurchasesForInsightMetrics(substanceId, data = appData) {
     return getPurchasesForBuyMetrics(substanceId, data);
 }
 
+function getPurchaseDateStr(purchase) {
+    if (!purchase?.date) return '';
+    const raw = String(purchase.date).trim();
+    if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+    const isoPrefix = /^(\d{4}-\d{2}-\d{2})/.exec(raw);
+    if (isoPrefix) return isoPrefix[1];
+    const parsed = parseLocalDate(raw);
+    return parsed ? getLocalDateString(parsed) : raw;
+}
+
 function purchaseOnDate(purchase, dateStr) {
-    return !!purchase?.date && purchase.date === dateStr;
+    return getPurchaseDateStr(purchase) === dateStr;
 }
 
 function purchaseInDateRange(purchase, startDate, endDate) {
@@ -10502,7 +10517,7 @@ function buildDailyPurchaseSpendBuckets(substanceId, days = 7, data = appData) {
         const d = parseLocalDate(dateStr);
         const label = d ? d.toLocaleDateString('en-US', { weekday: 'short' }) : dateStr.slice(5);
         const total = purchases
-            .filter(p => p.date === dateStr)
+            .filter(p => getPurchaseDateStr(p) === dateStr)
             .reduce((sum, p) => sum + getPurchaseSpendAmount(p), 0);
         buckets.push({ date: dateStr, label, total });
     }
@@ -12506,10 +12521,19 @@ function syncInsightToggleControls() {
     if (costEl) costEl.checked = !!prefs.showZeroDaysCost;
 }
 
-function resolveDashboardInsightSubstanceId() {
+function isDashboardAllSubstancesSelected() {
     const dashVal = document.getElementById('dashboard-substance')?.value;
-    if (dashVal === DASHBOARD_ALL) return null;
-    if (dashVal) return normalizeSubstanceRef(dashVal) || dashVal;
+    if (dashVal) return dashVal === DASHBOARD_ALL;
+    return currentSubstanceId === DASHBOARD_ALL;
+}
+
+function resolveDashboardInsightSubstanceId() {
+    const dashEl = document.getElementById('dashboard-substance');
+    const dashVal = dashEl?.value;
+    if (dashEl && dashVal === DASHBOARD_ALL) return null;
+    if (dashEl && dashVal && dashVal !== DASHBOARD_ALL) {
+        return normalizeSubstanceRef(dashVal) || dashVal;
+    }
     if (currentSubstanceId && currentSubstanceId !== DASHBOARD_ALL) {
         return normalizeSubstanceRef(currentSubstanceId) || currentSubstanceId;
     }
@@ -12544,6 +12568,7 @@ function renderInsightBarRows(containerId, buckets, {
     unit = '',
     isCost = false,
     showZero = true,
+    allowAllZeroRows = false,
     emptyHint = 'No data yet'
 } = {}) {
     const container = document.getElementById(containerId);
@@ -12554,16 +12579,12 @@ function renderInsightBarRows(containerId, buckets, {
         return;
     }
 
-    const hasAnyData = buckets.some(b => (parseFloat(b.value) || 0) > INVENTORY_EPS);
-    if (!hasAnyData) {
-        container.innerHTML = `<p class="dash-insight-empty">${emptyHint}</p>`;
-        return;
-    }
-
+    const hasNonZero = buckets.some(b => (parseFloat(b.value) || 0) > INVENTORY_EPS);
     const visible = showZero
         ? buckets
         : buckets.filter(b => (parseFloat(b.value) || 0) > INVENTORY_EPS);
-    if (!visible.length) {
+
+    if (!visible.length || (!hasNonZero && !allowAllZeroRows)) {
         container.innerHTML = `<p class="dash-insight-empty">${emptyHint}</p>`;
         return;
     }
@@ -12590,7 +12611,7 @@ function renderInsightBarRows(containerId, buckets, {
     });
 }
 
-function buildDailyUsageBuckets(substanceId, days = 7) {
+function buildDailyUsageBuckets(substanceId, days = 7, data = appData) {
     const today = getLocalDateString();
     const buckets = [];
     for (let i = days - 1; i >= 0; i--) {
@@ -12599,36 +12620,39 @@ function buildDailyUsageBuckets(substanceId, days = 7) {
         const label = d ? d.toLocaleDateString('en-US', { weekday: 'short' }) : dateStr.slice(5);
         buckets.push({
             label,
-            value: isVapeNicotineSubstanceId(substanceId)
-                ? getStatsUsageOnDate(substanceId, dateStr)
-                : sumUsageForDate(null, dateStr, substanceId).amount
+            value: isVapeNicotineSubstanceId(substanceId, data)
+                ? getStatsUsageOnDate(substanceId, dateStr, data)
+                : sumUsageForDate(data.logs, dateStr, substanceId, { data }).amount
         });
     }
     return buckets;
 }
 
-function buildWeeklyUsageBuckets(substanceId, weeks = 4) {
+function buildWeeklyUsageBuckets(substanceId, weeks = 4, data = appData) {
     const today = getLocalDateString();
     const buckets = [];
     for (let i = weeks - 1; i >= 0; i--) {
         const weekEnd = addDaysToDateStr(getWeekStartDateStr(today), -i * 7 + 6);
         const weekStart = addDaysToDateStr(weekEnd, -6);
-        const used = getStatsUsageInRange(substanceId, weekStart, weekEnd);
+        const rangeEnd = weekEnd > today ? today : weekEnd;
+        const used = getStatsUsageInRange(substanceId, weekStart, rangeEnd, data);
         buckets.push({ label: formatShortMonthDay(weekStart), value: used });
     }
     return buckets;
 }
 
-function buildMonthlyUsageBuckets(substanceId, months = 3) {
-    const today = new Date();
+function buildMonthlyUsageBuckets(substanceId, months = 3, data = appData) {
+    const todayStr = getLocalDateString();
+    const today = parseLocalDate(todayStr) || new Date();
     const buckets = [];
     for (let i = months - 1; i >= 0; i--) {
         const d = new Date(today.getFullYear(), today.getMonth() - i, 1);
         const monthStart = getLocalDateString(d);
         const monthEnd = getMonthEndDateStr(monthStart);
-        const used = isVapeNicotineSubstanceId(substanceId)
-            ? getStatsMonthUsageTotal(substanceId, monthEnd)
-            : getMonthPersonalUseTotal(substanceId, monthEnd);
+        const rangeEnd = monthEnd > todayStr ? todayStr : monthEnd;
+        const used = isVapeNicotineSubstanceId(substanceId, data)
+            ? getStatsUsageInRange(substanceId, monthStart, rangeEnd, data)
+            : sumUsageForRange(data.logs, monthStart, rangeEnd, substanceId, { data }).amount;
         const label = d.toLocaleDateString('en-US', { month: 'short' });
         buckets.push({ label, value: used });
     }
@@ -12642,7 +12666,7 @@ function buildCostOverTimeBuckets(substanceId, days = 14, data = appData) {
     for (let i = days - 1; i >= 0; i--) {
         const dateStr = addDaysToDateStr(today, -i);
         const cost = purchases
-            .filter(p => p.date === dateStr)
+            .filter(p => getPurchaseDateStr(p) === dateStr)
             .reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
         const d = parseLocalDate(dateStr);
         buckets.push({
@@ -12688,60 +12712,85 @@ function getRecoveryInsightStats(substanceId, data = appData) {
 function renderDashboardRecoveryInsights() {
     const wrap = document.getElementById('dash-recovery-insights');
     if (!wrap) return;
-    syncInsightToggleControls();
-    const prefs = getInsightPrefs();
-    const allViewEl = document.getElementById('dash-recovery-insights-all');
-    const detailEl = document.getElementById('dash-recovery-insights-detail');
-    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
 
-    const substanceId = resolveDashboardInsightSubstanceId();
-    const allView = isAllSubstancesView() || !substanceId;
+    try {
+        syncInsightToggleControls();
+        const prefs = getInsightPrefs();
+        const allViewEl = document.getElementById('dash-recovery-insights-all');
+        const detailEl = document.getElementById('dash-recovery-insights-detail');
+        const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+        const emptyRows = (message = 'No data yet') => {
+            ['insight-rows-day', 'insight-rows-week', 'insight-rows-month', 'insight-rows-cost'].forEach(id => {
+                const el = document.getElementById(id);
+                if (el) el.innerHTML = `<p class="dash-insight-empty">${message}</p>`;
+            });
+        };
 
-    if (allView) {
-        const today = getLocalDateString();
-        const entries = buildAllSubstancesUsageEntries(today, today);
-        const top = entries.find(e => e.amount > 0);
-        const insight = top
-            ? `Highest use today: ${top.name} ${formatAmount(top.amount)} ${top.unit}.`
-            : 'No personal use logged today across substances.';
-        if (allViewEl) {
-            allViewEl.innerHTML = `<p class="dash-all-insight">${insight}</p><p class="settings-hint">Select a single substance for detailed taper/recovery insights.</p>`;
-            allViewEl.classList.remove('hidden');
+        if (isDashboardAllSubstancesSelected()) {
+            const today = getLocalDateString();
+            const entries = buildAllSubstancesUsageEntries(today, today);
+            const top = entries.find(e => e.amount > 0);
+            const insight = top
+                ? `Highest use today: ${top.name} ${formatAmount(top.amount)} ${top.unit}.`
+                : 'No personal use logged today across substances.';
+            if (allViewEl) {
+                allViewEl.innerHTML = `<p class="dash-all-insight">${insight}</p><p class="settings-hint">Select a single substance for detailed taper/recovery insights.</p>`;
+                allViewEl.classList.remove('hidden');
+            }
+            detailEl?.classList.add('hidden');
+            return;
         }
-        detailEl?.classList.add('hidden');
-        return;
+
+        const substanceId = resolveDashboardInsightSubstanceId();
+        allViewEl?.classList.add('hidden');
+        detailEl?.classList.remove('hidden');
+
+        if (!substanceId) {
+            set('insight-avg-daily', '—');
+            set('insight-highest-day', '—');
+            set('insight-no-use-days', '—');
+            emptyRows('Select a substance to view recovery insights.');
+            return;
+        }
+
+        if (currentSubstanceId !== substanceId) {
+            currentSubstanceId = substanceId;
+        }
+
+        const stats = getRecoveryInsightStats(substanceId);
+        const sub = getSubstance(substanceId);
+        const unit = getStatsDisplayUnit(substanceId, sub?.defaultUnit || 'units');
+        set('insight-avg-daily', `${formatAmount(stats.avgDaily)} ${unit}`);
+        set('insight-highest-day', stats.highestAmt > 0 ? `${stats.highestDay} (${formatAmount(stats.highestAmt)} ${unit})` : '—');
+        set('insight-no-use-days', String(stats.noUseDays));
+
+        renderInsightBarRows('insight-rows-day', buildDailyUsageBuckets(substanceId, 7), {
+            unit,
+            showZero: prefs.showZeroDaysUsage,
+            allowAllZeroRows: !!prefs.showZeroDaysUsage,
+            emptyHint: 'No data yet'
+        });
+        renderInsightBarRows('insight-rows-week', buildWeeklyUsageBuckets(substanceId, 4), {
+            unit,
+            showZero: true,
+            allowAllZeroRows: false,
+            emptyHint: 'No data yet'
+        });
+        renderInsightBarRows('insight-rows-month', buildMonthlyUsageBuckets(substanceId, 3), {
+            unit,
+            showZero: true,
+            allowAllZeroRows: false,
+            emptyHint: 'No data yet'
+        });
+        renderInsightBarRows('insight-rows-cost', buildCostOverTimeBuckets(substanceId, 14), {
+            isCost: true,
+            showZero: prefs.showZeroDaysCost,
+            allowAllZeroRows: !!prefs.showZeroDaysCost,
+            emptyHint: 'No data yet'
+        });
+    } catch (error) {
+        console.error('Failed to render Recovery Insights:', error);
     }
-
-    allViewEl?.classList.add('hidden');
-    detailEl?.classList.remove('hidden');
-
-    const stats = getRecoveryInsightStats(substanceId);
-    const sub = getSubstance(substanceId);
-    const unit = getStatsDisplayUnit(substanceId, sub?.defaultUnit || 'units');
-    set('insight-avg-daily', `${formatAmount(stats.avgDaily)} ${unit}`);
-    set('insight-highest-day', stats.highestAmt > 0 ? `${stats.highestDay} (${formatAmount(stats.highestAmt)} ${unit})` : '—');
-    set('insight-no-use-days', String(stats.noUseDays));
-
-    renderInsightBarRows('insight-rows-day', buildDailyUsageBuckets(substanceId, 7), {
-        unit,
-        showZero: prefs.showZeroDaysUsage,
-        emptyHint: 'No data yet'
-    });
-    renderInsightBarRows('insight-rows-week', buildWeeklyUsageBuckets(substanceId, 4), {
-        unit,
-        showZero: true,
-        emptyHint: 'No data yet'
-    });
-    renderInsightBarRows('insight-rows-month', buildMonthlyUsageBuckets(substanceId, 3), {
-        unit,
-        showZero: true,
-        emptyHint: 'No data yet'
-    });
-    renderInsightBarRows('insight-rows-cost', buildCostOverTimeBuckets(substanceId, 14), {
-        isCost: true,
-        showZero: prefs.showZeroDaysCost,
-        emptyHint: 'No data yet'
-    });
 }
 
 function updateInventoryLowWarning(substanceId) {
@@ -12947,7 +12996,7 @@ function updateDashboard() {
     updateDashboardMainDisplay();
     updateBreakMetricsDashboard();
 
-    const dashSubId = isAllSubstancesView() ? null : (resolveDashboardInsightSubstanceId() || currentSubstanceId);
+    const dashSubId = isDashboardAllSubstancesSelected() ? null : (resolveDashboardInsightSubstanceId() || currentSubstanceId);
     renderDashboardSummaryCards(dashSubId);
     renderVapeDashboardSection(dashSubId);
     renderNextBestAction(dashSubId);
