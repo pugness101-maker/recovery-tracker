@@ -12505,7 +12505,9 @@ function renderMiniUsageChart(containerId, buckets, emptyHint = 'No data yet') {
 }
 
 function ensureInsightPrefs(data = appData) {
-    ensureAppDataSettings(data);
+    if (!data.settings) {
+        data.settings = JSON.parse(JSON.stringify(defaultData.settings));
+    }
     if (!data.settings.insightPrefs) {
         data.settings.insightPrefs = {
             showZeroDaysUsage: true,
@@ -20063,6 +20065,15 @@ if (typeof window !== 'undefined') {
         setVapeTaperCountMode,
         setThemePreference,
         repairAppData,
-        updateVapePurchaseSelectDetails
+        updateVapePurchaseSelectDetails,
+        switchTab,
+        toggleSection,
+        switchSubstance,
+        switchStatsSubstance,
+        logOneUse,
+        openUseLogSession,
+        openBuyTrackerModal,
+        undoLastUse,
+        cancelUseEdit
     });
 }
