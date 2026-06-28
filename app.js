@@ -2351,33 +2351,90 @@ function migrateFromV1(v1) {
     };
 }
 
+let appDataLoadedFromStorage = false;
+
+function getDefaultAppData() {
+    return typeof structuredClone === 'function'
+        ? structuredClone(defaultData)
+        : JSON.parse(JSON.stringify(defaultData));
+}
+
+function safeParseStoredJson(raw) {
+    if (raw == null || raw === '') return null;
+    try {
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+        return parsed;
+    } catch (err) {
+        console.error('Failed to parse saved recovery data JSON:', err);
+        return null;
+    }
+}
+
+function loadAutoBackupAppData() {
+    try {
+        const raw = localStorage.getItem(AUTO_BACKUP_KEY);
+        if (!raw) return null;
+        const parsed = safeParseStoredJson(raw);
+        const backupData = parsed?.data;
+        const validation = validateBackupData(backupData);
+        return validation.ok ? backupData : null;
+    } catch (err) {
+        console.error('Failed to read automatic backup:', err);
+        return null;
+    }
+}
+
+function normalizeAppDataSafe(data) {
+    try {
+        return normalizeAppData(data);
+    } catch (err) {
+        console.error('Failed to normalize app data:', err);
+        return data;
+    }
+}
+
+function ensureLoadedDataDefaults(data) {
+    if (!data.substances?.length) data.substances = getDefaultSubstances();
+    if (!data.privacy) data.privacy = { ...defaultData.privacy };
+    if (!data.recoveryStreaks) data.recoveryStreaks = {};
+    return data;
+}
+
 function loadData() {
     const raw = localStorage.getItem(STORAGE_KEY);
-    let data;
+    let data = null;
 
     if (raw) {
-        data = JSON.parse(raw);
-        if (!data.substances?.length) data.substances = getDefaultSubstances();
-        if (!data.privacy) data.privacy = { ...defaultData.privacy };
-        if (!data.recoveryStreaks) data.recoveryStreaks = {};
-    } else {
-        const v1 = localStorage.getItem(STORAGE_KEY_V1);
-        if (v1) {
-            if (raw) {
-                try {
-                    createAutoBackupFromData(JSON.parse(raw), 'before-v1-upgrade');
-                } catch (_) { /* ignore */ }
-            }
-            data = migrateFromV1(JSON.parse(v1));
-            localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-        } else {
-            data = typeof structuredClone === 'function'
-                ? structuredClone(defaultData)
-                : JSON.parse(JSON.stringify(defaultData));
+        data = safeParseStoredJson(raw);
+        if (!data) {
+            console.warn('Saved recovery data is invalid; trying automatic backup');
+            data = loadAutoBackupAppData();
         }
+        if (!data) {
+            throw new Error('Invalid saved recovery data');
+        }
+        appDataLoadedFromStorage = true;
+        console.log('Loaded saved recovery data');
+        ensureLoadedDataDefaults(data);
+        return normalizeAppDataSafe(data);
     }
 
-    return normalizeAppData(data);
+    const v1 = localStorage.getItem(STORAGE_KEY_V1);
+    if (v1) {
+        const v1Data = safeParseStoredJson(v1);
+        if (!v1Data) {
+            throw new Error('Invalid v1 saved recovery data');
+        }
+        data = migrateFromV1(v1Data);
+        appDataLoadedFromStorage = true;
+        console.log('Loaded saved recovery data');
+        ensureLoadedDataDefaults(data);
+        return normalizeAppDataSafe(data);
+    }
+
+    console.log('No saved data found, using defaults');
+    return normalizeAppDataSafe(getDefaultAppData());
 }
 
 function normalizeLegacyRefs(data) {
@@ -4064,10 +4121,23 @@ function normalizeMainSubstances(data) {
 }
 
 function saveData(data) {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
-    const savedAt = new Date().toISOString();
-    localStorage.setItem(LAST_SAVED_KEY, savedAt);
-    updateLastSavedDisplay(savedAt);
+    try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+        const savedAt = new Date().toISOString();
+        localStorage.setItem(LAST_SAVED_KEY, savedAt);
+        updateLastSavedDisplay(savedAt);
+        console.log('Saved recovery data');
+        return true;
+    } catch (err) {
+        console.error('Failed to save recovery data:', err);
+        return false;
+    }
+}
+
+function persistLoadedAppDataIfNeeded() {
+    if (appDataLoadedFromStorage) {
+        saveData(appData);
+    }
 }
 
 function getLastSavedTimestamp() {
@@ -4233,14 +4303,19 @@ let appData;
 try {
     appData = loadData();
 } catch (error) {
-    console.error('Failed to load app data, using defaults:', error);
-    appData = typeof structuredClone === 'function'
-        ? structuredClone(defaultData)
-        : JSON.parse(JSON.stringify(defaultData));
-    try {
-        appData = normalizeAppData(appData);
-    } catch (normalizeError) {
-        console.error('Failed to normalize default app data:', normalizeError);
+    console.error('Failed to load app data:', error);
+    const hasStoredData = !!localStorage.getItem(STORAGE_KEY) || !!localStorage.getItem(STORAGE_KEY_V1);
+    const backup = loadAutoBackupAppData();
+    if (backup) {
+        appDataLoadedFromStorage = true;
+        appData = normalizeAppDataSafe(backup);
+        console.log('Loaded saved recovery data');
+    } else if (hasStoredData) {
+        console.error('Saved data exists but could not be loaded. Defaults shown in memory only — storage was not overwritten.');
+        appData = normalizeAppDataSafe(getDefaultAppData());
+    } else {
+        appData = normalizeAppDataSafe(getDefaultAppData());
+        console.log('No saved data found, using defaults');
     }
 }
 
@@ -4303,6 +4378,7 @@ function initializeApp() {
 
     updateLastSavedDisplay();
     applyCollapsedSections();
+    persistLoadedAppDataIfNeeded();
 
     if (appData.settings?.activeTab) {
         switchTab(appData.settings.activeTab);
@@ -4833,9 +4909,7 @@ function handleSubstanceSubmit(e) {
         }
 
         normalizeMainSubstances(appData);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(appData));
-        const savedAt = new Date().toISOString();
-        localStorage.setItem(LAST_SAVED_KEY, savedAt);
+        saveData(appData);
         console.log('[substance] saved', savedSubstance);
 
         const wasEdit = !!editingSubstanceId;
@@ -12890,12 +12964,19 @@ function snapshotBestStreakBeforeUse(substanceId) {
 }
 
 function refreshAllRecoveryStreaks() {
-    appData.substances.forEach(sub => {
+    let changed = false;
+    (appData.substances || []).forEach(sub => {
         const { days } = computeRecoveryStreakDays(sub.id);
-        if (!appData.recoveryStreaks[sub.id]) appData.recoveryStreaks[sub.id] = { best: 0 };
-        if (days > appData.recoveryStreaks[sub.id].best) appData.recoveryStreaks[sub.id].best = days;
+        if (!appData.recoveryStreaks[sub.id]) {
+            appData.recoveryStreaks[sub.id] = { best: 0 };
+            changed = true;
+        }
+        if (days > appData.recoveryStreaks[sub.id].best) {
+            appData.recoveryStreaks[sub.id].best = days;
+            changed = true;
+        }
     });
-    saveData(appData);
+    if (changed) saveData(appData);
 }
 
 function updateRecoveryStreakDisplay(substanceId) {
@@ -19551,7 +19632,7 @@ function clearAllData() {
     if (!confirm('Clear ALL data? This cannot be undone.')) return;
     if (!confirm('Delete all logs, substances, and settings?')) return;
     createAutoBackup('before-clear');
-    appData = JSON.parse(JSON.stringify(defaultData));
+    appData = getDefaultAppData();
     appData.substances = getDefaultSubstances();
     saveData(appData);
     refreshAppAfterDataChange();
