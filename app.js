@@ -3875,7 +3875,7 @@ const TABLE_COLUMN_DEFAULTS = {
         }
     },
     buyMonthly: {
-        order: ['startMonth', 'endMonth', 'purchased', 'cost', 'costPerUnit', 'gPerDay', 'supplyDuration'],
+        order: ['startMonth', 'endMonth', 'purchased', 'cost', 'costPerUnit', 'runningCostTotal', 'gPerDay', 'supplyDuration'],
         hidden: [],
         widths: {
             startMonth: 110,
@@ -3883,6 +3883,7 @@ const TABLE_COLUMN_DEFAULTS = {
             purchased: 110,
             cost: 90,
             costPerUnit: 100,
+            runningCostTotal: 130,
             gPerDay: 90,
             supplyDuration: 120
         }
@@ -4013,6 +4014,7 @@ const TABLE_COLUMN_LABELS = {
         purchased: 'Purchased',
         cost: 'Cost',
         costPerUnit: 'Cost/g',
+        runningCostTotal: 'Running Cost Total',
         gPerDay: 'g/day',
         supplyDuration: 'Supply Duration'
     },
@@ -15747,8 +15749,7 @@ function formatBuyInsightsMonthLabel(monthStart) {
 }
 
 function getBuyWeeklySummaries(substanceId, limit = 8) {
-    const purchases = (appData.purchases || [])
-        .filter(p => getPurchaseSubstanceId(p) === substanceId);
+    const purchases = getPurchasesForInsightMetrics(substanceId);
     if (!purchases.length) return [];
     const baseRows = buildMonthSplitWeeklyRows(
         purchases,
@@ -15779,45 +15780,64 @@ function getBuyWeeklySummaries(substanceId, limit = 8) {
     });
 }
 
-function getBuyMonthlySummaries(substanceId, limit = 12) {
-    const purchases = (appData.purchases || [])
-        .filter(p => getPurchaseSubstanceId(p) === substanceId);
+function getBuyMonthSummaryCutoffDate(limitMonths = 12) {
+    const today = getLocalDateString();
+    const [year, month] = today.split('-').map(Number);
+    let targetMonth = month - limitMonths;
+    let targetYear = year;
+    while (targetMonth <= 0) {
+        targetMonth += 12;
+        targetYear -= 1;
+    }
+    return `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
+}
+
+function getBuyMonthSummaryRows(substanceId, limitMonths = 12, data = appData) {
+    const purchases = getPurchasesForInsightMetrics(substanceId, data);
     if (!purchases.length) return [];
 
-    const monthSet = new Set();
-    purchases.forEach(p => {
-        if (p.date) monthSet.add(p.date.slice(0, 7));
-    });
-
-    const months = [...monthSet].sort().reverse().slice(0, limit);
-    const sub = getSubstance(substanceId);
+    const sub = getSubstance(substanceId, data);
     const unit = sub?.defaultUnit || 'units';
     const cur = getCurrencySymbol();
+    const cutoffDate = getBuyMonthSummaryCutoffDate(limitMonths);
 
-    return months.map(monthKey => {
-        const [yearStr, monthStr] = monthKey.split('-');
-        const year = parseInt(yearStr, 10);
-        const monthIndex = parseInt(monthStr, 10) - 1;
-        const { monthStart, monthEnd } = getTaperCalendarMonthBounds(year, monthIndex);
-        const monthPurchases = purchases.filter(p => p.date >= monthStart && p.date <= monthEnd);
-        const purchased = monthPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
-        const cost = monthPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
-        const costPerUnit = purchased > 0 ? cost / purchased : null;
+    const dateSet = new Set();
+    purchases.forEach(purchase => {
+        const dateStr = getPurchaseDateStr(purchase);
+        if (dateStr && dateStr >= cutoffDate) dateSet.add(dateStr);
+    });
 
+    const dates = [...dateSet].sort();
+    let monthRunningCost = 0;
+    let currentMonthKey = null;
+
+    return dates.map(dateStr => {
+        const monthKey = dateStr.slice(0, 7);
+        if (monthKey !== currentMonthKey) {
+            currentMonthKey = monthKey;
+            monthRunningCost = 0;
+        }
+        const dayPurchases = purchases.filter(p => getPurchaseDateStr(p) === dateStr);
+        const purchased = dayPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
+        const cost = dayPurchases.reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
+        monthRunningCost += cost;
         return {
-            monthStart,
-            monthEnd,
-            monthLabel: formatBuyInsightsMonthLabel(monthStart),
+            monthLabel: formatBuyInsightsMonthLabel(dateStr),
+            rowLabel: formatDate(dateStr),
+            dateStr,
             purchased,
             cost,
-            costPerUnit,
-            purchaseCount: monthPurchases.length,
-            avgSupplyDurationDays: avgPurchaseSupplyDurationDays(monthPurchases),
-            avgBreakHours: avgPurchaseBreakHours(monthPurchases),
+            costPerUnit: purchased > 0 ? cost / purchased : null,
+            runningCostTotal: monthRunningCost,
+            purchaseCount: dayPurchases.length,
             unit,
             cur
         };
-    });
+    }).slice().reverse();
+}
+
+function getBuyMonthlySummaries(substanceId, limit = 12) {
+    return getBuyMonthSummaryRows(substanceId, limit);
 }
 
 function renderStatsSummaryDashboard(substanceId, useStats, bounds, unit, cur) {
@@ -16264,7 +16284,7 @@ function renderStatsBuyMonthSummary(substanceId) {
         container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
         return;
     }
-    const summaries = getBuyMonthlySummaries(substanceId);
+    const summaries = getBuyMonthSummaryRows(substanceId);
     if (!summaries.length) {
         container.innerHTML = '<p class="empty-hint">No purchases yet.</p>';
         return;
@@ -16272,16 +16292,51 @@ function renderStatsBuyMonthSummary(substanceId) {
     const sub = getSubstance(substanceId);
     const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : (sub?.defaultUnit || 'units');
     container.innerHTML = renderSheetTable(
-        ['Month', 'Purchased', 'Cost', 'Avg Cost/g', 'Purchases', 'Avg Supply Duration', 'Avg Break Between Buys'],
+        ['Month', 'Purchased', 'Cost', 'Avg Cost/unit', 'Running Cost Total'],
         summaries.map(s => [
-            s.monthLabel,
+            s.rowLabel,
             s.purchased > 0 ? fmtSheetAmount(s.purchased, displayUnit) : '—',
             fmtSheetMoney(s.cost, s.cur),
             s.costPerUnit != null ? fmtAvgCostPerGram(s.cost, s.purchased, displayUnit, s.cur) : '—',
-            s.purchaseCount > 0 ? String(s.purchaseCount) : '—',
-            formatSupplyDurationDays(s.avgSupplyDurationDays),
-            s.avgBreakHours != null ? formatBuyBreakFromHours(s.avgBreakHours) : '—'
+            fmtSheetMoney(s.runningCostTotal, s.cur)
         ])
+    );
+}
+
+function exportStatsBuyMonthSummaryCsv() {
+    const substanceId = isAllSubstancesView() ? null : currentSubstanceId;
+    if (!substanceId) {
+        alert('Select a specific substance to export Spending & Purchases.');
+        return;
+    }
+    const sub = getSubstance(substanceId);
+    if (!sub) {
+        alert('Select a substance to export.');
+        return;
+    }
+    const rows = getBuyMonthSummaryRows(substanceId);
+    if (!rows.length) {
+        alert('No purchase data to export.');
+        return;
+    }
+    const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : (sub.defaultUnit || 'units');
+    const substanceName = getSubstanceDisplayName(sub);
+    const headers = ['Month', 'Purchased', 'Unit', 'Cost', 'Avg Cost/unit', 'Running Cost Total'];
+    const csvRows = [headers.map(csvEscape).join(',')];
+    rows.slice().reverse().forEach(row => {
+        csvRows.push([
+            row.rowLabel,
+            row.purchased > 0 ? row.purchased : '',
+            displayUnit,
+            Number.isFinite(row.cost) ? row.cost.toFixed(2) : '0.00',
+            row.costPerUnit != null && Number.isFinite(row.costPerUnit) ? row.costPerUnit.toFixed(4) : '',
+            Number.isFinite(row.runningCostTotal) ? row.runningCostTotal.toFixed(2) : '0.00'
+        ].map(csvEscape).join(','));
+    });
+    const safeName = substanceName.replace(/[^\w.-]+/g, '_');
+    downloadBlob(
+        new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8' }),
+        `recovery-tracker-spending-month-summary-${safeName}-${getLocalDateString()}.csv`
     );
 }
 
@@ -17347,6 +17402,7 @@ function setupStatsCalendarControls() {
 
     document.getElementById('stats-calendar-today-btn')?.addEventListener('click', goStatsCalendarToday);
     document.getElementById('stats-calendar-export-btn')?.addEventListener('click', exportStatsCalendarCsv);
+    document.getElementById('stats-buy-month-export-btn')?.addEventListener('click', exportStatsBuyMonthSummaryCsv);
 
     document.getElementById('stats-cal-compact')?.addEventListener('change', (e) => {
         statsCalendarCompact = e.target.checked;
