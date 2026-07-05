@@ -873,51 +873,88 @@ function ensureNicotineSubstanceRecord(data) {
     return nicotine;
 }
 
+function assignNicotineProductType(record, legacyId, data = appData) {
+    if (!record || record.nicotineProductType) return;
+    if (legacyId === VAPE_NICOTINE_ID || getSubstanceTrackingMode(legacyId, data) === 'vape') {
+        record.nicotineProductType = 'vape';
+    } else if (legacyId === LEGACY_CIGARETTES_ID || getSubstanceTrackingMode(legacyId, data) === 'cigarettes') {
+        record.nicotineProductType = 'cigarettes';
+    } else if (isVapePuffUnit(record.unit) || record.fullPuffCount != null || record.percentBoughtAt != null) {
+        record.nicotineProductType = 'vape';
+    } else if ((record.unit || '').toLowerCase().includes('cigarette') || record.cigarettesPerPack != null) {
+        record.nicotineProductType = 'cigarettes';
+    } else if ((record.unit || '').toLowerCase().includes('pouch')) {
+        record.nicotineProductType = 'pouches';
+    } else if ((record.unit || '').toLowerCase().includes('piece') || (record.unit || '').toLowerCase().includes('gum')) {
+        record.nicotineProductType = 'gum';
+    } else if ((record.unit || '').toLowerCase().includes('patch')) {
+        record.nicotineProductType = 'patches';
+    }
+}
+
+function isLegacyNicotineDataRef(substanceId, data = appData) {
+    if (!substanceId) return false;
+    if (isLegacyNicotineSubstanceId(substanceId)) return true;
+    const mode = getSubstanceTrackingMode(substanceId, data);
+    return mode === 'vape' || mode === 'cigarettes';
+}
+
+function migrateNicotineRecordToUnified(record, getSubstanceIdFn, data = appData) {
+    if (!record) return;
+    const sid = getSubstanceIdFn(record);
+    if (!isLegacyNicotineDataRef(sid, data)) return;
+    assignNicotineProductType(record, sid, data);
+    record.substanceId = NICOTINE_ID;
+    record.trackingMode = 'nicotine';
+}
+
+function repairNicotineUnifiedData(data) {
+    if (!data) return;
+    ensureAppDataSettings(data);
+
+    (data.logs || []).forEach(log => migrateNicotineRecordToUnified(log, getUseSubstanceId, data));
+    (data.purchases || []).forEach(purchase => migrateNicotineRecordToUnified(purchase, getPurchaseSubstanceId, data));
+
+    (data.logs || []).forEach(log => {
+        const resolved = normalizeSubstanceRef(getUseSubstanceId(log), data);
+        if (resolved) log.substanceId = resolved;
+    });
+    (data.purchases || []).forEach(purchase => {
+        const resolved = normalizeSubstanceRef(getPurchaseSubstanceId(purchase), data);
+        if (resolved) purchase.substanceId = resolved;
+    });
+
+    reassignSubstanceIdInData(data, VAPE_NICOTINE_ID, NICOTINE_ID);
+    reassignSubstanceIdInData(data, LEGACY_CIGARETTES_ID, NICOTINE_ID);
+
+    const settings = data.settings.substanceSettings || {};
+    if (settings[VAPE_NICOTINE_ID] || settings[LEGACY_CIGARETTES_ID]) {
+        if (!settings[NICOTINE_ID]) {
+            settings[NICOTINE_ID] = {
+                ...(settings[VAPE_NICOTINE_ID] || settings[LEGACY_CIGARETTES_ID] || getDefaultSubstanceSettings()[NICOTINE_ID] || {})
+            };
+        }
+        delete settings[VAPE_NICOTINE_ID];
+        delete settings[LEGACY_CIGARETTES_ID];
+        data.settings.substanceSettings = settings;
+    }
+
+    if (data.settings?.dashboardSubstanceId && isLegacyNicotineSubstanceId(data.settings.dashboardSubstanceId)) {
+        data.settings.dashboardSubstanceId = NICOTINE_ID;
+    }
+
+    ensureNicotineSubstanceRecord(data);
+    normalizeMainSubstances(data);
+}
+
 function migrateNicotineUnifyV1(data) {
     if (data.migrations?.nicotineUnifyV1) return;
     ensureAppDataSettings(data);
 
     ensureNicotineSubstanceRecord(data);
-    const assignProductType = (record, legacyId) => {
-        if (!record || record.nicotineProductType) return;
-        if (legacyId === VAPE_NICOTINE_ID || getSubstanceTrackingMode(legacyId, data) === 'vape') {
-            record.nicotineProductType = 'vape';
-        } else if (legacyId === LEGACY_CIGARETTES_ID || getSubstanceTrackingMode(legacyId, data) === 'cigarettes') {
-            record.nicotineProductType = 'cigarettes';
-        } else if (isVapePuffUnit(record.unit) || record.fullPuffCount != null || record.percentBoughtAt != null) {
-            record.nicotineProductType = 'vape';
-        } else if ((record.unit || '').toLowerCase().includes('cigarette') || record.cigarettesPerPack != null) {
-            record.nicotineProductType = 'cigarettes';
-        } else if ((record.unit || '').toLowerCase().includes('pouch')) {
-            record.nicotineProductType = 'pouches';
-        } else if ((record.unit || '').toLowerCase().includes('piece') || (record.unit || '').toLowerCase().includes('gum')) {
-            record.nicotineProductType = 'gum';
-        } else if ((record.unit || '').toLowerCase().includes('patch')) {
-            record.nicotineProductType = 'patches';
-        }
-    };
 
-    (data.logs || []).forEach(log => {
-        const sid = getUseSubstanceId(log);
-        if (sid === VAPE_NICOTINE_ID || sid === LEGACY_CIGARETTES_ID
-            || getSubstanceTrackingMode(sid, data) === 'vape'
-            || getSubstanceTrackingMode(sid, data) === 'cigarettes') {
-            assignProductType(log, sid);
-            log.substanceId = NICOTINE_ID;
-            log.trackingMode = 'nicotine';
-        }
-    });
-
-    (data.purchases || []).forEach(purchase => {
-        const sid = getPurchaseSubstanceId(purchase);
-        if (sid === VAPE_NICOTINE_ID || sid === LEGACY_CIGARETTES_ID
-            || getSubstanceTrackingMode(sid, data) === 'vape'
-            || getSubstanceTrackingMode(sid, data) === 'cigarettes') {
-            assignProductType(purchase, sid);
-            purchase.substanceId = NICOTINE_ID;
-            purchase.trackingMode = 'nicotine';
-        }
-    });
+    (data.logs || []).forEach(log => migrateNicotineRecordToUnified(log, getUseSubstanceId, data));
+    (data.purchases || []).forEach(purchase => migrateNicotineRecordToUnified(purchase, getPurchaseSubstanceId, data));
 
     reassignSubstanceIdInData(data, VAPE_NICOTINE_ID, NICOTINE_ID);
     reassignSubstanceIdInData(data, LEGACY_CIGARETTES_ID, NICOTINE_ID);
@@ -1592,7 +1629,7 @@ function purchaseMatchesInventoryFilters(purchase, filters = inventoryListFilter
 function getInventoryFilteredPurchases(substanceId, data = appData) {
     let list = [...(data.purchases || [])];
     if (substanceId && substanceId !== DASHBOARD_ALL) {
-        list = list.filter(p => getPurchaseSubstanceId(p) === substanceId);
+        list = list.filter(p => purchaseMatchesSubstance(p, substanceId, data));
     }
     if (inventoryTabFilter !== 'all') {
         list = list.filter(p => getPurchaseInventoryTab(p) === inventoryTabFilter);
@@ -1787,7 +1824,7 @@ function syncInventorySubstanceFilterState() {
 function getFilteredPurchases(purchases, selectedSubstanceId, selectedStatus = null, data = appData) {
     let list = [...(purchases || [])];
     if (!isInventoryAllSubstancesFilter(selectedSubstanceId)) {
-        list = list.filter(p => getPurchaseSubstanceId(p) === selectedSubstanceId);
+        list = list.filter(p => purchaseMatchesSubstance(p, selectedSubstanceId, data));
     }
     if (selectedStatus) {
         list = list.filter(p => getPurchaseInventoryTab(p) === selectedStatus);
@@ -1810,7 +1847,7 @@ function getInventoryPurchaseEstimatedValue(purchase, data = appData) {
 function getInventoryPurchasesForStatusView(substanceId, data = appData) {
     let list = [...(data.purchases || [])];
     if (substanceId && substanceId !== DASHBOARD_ALL) {
-        list = list.filter(p => getPurchaseSubstanceId(p) === substanceId);
+        list = list.filter(p => purchaseMatchesSubstance(p, substanceId, data));
     }
     if (inventoryTabFilter !== 'all') {
         list = list.filter(p => getPurchaseInventoryTab(p) === inventoryTabFilter);
@@ -2203,8 +2240,8 @@ function populatePageSubstanceSelect(selectId, { includeAll = false, substances 
     const fallback = includeAll
         ? (subs[0]?.id || DASHBOARD_ALL)
         : (subs[0]?.id || '');
-    const target = [...dropdown.options].some(o => o.value === selectedSubstanceId)
-        ? selectedSubstanceId
+    const target = [...dropdown.options].some(o => o.value === resolveSelectedSubstanceId(selectedSubstanceId))
+        ? resolveSelectedSubstanceId(selectedSubstanceId)
         : fallback;
     if (target && [...dropdown.options].some(o => o.value === target)) {
         dropdown.value = target;
@@ -2212,31 +2249,38 @@ function populatePageSubstanceSelect(selectId, { includeAll = false, substances 
 }
 
 function syncPageSubstanceSelectors(skipId = null) {
+    const resolvedSelected = resolveSelectedSubstanceId(selectedSubstanceId);
     if (skipId !== 'use-log-substance') {
         const el = document.getElementById('use-log-substance');
-        if (el && [...el.options].some(o => o.value === selectedSubstanceId)) el.value = selectedSubstanceId;
+        if (el && [...el.options].some(o => o.value === resolvedSelected)) el.value = resolvedSelected;
     }
     if (skipId !== 'inventory-substance') {
         const el = document.getElementById('inventory-substance');
-        if (el && [...el.options].some(o => o.value === selectedSubstanceId)) el.value = selectedSubstanceId;
+        if (el && [...el.options].some(o => o.value === resolvedSelected)) el.value = resolvedSelected;
     }
     if (skipId !== 'taper-substance') {
         const taperEl = document.getElementById('taper-substance');
-        if (taperEl && [...taperEl.options].some(o => o.value === selectedSubstanceId)) {
-            taperEl.value = selectedSubstanceId;
+        if (taperEl && [...taperEl.options].some(o => o.value === resolvedSelected)) {
+            taperEl.value = resolvedSelected;
         }
     }
     syncInventorySubstanceFilterState();
 }
 
+function resolveSelectedSubstanceId(id, data = appData) {
+    if (!id || id === DASHBOARD_ALL) return id || DASHBOARD_ALL;
+    return normalizeNicotineSubstanceRef(id, data) || normalizeSubstanceRef(id, data) || id;
+}
+
 function ensureSelectedSubstanceIdValid() {
+    selectedSubstanceId = resolveSelectedSubstanceId(selectedSubstanceId);
     if (isSelectedAllSubstances()) return;
     if (getActiveSubstances().some(s => s.id === selectedSubstanceId)) return;
     selectedSubstanceId = resolveDefaultSelectedSubstanceId();
 }
 
 function setSelectedSubstanceId(id, { source = null, refresh = true } = {}) {
-    selectedSubstanceId = id || DASHBOARD_ALL;
+    selectedSubstanceId = resolveSelectedSubstanceId(id || DASHBOARD_ALL);
     ensureSelectedSubstanceIdValid();
     syncPageSubstanceSelectors(source);
     syncUseLogFormFromSelectedSubstance();
@@ -3586,6 +3630,7 @@ function normalizeAppData(data) {
     migrateLsdInventoryV1(data);
     migrateNicotineUnifyV1(data);
     migrateNicotineSubstanceRecordsV2(data);
+    repairNicotineUnifiedData(data);
     migrateVapePercentSpreadV1(data);
     migrateInventoryStatusFields(data);
     repairDataConsistency(data);
@@ -5057,7 +5102,7 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
         case 'date':
             return phTd('date', formatDate(purchase.date || ''));
         case 'substance':
-            return phTd('substance', `${sub?.icon || ''} ${sub?.name || 'Unknown'}`);
+            return phTd('substance', `${sub?.icon || ''} ${getSubstanceDisplayName(sub)}`);
         case 'bought':
             if (isVapePuffPurchase(purchase)) {
                 return renderPurchaseVapeBoughtCell(purchase);
@@ -5137,21 +5182,24 @@ function normalizeMainSubstances(data) {
     data.substances.forEach(s => {
         if (s.isMain === undefined) s.isMain = false;
     });
-    const active = data.substances.filter(isSubstanceActive);
+    const active = data.substances.filter(s => isSubstanceActive(s) && !isLegacyNicotineSubstanceId(s.id));
     if (!active.length) {
         data.substances.forEach(s => { s.isMain = false; });
         return;
     }
     let main = active.find(s => s.isMain);
+    if (main && isLegacyNicotineSubstanceId(main.id)) {
+        main = active.find(s => s.id === NICOTINE_ID) || active[0];
+    }
     if (!main) {
         main = active.find(s => s.id === DEFAULT_MAIN_SUBSTANCE_ID)
+            || active.find(s => s.id === NICOTINE_ID)
             || findSubstanceByNormalizedName(active, 'Nicotine')
-            || findSubstanceByNormalizedName(active, 'Vape/Nicotine')
             || active[0];
         main.isMain = true;
     }
     data.substances.forEach(s => {
-        s.isMain = isSubstanceActive(s) && s.id === main.id;
+        s.isMain = isSubstanceActive(s) && !isLegacyNicotineSubstanceId(s.id) && s.id === main.id;
     });
 }
 
@@ -5309,7 +5357,7 @@ function resolveStartupSubstanceId() {
 function resolveDefaultSelectedSubstanceId() {
     ensureAppDataSubstancesReady(appData);
     if (!appData?.substances?.length) return DASHBOARD_ALL;
-    const mainId = getMainSubstanceId();
+    const mainId = resolveSelectedSubstanceId(getMainSubstanceId());
     if (mainId && substanceIsDashboardViewOption(mainId)) return mainId;
     return getActiveSubstances()[0]?.id || appData.substances[0]?.id || DASHBOARD_ALL;
 }
@@ -5500,7 +5548,7 @@ function resolveDashboardViewSubstanceId(data = appData) {
     const saved = data.settings?.dashboardSubstanceId;
     if (saved === DASHBOARD_ALL) return DASHBOARD_ALL;
     if (saved && substanceIsDashboardViewOption(saved, data)) {
-        return normalizeSubstanceRef(saved, data) || saved;
+        return resolveSelectedSubstanceId(saved, data) || saved;
     }
 
     const active = getActiveSubstances(data);
@@ -5556,7 +5604,9 @@ function ensureDashboardSubstanceDropdownReady() {
 }
 
 function getActiveSubstances(data = appData) {
-    return sortSubstancesMainFirst((data.substances || []).filter(isSubstanceActive));
+    return sortSubstancesMainFirst(
+        (data.substances || []).filter(s => isSubstanceActive(s) && !isLegacyNicotineSubstanceId(s.id))
+    );
 }
 
 function setMainSubstance(id) {
@@ -5668,8 +5718,8 @@ function populateAllSubstanceDropdowns() {
 
     populateSelect('dashboard-substance', active, { includeAll: true, currentValue: viewDefault });
     populateSelect('stats-substance', active, { includeAll: true, currentValue: viewDefault });
-    populateSelect('use-substance', getLoggableSubstances(), { currentValue: isSelectedAllSubstances() ? getMainSubstanceId() : selectedSubstanceId });
-    populateSelect('buy-substance', active, { currentValue: isSelectedAllSubstances() ? mainId : selectedSubstanceId });
+    populateSelect('use-substance', getLoggableSubstances(), { currentValue: resolveSelectedSubstanceId(isSelectedAllSubstances() ? getMainSubstanceId() : selectedSubstanceId) });
+    populateSelect('buy-substance', active, { currentValue: resolveSelectedSubstanceId(isSelectedAllSubstances() ? mainId : selectedSubstanceId) });
     populatePageSubstanceDropdowns();
     populateTaperReductionTypeSelect(getTaperSubstanceId());
     updateUseUnitDropdown();
