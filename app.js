@@ -789,25 +789,53 @@ function migrateLsdInventoryV1(data) {
     data.migrations.lsdInventoryV1 = true;
 }
 
-function migrateNicotineUnifyV1(data) {
-    if (data.migrations?.nicotineUnifyV1) return;
-    ensureDefaultSubstances(data);
-    ensureAppDataSettings(data);
+function isLegacyNicotineSubstanceId(substanceId) {
+    return substanceId === VAPE_NICOTINE_ID || substanceId === LEGACY_CIGARETTES_ID;
+}
 
-    const nicotineSub = data.substances.find(s => s.id === NICOTINE_ID)
-        || findSubstanceByNormalizedName(data.substances, 'Nicotine');
-    if (!nicotineSub) {
-        data.substances.unshift(createSubstance({
+function ensureNicotineSubstanceRecord(data) {
+    if (!Array.isArray(data.substances)) data.substances = [];
+    const vapeLegacy = data.substances.find(s => s.id === VAPE_NICOTINE_ID);
+    const cigsLegacy = data.substances.find(s => s.id === LEGACY_CIGARETTES_ID);
+    let nicotine = data.substances.find(s => s.id === NICOTINE_ID);
+    const inheritMain = !!(vapeLegacy?.isMain || cigsLegacy?.isMain);
+
+    if (!nicotine) {
+        nicotine = createSubstance({
             ...DEFAULT_SUBSTANCE_CATALOG[0],
-            isMain: true
-        }));
+            isMain: inheritMain,
+            active: true
+        });
+        data.substances.unshift(nicotine);
     } else {
-        nicotineSub.name = nicotineSub.name || 'Nicotine';
-        nicotineSub.icon = nicotineSub.icon || '💨';
-        nicotineSub.trackingMode = 'nicotine';
-        nicotineSub.active = nicotineSub.active !== false;
+        nicotine.name = 'Nicotine';
+        nicotine.icon = nicotine.icon || '💨';
+        nicotine.trackingMode = 'nicotine';
+        nicotine.active = true;
+        nicotine.primaryUnit = nicotine.primaryUnit || 'puffs';
+        nicotine.units = nicotine.units || ['puffs', 'cigarettes', 'pouches', 'pieces', 'patches'];
+        nicotine.defaultUnit = nicotine.defaultUnit || 'puffs';
+        nicotine.costTrackingEnabled = nicotine.costTrackingEnabled !== false;
+        nicotine.taperTrackingEnabled = nicotine.taperTrackingEnabled !== false;
+        if (inheritMain) nicotine.isMain = true;
     }
 
+    [vapeLegacy, cigsLegacy].forEach(legacy => {
+        if (!legacy) return;
+        legacy.active = false;
+        legacy.isMain = false;
+        legacy.archived = true;
+    });
+
+    normalizeMainSubstances(data);
+    return nicotine;
+}
+
+function migrateNicotineUnifyV1(data) {
+    if (data.migrations?.nicotineUnifyV1) return;
+    ensureAppDataSettings(data);
+
+    ensureNicotineSubstanceRecord(data);
     const assignProductType = (record, legacyId) => {
         if (!record || record.nicotineProductType) return;
         if (legacyId === VAPE_NICOTINE_ID || getSubstanceTrackingMode(legacyId, data) === 'vape') {
@@ -862,20 +890,26 @@ function migrateNicotineUnifyV1(data) {
     delete settings[LEGACY_CIGARETTES_ID];
     data.settings.substanceSettings = settings;
 
-    data.substances.forEach(sub => {
-        if (sub.id === VAPE_NICOTINE_ID || sub.id === LEGACY_CIGARETTES_ID) {
-            sub.active = false;
-            sub.isMain = false;
-        }
-    });
-
-    const nicotine = data.substances.find(s => s.id === NICOTINE_ID);
-    if (nicotine && !data.substances.some(s => s.isMain && s.active !== false)) {
-        nicotine.isMain = true;
-    }
+    ensureNicotineSubstanceRecord(data);
 
     if (!data.migrations) data.migrations = {};
     data.migrations.nicotineUnifyV1 = true;
+}
+
+function migrateNicotineSubstanceRecordsV2(data) {
+    if (data.migrations?.nicotineSubstanceRecordsV2) return;
+    const vapeLegacy = data.substances?.find(s => s.id === VAPE_NICOTINE_ID);
+    const cigsLegacy = data.substances?.find(s => s.id === LEGACY_CIGARETTES_ID);
+    const needsRepair = (vapeLegacy && vapeLegacy.active !== false)
+        || (cigsLegacy && cigsLegacy.active !== false)
+        || !data.substances?.some(s => s.id === NICOTINE_ID && s.active !== false);
+    if (!needsRepair && data.migrations?.nicotineUnifyV1) {
+        data.migrations.nicotineSubstanceRecordsV2 = true;
+        return;
+    }
+    ensureNicotineSubstanceRecord(data);
+    if (!data.migrations) data.migrations = {};
+    data.migrations.nicotineSubstanceRecordsV2 = true;
 }
 
 function isVapeTaperSubstanceId(substanceId, data = appData) {
@@ -2625,9 +2659,14 @@ function ensureDefaultSubstances(data) {
 
     const defaults = getDefaultSubstances();
     defaults.forEach(def => {
-        const existsById = data.substances.some(s => s.id === def.id);
+        if (data.substances.some(s => s.id === def.id)) return;
+        if (def.id === NICOTINE_ID) {
+            // Legacy vape-nicotine / cigarettes share normalized names — add nicotine by id only.
+            data.substances.push(createSubstance({ ...def, isMain: false }));
+            return;
+        }
         const existsByName = findSubstanceByNormalizedName(data.substances, def.name);
-        if (existsById || existsByName) return;
+        if (existsByName) return;
         data.substances.push(createSubstance({ ...def, isMain: false }));
     });
 
@@ -3504,6 +3543,7 @@ function normalizeAppData(data) {
     repairVapeInventoryLinks(data);
     migrateLsdInventoryV1(data);
     migrateNicotineUnifyV1(data);
+    migrateNicotineSubstanceRecordsV2(data);
     migrateVapePercentSpreadV1(data);
     migrateInventoryStatusFields(data);
     repairDataConsistency(data);
@@ -5369,7 +5409,13 @@ function refreshAppAfterDataChange() {
 function getSubstance(id, data = appData) {
     if (!id) return null;
     const substances = data?.substances || [];
-    return substances.find(s => s.id === id || s.name === id) || null;
+    const resolvedId = normalizeSubstanceRef(id, data);
+    if (isLegacyNicotineSubstanceId(id) || isLegacyNicotineSubstanceId(resolvedId)) {
+        return substances.find(s => s.id === NICOTINE_ID)
+            || substances.find(s => s.id === id || s.name === id)
+            || null;
+    }
+    return substances.find(s => s.id === id || s.id === resolvedId || s.name === id) || null;
 }
 
 function getSubstanceName(id) {
@@ -5710,7 +5756,9 @@ function renderSubstancesList() {
     if (!container) return;
     container.innerHTML = '';
 
-    const sorted = sortSubstancesMainFirst(appData.substances);
+    const sorted = sortSubstancesMainFirst(
+        appData.substances.filter(s => !isLegacyNicotineSubstanceId(s.id))
+    );
 
     if (sorted.length === 0) {
         container.innerHTML = '<p class="empty-hint">No substances yet. Add one below.</p>';
