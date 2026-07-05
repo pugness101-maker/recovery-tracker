@@ -181,9 +181,60 @@ function getNicotineProductType(record, data = appData) {
     if (!record) return null;
     const explicit = normalizeNicotineProductType(record.nicotineProductType);
     if (explicit) return explicit;
+    if (record.cigarettesUsed != null || record.logMode === 'nicotine_cigarettes') return 'cigarettes';
+    if (record.pouchesUsed != null || record.logMode === 'nicotine_pouches') return 'pouches';
+    if (record.piecesUsed != null || record.logMode === 'nicotine_gum') return 'gum';
+    if (record.patchesUsed != null || record.logMode === 'nicotine_patches') return 'patches';
+    const unit = (record.unit || '').toLowerCase();
+    if (unit === 'cigarettes' || unit === 'cigarette') return 'cigarettes';
+    if (unit === 'pouches' || unit === 'pouch') return 'pouches';
+    if (unit === 'pieces' || unit === 'piece') return 'gum';
+    if (unit === 'patches' || unit === 'patch') return 'patches';
+    if (isVapePuffUnit(record.unit) || record.logMode === 'vape_puffs' || record.logMode === 'percent_remaining') {
+        return 'vape';
+    }
     const substanceId = record.substanceId || record.substance
         || (record.unit != null ? getPurchaseSubstanceId(record) : getUseSubstanceId(record));
     return inferNicotineProductTypeFromSubstanceId(substanceId, data) || 'vape';
+}
+
+function normalizeNicotineSubstanceRef(substanceId, data = appData) {
+    if (!substanceId) return '';
+    const resolved = normalizeSubstanceRef(substanceId, data);
+    return isNicotineSubstanceId(resolved, data) ? NICOTINE_ID : resolved;
+}
+
+function resolveNicotineFormProductType(substanceId) {
+    if (!isNicotineTrackingMode(substanceId)) return null;
+    const resolved = normalizeNicotineSubstanceRef(substanceId);
+    const useSub = document.getElementById('use-substance')?.value;
+    if (useSub && normalizeNicotineSubstanceRef(useSub) === resolved) {
+        return getUseFormNicotineProductType();
+    }
+    const buySub = document.getElementById('buy-substance')?.value;
+    if (buySub && normalizeNicotineSubstanceRef(buySub) === resolved) {
+        return getBuyFormNicotineProductType();
+    }
+    const useTypeEl = document.getElementById('use-nicotine-product-type');
+    if (useTypeEl && !document.getElementById('use-nicotine-product-type-group')?.classList.contains('hidden')) {
+        return getUseFormNicotineProductType();
+    }
+    return null;
+}
+
+function isNicotineVapeFormContext(substanceId, payload = null) {
+    if (!isNicotineTrackingMode(substanceId)) {
+        return isVapeTrackingMode(substanceId);
+    }
+    const pt = payload?.nicotineProductType || resolveNicotineFormProductType(substanceId);
+    if (pt) return pt === 'vape';
+    return inferNicotineProductTypeFromSubstanceId(substanceId) === 'vape';
+}
+
+function isNicotineNonVapeFormContext(substanceId, payload = null) {
+    if (!isNicotineTrackingMode(substanceId)) return false;
+    const pt = payload?.nicotineProductType || resolveNicotineFormProductType(substanceId);
+    return !!pt && pt !== 'vape' && pt !== 'other';
 }
 
 function getNicotineProductTypeLabel(type) {
@@ -196,15 +247,6 @@ function getBuyFormNicotineProductType() {
 
 function getUseFormNicotineProductType() {
     return normalizeNicotineProductType(document.getElementById('use-nicotine-product-type')?.value) || 'vape';
-}
-
-function resolveNicotineFormProductType(substanceId) {
-    if (!isNicotineTrackingMode(substanceId)) return null;
-    const buySub = document.getElementById('buy-substance')?.value;
-    const useSub = document.getElementById('use-substance')?.value;
-    if (buySub === substanceId) return getBuyFormNicotineProductType();
-    if (useSub === substanceId) return getUseFormNicotineProductType();
-    return 'vape';
 }
 
 function isNicotineVapeProduct(record, data = appData) {
@@ -7725,7 +7767,8 @@ function getUseCreatedAt(entry) {
 }
 
 function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = null) {
-    const substanceId = document.getElementById('use-substance')?.value;
+    const rawSubstanceId = document.getElementById('use-substance')?.value;
+    const substanceId = isNicotineTrackingMode(rawSubstanceId) ? NICOTINE_ID : rawSubstanceId;
     const isNicotine = isNicotineTrackingMode(substanceId);
     const nicotineProductType = isNicotine ? getUseFormNicotineProductType() : null;
     const isVapeDateOnly = isNicotine ? nicotineProductType === 'vape' : isVapeTrackingMode(substanceId);
@@ -8303,13 +8346,25 @@ function findPurchase(id, data = appData) {
 }
 
 function getActivePurchasesForSubstance(substanceId) {
+    const resolved = normalizeNicotineSubstanceRef(substanceId);
     return (appData.purchases || [])
-        .filter(p => getPurchaseSubstanceId(p) === substanceId && !p.isDepleted && getPurchaseRemainingAmount(p) > 0)
+        .filter(p => {
+            const pid = getPurchaseSubstanceId(p);
+            return (pid === substanceId || normalizeNicotineSubstanceRef(pid) === resolved)
+                && !p.isDepleted && getPurchaseRemainingAmount(p) > 0;
+        })
         .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
 }
 
-function getOldestActivePurchase(substanceId) {
-    const active = getActivePurchasesForSubstance(substanceId);
+function getActivePurchasesForNicotineProductType(substanceId, productType, data = appData) {
+    return getActivePurchasesForSubstance(substanceId)
+        .filter(p => getNicotineProductType(p, data) === productType);
+}
+
+function getOldestActivePurchase(substanceId, productType = null) {
+    const active = productType
+        ? getActivePurchasesForNicotineProductType(substanceId, productType)
+        : getActivePurchasesForSubstance(substanceId);
     return active[0] || null;
 }
 
@@ -9366,8 +9421,9 @@ function computeNicotineNonVapeUseFromForm() {
     if (!isNicotineTrackingMode(substanceId)) return null;
     const productType = getUseFormNicotineProductType();
     if (productType === 'vape') return null;
+    const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
 
-    const linkedPurchaseId = resolveLinkedPurchaseId(substanceId, 'use');
+    const linkedPurchaseId = resolveLinkedPurchaseId(substanceId, transactionType, { nicotineProductType: productType });
     const purchase = linkedPurchaseId ? findPurchase(linkedPurchaseId) : null;
     const inventoryAffects = getUsePurchaseLinkMode() !== 'none' && !!linkedPurchaseId;
 
@@ -9826,9 +9882,17 @@ function parsePurchaseSelectId(val) {
     return Number.isNaN(parsed) ? val : parsed;
 }
 
-function resolveLinkedPurchaseId(substanceId, transactionType = 'use') {
+function resolveLinkedPurchaseId(substanceId, transactionType = 'use', options = {}) {
     const mode = getUsePurchaseLinkMode();
     if (mode === 'none') return null;
+
+    const nicotineProductType = options.nicotineProductType || null;
+    const pickPurchase = () => {
+        if (nicotineProductType && isNicotineTrackingMode(substanceId)) {
+            return getOldestActivePurchase(substanceId, nicotineProductType);
+        }
+        return getOldestActivePurchase(substanceId);
+    };
 
     const addsInventory = transactionType === 'gift_received'
         || (transactionType === 'inventory_adjustment' && getUseAdjustmentDirection() === 'add');
@@ -9838,6 +9902,10 @@ function resolveLinkedPurchaseId(substanceId, transactionType = 'use') {
             const val = document.getElementById('use-purchase-select')?.value;
             return val ? parsePurchaseSelectId(val) : null;
         }
+        if (nicotineProductType && isNicotineTrackingMode(substanceId)) {
+            const purchase = pickPurchase();
+            return purchase?.id ?? resolveGiftReceivedPurchaseId(substanceId);
+        }
         return resolveGiftReceivedPurchaseId(substanceId);
     }
 
@@ -9846,7 +9914,7 @@ function resolveLinkedPurchaseId(substanceId, transactionType = 'use') {
         return val ? parsePurchaseSelectId(val) : null;
     }
 
-    if (isVapeTrackingMode(substanceId)) {
+    if (isNicotineVapeFormContext(substanceId)) {
         const selected = getSelectedVapePurchaseId();
         if (selected) return selected;
         const logDate = document.getElementById('use-date')?.value || getLocalDateString();
@@ -9854,7 +9922,7 @@ function resolveLinkedPurchaseId(substanceId, transactionType = 'use') {
         return purchase?.id ?? null;
     }
 
-    const oldest = getOldestActivePurchase(substanceId);
+    const oldest = pickPurchase();
     return oldest ? oldest.id : null;
 }
 
@@ -10451,6 +10519,7 @@ function editUseEntry(id) {
     const isVape = isVapeUseLog(entry);
     const isWeed = isWeedTrackingMode(getUseSubstanceId(entry));
     const isLsd = isLsdSubstanceId(getUseSubstanceId(entry));
+    const isNicotineNonVape = isNicotineSubstanceId(getUseSubstanceId(entry)) && !isVape;
     if (isVape) {
         setUseTransactionType('use');
         setUseLogType('quick');
@@ -10469,8 +10538,11 @@ function editUseEntry(id) {
     }
 
     const substanceId = getUseSubstanceId(entry);
+    const formSubstanceId = isNicotineSubstanceId(substanceId) ? NICOTINE_ID : substanceId;
     const substanceSelect = document.getElementById('use-substance');
-    if (substanceSelect && substanceId && [...substanceSelect.options].some(o => o.value === substanceId)) {
+    if (substanceSelect && formSubstanceId && [...substanceSelect.options].some(o => o.value === formSubstanceId)) {
+        substanceSelect.value = formSubstanceId;
+    } else if (substanceSelect && substanceId && [...substanceSelect.options].some(o => o.value === substanceId)) {
         substanceSelect.value = substanceId;
     }
     updateUseUnitDropdown();
@@ -10488,7 +10560,18 @@ function editUseEntry(id) {
     }
 
     setInputValue('use-date', entry.date || '');
-    if (isWeed || isVape || isLsd) {
+    if (isNicotineNonVape) {
+        setInputValue('use-nicotine-product-type', getNicotineProductType(entry));
+        setInputValue('use-cigarettes-smoked', entry.cigarettesUsed ?? (getNicotineProductType(entry) === 'cigarettes' ? entry.amount : '') ?? '');
+        setInputValue('use-pouches-used', entry.pouchesUsed ?? (getNicotineProductType(entry) === 'pouches' ? entry.amount : '') ?? '');
+        setInputValue('use-gum-pieces-used', entry.piecesUsed ?? (getNicotineProductType(entry) === 'gum' ? entry.amount : '') ?? '');
+        setInputValue('use-patches-used', entry.patchesUsed ?? (getNicotineProductType(entry) === 'patches' ? entry.amount : '') ?? '');
+        setInputValue('use-patch-hours-worn', entry.patchHoursWorn ?? '');
+        setInputValue('use-start-time', '');
+        setInputValue('use-end-date', '');
+        setInputValue('use-end-time', '');
+        updateUseNicotineProductTypeUI();
+    } else if (isWeed || isVape || isLsd) {
         if (isWeed) {
             setInputValue('use-weed-product-type', entry.weedProductType || 'bud');
         }
@@ -11075,6 +11158,7 @@ function handleUseLogSubmit(e) {
     const now = new Date().toISOString();
     const useVapeInventory = isVapeUse && vapeCalc?.purchase && payload.inventoryAffects;
     const useLsdInventory = isLsdUse && lsdCalc?.purchase && payload.inventoryAffects;
+    const useNicotineInventory = isNicotineSimple && nicotineCalc?.purchaseId && payload.inventoryAffects;
 
     if (isCokeSubstanceId(substanceId) && type === 'session') {
         if (!payload.endTime) {
@@ -11139,7 +11223,17 @@ function handleUseLogSubmit(e) {
             delete updated.endedAt;
             delete updated.durationMs;
         }
-        if (isVapeTrackingMode(substanceId)) {
+        if (isNicotineNonVapeFormContext(substanceId, updated)) {
+            updated.type = 'quick';
+            updated.startTime = '';
+            updated.time = '';
+            updated.endTime = '';
+            delete updated.endDate;
+            delete updated.startedAt;
+            delete updated.endedAt;
+            delete updated.durationMs;
+        }
+        if (isNicotineVapeFormContext(substanceId, updated)) {
             updated.type = 'quick';
             updated.logMode = 'vape_puffs';
             updated.startTime = '';
@@ -11210,7 +11304,17 @@ function handleUseLogSubmit(e) {
         delete log.endedAt;
         delete log.durationMs;
     }
-    if (isVapeTrackingMode(substanceId)) {
+    if (isNicotineNonVapeFormContext(substanceId, log)) {
+        log.type = 'quick';
+        log.startTime = '';
+        log.time = '';
+        log.endTime = '';
+        delete log.endDate;
+        delete log.startedAt;
+        delete log.endedAt;
+        delete log.durationMs;
+    }
+    if (isNicotineVapeFormContext(substanceId, log)) {
         log.type = 'quick';
         log.logMode = 'vape_puffs';
         log.startTime = '';
@@ -11244,7 +11348,15 @@ function handleUseLogSubmit(e) {
     } else if (useLsdInventory && lsdCalc.purchaseId) {
         setLogPurchaseId(log, lsdCalc.purchaseId);
         recalculatePurchaseRemaining(lsdCalc.purchaseId);
-    } else if (!useVapeInventory && !useLsdInventory) {
+    } else if (useNicotineInventory && nicotineCalc.purchaseId) {
+        setLogPurchaseId(log, nicotineCalc.purchaseId);
+        const purchase = findPurchase(nicotineCalc.purchaseId);
+        if (isVapePuffPurchase(purchase)) {
+            recalculateVapePurchaseInventory(nicotineCalc.purchaseId);
+        } else {
+            recalculatePurchaseRemaining(nicotineCalc.purchaseId);
+        }
+    } else if (!useVapeInventory && !useLsdInventory && !useNicotineInventory) {
         const inv = applyLogInventoryEffect(log);
         if (!inv.ok) {
             appData.logs.pop();
@@ -11783,15 +11895,18 @@ function renderRecentUseList() {
         const sub = getSubstance(substanceId);
         const enriched = enrichUseEntry(log, null);
         const isVape = isVapeUseLog(log);
+        const isNicotineNonVape = isNicotineSubstanceId(getUseSubstanceId(log)) && !isVape;
         const isCheckpoint = isPercentLeftCheckpointLog(log) && getSpreadPercentLeftUsage();
         const distChildren = isCheckpoint ? getDistributedChildrenForPercentLog(log.id) : [];
         const countStr = getUseCount(log);
         const isWeedSimple = isWeedDateOnlyUseLog(log);
-        const isSessionLog = !isVape && !isWeedSimple && log.endTime;
+        const isSessionLog = !isVape && !isWeedSimple && !isNicotineNonVape && log.endTime;
         const timeRange = formatUseSessionTimeRange(log);
         const amountDisplay = isVape
             ? ''
-            : `${log.amount != null ? formatAmount(log.amount) : '—'} ${log.unit || ''}`;
+            : (isNicotineNonVape
+                ? formatNicotineUseLogLabel(log)
+                : `${log.amount != null ? formatAmount(log.amount) : '—'} ${log.unit || ''}`);
         const vapeDetailHtml = isVape
             ? formatVapeRecentUseDetailLines(log).map(line => `<div class="use-recent-detail">${line}</div>`).join('')
             : '';
@@ -13768,16 +13883,41 @@ function getUseLogTotalsForView(substanceId = getUseLogViewSubstanceId()) {
     return { totalGrams, totalCost, entryCount: logs.length };
 }
 
+function formatNicotineUseTotalsLabel(logs, data = appData) {
+    const stats = getNicotineUseAnalytics(logs, data);
+    const parts = [];
+    if (stats.vapePuffs > INVENTORY_EPS) parts.push(`${formatStatsPuffs(stats.vapePuffs)} puffs`);
+    if (stats.cigarettes > INVENTORY_EPS) parts.push(`${formatAmount(stats.cigarettes)} cigarettes`);
+    if (stats.pouches > INVENTORY_EPS) parts.push(`${formatAmount(stats.pouches)} pouches`);
+    if (stats.gumPieces > INVENTORY_EPS) parts.push(`${formatAmount(stats.gumPieces)} pieces`);
+    if (stats.patches > INVENTORY_EPS) parts.push(`${formatAmount(stats.patches)} patches`);
+    return parts.length ? parts.join(' · ') : '—';
+}
+
 function renderUseLogTotals() {
     const container = document.getElementById('use-log-totals');
     if (!container) return;
-    const sub = isSelectedAllSubstances() ? null : getSubstance(selectedSubstanceId);
+    const substanceId = getUseLogViewSubstanceId();
+    const sub = isSelectedAllSubstances() ? null : getSubstance(substanceId);
     const unit = sub?.defaultUnit || 'units';
+    const bounds = getUseLogFilterBounds();
+    const { startDate, endDate } = bounds;
+    let logs = getUseEntries().filter(l => logMatchesUseLogFilter(l) && isPersonalUseLog(l));
+    logs = logs.filter(l => !isPercentLeftDistributedChildLog(l));
+    if (substanceId) logs = logs.filter(l => logMatchesSubstance(l, substanceId));
     const { totalGrams, totalCost, entryCount } = getUseLogTotalsForView();
     const cur = getCurrencySymbol();
+    let amountLabel;
+    if (isNicotineSubstanceId(substanceId)) {
+        amountLabel = formatNicotineUseTotalsLabel(logs);
+    } else if (isVapeNicotineSubstanceId(substanceId)) {
+        amountLabel = `${formatStatsPuffs(totalGrams)} puffs`;
+    } else {
+        amountLabel = `${formatAmount(totalGrams)} ${unit}`;
+    }
     container.innerHTML = `
         <div class="use-log-totals-grid">
-            <div class="use-log-total-card"><span>Total amount</span><strong>${formatAmount(totalGrams)} ${unit}</strong></div>
+            <div class="use-log-total-card"><span>Total amount</span><strong>${amountLabel}</strong></div>
             <div class="use-log-total-card"><span>Est. cost</span><strong>${fmtSheetMoney(totalCost, cur)}</strong></div>
             <div class="use-log-total-card"><span>Entries</span><strong>${entryCount}</strong></div>
         </div>`;
@@ -15895,8 +16035,11 @@ function getNicotineUseAnalytics(logs, data = appData) {
         const type = getNicotineProductType(log, data);
         stats.totalEntries++;
         stats.useByType[type] = (stats.useByType[type] || 0) + (parseFloat(log.amount) || 0);
-        if (type === 'vape' || isVapeUseLog(log, data)) stats.vapePuffs += parseFloat(log.estimatedPuffsUsed ?? log.amount) || 0;
-        else if (type === 'cigarettes') stats.cigarettes += parseFloat(log.cigarettesUsed ?? log.amount) || 0;
+        if (type === 'vape' || isVapeUseLog(log, data)) {
+            getVapeLogStatsAllocations(log, data).forEach(({ amount }) => {
+                stats.vapePuffs += amount;
+            });
+        } else if (type === 'cigarettes') stats.cigarettes += parseFloat(log.cigarettesUsed ?? log.amount) || 0;
         else if (type === 'pouches') stats.pouches += parseFloat(log.pouchesUsed ?? log.amount) || 0;
         else if (type === 'gum') stats.gumPieces += parseFloat(log.piecesUsed ?? log.amount) || 0;
         else if (type === 'patches') stats.patches += parseFloat(log.patchesUsed ?? log.amount) || 0;
