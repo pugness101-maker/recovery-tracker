@@ -329,6 +329,379 @@ function isCigarettesTrackingMode(substanceId, data = appData) {
     return getSubstanceTrackingMode(substanceId, data) === 'cigarettes';
 }
 
+function isLsdSubstanceId(substanceId, data = appData) {
+    return normalizeSubstanceRef(substanceId, data) === 'lsd';
+}
+
+function isLsdPurchase(purchase, data = appData) {
+    return isLsdSubstanceId(getPurchaseSubstanceId(purchase), data);
+}
+
+function isLsdDateOnlyUseForm() {
+    return isLsdSubstanceId(document.getElementById('use-substance')?.value);
+}
+
+function isLsdDateOnlyUseLog(log, data = appData) {
+    if (!log || !isLsdSubstanceId(getUseSubstanceId(log, data), data)) return false;
+    return getUseLogType(log) === 'quick' || log.logMode === 'lsd_dose' || !log.endTime;
+}
+
+function computeLsdTotalUg(quantityTabs, ugPerTab) {
+    const tabs = parseFloat(quantityTabs);
+    const ug = parseFloat(ugPerTab);
+    if (!Number.isFinite(tabs) || !Number.isFinite(ug) || tabs <= 0 || ug <= 0) return null;
+    return tabs * ug;
+}
+
+function getLsdUgPerTab(purchase) {
+    if (!purchase) return null;
+    const ug = parseFloat(purchase.ugPerTab);
+    if (Number.isFinite(ug) && ug > 0) return ug;
+    const tabs = parseFloat(purchase.quantityTabs);
+    const totalUg = parseFloat(purchase.totalUg ?? purchase.quantityBought);
+    if (Number.isFinite(tabs) && tabs > 0 && Number.isFinite(totalUg) && totalUg > 0) {
+        return totalUg / tabs;
+    }
+    return null;
+}
+
+function getLsdQuantityTabs(purchase) {
+    if (!purchase) return null;
+    const tabs = parseFloat(purchase.quantityTabs);
+    if (Number.isFinite(tabs) && tabs > 0) return tabs;
+    const totalUg = parseFloat(purchase.totalUg ?? purchase.quantityBought);
+    const ugPerTab = getLsdUgPerTab(purchase);
+    if (ugPerTab > 0 && Number.isFinite(totalUg) && totalUg > 0) return totalUg / ugPerTab;
+    if ((purchase.unit || '') === 'tabs') return getPurchaseQuantityBought(purchase);
+    return null;
+}
+
+function getLsdTotalUg(purchase) {
+    if (!purchase) return null;
+    const total = parseFloat(purchase.totalUg);
+    if (Number.isFinite(total) && total > 0) return total;
+    if ((purchase.unit || '') === 'ug') return getPurchaseQuantityBought(purchase);
+    const tabs = getLsdQuantityTabs(purchase);
+    const ugPerTab = getLsdUgPerTab(purchase);
+    if (tabs != null && ugPerTab != null) return tabs * ugPerTab;
+    return null;
+}
+
+function getLsdRemainingTabs(purchase) {
+    if (!purchase) return null;
+    if (purchase.remainingTabs != null && purchase.remainingTabs !== '') {
+        return Math.max(0, parseFloat(purchase.remainingTabs) || 0);
+    }
+    const remainingUg = getPurchaseRemainingAmount(purchase);
+    const ugPerTab = getLsdUgPerTab(purchase);
+    if (ugPerTab > 0) return remainingUg / ugPerTab;
+    if ((purchase.unit || '') === 'tabs') return getPurchaseRemainingAmount(purchase);
+    return null;
+}
+
+function getLsdRemainingUg(purchase) {
+    if (!purchase) return null;
+    if (purchase.remainingUg != null && purchase.remainingUg !== '') {
+        return Math.max(0, parseFloat(purchase.remainingUg) || 0);
+    }
+    if ((purchase.unit || '') === 'ug' || purchase.totalUg != null) {
+        return getPurchaseRemainingAmount(purchase);
+    }
+    const tabs = getLsdRemainingTabs(purchase);
+    const ugPerTab = getLsdUgPerTab(purchase);
+    if (tabs != null && ugPerTab != null) return tabs * ugPerTab;
+    return null;
+}
+
+function syncLsdPurchaseFields(purchase, totalCost = null) {
+    if (!isLsdPurchase(purchase)) return;
+    const tabs = getLsdQuantityTabs(purchase);
+    const ugPerTab = getLsdUgPerTab(purchase);
+    if (tabs != null) purchase.quantityTabs = tabs;
+    if (ugPerTab != null) purchase.ugPerTab = ugPerTab;
+    const totalUg = computeLsdTotalUg(tabs, ugPerTab)
+        ?? (purchase.unit === 'ug' ? getPurchaseQuantityBought(purchase) : null);
+    if (totalUg != null) {
+        purchase.totalUg = totalUg;
+        purchase.quantityBought = totalUg;
+        purchase.quantity = totalUg;
+        purchase.unit = 'ug';
+    }
+    const cost = totalCost != null ? totalCost : (parseFloat(getPurchaseTotalCost(purchase)) || 0);
+    purchase.costPerTab = tabs > 0 && cost >= 0 ? cost / tabs : null;
+    purchase.costPerUg = totalUg > 0 && cost >= 0 ? cost / totalUg : null;
+    if (totalUg > 0 && cost >= 0) purchase.costPerUnit = cost / totalUg;
+    syncLsdPurchaseRemaining(purchase);
+}
+
+function syncLsdPurchaseRemaining(purchase) {
+    if (!isLsdPurchase(purchase)) return;
+    const remainingUg = getPurchaseRemainingAmount(purchase);
+    purchase.remainingUg = remainingUg;
+    const ugPerTab = getLsdUgPerTab(purchase);
+    purchase.remainingTabs = ugPerTab > 0 ? remainingUg / ugPerTab : null;
+}
+
+function formatLsdAmountWithUg(value) {
+    if (value == null || Number.isNaN(value)) return '—';
+    const rounded = Math.round(value * 100) / 100;
+    return `${formatAmount(rounded)} ug`;
+}
+
+function formatLsdPurchaseDisplayLine(purchase) {
+    const tabs = getLsdQuantityTabs(purchase);
+    const ugPerTab = getLsdUgPerTab(purchase);
+    const totalUg = getLsdTotalUg(purchase);
+    const parts = [];
+    if (tabs != null) parts.push(`${formatAmount(tabs)} tabs`);
+    if (ugPerTab != null) parts.push(`${formatAmount(ugPerTab)} ug/tab`);
+    if (totalUg != null) parts.push(`${formatAmount(totalUg)} ug total`);
+    return parts.length ? parts.join(' · ') : '—';
+}
+
+function formatLsdPurchaseCostLine(purchase) {
+    const totalCost = parseFloat(getPurchaseTotalCost(purchase));
+    const hasCost = Number.isFinite(totalCost) && totalCost > 0;
+    const costPerTab = purchase.costPerTab ?? (hasCost && getLsdQuantityTabs(purchase) > 0
+        ? totalCost / getLsdQuantityTabs(purchase) : null);
+    const costPerUg = purchase.costPerUg ?? (hasCost && getLsdTotalUg(purchase) > 0
+        ? totalCost / getLsdTotalUg(purchase) : null);
+    const cur = getCurrencySymbol();
+    const parts = [];
+    if (hasCost) parts.push(`${fmtSheetMoney(totalCost, cur)} total`);
+    else parts.push('— total');
+    parts.push(costPerTab != null ? `${fmtSheetMoney(costPerTab, cur)}/tab` : '—/tab');
+    parts.push(costPerUg != null ? `${fmtSheetMoney(costPerUg, cur)}/ug` : '—/ug');
+    return parts.join(' · ');
+}
+
+function formatLsdRemainingDisplay(purchase) {
+    const tabs = getLsdRemainingTabs(purchase);
+    const ug = getLsdRemainingUg(purchase);
+    if (tabs != null && ug != null) {
+        return `${formatAmount(tabs)} tabs / ${formatAmount(ug)} ug`;
+    }
+    if (ug != null) return formatLsdAmountWithUg(ug);
+    if (tabs != null) return `${formatAmount(tabs)} tabs`;
+    return formatPurchaseRemainingWithUnit(purchase);
+}
+
+function parseLsdFieldsFromForm() {
+    const tabsRaw = parseFloat(document.getElementById('buy-quantity')?.value);
+    const ugPerTabRaw = parseFloat(document.getElementById('buy-ug-per-tab')?.value);
+    const quantityTabs = Number.isFinite(tabsRaw) && tabsRaw > 0 ? tabsRaw : null;
+    const ugPerTab = Number.isFinite(ugPerTabRaw) && ugPerTabRaw > 0 ? ugPerTabRaw : null;
+    const totalUg = computeLsdTotalUg(quantityTabs, ugPerTab);
+    return { quantityTabs, ugPerTab, totalUg };
+}
+
+function applyLsdFieldsToPayload(payload, fields, totalCost) {
+    if (fields.quantityTabs != null) payload.quantityTabs = fields.quantityTabs;
+    if (fields.ugPerTab != null) payload.ugPerTab = fields.ugPerTab;
+    if (fields.totalUg != null) {
+        payload.totalUg = fields.totalUg;
+        payload.quantityBought = fields.totalUg;
+        payload.quantity = fields.totalUg;
+        payload.unit = 'ug';
+        payload.remainingAmount = fields.totalUg;
+        payload.remainingUg = fields.totalUg;
+        payload.remainingTabs = fields.quantityTabs;
+    }
+    const cost = Number.isFinite(totalCost) ? totalCost : 0;
+    payload.costPerTab = fields.quantityTabs > 0 && cost >= 0 ? cost / fields.quantityTabs : null;
+    payload.costPerUg = fields.totalUg > 0 && cost >= 0 ? cost / fields.totalUg : null;
+    payload.costPerUnit = fields.totalUg > 0 && cost >= 0 ? cost / fields.totalUg : 0;
+}
+
+function validateLsdBuyForm(substanceId) {
+    if (!isLsdSubstanceId(substanceId)) return null;
+    const fields = parseLsdFieldsFromForm();
+    if (!fields.quantityTabs) return 'Quantity (tabs) must be greater than 0.';
+    if (!fields.ugPerTab) return 'Enter ug per tab to track LSD accurately.';
+    if (!fields.totalUg) return 'Total ug could not be calculated. Check tabs and ug per tab.';
+    return null;
+}
+
+function updateBuyLsdPreview() {
+    const preview = document.getElementById('buy-lsd-preview');
+    if (!preview) return;
+    if (!isLsdSubstanceId(document.getElementById('buy-substance')?.value)) {
+        preview.textContent = '—';
+        return;
+    }
+    const fields = parseLsdFieldsFromForm();
+    const totalCost = parseFloat(document.getElementById('buy-total-cost')?.value);
+    const cur = getCurrencySymbol();
+    const lines = [];
+    if (fields.quantityTabs && fields.ugPerTab) {
+        lines.push(`${formatAmount(fields.quantityTabs)} tabs × ${formatAmount(fields.ugPerTab)} ug = ${formatAmount(fields.totalUg)} ug total`);
+    } else if (fields.quantityTabs) {
+        lines.push(`${formatAmount(fields.quantityTabs)} tabs — enter ug per tab`);
+    } else {
+        lines.push('Enter quantity (tabs) and ug per tab.');
+    }
+    if (Number.isFinite(totalCost) && totalCost >= 0 && fields.quantityTabs > 0) {
+        const perTab = fields.costPerTab ?? (totalCost / fields.quantityTabs);
+        lines.push(`Cost per tab: ${fmtSheetMoney(perTab, cur)}`);
+    } else {
+        lines.push('Cost per tab: —');
+    }
+    if (Number.isFinite(totalCost) && totalCost >= 0 && fields.totalUg > 0) {
+        lines.push(`Cost per ug: ${fmtSheetMoney(totalCost / fields.totalUg, cur)}`);
+    } else {
+        lines.push('Cost per ug: —');
+    }
+    if (fields.quantityTabs && !fields.ugPerTab) {
+        lines.push('Enter ug per tab to track LSD accurately.');
+    }
+    preview.textContent = lines.join(' · ');
+}
+
+function getLsdLogInputMode() {
+    return document.getElementById('use-lsd-log-mode')?.value === 'ug' ? 'ug' : 'tabs';
+}
+
+function setLsdLogInputMode(mode) {
+    const val = mode === 'ug' ? 'ug' : 'tabs';
+    setInputValue('use-lsd-log-mode', val);
+    document.querySelectorAll('.use-lsd-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.lsdMode === val);
+    });
+    document.getElementById('use-lsd-tabs-group')?.classList.toggle('hidden', val === 'ug');
+    document.getElementById('use-lsd-ug-group')?.classList.toggle('hidden', val !== 'ug');
+    updateLsdUsePreview();
+}
+
+function computeLsdUseFromForm(options = {}) {
+    const substanceId = document.getElementById('use-substance')?.value;
+    if (!isLsdSubstanceId(substanceId)) return null;
+
+    const purchaseId = getUsePurchaseLinkMode() === 'manual'
+        ? parsePurchaseSelectId(document.getElementById('use-purchase-select')?.value)
+        : resolveLinkedPurchaseId(substanceId, 'use');
+    const purchase = purchaseId ? findPurchase(purchaseId) : null;
+    const ugPerTab = purchase ? getLsdUgPerTab(purchase) : null;
+    const inputMode = getLsdLogInputMode();
+
+    if (inputMode === 'tabs') {
+        const tabsRaw = parseFloat(document.getElementById('use-lsd-tabs-used')?.value);
+        if (!Number.isFinite(tabsRaw) || tabsRaw < 0) return { error: 'Enter tabs used.' };
+        if (!ugPerTab) {
+            return { error: 'Link to an LSD purchase with ug per tab set, or add inventory with ug per tab first.' };
+        }
+        const tabsUsed = tabsRaw;
+        const ugUsed = tabsUsed * ugPerTab;
+        return {
+            purchaseId,
+            purchase,
+            tabsUsed,
+            ugUsed,
+            amount: ugUsed,
+            unit: 'ug',
+            ugPerTabAtTimeOfUse: ugPerTab
+        };
+    }
+
+    const ugRaw = parseFloat(document.getElementById('use-lsd-ug-used')?.value);
+    if (!Number.isFinite(ugRaw) || ugRaw < 0) return { error: 'Enter ug used.' };
+    if (!ugPerTab) {
+        return { error: 'Link to an LSD purchase with ug per tab set, or add inventory with ug per tab first.' };
+    }
+    const ugUsed = ugRaw;
+    const tabsUsed = ugUsed / ugPerTab;
+    return {
+        purchaseId,
+        purchase,
+        tabsUsed,
+        ugUsed,
+        amount: ugUsed,
+        unit: 'ug',
+        ugPerTabAtTimeOfUse: ugPerTab
+    };
+}
+
+function updateLsdUsePreview() {
+    const preview = document.getElementById('use-lsd-preview');
+    if (!preview) return;
+    if (!isLsdDateOnlyUseForm()) {
+        preview.textContent = '—';
+        return;
+    }
+    const calc = computeLsdUseFromForm();
+    if (!calc || calc.error) {
+        preview.textContent = calc?.error || 'Enter use amount.';
+        return;
+    }
+    preview.textContent = `${formatAmount(calc.tabsUsed)} tabs = ${formatAmount(calc.ugUsed)} ug used (${formatAmount(calc.ugPerTabAtTimeOfUse)} ug/tab).`;
+}
+
+function updateLsdUseFormUI() {
+    const substanceId = document.getElementById('use-substance')?.value;
+    const isLsd = isLsdSubstanceId(substanceId);
+    document.getElementById('use-lsd-fields-group')?.classList.toggle('hidden', !isLsd);
+    document.getElementById('use-amount-mode-group')?.classList.toggle('hidden', isLsd || isVapeTrackingMode(substanceId) || isWeedTrackingMode(substanceId));
+    if (isLsd) {
+        setUseLogType('quick');
+        setUseTransactionType('use');
+        ensureLsdUseFormDefaults();
+        updateLsdUsePreview();
+    }
+}
+
+function ensureLsdUseFormDefaults() {
+    if (!isLsdDateOnlyUseForm()) return;
+    const startEl = document.getElementById('use-start-time');
+    if (startEl) {
+        startEl.value = '';
+        startEl.required = false;
+    }
+    const endTimeEl = document.getElementById('use-end-time');
+    if (endTimeEl) endTimeEl.value = '';
+    const endDateEl = document.getElementById('use-end-date');
+    if (endDateEl) endDateEl.value = '';
+    document.getElementById('use-duration-preview')?.classList.add('hidden');
+}
+
+function getLsdLogUgAmount(log) {
+    return parseFloat(log?.ugUsed ?? log?.amount) || 0;
+}
+
+function getLsdLogTabsAmount(log) {
+    if (log?.tabsUsed != null && log.tabsUsed !== '') return parseFloat(log.tabsUsed) || 0;
+    const ug = getLsdLogUgAmount(log);
+    const ugPerTab = parseFloat(log?.ugPerTabAtTimeOfUse);
+    if (ugPerTab > 0) return ug / ugPerTab;
+    return 0;
+}
+
+function getLsdTotalRemainingSummary(substanceId, data = appData) {
+    let tabs = 0;
+    let ug = 0;
+    (data.purchases || [])
+        .filter(p => getPurchaseSubstanceId(p) === substanceId && !p.isDepleted && getPurchaseRemainingAmount(p) > INVENTORY_EPS)
+        .forEach(p => {
+            const remTabs = getLsdRemainingTabs(p);
+            const remUg = getLsdRemainingUg(p);
+            if (remTabs != null) tabs += remTabs;
+            if (remUg != null) ug += remUg;
+        });
+    return { tabs, ug };
+}
+
+function migrateLsdInventoryV1(data) {
+    if (data.migrations?.lsdInventoryV1) return;
+    (data.purchases || []).forEach(purchase => {
+        if (!isLsdPurchase(purchase, data)) return;
+        if (purchase.unit === 'tabs' && purchase.quantityTabs == null) {
+            purchase.quantityTabs = getPurchaseQuantityBought(purchase);
+            purchase.remainingTabs = getPurchaseRemainingAmount(purchase);
+        }
+        syncLsdPurchaseFields(purchase);
+    });
+    if (!data.migrations) data.migrations = {};
+    data.migrations.lsdInventoryV1 = true;
+}
+
 function isVapeTaperSubstanceId(substanceId, data = appData) {
     return isVapeTrackingMode(substanceId, data);
 }
@@ -1003,6 +1376,9 @@ function recalculatePurchaseRemaining(purchaseId, data = appData) {
         purchase.remainingAmount = Math.max(0, remaining);
         purchase.isDepleted = purchase.remainingAmount <= INVENTORY_EPS;
     }
+    if (isLsdPurchase(purchase, data)) {
+        syncLsdPurchaseRemaining(purchase);
+    }
     syncPurchaseInventoryStatus(purchase);
     purchase.updatedAt = new Date().toISOString();
     return {
@@ -1105,6 +1481,16 @@ function duplicatePurchaseNow(id) {
         record.eLiquidCapacityMl = getVapeELiquidCapacityMl(purchase);
         record.nicotineMgPerMl = getVapeNicotineMgPerMl(purchase);
         syncVapeNicotineFields(record);
+    }
+    if (isLsdPurchase(purchase)) {
+        record.quantityTabs = getLsdQuantityTabs(purchase);
+        record.ugPerTab = getLsdUgPerTab(purchase);
+        record.totalUg = getLsdTotalUg(purchase);
+        record.remainingTabs = record.quantityTabs;
+        record.remainingUg = record.totalUg;
+        record.remainingAmount = record.totalUg ?? qty;
+        record.unit = 'ug';
+        syncLsdPurchaseFields(record, record.totalCost);
     }
     stripIrrelevantPurchaseFields(record);
     appData.purchases.push(record);
@@ -1838,6 +2224,10 @@ function stripIrrelevantPurchaseFields(purchase) {
     }
     if (mode !== 'cigarettes') {
         delete purchase.nicotineMg;
+    }
+    if (!isLsdPurchase(purchase)) {
+        ['quantityTabs', 'ugPerTab', 'totalUg', 'remainingTabs', 'remainingUg', 'costPerTab', 'costPerUg']
+            .forEach(key => delete purchase[key]);
     }
 }
 
@@ -2803,6 +3193,7 @@ function normalizeAppData(data) {
     delete data.reasons;
     migrateVapeDataV1(data);
     repairVapeInventoryLinks(data);
+    migrateLsdInventoryV1(data);
     migrateVapePercentSpreadV1(data);
     migrateInventoryStatusFields(data);
     repairDataConsistency(data);
@@ -4086,7 +4477,8 @@ function formatUseHistoryTransactionType(log) {
 function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
     const isWeedSimple = isWeedDateOnlyUseLog(entry);
     const isVapeDateOnly = isVapeDateOnlyUseLog(entry);
-    const hideTimeStats = isWeedSimple || isVapeDateOnly;
+    const isLsdDateOnly = isLsdDateOnlyUseLog(entry);
+    const hideTimeStats = isWeedSimple || isVapeDateOnly || isLsdDateOnly;
     const rateStr = (!hideTimeStats && entry.useRate != null) ? `${formatAmount(entry.useRate)}/${sub.defaultUnit}/hr` : '—';
     const checked = useHistorySelectionHas(entry.id) ? 'checked' : '';
     const label = TABLE_COLUMN_LABELS.useHistory[colId] || colId;
@@ -4107,6 +4499,9 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
         case 'transactionType':
             return `<td data-col="${colId}"${dataLabel}>${formatUseHistoryTransactionType(entry)}</td>`;
         case 'amount': {
+            let amountHtml = formatAmount(entry.amount);
+            if (isLsdDateOnlyUseLog(entry)) {
+                amountHtml = formatLsdUseSummary(entry);
             let amountHtml = `${formatAmount(entry.amount)}`;
             if (isPercentLeftDistributedChildLog(entry)) {
                 amountHtml = `~${formatAmount(entry.amount)} <span class="use-history-est-label">(est. daily)</span>`;
@@ -4121,9 +4516,9 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
             return `<td data-col="${colId}"${dataLabel}>${amountHtml}</td>`;
         }
         case 'unit':
-            return `<td data-col="${colId}"${dataLabel}>${entry.unit}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${isLsdDateOnlyUseLog(entry) ? 'ug' : entry.unit}</td>`;
         case 'count':
-            return `<td data-col="${colId}"${dataLabel}>${isVapeUseLog(entry) ? '—' : (entry.count || '—')}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${(isVapeUseLog(entry) || isLsdDateOnlyUseLog(entry)) ? '—' : (entry.count || '—')}</td>`;
         case 'rate':
             return `<td data-col="${colId}"${dataLabel}>${rateStr}</td>`;
         case 'break':
@@ -4197,6 +4592,10 @@ function renderPurchaseBoughtMetaInner(purchase) {
     if (isWeedPurchase(purchase)) {
         return `<div class="purchase-vape-meta">${formatWeedPurchaseDisplayLine(purchase)}</div>`;
     }
+    if (isLsdPurchase(purchase)) {
+        return `<div class="purchase-vape-meta">${formatLsdPurchaseDisplayLine(purchase)}</div>
+            <div class="purchase-vape-meta">${formatLsdPurchaseCostLine(purchase)}</div>`;
+    }
     if (isCigarettesPurchase(purchase)) {
         const nic = purchase.nicotineMg;
         if (nic != null && nic !== '') {
@@ -4208,6 +4607,11 @@ function renderPurchaseBoughtMetaInner(purchase) {
 
 function renderPurchaseWeedBoughtCell(purchase) {
     return phTd('bought', formatWeedPurchaseDisplayLine(purchase), 'purchase-weed-bought-cell');
+}
+
+function renderPurchaseLsdBoughtCell(purchase) {
+    return phTd('bought', `<div>${formatLsdPurchaseDisplayLine(purchase)}</div>
+        <div class="purchase-vape-meta">${formatLsdPurchaseCostLine(purchase)}</div>`, 'purchase-lsd-bought-cell');
 }
 
 function renderPurchaseVapeBoughtCell(purchase) {
@@ -4264,6 +4668,9 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
             }
             if (isWeedPurchase(purchase)) {
                 return renderPurchaseWeedBoughtCell(purchase);
+            }
+            if (isLsdPurchase(purchase)) {
+                return renderPurchaseLsdBoughtCell(purchase);
             }
             {
                 const meta = renderPurchaseBoughtMetaInner(purchase);
@@ -6848,6 +7255,9 @@ function formatLogHistoryLabel(entry, sub) {
     if (isVapeUseLog(entry)) {
         return formatVapeUseSummary(entry, sub);
     }
+    if (isLsdDateOnlyUseLog(entry)) {
+        return formatLsdUseSummary(entry);
+    }
     if (isWeedDateOnlyUseLog(entry)) {
         return `${sub?.icon || ''} ${amount} ${unit}`;
     }
@@ -6940,18 +7350,19 @@ function getUseCreatedAt(entry) {
     return entry.createdAt || entry.timestamp || new Date().toISOString();
 }
 
-function buildUseEntryFromForm(vapeCalc = null) {
+function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null) {
     const substanceId = document.getElementById('use-substance')?.value;
     const isVapeDateOnly = isVapeTrackingMode(substanceId);
     const isWeedSimple = isWeedTrackingMode(substanceId);
+    const isLsdSimple = isLsdSubstanceId(substanceId);
     const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
     const isGift = transactionType === 'gift_given' || transactionType === 'gift_received';
     const isAdjustment = transactionType === 'inventory_adjustment';
-    let type = (isGift || isAdjustment || isWeedSimple || isVapeDateOnly) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
+    let type = (isGift || isAdjustment || isWeedSimple || isVapeDateOnly || isLsdSimple) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
     const date = document.getElementById('use-date')?.value;
-    const startTime = (isWeedSimple || isVapeDateOnly) ? '' : (document.getElementById('use-start-time')?.value || '12:00');
-    const endDate = (isWeedSimple || isVapeDateOnly) ? null : (document.getElementById('use-end-date')?.value || date);
-    const endTime = (isWeedSimple || isVapeDateOnly) ? '' : (document.getElementById('use-end-time')?.value || '');
+    const startTime = (isWeedSimple || isVapeDateOnly || isLsdSimple) ? '' : (document.getElementById('use-start-time')?.value || '12:00');
+    const endDate = (isWeedSimple || isVapeDateOnly || isLsdSimple) ? null : (document.getElementById('use-end-date')?.value || date);
+    const endTime = (isWeedSimple || isVapeDateOnly || isLsdSimple) ? '' : (document.getElementById('use-end-time')?.value || '');
     const isVapeUse = isVapeDateOnly;
     const isCokeSession = isCokeSubstanceId(substanceId) && type === 'session';
 
@@ -6971,6 +7382,12 @@ function buildUseEntryFromForm(vapeCalc = null) {
         logMode = 'vape_puffs';
         percentRemaining = vapeCalc.percentAfter;
         previousRemainingBeforeLog = vapeCalc.previousRemaining;
+    } else if (isLsdSimple && lsdCalc && !lsdCalc.error) {
+        amount = lsdCalc.ugUsed;
+        unit = 'ug';
+        linkedPurchaseId = lsdCalc.purchaseId;
+        inventoryAffects = getUsePurchaseLinkMode() !== 'none' && !!linkedPurchaseId;
+        logMode = 'lsd_dose';
     } else {
         amount = parseFloat(document.getElementById('use-amount')?.value);
         unit = document.getElementById('use-unit')?.value;
@@ -6989,11 +7406,11 @@ function buildUseEntryFromForm(vapeCalc = null) {
         percentRemaining: percentRemaining != null ? percentRemaining : undefined,
         previousRemainingBeforeLog: previousRemainingBeforeLog != null ? previousRemainingBeforeLog : undefined,
         date,
-        endDate: (isWeedSimple || isVapeDateOnly) ? undefined : ((isGift || isAdjustment || type === 'session') ? (endDate || date) : undefined),
+        endDate: (isWeedSimple || isVapeDateOnly || isLsdSimple) ? undefined : ((isGift || isAdjustment || type === 'session') ? (endDate || date) : undefined),
         startTime,
         time: startTime,
-        endTime: (isWeedSimple || isVapeDateOnly) ? '' : ((isGift || isAdjustment || type === 'session') ? (endTime || '') : ''),
-        count: (isGift || isAdjustment || isWeedSimple) ? 0 : (parseFloat(document.getElementById('use-count')?.value) || 0),
+        endTime: (isWeedSimple || isVapeDateOnly || isLsdSimple) ? '' : ((isGift || isAdjustment || type === 'session') ? (endTime || '') : ''),
+        count: (isGift || isAdjustment || isWeedSimple || isLsdSimple) ? 0 : (parseFloat(document.getElementById('use-count')?.value) || 0),
         giftPartyName: isGift ? (document.getElementById('use-gift-party')?.value?.trim() || '') : '',
         adjustmentDirection: isAdjustment ? getUseAdjustmentDirection() : undefined,
         notes: document.getElementById('use-notes')?.value || '',
@@ -7017,6 +7434,12 @@ function buildUseEntryFromForm(vapeCalc = null) {
         base.percentLeftAfter = vapeCalc.percentAfter;
         base.remainingPuffsAfter = vapeCalc.currentRemaining;
         base.estimatedPuffsUsed = vapeCalc.estimatedPuffsUsed ?? vapeCalc.puffsUsed;
+    }
+
+    if (isLsdSimple && lsdCalc && !lsdCalc.error) {
+        base.tabsUsed = lsdCalc.tabsUsed;
+        base.ugUsed = lsdCalc.ugUsed;
+        base.ugPerTabAtTimeOfUse = lsdCalc.ugPerTabAtTimeOfUse;
     }
 
     if (isCokeSession && endTime) {
@@ -8442,6 +8865,7 @@ function updateVapeUseFormUI() {
     const substanceId = document.getElementById('use-substance')?.value;
     const isVape = isVapeTrackingMode(substanceId);
     const isWeed = isWeedTrackingMode(substanceId);
+    const isLsd = isLsdSubstanceId(substanceId);
     const isVapeUse = isVape;
     const vapeGroup = document.getElementById('use-vape-fields-group');
     const amountGroup = document.getElementById('use-amount-mode-group');
@@ -8454,20 +8878,27 @@ function updateVapeUseFormUI() {
 
     document.getElementById('use-log-form')?.classList.toggle('is-weed-simple', isWeed);
     document.getElementById('use-log-form')?.classList.toggle('is-vape-simple', isVape);
-    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isVape || isWeed || isNonUse);
-    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', isVape);
-    document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape);
+    document.getElementById('use-log-form')?.classList.toggle('is-lsd-simple', isLsd);
+    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isVape || isWeed || isLsd || isNonUse);
+    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', isVape || isLsd);
+    document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape || isLsd);
 
     const dateLabel = document.getElementById('use-date-label');
     if (dateLabel) dateLabel.textContent = 'Date';
     const startTimeInput = document.getElementById('use-start-time');
-    if (startTimeInput) startTimeInput.required = !isWeed && !isVape;
+    if (startTimeInput) startTimeInput.required = !isWeed && !isVape && !isLsd;
 
     if (isWeed) {
         ensureWeedUseFormDefaults();
         updateWeedUseFormUI();
         positionUseInventoryFields(true);
         document.getElementById('use-duration-preview')?.classList.add('hidden');
+    } else if (isLsd) {
+        ensureLsdUseFormDefaults();
+        updateLsdUseFormUI();
+        positionUseInventoryFields(true);
+        document.getElementById('use-duration-preview')?.classList.add('hidden');
+        document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
     } else if (isVape) {
         ensureVapeUseFormDefaults();
         positionUseInventoryFields(false);
@@ -8475,6 +8906,7 @@ function updateVapeUseFormUI() {
         document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
     } else {
         document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
+        document.getElementById('use-lsd-fields-group')?.classList.add('hidden');
         positionUseInventoryFields(false);
     }
 
@@ -8484,11 +8916,11 @@ function updateVapeUseFormUI() {
         setVapeLogInputMode(getVapeLogInputMode());
     }
 
-    amountGroup?.classList.toggle('hidden', isVapeUse);
+    amountGroup?.classList.toggle('hidden', isVapeUse || isLsd);
     vapeGroup?.classList.toggle('hidden', !isVapeUse);
     document.getElementById('use-vape-purchase-block')?.classList.toggle('hidden', !isVapeUse);
     if (amountInput) {
-        amountInput.required = !isVapeUse;
+        amountInput.required = !isVapeUse && !isLsd;
     }
     if (percentInput) {
         if (isVapeUse) {
@@ -8501,15 +8933,15 @@ function updateVapeUseFormUI() {
         }
     }
     if (unitSelect) {
-        unitSelect.disabled = isVapeUse;
-        unitSelect.required = !isVapeUse;
+        unitSelect.disabled = isVapeUse || isLsd;
+        unitSelect.required = !isVapeUse && !isLsd;
     }
-    countGroup?.classList.toggle('hidden', !shouldShowUseCountForSubstance(substanceId) || isVapeUse || isWeed);
+    countGroup?.classList.toggle('hidden', !shouldShowUseCountForSubstance(substanceId) || isVapeUse || isWeed || isLsd);
     if (isVapeUse) {
         updateVapeUsePreview();
     }
 
-    if (!isWeed && !isVape) {
+    if (!isWeed && !isVape && !isLsd) {
         updateUseEndTimeVisibility();
     }
 }
@@ -8524,6 +8956,12 @@ function applyVapeUseInventory(calc, logEntry) {
 
 function formatVapeUseSummary(log, sub) {
     return formatVapeRecentUseDetailLines(log).join(' · ') || `${sub?.name || 'Vape'} use`;
+}
+
+function formatLsdUseSummary(log) {
+    const tabs = getLsdLogTabsAmount(log);
+    const ug = getLsdLogUgAmount(log);
+    return `${formatAmount(tabs)} tabs · ${formatAmount(ug)} ug`;
 }
 
 function formatVapeRecentUseDetailLines(log) {
@@ -8715,6 +9153,9 @@ function formatPurchaseRemainingDisplay(purchase) {
         const pct = getPurchasePercentRemaining(purchase);
         return `${formatAmountWithUnit(getPurchaseRemainingDisplayAmount(purchase), 'puffs')} / ${pct}%`;
     }
+    if (isLsdPurchase(purchase)) {
+        return formatLsdRemainingDisplay(purchase);
+    }
     const remaining = getPurchaseRemainingDisplayAmount(purchase);
     const unit = getPurchaseRemainingDisplayUnit(purchase);
     const base = formatAmountWithUnit(remaining, unit);
@@ -8736,6 +9177,9 @@ function formatPurchaseOptionLabel(purchase) {
             ? `${formatAmount(full)} @100% · bought at ${pctBought}% · ${formatAmount(starting)} started`
             : `${formatAmount(full)} puffs`;
         return `${formatDate(purchase.date)} — ${boughtPart} — ${formatAmountWithUnit(remaining, 'puffs')} left (${pct}%)${storePart}`;
+    }
+    if (isLsdPurchase(purchase)) {
+        return `${formatDate(purchase.date)} — ${formatLsdPurchaseDisplayLine(purchase)} — ${formatLsdRemainingDisplay(purchase)} left${storePart}`;
     }
     const bought = getPurchaseQuantityBought(purchase);
     const unit = getPurchaseRemainingDisplayUnit(purchase);
@@ -9401,10 +9845,11 @@ function editUseEntry(id) {
     editingUseId = id;
     const isVape = isVapeUseLog(entry);
     const isWeed = isWeedTrackingMode(getUseSubstanceId(entry));
+    const isLsd = isLsdSubstanceId(getUseSubstanceId(entry));
     if (isVape) {
         setUseTransactionType('use');
         setUseLogType('quick');
-    } else if (isWeed) {
+    } else if (isWeed || isLsd) {
         setUseTransactionType(getLogTransactionType(entry));
         setUseLogType('quick');
         if (isInventoryAdjustmentLog(entry)) {
@@ -9438,7 +9883,7 @@ function editUseEntry(id) {
     }
 
     setInputValue('use-date', entry.date || '');
-    if (isWeed || isVape) {
+    if (isWeed || isVape || isLsd) {
         if (isWeed) {
             setInputValue('use-weed-product-type', entry.weedProductType || 'bud');
         }
@@ -9487,6 +9932,22 @@ function editUseEntry(id) {
             setVapeLogInputMode('percent');
         }
         updateVapeUsePreview();
+    } else if (isLsd) {
+        const ugPerTab = entry.ugPerTabAtTimeOfUse ?? getLsdUgPerTab(findPurchase(getLogPurchaseId(entry)));
+        if (entry.tabsUsed != null && entry.ugUsed != null && entry.tabsUsed * (ugPerTab || 1) === entry.ugUsed) {
+            setLsdLogInputMode('tabs');
+            setInputValue('use-lsd-tabs-used', entry.tabsUsed);
+        } else if (entry.ugUsed != null) {
+            setLsdLogInputMode('ug');
+            setInputValue('use-lsd-ug-used', entry.ugUsed);
+        } else if (entry.tabsUsed != null) {
+            setLsdLogInputMode('tabs');
+            setInputValue('use-lsd-tabs-used', entry.tabsUsed);
+        } else {
+            setLsdLogInputMode('ug');
+            setInputValue('use-lsd-ug-used', entry.amount ?? '');
+        }
+        updateLsdUsePreview();
     } else {
         setInputValue('use-amount', entry.amount != null ? entry.amount : '');
         setInputValue('use-percent-after', '');
@@ -9506,7 +9967,7 @@ function editUseEntry(id) {
                 if (match) select.value = match.value;
             }
         }
-    } else if (isWeed) {
+    } else if (isWeed || isLsd) {
         updateVapeUseFormUI();
         if (!hasLinkedSupply(entry) && !logInventoryAffects(entry)) {
             setUsePurchaseLinkMode('none');
@@ -9544,7 +10005,7 @@ function editUseEntry(id) {
 
     setUseFormSubmitLabel('Update Entry');
     document.getElementById('cancel-use-edit-btn')?.classList.remove('hidden');
-    if (!isWeed && !isVape) {
+    if (!isWeed && !isVape && !isLsd) {
         updateUseEndTimeVisibility();
     }
     computeUseFormDuration();
@@ -9788,6 +10249,13 @@ function setupUseLogForm() {
     document.getElementById('use-purchase-select')?.addEventListener('change', () => {
         updateUsePurchaseLinkUI();
         updateVapeUsePreview();
+        updateLsdUsePreview();
+    });
+    ['use-lsd-tabs-used', 'use-lsd-ug-used'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', () => {
+            updateLsdUsePreview();
+            updateUsePurchaseLinkUI();
+        });
     });
     document.getElementById('use-weed-product-type')?.addEventListener('change', () => {
         updateWeedUseFormUI();
@@ -9953,7 +10421,9 @@ function handleUseLogSubmit(e) {
 
     const substanceIdPreview = document.getElementById('use-substance')?.value;
     const isVapeUse = isVapeTrackingMode(substanceIdPreview);
+    const isLsdUse = isLsdSubstanceId(substanceIdPreview);
     let vapeCalc = null;
+    let lsdCalc = null;
 
     if (isVapeUse) {
         vapeCalc = computeVapeUseFromForm({ editingId: editingUseId || null });
@@ -9968,12 +10438,18 @@ function handleUseLogSubmit(e) {
         }
     }
 
-    const payload = buildUseEntryFromForm(vapeCalc);
+    if (isLsdUse) {
+        lsdCalc = computeLsdUseFromForm({ editingId: editingUseId || null });
+        if (lsdCalc?.error) return alert(lsdCalc.error);
+    }
+
+    const payload = buildUseEntryFromForm(vapeCalc, lsdCalc);
     const { substanceId, amount, type, transactionType } = payload;
     const isPersonalUse = isPersonalUseLog({ transactionType });
     const eventTimestamp = getUseEventTimestamp(payload.date, payload.startTime);
     const now = new Date().toISOString();
     const useVapeInventory = isVapeUse && vapeCalc?.purchase && payload.inventoryAffects;
+    const useLsdInventory = isLsdUse && lsdCalc?.purchase && payload.inventoryAffects;
 
     if (isCokeSubstanceId(substanceId) && type === 'session') {
         if (!payload.endTime) {
@@ -10051,6 +10527,17 @@ function handleUseLogSubmit(e) {
             delete updated.estimatedPuffsPerHour;
             delete updated.estimatedPuffsPerMinute;
         }
+        if (isLsdSubstanceId(substanceId)) {
+            updated.type = 'quick';
+            updated.logMode = 'lsd_dose';
+            updated.startTime = '';
+            updated.time = '';
+            updated.endTime = '';
+            delete updated.endDate;
+            delete updated.startedAt;
+            delete updated.endedAt;
+            delete updated.durationMs;
+        }
 
         if (isVapeEdit || useVapeInventory) {
             setLogPurchaseId(updated, getLogPurchaseId(updated));
@@ -10111,6 +10598,17 @@ function handleUseLogSubmit(e) {
         delete log.estimatedPuffsPerHour;
         delete log.estimatedPuffsPerMinute;
     }
+    if (isLsdSubstanceId(substanceId)) {
+        log.type = 'quick';
+        log.logMode = 'lsd_dose';
+        log.startTime = '';
+        log.time = '';
+        log.endTime = '';
+        delete log.endDate;
+        delete log.startedAt;
+        delete log.endedAt;
+        delete log.durationMs;
+    }
 
     if (!Array.isArray(appData.logs)) appData.logs = [];
     appData.logs.push(log);
@@ -10118,7 +10616,10 @@ function handleUseLogSubmit(e) {
     if (useVapeInventory && vapeCalc.purchaseId) {
         setLogPurchaseId(log, vapeCalc.purchaseId);
         recalculateVapePurchaseInventory(vapeCalc.purchaseId);
-    } else if (!useVapeInventory) {
+    } else if (useLsdInventory && lsdCalc.purchaseId) {
+        setLogPurchaseId(log, lsdCalc.purchaseId);
+        recalculatePurchaseRemaining(lsdCalc.purchaseId);
+    } else if (!useVapeInventory && !useLsdInventory) {
         const inv = applyLogInventoryEffect(log);
         if (!inv.ok) {
             appData.logs.pop();
@@ -10587,11 +11088,17 @@ function renderUseHistoryCard(entry, sub, avgRate) {
     const warnings = getUseRowWarnings(entry, sub.id, avgRate);
     const isWeedSimple = isWeedDateOnlyUseLog(entry);
     const isVapeDateOnly = isVapeDateOnlyUseLog(entry);
-    const hideTimeStats = isWeedSimple || isVapeDateOnly;
+    const isLsdDateOnly = isLsdDateOnlyUseLog(entry);
+    const hideTimeStats = isWeedSimple || isVapeDateOnly || isLsdDateOnly;
     const rateStr = (!hideTimeStats && entry.useRate != null) ? `${entry.useRate.toFixed(2)}/${sub.defaultUnit}/hr` : '—';
     const checked = useHistorySelectionHas(entry.id) ? 'checked' : '';
     const timeRange = hideTimeStats ? '' : formatUseSessionTimeRange(entry);
     const isVape = isVapeUseLog(entry);
+    const isLsd = isLsdDateOnlyUseLog(entry);
+    const countStr = (isVape || isLsd) ? '—' : (entry.count || '—');
+    const amountDisplay = isVape
+        ? formatVapeUseSummary(entry, sub)
+        : (isLsd ? formatLsdUseSummary(entry) : `${entry.amount} ${entry.unit}`);
     const countStr = isVape ? '—' : (entry.count || '—');
     let amountDisplay = isVape ? formatVapeUseSummary(entry, sub) : `${entry.amount} ${entry.unit}`;
     if (isPercentLeftDistributedChildLog(entry)) {
@@ -11129,11 +11636,14 @@ function updateBuyVapeFieldsVisibility() {
     const isAlcohol = isAlcoholTrackingMode(substanceId);
     const isWeed = isWeedTrackingMode(substanceId);
     const isCigarettes = isCigarettesTrackingMode(substanceId);
+    const isLsd = isLsdSubstanceId(substanceId);
     document.getElementById('buy-vape-percent-group')?.classList.toggle('hidden', !isVape);
     document.getElementById('buy-vape-liquid-group')?.classList.toggle('hidden', !isVape);
     document.getElementById('buy-alcohol-fields-group')?.classList.toggle('hidden', !isAlcohol);
     document.getElementById('buy-weed-fields-group')?.classList.toggle('hidden', !isWeed);
     document.getElementById('buy-cigarettes-fields-group')?.classList.toggle('hidden', !isCigarettes);
+    document.getElementById('buy-lsd-fields-group')?.classList.toggle('hidden', !isLsd);
+    document.getElementById('buy-unit-group')?.classList.toggle('hidden', isLsd);
     document.getElementById('buy-time-group')?.classList.toggle('hidden', isVape);
     if (!isWeed) {
         document.getElementById('buy-quantity-group')?.classList.remove('hidden');
@@ -11145,13 +11655,16 @@ function updateBuyVapeFieldsVisibility() {
     if (qtyLabel && !isWeed) {
         qtyLabel.textContent = isVape
             ? 'Puff count at 100%'
-            : (primaryUnit && primaryUnit !== 'units'
-                ? `Quantity (${primaryUnit})`
-                : 'Quantity Bought');
+            : (isLsd
+                ? 'Quantity (tabs)'
+                : (primaryUnit && primaryUnit !== 'units'
+                    ? `Quantity (${primaryUnit})`
+                    : 'Quantity Bought'));
     }
     if (isVape) updateBuyVapeFieldsPreview();
     if (isAlcohol) updateBuyAlcoholPreview();
     if (isWeed) updateBuyWeedProductTypeUI();
+    if (isLsd) updateBuyLsdPreview();
 }
 
 function setBuyFormSubmitLabel(text) {
@@ -11187,6 +11700,12 @@ function setupBuyTrackerForm() {
         });
     });
     document.getElementById('buy-bud-grams')?.addEventListener('input', updateBuyCostPerUnitPreview);
+    ['buy-quantity', 'buy-ug-per-tab', 'buy-total-cost'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', () => {
+            updateBuyLsdPreview();
+            updateBuyCostPerUnitPreview();
+        });
+    });
     document.getElementById('buy-substance')?.addEventListener('change', updateBuyUnitDropdown);
     document.getElementById('buy-store-select')?.addEventListener('change', onBuyStoreSelectChange);
 }
@@ -11242,6 +11761,10 @@ function buildPurchaseFromForm() {
     if (isCigarettesTrackingMode(substanceId)) {
         applyCigaretteFieldsToPayload(payload, parseCigaretteFieldsFromForm());
     }
+    if (isLsdSubstanceId(substanceId)) {
+        const lsdFields = parseLsdFieldsFromForm();
+        applyLsdFieldsToPayload(payload, lsdFields, payload.totalCost);
+    }
     stripIrrelevantPurchaseFields(payload);
     return payload;
 }
@@ -11270,6 +11793,9 @@ function finalizeNewPurchaseRecord(payload) {
         record.supplyStartedAt = null;
         record.startedAt = null;
         record.finishedAt = null;
+    }
+    if (isLsdPurchase(record)) {
+        syncLsdPurchaseFields(record, parseFloat(getPurchaseTotalCost(record)) || 0);
     }
     record.inventoryStatus = 'active';
     record.inventoryHidden = false;
@@ -11301,6 +11827,21 @@ function applyPurchaseQuantityEdit(existing, newQty, options = {}) {
             const total = parseFloat(getPurchaseTotalCost(existing)) || 0;
             existing.costPerUnit = total / full;
         }
+        existing.updatedAt = new Date().toISOString();
+        return;
+    }
+    if (isLsdPurchase(existing)) {
+        const usedUg = Math.max(0, getPurchaseQuantityBought(existing) - getPurchaseRemainingAmount(existing));
+        const newTotalUg = newQty;
+        existing.totalUg = newTotalUg;
+        existing.quantityBought = newTotalUg;
+        existing.quantity = newTotalUg;
+        existing.unit = 'ug';
+        existing.remainingAmount = Math.max(0, newTotalUg - usedUg);
+        if (options.quantityTabs != null) existing.quantityTabs = options.quantityTabs;
+        if (options.ugPerTab != null) existing.ugPerTab = options.ugPerTab;
+        syncLsdPurchaseFields(existing);
+        existing.isDepleted = existing.remainingAmount <= INVENTORY_EPS;
         existing.updatedAt = new Date().toISOString();
         return;
     }
@@ -11405,8 +11946,10 @@ function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
     const weedType = purchase.weedProductType || 'bud';
     if (isWeedPurchase(purchase) && weedType === 'bud') {
         setInputValue('buy-quantity', '');
-    } else if (isWeedPurchase(purchase) && weedType === 'prerolls') {
+    } else     if (isWeedPurchase(purchase) && weedType === 'prerolls') {
         setInputValue('buy-quantity', '');
+    } else if (isLsdPurchase(purchase)) {
+        setInputValue('buy-quantity', getLsdQuantityTabs(purchase) ?? getPurchaseQuantity(purchase));
     } else {
         setInputValue('buy-quantity', isVape ? getVapeFullPuffCount(purchase) : getPurchaseQuantity(purchase));
     }
@@ -11422,6 +11965,7 @@ function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
     setInputValue('buy-preroll-count', purchase.preRollCount ?? '');
     setInputValue('buy-grams-per-preroll', purchase.gramsPerPreRoll ?? '');
     setInputValue('buy-cigarette-nicotine-mg', purchase.nicotineMg ?? '');
+    setInputValue('buy-ug-per-tab', purchase.ugPerTab ?? '');
     setInputValue('buy-total-cost', getPurchaseTotalCost(purchase));
     setBuyStoreFieldValue(purchase.store || purchase.location || '');
     setInputValue('buy-payment', purchase.paymentMethod || '');
@@ -11431,6 +11975,7 @@ function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
     updateBuyVapeFieldsPreview();
     updateBuyAlcoholPreview();
     updateBuyWeedProductTypeUI();
+    updateBuyLsdPreview();
     return true;
 }
 
@@ -11489,6 +12034,10 @@ function updateBuyCostPerUnitPreview() {
     const el = document.getElementById('buy-cost-per-unit-preview');
     if (!el) return;
     const substanceId = document.getElementById('buy-substance')?.value;
+    if (isLsdSubstanceId(substanceId)) {
+        el.textContent = 'See LSD preview below for cost per tab and cost per ug.';
+        return;
+    }
     let qty = parseFloat(document.getElementById('buy-quantity')?.value);
     if (isWeedTrackingMode(substanceId)) {
         const productType = document.getElementById('buy-weed-product-type')?.value || 'bud';
@@ -11516,6 +12065,11 @@ function handleBuySubmit(e) {
     const weedErr = validateWeedBuyForm(substanceId);
     if (weedErr) {
         alert(weedErr);
+        return;
+    }
+    const lsdErr = validateLsdBuyForm(substanceId);
+    if (lsdErr) {
+        alert(lsdErr);
         return;
     }
 
@@ -11546,7 +12100,9 @@ function handleBuySubmit(e) {
         applyPurchaseQuantityEdit(appData.purchases[idx], payload.quantityBought ?? payload.quantity ?? 0, {
             percentBoughtAt: payload.percentBoughtAt,
             eLiquidCapacityMl: payload.eLiquidCapacityMl ?? null,
-            nicotineMgPerMl: payload.nicotineMgPerMl ?? null
+            nicotineMgPerMl: payload.nicotineMgPerMl ?? null,
+            quantityTabs: payload.quantityTabs ?? null,
+            ugPerTab: payload.ugPerTab ?? null
         });
         migratePurchaseInventory(appData.purchases[idx], appData.logs || [], appData);
         if (isVapePuffPurchase(appData.purchases[idx])) {
@@ -14529,7 +15085,14 @@ function renderStatsBuyAnalyticsCards(substanceId) {
     const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
     const remainingLabel = isVapeNicotineSubstanceId(substanceId)
         ? (remaining != null ? `${formatStatsPuffs(remaining)} puffs` : '—')
-        : (remaining != null ? fmtSheetAmount(remaining, unit) : '—');
+        : (isLsdSubstanceId(substanceId)
+            ? (() => {
+                const sum = getLsdTotalRemainingSummary(substanceId);
+                return sum.tabs > 0 || sum.ug > 0
+                    ? `${formatAmount(sum.tabs)} tabs / ${formatAmount(sum.ug)} ug`
+                    : '—';
+            })()
+            : (remaining != null ? fmtSheetAmount(remaining, unit) : '—'));
 
     container.innerHTML = [
         renderSheetMetricCard('Total Cost', fmtSheetMoney(totalCost, cur), null),
@@ -19729,6 +20292,9 @@ function cleanExportData(data) {
             previousRemainingBeforeLog: l.previousRemainingBeforeLog ?? null,
             isEstimated: !!l.isEstimated,
             estimatedFromPercent: !!l.estimatedFromPercent,
+            tabsUsed: l.tabsUsed ?? null,
+            ugUsed: l.ugUsed ?? null,
+            ugPerTabAtTimeOfUse: l.ugPerTabAtTimeOfUse ?? null,
             isEstimatedFromPercentLeft: !!l.isEstimatedFromPercentLeft,
             isPercentLeftCheckpoint: !!l.isPercentLeftCheckpoint,
             excludeFromStats: !!l.excludeFromStats,
@@ -19780,6 +20346,13 @@ function cleanExportData(data) {
             eLiquidCapacityMl: p.eLiquidCapacityMl != null ? Number(p.eLiquidCapacityMl) : null,
             nicotineMgPerMl: p.nicotineMgPerMl != null ? Number(p.nicotineMgPerMl) : null,
             totalNicotineMg: p.totalNicotineMg != null ? Number(p.totalNicotineMg) : null,
+            quantityTabs: p.quantityTabs != null ? Number(p.quantityTabs) : null,
+            ugPerTab: p.ugPerTab != null ? Number(p.ugPerTab) : null,
+            totalUg: p.totalUg != null ? Number(p.totalUg) : null,
+            remainingTabs: p.remainingTabs != null ? Number(p.remainingTabs) : null,
+            remainingUg: p.remainingUg != null ? Number(p.remainingUg) : null,
+            costPerTab: p.costPerTab != null ? Number(p.costPerTab) : null,
+            costPerUg: p.costPerUg != null ? Number(p.costPerUg) : null,
             startedAt: p.startedAt || p.supplyStartedAt || null,
             finishedAt: p.finishedAt || null,
             inventoryStatus: p.inventoryStatus || null,
@@ -20135,6 +20708,7 @@ if (typeof window !== 'undefined') {
         clearInventoryFilters,
         runInventoryBulkAction,
         setVapeLogInputMode,
+        setLsdLogInputMode,
         setVapeTaperCountMode,
         setSpreadPercentLeftUsage,
         togglePercentDistDays,
