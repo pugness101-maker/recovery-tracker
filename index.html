@@ -480,6 +480,56 @@
                             </select>
                         </div>
 
+                        <div class="form-group use-log-compact hidden" id="use-nicotine-product-type-group">
+                            <label for="use-nicotine-product-type">Product type</label>
+                            <select id="use-nicotine-product-type" onchange="updateUseNicotineProductTypeUI()">
+                                <option value="vape">Vape</option>
+                                <option value="cigarettes">Cigarettes</option>
+                                <option value="pouches">Nicotine pouches</option>
+                                <option value="gum">Nicotine gum</option>
+                                <option value="patches">Nicotine patches</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+
+                        <div id="use-cigarettes-fields-group" class="hidden">
+                            <div class="form-group use-log-compact">
+                                <label for="use-cigarettes-smoked">Cigarettes smoked</label>
+                                <input type="number" id="use-cigarettes-smoked" min="0" step="1" placeholder="e.g. 5">
+                            </div>
+                            <p id="use-cigarettes-preview" class="use-supply-preview">—</p>
+                        </div>
+
+                        <div id="use-pouches-fields-group" class="hidden">
+                            <div class="form-group use-log-compact">
+                                <label for="use-pouches-used">Pouches used</label>
+                                <input type="number" id="use-pouches-used" min="0" step="1" placeholder="e.g. 3">
+                            </div>
+                            <p id="use-pouches-preview" class="use-supply-preview">—</p>
+                        </div>
+
+                        <div id="use-gum-fields-group" class="hidden">
+                            <div class="form-group use-log-compact">
+                                <label for="use-gum-pieces-used">Pieces used</label>
+                                <input type="number" id="use-gum-pieces-used" min="0" step="1" placeholder="e.g. 2">
+                            </div>
+                            <p id="use-gum-preview" class="use-supply-preview">—</p>
+                        </div>
+
+                        <div id="use-patches-fields-group" class="hidden">
+                            <div class="form-row">
+                                <div class="form-group use-log-compact">
+                                    <label for="use-patches-used">Patches used</label>
+                                    <input type="number" id="use-patches-used" min="0" step="1" placeholder="1">
+                                </div>
+                                <div class="form-group use-log-compact">
+                                    <label for="use-patch-hours-worn">Hours worn</label>
+                                    <input type="number" id="use-patch-hours-worn" min="0" step="0.5" placeholder="24">
+                                </div>
+                            </div>
+                            <p id="use-patches-preview" class="use-supply-preview">—</p>
+                        </div>
+
                         <div id="use-vape-fields-group" class="use-vape-fields-group hidden">
                             <div id="use-vape-purchase-block" class="hidden">
                                 <div class="form-group use-log-compact">
@@ -1397,6 +1447,19 @@
                             <input type="number" id="buy-quantity" min="0.01" step="0.01" required>
                         </div>
                     </div>
+                    <div id="buy-nicotine-fields-group" class="hidden">
+                        <div class="form-group">
+                            <label for="buy-nicotine-product-type">Product type</label>
+                            <select id="buy-nicotine-product-type" onchange="updateBuyNicotineProductTypeUI()">
+                                <option value="vape">Vape</option>
+                                <option value="cigarettes">Cigarettes</option>
+                                <option value="pouches">Nicotine pouches</option>
+                                <option value="gum">Nicotine gum</option>
+                                <option value="patches">Nicotine patches</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                    </div>
                     <div id="buy-vape-percent-group" class="form-group hidden">
                         <label for="buy-percent-bought">Percent bought at</label>
                         <input type="number" id="buy-percent-bought" min="0" max="100" step="0.1" value="100">
@@ -1465,10 +1528,74 @@
                         </div>
                     </div>
                     <div id="buy-cigarettes-fields-group" class="hidden">
-                        <div class="form-group">
-                            <label for="buy-cigarette-nicotine-mg">Nicotine (mg)</label>
-                            <input type="number" id="buy-cigarette-nicotine-mg" min="0" step="0.01" placeholder="1.2">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="buy-cigarette-pack-count">Pack count</label>
+                                <input type="number" id="buy-cigarette-pack-count" min="0" step="1" placeholder="1">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-cigarette-count">Cigarette count</label>
+                                <input type="number" id="buy-cigarette-count" min="0" step="1" placeholder="20">
+                            </div>
                         </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="buy-cigarettes-per-pack">Cigarettes per pack</label>
+                                <input type="number" id="buy-cigarettes-per-pack" min="1" step="1" value="20">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-cigarette-nicotine-mg">Nicotine (mg per cigarette)</label>
+                                <input type="number" id="buy-cigarette-nicotine-mg" min="0" step="0.01" placeholder="1.2">
+                            </div>
+                        </div>
+                        <p id="buy-cigarettes-preview" class="buy-preview">—</p>
+                    </div>
+                    <div id="buy-pouches-fields-group" class="hidden">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="buy-pouch-container-count">Can/container count</label>
+                                <input type="number" id="buy-pouch-container-count" min="0" step="1" placeholder="1">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-pouches-per-container">Pouches per container</label>
+                                <input type="number" id="buy-pouches-per-container" min="0" step="1" placeholder="20">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="buy-pouch-mg-per">Mg nicotine per pouch</label>
+                            <input type="number" id="buy-pouch-mg-per" min="0" step="0.1" placeholder="6">
+                        </div>
+                        <p id="buy-pouches-preview" class="buy-preview">—</p>
+                    </div>
+                    <div id="buy-gum-fields-group" class="hidden">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="buy-gum-piece-count">Piece count</label>
+                                <input type="number" id="buy-gum-piece-count" min="0" step="1" placeholder="20">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-gum-mg-per-piece">Mg nicotine per piece</label>
+                                <input type="number" id="buy-gum-mg-per-piece" min="0" step="0.1" placeholder="2">
+                            </div>
+                        </div>
+                        <p id="buy-gum-preview" class="buy-preview">—</p>
+                    </div>
+                    <div id="buy-patches-fields-group" class="hidden">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="buy-patch-count">Patch count</label>
+                                <input type="number" id="buy-patch-count" min="0" step="1" placeholder="14">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-patch-mg-per">Mg per patch</label>
+                                <input type="number" id="buy-patch-mg-per" min="0" step="0.1" placeholder="21">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="buy-patch-duration-hours">Patch duration (hours)</label>
+                            <input type="number" id="buy-patch-duration-hours" min="1" step="1" value="24">
+                        </div>
+                        <p id="buy-patches-preview" class="buy-preview">—</p>
                     </div>
                     <div id="buy-lsd-fields-group" class="hidden">
                         <div class="form-group">
