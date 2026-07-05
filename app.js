@@ -97,9 +97,10 @@ const SUBSTANCE_ICONS = ['🚬', '💨', '🍺', '🌿', '💊', '☕', '🍬', 
 const SUBSTANCE_COLORS = ['#4caf50', '#42a5f5', '#ffb74d', '#66bb6a', '#ab47bc', '#ef5350', '#78909c', '#26a69a', '#ff7043', '#5c6bc0'];
 
 const V1_NAME_TO_ID = {
-    'Cigarettes': 'cigarettes',
-    'Vapes/Nicotine': 'vape-nicotine',
-    'Vape/Nicotine': 'vape-nicotine',
+    'Cigarettes': 'nicotine',
+    'Vapes/Nicotine': 'nicotine',
+    'Vape/Nicotine': 'nicotine',
+    'Nicotine': 'nicotine',
     'Coke': 'coke',
     'Alcohol': 'alcohol',
     'Weed/THC': 'weed-thc',
@@ -111,15 +112,17 @@ const V1_NAME_TO_ID = {
 };
 
 const SUBSTANCE_NAME_ALIASES = {
-    'vapes/nicotine': 'vape/nicotine',
-    'vape nicotine': 'vape/nicotine',
-    'nicotine': 'vape/nicotine',
+    'vapes/nicotine': 'nicotine',
+    'vape nicotine': 'nicotine',
+    'vape/nicotine': 'nicotine',
+    'nicotine': 'nicotine',
     'cocaine': 'coke',
     'weed': 'weed/thc',
     'thc': 'weed/thc',
     'marijuana': 'weed/thc',
-    'cigs': 'cigarettes',
-    'cigarette': 'cigarettes',
+    'cigs': 'nicotine',
+    'cigarette': 'nicotine',
+    'cigarettes': 'nicotine',
     'xanax': 'xannax',
     'xannax': 'xannax',
     'mdma': 'molly',
@@ -135,16 +138,100 @@ function normalizeSubstanceName(name) {
 }
 
 const VAPE_NICOTINE_ID = 'vape-nicotine';
+const LEGACY_CIGARETTES_ID = 'cigarettes';
+const NICOTINE_ID = 'nicotine';
+
+const NICOTINE_PRODUCT_TYPES = ['vape', 'cigarettes', 'pouches', 'gum', 'patches', 'other'];
+const NICOTINE_PRODUCT_LABELS = {
+    vape: 'Vape',
+    cigarettes: 'Cigarettes',
+    pouches: 'Nicotine pouches',
+    gum: 'Nicotine gum',
+    patches: 'Nicotine patches',
+    other: 'Other'
+};
+
+function isNicotineSubstanceId(substanceId, data = appData) {
+    if (!substanceId) return false;
+    const id = normalizeSubstanceRef(substanceId, data);
+    return id === NICOTINE_ID || id === VAPE_NICOTINE_ID || id === LEGACY_CIGARETTES_ID;
+}
+
+function isNicotineTrackingMode(substanceId, data = appData) {
+    if (!substanceId) return false;
+    if (isNicotineSubstanceId(substanceId, data)) return true;
+    return getSubstanceTrackingMode(substanceId, data) === 'nicotine';
+}
+
+function inferNicotineProductTypeFromSubstanceId(substanceId, data = appData) {
+    const id = normalizeSubstanceRef(substanceId, data);
+    if (id === VAPE_NICOTINE_ID) return 'vape';
+    if (id === LEGACY_CIGARETTES_ID) return 'cigarettes';
+    const mode = getSubstanceTrackingMode(substanceId, data);
+    if (mode === 'vape') return 'vape';
+    if (mode === 'cigarettes') return 'cigarettes';
+    return null;
+}
+
+function normalizeNicotineProductType(type) {
+    return NICOTINE_PRODUCT_TYPES.includes(type) ? type : null;
+}
+
+function getNicotineProductType(record, data = appData) {
+    if (!record) return null;
+    const explicit = normalizeNicotineProductType(record.nicotineProductType);
+    if (explicit) return explicit;
+    const substanceId = record.substanceId || record.substance
+        || (record.unit != null ? getPurchaseSubstanceId(record) : getUseSubstanceId(record));
+    return inferNicotineProductTypeFromSubstanceId(substanceId, data) || 'vape';
+}
+
+function getNicotineProductTypeLabel(type) {
+    return NICOTINE_PRODUCT_LABELS[type] || type || 'Nicotine';
+}
+
+function getBuyFormNicotineProductType() {
+    return normalizeNicotineProductType(document.getElementById('buy-nicotine-product-type')?.value) || 'vape';
+}
+
+function getUseFormNicotineProductType() {
+    return normalizeNicotineProductType(document.getElementById('use-nicotine-product-type')?.value) || 'vape';
+}
+
+function resolveNicotineFormProductType(substanceId) {
+    if (!isNicotineTrackingMode(substanceId)) return null;
+    const buySub = document.getElementById('buy-substance')?.value;
+    const useSub = document.getElementById('use-substance')?.value;
+    if (buySub === substanceId) return getBuyFormNicotineProductType();
+    if (useSub === substanceId) return getUseFormNicotineProductType();
+    return 'vape';
+}
+
+function isNicotineVapeProduct(record, data = appData) {
+    if (!record) return false;
+    return isNicotineTrackingMode(getPurchaseSubstanceId(record) || getUseSubstanceId(record), data)
+        && getNicotineProductType(record, data) === 'vape';
+}
+
+function isNicotineCigarettesProduct(record, data = appData) {
+    if (!record) return false;
+    return isNicotineTrackingMode(getPurchaseSubstanceId(record) || getUseSubstanceId(record), data)
+        && getNicotineProductType(record, data) === 'cigarettes';
+}
+
+function isNicotinePurchase(purchase, data = appData) {
+    return isNicotineTrackingMode(getPurchaseSubstanceId(purchase), data);
+}
 
 const DEFAULT_SUBSTANCE_CATALOG = [
     {
-        id: 'vape-nicotine',
-        name: 'Vape/Nicotine',
+        id: 'nicotine',
+        name: 'Nicotine',
         icon: '💨',
         color: '#42a5f5',
-        trackingMode: 'vape',
+        trackingMode: 'nicotine',
         primaryUnit: 'puffs',
-        units: ['puffs', 'hits', 'pods', 'disposable', 'ml'],
+        units: ['puffs', 'cigarettes', 'pouches', 'pieces', 'patches'],
         defaultUnit: 'puffs',
         costTrackingEnabled: true,
         taperTrackingEnabled: true,
@@ -246,18 +333,6 @@ const DEFAULT_SUBSTANCE_CATALOG = [
         defaultUnit: 'g',
         costTrackingEnabled: true,
         taperTrackingEnabled: true
-    },
-    {
-        id: 'cigarettes',
-        name: 'Cigarettes',
-        icon: '🚬',
-        color: '#78909c',
-        trackingMode: 'cigarettes',
-        primaryUnit: 'cigarettes',
-        units: ['cigarettes', 'packs'],
-        defaultUnit: 'cigarettes',
-        costTrackingEnabled: true,
-        taperTrackingEnabled: true
     }
 ];
 
@@ -299,8 +374,14 @@ function getSubstanceTrackingMode(substanceId, data = appData) {
     return getSubstanceTrackingDefaults(substanceId).trackingMode || 'standard';
 }
 
-function isVapeTrackingMode(substanceId, data = appData) {
+function isVapeTrackingMode(substanceId, data = appData, record = null) {
     if (!substanceId || substanceId === 'coke') return false;
+    if (isNicotineTrackingMode(substanceId, data)) {
+        if (record) return getNicotineProductType(record, data) === 'vape';
+        const formType = resolveNicotineFormProductType(substanceId);
+        if (formType) return formType === 'vape';
+        return inferNicotineProductTypeFromSubstanceId(substanceId, data) === 'vape';
+    }
     return getSubstanceTrackingMode(substanceId, data) === 'vape';
 }
 
@@ -325,7 +406,13 @@ function isWeedDateOnlyUseLog(log, data = appData) {
     return log.logMode === 'amount' || getUseLogType(log) === 'quick' || !log.endTime;
 }
 
-function isCigarettesTrackingMode(substanceId, data = appData) {
+function isCigarettesTrackingMode(substanceId, data = appData, record = null) {
+    if (isNicotineTrackingMode(substanceId, data)) {
+        if (record) return getNicotineProductType(record, data) === 'cigarettes';
+        const formType = resolveNicotineFormProductType(substanceId);
+        if (formType) return formType === 'cigarettes';
+        return inferNicotineProductTypeFromSubstanceId(substanceId, data) === 'cigarettes';
+    }
     return getSubstanceTrackingMode(substanceId, data) === 'cigarettes';
 }
 
@@ -702,6 +789,95 @@ function migrateLsdInventoryV1(data) {
     data.migrations.lsdInventoryV1 = true;
 }
 
+function migrateNicotineUnifyV1(data) {
+    if (data.migrations?.nicotineUnifyV1) return;
+    ensureDefaultSubstances(data);
+    ensureAppDataSettings(data);
+
+    const nicotineSub = data.substances.find(s => s.id === NICOTINE_ID)
+        || findSubstanceByNormalizedName(data.substances, 'Nicotine');
+    if (!nicotineSub) {
+        data.substances.unshift(createSubstance({
+            ...DEFAULT_SUBSTANCE_CATALOG[0],
+            isMain: true
+        }));
+    } else {
+        nicotineSub.name = nicotineSub.name || 'Nicotine';
+        nicotineSub.icon = nicotineSub.icon || '💨';
+        nicotineSub.trackingMode = 'nicotine';
+        nicotineSub.active = nicotineSub.active !== false;
+    }
+
+    const assignProductType = (record, legacyId) => {
+        if (!record || record.nicotineProductType) return;
+        if (legacyId === VAPE_NICOTINE_ID || getSubstanceTrackingMode(legacyId, data) === 'vape') {
+            record.nicotineProductType = 'vape';
+        } else if (legacyId === LEGACY_CIGARETTES_ID || getSubstanceTrackingMode(legacyId, data) === 'cigarettes') {
+            record.nicotineProductType = 'cigarettes';
+        } else if (isVapePuffUnit(record.unit) || record.fullPuffCount != null || record.percentBoughtAt != null) {
+            record.nicotineProductType = 'vape';
+        } else if ((record.unit || '').toLowerCase().includes('cigarette') || record.cigarettesPerPack != null) {
+            record.nicotineProductType = 'cigarettes';
+        } else if ((record.unit || '').toLowerCase().includes('pouch')) {
+            record.nicotineProductType = 'pouches';
+        } else if ((record.unit || '').toLowerCase().includes('piece') || (record.unit || '').toLowerCase().includes('gum')) {
+            record.nicotineProductType = 'gum';
+        } else if ((record.unit || '').toLowerCase().includes('patch')) {
+            record.nicotineProductType = 'patches';
+        }
+    };
+
+    (data.logs || []).forEach(log => {
+        const sid = getUseSubstanceId(log);
+        if (sid === VAPE_NICOTINE_ID || sid === LEGACY_CIGARETTES_ID
+            || getSubstanceTrackingMode(sid, data) === 'vape'
+            || getSubstanceTrackingMode(sid, data) === 'cigarettes') {
+            assignProductType(log, sid);
+            log.substanceId = NICOTINE_ID;
+            log.trackingMode = 'nicotine';
+        }
+    });
+
+    (data.purchases || []).forEach(purchase => {
+        const sid = getPurchaseSubstanceId(purchase);
+        if (sid === VAPE_NICOTINE_ID || sid === LEGACY_CIGARETTES_ID
+            || getSubstanceTrackingMode(sid, data) === 'vape'
+            || getSubstanceTrackingMode(sid, data) === 'cigarettes') {
+            assignProductType(purchase, sid);
+            purchase.substanceId = NICOTINE_ID;
+            purchase.trackingMode = 'nicotine';
+        }
+    });
+
+    reassignSubstanceIdInData(data, VAPE_NICOTINE_ID, NICOTINE_ID);
+    reassignSubstanceIdInData(data, LEGACY_CIGARETTES_ID, NICOTINE_ID);
+
+    const settings = data.settings.substanceSettings || {};
+    if (!settings[NICOTINE_ID]) {
+        settings[NICOTINE_ID] = {
+            ...(settings[VAPE_NICOTINE_ID] || settings[LEGACY_CIGARETTES_ID] || getDefaultSubstanceSettings()[NICOTINE_ID] || {})
+        };
+    }
+    delete settings[VAPE_NICOTINE_ID];
+    delete settings[LEGACY_CIGARETTES_ID];
+    data.settings.substanceSettings = settings;
+
+    data.substances.forEach(sub => {
+        if (sub.id === VAPE_NICOTINE_ID || sub.id === LEGACY_CIGARETTES_ID) {
+            sub.active = false;
+            sub.isMain = false;
+        }
+    });
+
+    const nicotine = data.substances.find(s => s.id === NICOTINE_ID);
+    if (nicotine && !data.substances.some(s => s.isMain && s.active !== false)) {
+        nicotine.isMain = true;
+    }
+
+    if (!data.migrations) data.migrations = {};
+    data.migrations.nicotineUnifyV1 = true;
+}
+
 function isVapeTaperSubstanceId(substanceId, data = appData) {
     return isVapeTrackingMode(substanceId, data);
 }
@@ -736,6 +912,7 @@ function getSubstanceDisplayName(sub, data = appData) {
     const n = normalizeSubstanceName(resolved.name);
     if (n === 'lsd' || n === 'acid') return 'LSD';
     if (n === 'alcohol' || n === 'alchocol') return 'Alcohol';
+    if (n === 'nicotine' || resolved.id === NICOTINE_ID) return 'Nicotine';
     return resolved.name || resolved.id;
 }
 
@@ -1635,12 +1812,25 @@ function formatInventoryTotalRemainingValue(summary, selectedSubstanceId, data =
 
 function shouldShowVapeInventorySummaryCards(selectedSubstanceId) {
     return isInventoryAllSubstancesFilter(selectedSubstanceId)
-        || isVapeNicotineSubstanceId(selectedSubstanceId);
+        || (isNicotineSubstanceId(selectedSubstanceId) && !isInventoryAllSubstancesFilter(selectedSubstanceId));
 }
 
 function shouldShowTotalRemainingInventoryCard(selectedSubstanceId) {
     return isInventoryAllSubstancesFilter(selectedSubstanceId)
-        || !isVapeNicotineSubstanceId(selectedSubstanceId);
+        || !isNicotineSubstanceId(selectedSubstanceId);
+}
+
+function formatNicotineInventorySummary(selectedSubstanceId, data = appData) {
+    const purchases = (data.purchases || []).filter(p => purchaseMatchesSubstance(p, selectedSubstanceId, data));
+    const stats = getNicotineInventoryAnalytics(purchases, data);
+    const parts = [
+        `Vape: ${stats.vapeActive} active, ${stats.vapeDepleted} depleted`,
+        `Cigarettes: ${stats.cigarettePacks} active pack${stats.cigarettePacks === 1 ? '' : 's'}`,
+        `Pouches: ${stats.pouches}`,
+        `Gum: ${stats.gumPieces > 0 ? formatAmount(stats.gumPieces) : '0'}`,
+        `Patches: ${stats.patches}`
+    ];
+    return parts.join(' · ');
 }
 
 function renderInventorySummaryCards() {
@@ -1656,6 +1846,9 @@ function renderInventorySummaryCards() {
     if (shouldShowTotalRemainingInventoryCard(selectedId)) {
         const rem = formatInventoryTotalRemainingValue(m, selectedId);
         metaParts.push(`Remaining <strong>${rem}</strong>`);
+    }
+    if (isNicotineSubstanceId(selectedId)) {
+        metaParts.push(`<span class="inventory-nicotine-summary">${formatNicotineInventorySummary(selectedId)}</span>`);
     }
     if (shouldShowVapeInventorySummaryCards(selectedId)) {
         metaParts.push(`Puffs <strong>${formatAmountWithUnit(m.vapePuffsLeft, 'puffs')}</strong>`);
@@ -2043,7 +2236,7 @@ function isWeedPurchase(purchase, data = appData) {
 }
 
 function isCigarettesPurchase(purchase, data = appData) {
-    return isCigarettesTrackingMode(getPurchaseSubstanceId(purchase), data);
+    return isCigarettesTrackingMode(getPurchaseSubstanceId(purchase), data, purchase);
 }
 
 function computePureAlcoholMl(netVolumeMl, alcoholPercent) {
@@ -2199,19 +2392,124 @@ function validateWeedBuyForm(substanceId) {
 }
 
 function parseCigaretteFieldsFromForm() {
-    const raw = parseFloat(document.getElementById('buy-cigarette-nicotine-mg')?.value);
-    return Number.isFinite(raw) && raw >= 0 ? raw : null;
+    const packCountRaw = parseFloat(document.getElementById('buy-cigarette-pack-count')?.value);
+    const cigaretteCountRaw = parseFloat(document.getElementById('buy-cigarette-count')?.value);
+    const perPackRaw = parseFloat(document.getElementById('buy-cigarettes-per-pack')?.value);
+    const nicotineRaw = parseFloat(document.getElementById('buy-cigarette-nicotine-mg')?.value);
+    const cigarettesPerPack = Number.isFinite(perPackRaw) && perPackRaw > 0 ? perPackRaw : 20;
+    const packCount = Number.isFinite(packCountRaw) && packCountRaw >= 0 ? packCountRaw : null;
+    const cigaretteCount = Number.isFinite(cigaretteCountRaw) && cigaretteCountRaw >= 0 ? cigaretteCountRaw : null;
+    let totalCigarettes = null;
+    if (cigaretteCount != null) totalCigarettes = cigaretteCount;
+    else if (packCount != null) totalCigarettes = packCount * cigarettesPerPack;
+    const nicotineMg = Number.isFinite(nicotineRaw) && nicotineRaw >= 0 ? nicotineRaw : null;
+    return { packCount, cigaretteCount, cigarettesPerPack, totalCigarettes, nicotineMg };
 }
 
-function applyCigaretteFieldsToPayload(payload, nicotineMg) {
-    if (nicotineMg != null) payload.nicotineMg = nicotineMg;
+function applyCigaretteFieldsToPayload(payload, fields) {
+    if (fields == null || typeof fields !== 'object') {
+        const legacyMg = fields;
+        if (legacyMg != null) payload.nicotineMg = legacyMg;
+        else delete payload.nicotineMg;
+        return;
+    }
+    payload.nicotineProductType = 'cigarettes';
+    if (fields.packCount != null) payload.packCount = fields.packCount;
+    else delete payload.packCount;
+    if (fields.cigaretteCount != null) payload.cigaretteCount = fields.cigaretteCount;
+    else delete payload.cigaretteCount;
+    payload.cigarettesPerPack = fields.cigarettesPerPack ?? 20;
+    if (fields.totalCigarettes != null) {
+        payload.totalCigarettes = fields.totalCigarettes;
+        payload.quantityBought = fields.totalCigarettes;
+        payload.quantity = fields.totalCigarettes;
+        payload.unit = 'cigarettes';
+    }
+    if (fields.nicotineMg != null) payload.nicotineMg = fields.nicotineMg;
     else delete payload.nicotineMg;
+}
+
+function parseNicotinePouchesFieldsFromForm() {
+    const containerRaw = parseFloat(document.getElementById('buy-pouch-container-count')?.value);
+    const perContainerRaw = parseFloat(document.getElementById('buy-pouches-per-container')?.value);
+    const mgRaw = parseFloat(document.getElementById('buy-pouch-mg-per')?.value);
+    const containerCount = Number.isFinite(containerRaw) && containerRaw >= 0 ? containerRaw : null;
+    const pouchesPerContainer = Number.isFinite(perContainerRaw) && perContainerRaw > 0 ? perContainerRaw : null;
+    const mgPerPouch = Number.isFinite(mgRaw) && mgRaw >= 0 ? mgRaw : null;
+    const totalPouches = containerCount != null && pouchesPerContainer != null
+        ? containerCount * pouchesPerContainer
+        : null;
+    const totalNicotineMg = totalPouches != null && mgPerPouch != null ? totalPouches * mgPerPouch : null;
+    return { containerCount, pouchesPerContainer, mgPerPouch, totalPouches, totalNicotineMg };
+}
+
+function applyNicotinePouchesFieldsToPayload(payload, fields) {
+    payload.nicotineProductType = 'pouches';
+    ['containerCount', 'pouchesPerContainer', 'mgPerPouch', 'totalPouches', 'totalNicotineMg'].forEach(key => {
+        if (fields[key] != null) payload[key] = fields[key];
+        else delete payload[key];
+    });
+    if (fields.totalPouches != null) {
+        payload.quantityBought = fields.totalPouches;
+        payload.quantity = fields.totalPouches;
+        payload.unit = 'pouches';
+    }
+}
+
+function parseNicotineGumFieldsFromForm() {
+    const pieceRaw = parseFloat(document.getElementById('buy-gum-piece-count')?.value);
+    const mgRaw = parseFloat(document.getElementById('buy-gum-mg-per-piece')?.value);
+    const pieceCount = Number.isFinite(pieceRaw) && pieceRaw >= 0 ? pieceRaw : null;
+    const mgPerPiece = Number.isFinite(mgRaw) && mgRaw >= 0 ? mgRaw : null;
+    const totalNicotineMg = pieceCount != null && mgPerPiece != null ? pieceCount * mgPerPiece : null;
+    return { pieceCount, mgPerPiece, totalNicotineMg };
+}
+
+function applyNicotineGumFieldsToPayload(payload, fields) {
+    payload.nicotineProductType = 'gum';
+    ['pieceCount', 'mgPerPiece', 'totalNicotineMg'].forEach(key => {
+        if (fields[key] != null) payload[key] = fields[key];
+        else delete payload[key];
+    });
+    if (fields.pieceCount != null) {
+        payload.quantityBought = fields.pieceCount;
+        payload.quantity = fields.pieceCount;
+        payload.unit = 'pieces';
+    }
+}
+
+function parseNicotinePatchesFieldsFromForm() {
+    const patchRaw = parseFloat(document.getElementById('buy-patch-count')?.value);
+    const mgRaw = parseFloat(document.getElementById('buy-patch-mg-per')?.value);
+    const durationRaw = parseFloat(document.getElementById('buy-patch-duration-hours')?.value);
+    const patchCount = Number.isFinite(patchRaw) && patchRaw >= 0 ? patchRaw : null;
+    const mgPerPatch = Number.isFinite(mgRaw) && mgRaw >= 0 ? mgRaw : null;
+    const patchDurationHours = Number.isFinite(durationRaw) && durationRaw > 0 ? durationRaw : 24;
+    return { patchCount, mgPerPatch, patchDurationHours };
+}
+
+function applyNicotinePatchesFieldsToPayload(payload, fields) {
+    payload.nicotineProductType = 'patches';
+    ['patchCount', 'mgPerPatch', 'patchDurationHours'].forEach(key => {
+        if (fields[key] != null) payload[key] = fields[key];
+        else delete payload[key];
+    });
+    if (fields.patchCount != null) {
+        payload.quantityBought = fields.patchCount;
+        payload.quantity = fields.patchCount;
+        payload.unit = 'patches';
+    }
 }
 
 function stripIrrelevantPurchaseFields(purchase) {
     if (!purchase || typeof purchase !== 'object') return;
-    const mode = getSubstanceTrackingMode(getPurchaseSubstanceId(purchase));
-    if (mode !== 'vape') {
+    const substanceId = getPurchaseSubstanceId(purchase);
+    const mode = getSubstanceTrackingMode(substanceId);
+    const productType = isNicotineTrackingMode(substanceId) ? getNicotineProductType(purchase) : null;
+    const isVapeProduct = productType === 'vape' || (!isNicotineTrackingMode(substanceId) && mode === 'vape');
+    const isCigProduct = productType === 'cigarettes' || (!isNicotineTrackingMode(substanceId) && mode === 'cigarettes');
+
+    if (!isVapeProduct) {
         ['fullPuffCount', 'percentBoughtAt', 'startingPuffsLeft', 'remainingPuffs', 'eLiquidCapacityMl',
             'nicotineMgPerMl', 'totalNicotineMg', 'finishedAt'].forEach(key => delete purchase[key]);
     }
@@ -2222,8 +2520,20 @@ function stripIrrelevantPurchaseFields(purchase) {
         ['weedProductType', 'budGrams', 'cartGrams', 'ediblesMg', 'preRollCount', 'gramsPerPreRoll', 'totalPreRollGrams']
             .forEach(key => delete purchase[key]);
     }
-    if (mode !== 'cigarettes') {
-        delete purchase.nicotineMg;
+    if (!isCigProduct) {
+        ['nicotineMg', 'packCount', 'cigaretteCount', 'cigarettesPerPack', 'totalCigarettes'].forEach(key => delete purchase[key]);
+    }
+    if (productType !== 'pouches') {
+        ['containerCount', 'pouchesPerContainer', 'mgPerPouch', 'totalPouches'].forEach(key => delete purchase[key]);
+    }
+    if (productType !== 'gum') {
+        ['pieceCount', 'mgPerPiece'].forEach(key => delete purchase[key]);
+    }
+    if (productType !== 'patches') {
+        ['patchCount', 'mgPerPatch', 'patchDurationHours'].forEach(key => delete purchase[key]);
+    }
+    if (!isNicotineTrackingMode(substanceId)) {
+        delete purchase.nicotineProductType;
     }
     if (!isLsdPurchase(purchase)) {
         ['quantityTabs', 'ugPerTab', 'totalUg', 'remainingTabs', 'remainingUg', 'costPerTab', 'costPerUg']
@@ -2267,7 +2577,7 @@ function getDefaultSubstances() {
 
 function getDefaultSubstanceSettings() {
     return {
-        'vape-nicotine': { packPrice: 20, unitsPerPack: 200, baseline: 20, quitGoal: '' },
+        nicotine: { packPrice: 20, unitsPerPack: 200, baseline: 20, quitGoal: '' },
         coke: { packPrice: 80, unitsPerPack: 1, baseline: 0.5, quitGoal: '' },
         alcohol: { packPrice: 15, unitsPerPack: 6, baseline: 2, quitGoal: '' },
         'weed-thc': { packPrice: 50, unitsPerPack: 28, baseline: 1, quitGoal: '' },
@@ -2275,8 +2585,7 @@ function getDefaultSubstanceSettings() {
         lsd: { packPrice: 15, unitsPerPack: 10, baseline: 1, quitGoal: '' },
         molly: { packPrice: 25, unitsPerPack: 1, baseline: 100, quitGoal: '' },
         xannax: { packPrice: 10, unitsPerPack: 30, baseline: 1, quitGoal: '' },
-        ketamine: { packPrice: 60, unitsPerPack: 1, baseline: 50, quitGoal: '' },
-        cigarettes: { packPrice: 10, unitsPerPack: 20, baseline: 20, quitGoal: '' }
+        ketamine: { packPrice: 60, unitsPerPack: 1, baseline: 50, quitGoal: '' }
     };
 }
 
@@ -2359,7 +2668,7 @@ const SESSION_LONG_BREAK_HOURS = 12;
 const SUPPLY_LOW_REMAINING_PCT = 0.25;
 const INVENTORY_EPS = 0.0001;
 const PERCENT_REMAINING_UNITS = new Set(['puffs', 'pods', 'disposable']);
-const DEFAULT_MAIN_SUBSTANCE_ID = VAPE_NICOTINE_ID;
+const DEFAULT_MAIN_SUBSTANCE_ID = NICOTINE_ID;
 
 const TAPER_RELAPSE_NOTE = 'Going over your limit doesn\'t erase your progress. Every day is a new chance—no shame, just data.';
 const TAPER_STANDARD_REDUCTION_TYPES = ['reduce-amount', 'reduce-percent', 'fixed', 'manual-weekly'];
@@ -3194,6 +3503,7 @@ function normalizeAppData(data) {
     migrateVapeDataV1(data);
     repairVapeInventoryLinks(data);
     migrateLsdInventoryV1(data);
+    migrateNicotineUnifyV1(data);
     migrateVapePercentSpreadV1(data);
     migrateInventoryStatusFields(data);
     repairDataConsistency(data);
@@ -4499,19 +4809,23 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
         case 'transactionType':
             return `<td data-col="${colId}"${dataLabel}>${formatUseHistoryTransactionType(entry)}</td>`;
         case 'amount': {
-            let amountHtml = formatAmount(entry.amount);
+            let amountHtml;
             if (isLsdDateOnlyUseLog(entry)) {
                 amountHtml = formatLsdUseSummary(entry);
-            let amountHtml = `${formatAmount(entry.amount)}`;
-            if (isPercentLeftDistributedChildLog(entry)) {
-                amountHtml = `~${formatAmount(entry.amount)} <span class="use-history-est-label">(est. daily)</span>`;
-            } else if (isPercentLeftCheckpointLog(entry) && getSpreadPercentLeftUsage()) {
-                const childCount = getDistributedChildrenForPercentLog(entry.id).length;
-                amountHtml = childCount
-                    ? `<span class="use-history-est-label">${formatPercentLeftCheckpointSummary(entry)}</span>`
-                    : `~${formatAmount(entry.amount)}`;
-            } else if (isVapeUseLog(entry) && (entry.isEstimated || entry.estimatedFromPercent)) {
-                amountHtml = `~${formatAmount(entry.amount)}`;
+            } else if (isNicotineSubstanceId(getUseSubstanceId(entry)) && !isVapeUseLog(entry)) {
+                amountHtml = formatNicotineUseLogLabel(entry);
+            } else {
+                amountHtml = `${formatAmount(entry.amount)}`;
+                if (isPercentLeftDistributedChildLog(entry)) {
+                    amountHtml = `~${formatAmount(entry.amount)} <span class="use-history-est-label">(est. daily)</span>`;
+                } else if (isPercentLeftCheckpointLog(entry) && getSpreadPercentLeftUsage()) {
+                    const childCount = getDistributedChildrenForPercentLog(entry.id).length;
+                    amountHtml = childCount
+                        ? `<span class="use-history-est-label">${formatPercentLeftCheckpointSummary(entry)}</span>`
+                        : `~${formatAmount(entry.amount)}`;
+                } else if (isVapeUseLog(entry) && (entry.isEstimated || entry.estimatedFromPercent)) {
+                    amountHtml = `~${formatAmount(entry.amount)}`;
+                }
             }
             return `<td data-col="${colId}"${dataLabel}>${amountHtml}</td>`;
         }
@@ -4597,10 +4911,10 @@ function renderPurchaseBoughtMetaInner(purchase) {
             <div class="purchase-vape-meta">${formatLsdPurchaseCostLine(purchase)}</div>`;
     }
     if (isCigarettesPurchase(purchase)) {
-        const nic = purchase.nicotineMg;
-        if (nic != null && nic !== '') {
-            return `<div class="purchase-vape-meta">Nicotine: ${formatAmount(nic)} mg</div>`;
-        }
+        return `<div class="purchase-vape-meta">${formatNicotinePurchaseDisplayLine(purchase)}</div>`;
+    }
+    if (isNicotinePurchase(purchase)) {
+        return `<div class="purchase-vape-meta">${formatNicotinePurchaseDisplayLine(purchase)}</div>`;
     }
     return '';
 }
@@ -4749,6 +5063,7 @@ function normalizeMainSubstances(data) {
     let main = active.find(s => s.isMain);
     if (!main) {
         main = active.find(s => s.id === DEFAULT_MAIN_SUBSTANCE_ID)
+            || findSubstanceByNormalizedName(active, 'Nicotine')
             || findSubstanceByNormalizedName(active, 'Vape/Nicotine')
             || active[0];
         main.isMain = true;
@@ -6549,11 +6864,18 @@ function normalizeSubstanceRef(ref, data = appData) {
     const substances = data?.substances || [];
     const refStr = String(ref);
     const byId = substances.find(s => String(s.id) === refStr);
-    if (byId) return byId.id;
+    if (byId) {
+        if (byId.id === VAPE_NICOTINE_ID || byId.id === LEGACY_CIGARETTES_ID) return NICOTINE_ID;
+        return byId.id;
+    }
     const byName = substances.find(s =>
         s.name === ref || String(s.name).toLowerCase() === refStr.toLowerCase()
     );
-    if (byName) return byName.id;
+    if (byName) {
+        if (byName.id === VAPE_NICOTINE_ID || byName.id === LEGACY_CIGARETTES_ID) return NICOTINE_ID;
+        return byName.id;
+    }
+    if (refStr === VAPE_NICOTINE_ID || refStr === LEGACY_CIGARETTES_ID) return NICOTINE_ID;
     return refStr;
 }
 
@@ -7086,6 +7408,10 @@ function sumUseCostForRange(substanceId, startDate, endDate, data = appData) {
 }
 
 function isUseDay(substanceId, dateStr, data = appData) {
+    if (isNicotineSubstanceId(substanceId, data)) {
+        const logs = getUseLogsForSubstance(substanceId, { personalUseOnly: true, data });
+        return logs.some(log => logHasUseSegmentOnDate(log, dateStr, data));
+    }
     if (isVapeNicotineSubstanceId(substanceId, data)) {
         return (getStatsUsageOnDate(substanceId, dateStr, data) || 0) > INVENTORY_EPS;
     }
@@ -7350,19 +7676,22 @@ function getUseCreatedAt(entry) {
     return entry.createdAt || entry.timestamp || new Date().toISOString();
 }
 
-function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null) {
+function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = null) {
     const substanceId = document.getElementById('use-substance')?.value;
-    const isVapeDateOnly = isVapeTrackingMode(substanceId);
+    const isNicotine = isNicotineTrackingMode(substanceId);
+    const nicotineProductType = isNicotine ? getUseFormNicotineProductType() : null;
+    const isVapeDateOnly = isNicotine ? nicotineProductType === 'vape' : isVapeTrackingMode(substanceId);
+    const isNicotineSimple = isNicotine && nicotineProductType !== 'vape' && nicotineProductType !== 'other';
     const isWeedSimple = isWeedTrackingMode(substanceId);
     const isLsdSimple = isLsdSubstanceId(substanceId);
     const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
     const isGift = transactionType === 'gift_given' || transactionType === 'gift_received';
     const isAdjustment = transactionType === 'inventory_adjustment';
-    let type = (isGift || isAdjustment || isWeedSimple || isVapeDateOnly || isLsdSimple) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
+    let type = (isGift || isAdjustment || isWeedSimple || isVapeDateOnly || isLsdSimple || isNicotineSimple) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
     const date = document.getElementById('use-date')?.value;
-    const startTime = (isWeedSimple || isVapeDateOnly || isLsdSimple) ? '' : (document.getElementById('use-start-time')?.value || '12:00');
-    const endDate = (isWeedSimple || isVapeDateOnly || isLsdSimple) ? null : (document.getElementById('use-end-date')?.value || date);
-    const endTime = (isWeedSimple || isVapeDateOnly || isLsdSimple) ? '' : (document.getElementById('use-end-time')?.value || '');
+    const startTime = (isWeedSimple || isVapeDateOnly || isLsdSimple || isNicotineSimple) ? '' : (document.getElementById('use-start-time')?.value || '12:00');
+    const endDate = (isWeedSimple || isVapeDateOnly || isLsdSimple || isNicotineSimple) ? null : (document.getElementById('use-end-date')?.value || date);
+    const endTime = (isWeedSimple || isVapeDateOnly || isLsdSimple || isNicotineSimple) ? '' : (document.getElementById('use-end-time')?.value || '');
     const isVapeUse = isVapeDateOnly;
     const isCokeSession = isCokeSubstanceId(substanceId) && type === 'session';
 
@@ -7382,6 +7711,12 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null) {
         logMode = 'vape_puffs';
         percentRemaining = vapeCalc.percentAfter;
         previousRemainingBeforeLog = vapeCalc.previousRemaining;
+    } else if (isNicotineSimple && nicotineCalc && !nicotineCalc.error) {
+        amount = nicotineCalc.amount;
+        unit = nicotineCalc.unit;
+        linkedPurchaseId = nicotineCalc.purchaseId;
+        inventoryAffects = nicotineCalc.inventoryAffects;
+        logMode = nicotineCalc.logMode || 'amount';
     } else if (isLsdSimple && lsdCalc && !lsdCalc.error) {
         amount = lsdCalc.ugUsed;
         unit = 'ug';
@@ -7422,13 +7757,29 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null) {
         inventoryAffects
     };
 
-    base.trackingMode = getSubstanceTrackingMode(substanceId);
+    base.trackingMode = isNicotineTrackingMode(substanceId) ? 'nicotine' : getSubstanceTrackingMode(substanceId);
 
     if (isWeedSimple) {
         base.weedProductType = getWeedUseProductType();
     }
 
+    if (isNicotine) {
+        base.nicotineProductType = nicotineProductType;
+    }
+
+    if (isNicotineSimple && nicotineCalc && !nicotineCalc.error) {
+        base.nicotineProductType = nicotineCalc.nicotineProductType || nicotineProductType;
+        if (nicotineCalc.cigarettesUsed != null) base.cigarettesUsed = nicotineCalc.cigarettesUsed;
+        if (nicotineCalc.packsUsed != null) base.packsUsed = nicotineCalc.packsUsed;
+        if (nicotineCalc.pouchesUsed != null) base.pouchesUsed = nicotineCalc.pouchesUsed;
+        if (nicotineCalc.piecesUsed != null) base.piecesUsed = nicotineCalc.piecesUsed;
+        if (nicotineCalc.patchesUsed != null) base.patchesUsed = nicotineCalc.patchesUsed;
+        if (nicotineCalc.patchHoursWorn != null) base.patchHoursWorn = nicotineCalc.patchHoursWorn;
+        if (nicotineCalc.nicotineMgUsed != null) base.nicotineMgUsed = nicotineCalc.nicotineMgUsed;
+    }
+
     if (isVapeUse && vapeCalc && !vapeCalc.error) {
+        base.nicotineProductType = 'vape';
         base.isEstimated = !!vapeCalc.isEstimated;
         base.estimatedFromPercent = !!vapeCalc.estimatedFromPercent;
         base.percentLeftAfter = vapeCalc.percentAfter;
@@ -7975,7 +8326,7 @@ function formatPercentRemainingLabel(remaining, bought) {
 }
 
 function isVapeNicotineSubstanceId(substanceId, data = appData) {
-    return isVapeTrackingMode(substanceId, data);
+    return isNicotineSubstanceId(substanceId, data);
 }
 
 function isVapeNicotineSubstance(sub, data = appData) {
@@ -7988,6 +8339,9 @@ function isVapePuffUnit(unit) {
 
 function isVapePuffPurchase(purchase, data = appData) {
     const substanceId = getPurchaseSubstanceId(purchase);
+    if (isNicotineTrackingMode(substanceId, data)) {
+        return getNicotineProductType(purchase, data) === 'vape' && isVapePuffUnit(purchase?.unit);
+    }
     return isVapeTrackingMode(substanceId, data) && isVapePuffUnit(purchase?.unit);
 }
 
@@ -8122,7 +8476,8 @@ function parseVapeNicotineFieldsFromForm() {
 function isVapeUseLog(log, data = appData) {
     if (!isPersonalUseLog(log)) return false;
     const substanceId = getUseSubstanceId(log);
-    if (!isVapeTrackingMode(substanceId, data)) return false;
+    if (isNicotineTrackingMode(substanceId, data) && getNicotineProductType(log, data) !== 'vape') return false;
+    if (!isVapeTrackingMode(substanceId, data, log)) return false;
     return log.logMode === 'vape_puffs'
         || log.logMode === 'percent_remaining'
         || log.trackingMode === 'vape'
@@ -8758,7 +9113,8 @@ function setVapeLogInputMode(mode) {
 
 function computeVapeUseFromForm(options = {}) {
     const substanceId = document.getElementById('use-substance')?.value;
-    if (!isVapeTrackingMode(substanceId)) return null;
+    const isNicotineVape = isNicotineTrackingMode(substanceId) && getUseFormNicotineProductType() === 'vape';
+    if (!isNicotineVape && !isVapeTrackingMode(substanceId)) return null;
 
     const logDate = document.getElementById('use-date')?.value || getLocalDateString();
     if (!logDate) return { error: 'Enter a date.' };
@@ -8861,9 +9217,197 @@ function updateVapeUsePreview() {
     preview.textContent = lines.join('\n');
 }
 
+function updateUseNicotineProductTypeUI() {
+    const substanceId = document.getElementById('use-substance')?.value;
+    if (!isNicotineTrackingMode(substanceId)) return;
+    const productType = getUseFormNicotineProductType();
+    const isVape = productType === 'vape';
+    const isCigarettes = productType === 'cigarettes';
+    const isPouches = productType === 'pouches';
+    const isGum = productType === 'gum';
+    const isPatches = productType === 'patches';
+
+    document.getElementById('use-vape-fields-group')?.classList.toggle('hidden', !isVape);
+    document.getElementById('use-cigarettes-fields-group')?.classList.toggle('hidden', !isCigarettes);
+    document.getElementById('use-pouches-fields-group')?.classList.toggle('hidden', !isPouches);
+    document.getElementById('use-gum-fields-group')?.classList.toggle('hidden', !isGum);
+    document.getElementById('use-patches-fields-group')?.classList.toggle('hidden', !isPatches);
+    document.getElementById('use-amount-mode-group')?.classList.toggle('hidden', isVape || isCigarettes || isPouches || isGum || isPatches);
+    document.getElementById('use-nicotine-product-type-group')?.classList.remove('hidden');
+
+    if (isVape) {
+        populateVapeActivePurchaseSelect(substanceId);
+        updateVapeUsePreview();
+    }
+    if (isCigarettes) updateUseCigarettesPreview();
+    if (isPouches) updateUsePouchesPreview();
+    if (isGum) updateUseGumPreview();
+    if (isPatches) updateUsePatchesPreview();
+}
+
+function updateUseCigarettesPreview() {
+    const preview = document.getElementById('use-cigarettes-preview');
+    if (!preview) return;
+    const smoked = parseFloat(document.getElementById('use-cigarettes-smoked')?.value);
+    if (!Number.isFinite(smoked) || smoked <= 0) {
+        preview.textContent = '—';
+        return;
+    }
+    const perPack = 20;
+    const packs = smoked / perPack;
+    preview.textContent = `${formatAmount(smoked)} cigarettes${packs >= 0.05 ? ` (~${formatAmount(packs)} packs)` : ''}`;
+}
+
+function updateUsePouchesPreview() {
+    const preview = document.getElementById('use-pouches-preview');
+    if (!preview) return;
+    const used = parseFloat(document.getElementById('use-pouches-used')?.value);
+    const purchaseId = resolveLinkedPurchaseId(document.getElementById('use-substance')?.value, 'use');
+    const purchase = purchaseId ? findPurchase(purchaseId) : null;
+    const mgPer = parseFloat(purchase?.mgPerPouch);
+    if (!Number.isFinite(used) || used <= 0) {
+        preview.textContent = '—';
+        return;
+    }
+    preview.textContent = Number.isFinite(mgPer) && mgPer > 0
+        ? `${formatAmount(used)} pouches · ~${formatAmount(used * mgPer)} mg nicotine`
+        : `${formatAmount(used)} pouches`;
+}
+
+function updateUseGumPreview() {
+    const preview = document.getElementById('use-gum-preview');
+    if (!preview) return;
+    const used = parseFloat(document.getElementById('use-gum-pieces-used')?.value);
+    const purchaseId = resolveLinkedPurchaseId(document.getElementById('use-substance')?.value, 'use');
+    const purchase = purchaseId ? findPurchase(purchaseId) : null;
+    const mgPer = parseFloat(purchase?.mgPerPiece);
+    if (!Number.isFinite(used) || used <= 0) {
+        preview.textContent = '—';
+        return;
+    }
+    preview.textContent = Number.isFinite(mgPer) && mgPer > 0
+        ? `${formatAmount(used)} pieces · ~${formatAmount(used * mgPer)} mg nicotine`
+        : `${formatAmount(used)} pieces`;
+}
+
+function updateUsePatchesPreview() {
+    const preview = document.getElementById('use-patches-preview');
+    if (!preview) return;
+    const used = parseFloat(document.getElementById('use-patches-used')?.value);
+    const hours = parseFloat(document.getElementById('use-patch-hours-worn')?.value);
+    const purchaseId = resolveLinkedPurchaseId(document.getElementById('use-substance')?.value, 'use');
+    const purchase = purchaseId ? findPurchase(purchaseId) : null;
+    const mgPer = parseFloat(purchase?.mgPerPatch);
+    const duration = parseFloat(purchase?.patchDurationHours) || 24;
+    if (!Number.isFinite(used) || used <= 0) {
+        preview.textContent = '—';
+        return;
+    }
+    let mgEstimate = null;
+    if (Number.isFinite(mgPer) && mgPer > 0) {
+        const worn = Number.isFinite(hours) && hours > 0 ? hours : duration;
+        mgEstimate = used * mgPer * Math.min(1, worn / duration);
+    }
+    preview.textContent = mgEstimate != null
+        ? `${formatAmount(used)} patch(es) · ~${formatAmount(mgEstimate)} mg nicotine est.`
+        : `${formatAmount(used)} patch(es)`;
+}
+
+function computeNicotineNonVapeUseFromForm() {
+    const substanceId = document.getElementById('use-substance')?.value;
+    if (!isNicotineTrackingMode(substanceId)) return null;
+    const productType = getUseFormNicotineProductType();
+    if (productType === 'vape') return null;
+
+    const linkedPurchaseId = resolveLinkedPurchaseId(substanceId, 'use');
+    const purchase = linkedPurchaseId ? findPurchase(linkedPurchaseId) : null;
+    const inventoryAffects = getUsePurchaseLinkMode() !== 'none' && !!linkedPurchaseId;
+
+    if (productType === 'cigarettes') {
+        const smoked = parseFloat(document.getElementById('use-cigarettes-smoked')?.value);
+        if (!Number.isFinite(smoked) || smoked <= 0) return { error: 'Enter cigarettes smoked.' };
+        const perPack = parseFloat(purchase?.cigarettesPerPack) || 20;
+        return {
+            amount: smoked,
+            unit: 'cigarettes',
+            nicotineProductType: 'cigarettes',
+            cigarettesUsed: smoked,
+            packsUsed: smoked / perPack,
+            purchaseId: linkedPurchaseId,
+            inventoryAffects,
+            logMode: 'nicotine_cigarettes'
+        };
+    }
+    if (productType === 'pouches') {
+        const used = parseFloat(document.getElementById('use-pouches-used')?.value);
+        if (!Number.isFinite(used) || used <= 0) return { error: 'Enter pouches used.' };
+        const mgPer = parseFloat(purchase?.mgPerPouch);
+        return {
+            amount: used,
+            unit: 'pouches',
+            nicotineProductType: 'pouches',
+            pouchesUsed: used,
+            nicotineMgUsed: Number.isFinite(mgPer) ? used * mgPer : null,
+            purchaseId: linkedPurchaseId,
+            inventoryAffects,
+            logMode: 'nicotine_pouches'
+        };
+    }
+    if (productType === 'gum') {
+        const used = parseFloat(document.getElementById('use-gum-pieces-used')?.value);
+        if (!Number.isFinite(used) || used <= 0) return { error: 'Enter pieces used.' };
+        const mgPer = parseFloat(purchase?.mgPerPiece);
+        return {
+            amount: used,
+            unit: 'pieces',
+            nicotineProductType: 'gum',
+            piecesUsed: used,
+            nicotineMgUsed: Number.isFinite(mgPer) ? used * mgPer : null,
+            purchaseId: linkedPurchaseId,
+            inventoryAffects,
+            logMode: 'nicotine_gum'
+        };
+    }
+    if (productType === 'patches') {
+        const used = parseFloat(document.getElementById('use-patches-used')?.value);
+        const hours = parseFloat(document.getElementById('use-patch-hours-worn')?.value);
+        if (!Number.isFinite(used) || used <= 0) return { error: 'Enter patches used.' };
+        const mgPer = parseFloat(purchase?.mgPerPatch);
+        const duration = parseFloat(purchase?.patchDurationHours) || 24;
+        const worn = Number.isFinite(hours) && hours > 0 ? hours : duration;
+        const mgUsed = Number.isFinite(mgPer) ? used * mgPer * Math.min(1, worn / duration) : null;
+        return {
+            amount: used,
+            unit: 'patches',
+            nicotineProductType: 'patches',
+            patchesUsed: used,
+            patchHoursWorn: worn,
+            nicotineMgUsed: mgUsed,
+            purchaseId: linkedPurchaseId,
+            inventoryAffects,
+            logMode: 'nicotine_patches'
+        };
+    }
+
+    const amount = parseFloat(document.getElementById('use-amount')?.value);
+    const unit = document.getElementById('use-unit')?.value || 'units';
+    if (!Number.isFinite(amount) || amount <= 0) return { error: 'Enter amount used.' };
+    return {
+        amount,
+        unit,
+        nicotineProductType: productType,
+        purchaseId: linkedPurchaseId,
+        inventoryAffects,
+        logMode: 'amount'
+    };
+}
+
 function updateVapeUseFormUI() {
     const substanceId = document.getElementById('use-substance')?.value;
-    const isVape = isVapeTrackingMode(substanceId);
+    const isNicotine = isNicotineTrackingMode(substanceId);
+    const nicotineProductType = isNicotine ? getUseFormNicotineProductType() : null;
+    const isVape = isNicotine ? nicotineProductType === 'vape' : isVapeTrackingMode(substanceId);
+    const isNicotineSimple = isNicotine && nicotineProductType !== 'vape' && nicotineProductType !== 'other';
     const isWeed = isWeedTrackingMode(substanceId);
     const isLsd = isLsdSubstanceId(substanceId);
     const isVapeUse = isVape;
@@ -8877,18 +9421,24 @@ function updateVapeUseFormUI() {
     const isNonUse = isNonUseTransactionType(tx);
 
     document.getElementById('use-log-form')?.classList.toggle('is-weed-simple', isWeed);
-    document.getElementById('use-log-form')?.classList.toggle('is-vape-simple', isVape);
+    document.getElementById('use-log-form')?.classList.toggle('is-vape-simple', isVape || isNicotineSimple);
     document.getElementById('use-log-form')?.classList.toggle('is-lsd-simple', isLsd);
-    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isVape || isWeed || isLsd || isNonUse);
-    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', isVape || isLsd);
-    document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape || isLsd);
+    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isVape || isWeed || isLsd || isNicotineSimple || isNonUse);
+    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', isVape || isLsd || isNicotineSimple);
+    document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape || isLsd || isNicotineSimple);
 
     const dateLabel = document.getElementById('use-date-label');
     if (dateLabel) dateLabel.textContent = 'Date';
     const startTimeInput = document.getElementById('use-start-time');
-    if (startTimeInput) startTimeInput.required = !isWeed && !isVape && !isLsd;
+    if (startTimeInput) startTimeInput.required = !isWeed && !isVape && !isLsd && !isNicotineSimple;
 
-    if (isWeed) {
+    if (isNicotine) {
+        document.getElementById('use-nicotine-product-type-group')?.classList.remove('hidden');
+        updateUseNicotineProductTypeUI();
+        positionUseInventoryFields(isNicotineSimple);
+        document.getElementById('use-duration-preview')?.classList.add('hidden');
+        document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
+    } else if (isWeed) {
         ensureWeedUseFormDefaults();
         updateWeedUseFormUI();
         positionUseInventoryFields(true);
@@ -8905,22 +9455,29 @@ function updateVapeUseFormUI() {
         document.getElementById('use-duration-preview')?.classList.add('hidden');
         document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
     } else {
+        document.getElementById('use-nicotine-product-type-group')?.classList.add('hidden');
+        document.getElementById('use-cigarettes-fields-group')?.classList.add('hidden');
+        document.getElementById('use-pouches-fields-group')?.classList.add('hidden');
+        document.getElementById('use-gum-fields-group')?.classList.add('hidden');
+        document.getElementById('use-patches-fields-group')?.classList.add('hidden');
         document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
         document.getElementById('use-lsd-fields-group')?.classList.add('hidden');
         positionUseInventoryFields(false);
     }
 
-    if (isVape) {
+    if (isVape && !isNicotine) {
         setUsePurchaseLinkMode('manual');
         populateVapeActivePurchaseSelect(substanceId);
         setVapeLogInputMode(getVapeLogInputMode());
     }
 
-    amountGroup?.classList.toggle('hidden', isVapeUse || isLsd);
-    vapeGroup?.classList.toggle('hidden', !isVapeUse);
+    amountGroup?.classList.toggle('hidden', isVapeUse || isLsd || isNicotineSimple);
+    if (!isNicotine) {
+        vapeGroup?.classList.toggle('hidden', !isVapeUse);
+    }
     document.getElementById('use-vape-purchase-block')?.classList.toggle('hidden', !isVapeUse);
     if (amountInput) {
-        amountInput.required = !isVapeUse && !isLsd;
+        amountInput.required = !isVapeUse && !isLsd && !isNicotineSimple;
     }
     if (percentInput) {
         if (isVapeUse) {
@@ -8936,12 +9493,12 @@ function updateVapeUseFormUI() {
         unitSelect.disabled = isVapeUse || isLsd;
         unitSelect.required = !isVapeUse && !isLsd;
     }
-    countGroup?.classList.toggle('hidden', !shouldShowUseCountForSubstance(substanceId) || isVapeUse || isWeed || isLsd);
+    countGroup?.classList.toggle('hidden', !shouldShowUseCountForSubstance(substanceId) || isVapeUse || isWeed || isLsd || isNicotineSimple);
     if (isVapeUse) {
         updateVapeUsePreview();
     }
 
-    if (!isWeed && !isVape && !isLsd) {
+    if (!isWeed && !isVape && !isLsd && !isNicotineSimple) {
         updateUseEndTimeVisibility();
     }
 }
@@ -10261,6 +10818,17 @@ function setupUseLogForm() {
         updateWeedUseFormUI();
         updateUsePurchaseLinkUI();
     });
+    document.getElementById('use-nicotine-product-type')?.addEventListener('change', () => {
+        updateUseNicotineProductTypeUI();
+        updateUsePurchaseLinkUI();
+    });
+    ['use-cigarettes-smoked', 'use-pouches-used', 'use-gum-pieces-used', 'use-patches-used', 'use-patch-hours-worn']
+        .forEach(id => {
+            document.getElementById(id)?.addEventListener('input', () => {
+                updateUseNicotineProductTypeUI();
+                updateUsePurchaseLinkUI();
+            });
+        });
     setUseLogType(document.getElementById('use-type')?.value || 'quick');
     updateVapeUseFormUI();
     updateUsePurchaseLinkUI();
@@ -10420,10 +10988,14 @@ function handleUseLogSubmit(e) {
     e.preventDefault();
 
     const substanceIdPreview = document.getElementById('use-substance')?.value;
-    const isVapeUse = isVapeTrackingMode(substanceIdPreview);
+    const isNicotine = isNicotineTrackingMode(substanceIdPreview);
+    const nicotineProductType = isNicotine ? getUseFormNicotineProductType() : null;
+    const isVapeUse = isNicotine ? nicotineProductType === 'vape' : isVapeTrackingMode(substanceIdPreview);
+    const isNicotineSimple = isNicotine && nicotineProductType !== 'vape' && nicotineProductType !== 'other';
     const isLsdUse = isLsdSubstanceId(substanceIdPreview);
     let vapeCalc = null;
     let lsdCalc = null;
+    let nicotineCalc = null;
 
     if (isVapeUse) {
         vapeCalc = computeVapeUseFromForm({ editingId: editingUseId || null });
@@ -10438,12 +11010,17 @@ function handleUseLogSubmit(e) {
         }
     }
 
+    if (isNicotineSimple) {
+        nicotineCalc = computeNicotineNonVapeUseFromForm();
+        if (nicotineCalc?.error) return alert(nicotineCalc.error);
+    }
+
     if (isLsdUse) {
         lsdCalc = computeLsdUseFromForm({ editingId: editingUseId || null });
         if (lsdCalc?.error) return alert(lsdCalc.error);
     }
 
-    const payload = buildUseEntryFromForm(vapeCalc, lsdCalc);
+    const payload = buildUseEntryFromForm(vapeCalc, lsdCalc, nicotineCalc);
     const { substanceId, amount, type, transactionType } = payload;
     const isPersonalUse = isPersonalUseLog({ transactionType });
     const eventTimestamp = getUseEventTimestamp(payload.date, payload.startTime);
@@ -11095,12 +11672,11 @@ function renderUseHistoryCard(entry, sub, avgRate) {
     const timeRange = hideTimeStats ? '' : formatUseSessionTimeRange(entry);
     const isVape = isVapeUseLog(entry);
     const isLsd = isLsdDateOnlyUseLog(entry);
+    const isNicotineNonVape = isNicotineSubstanceId(getUseSubstanceId(entry)) && !isVape;
     const countStr = (isVape || isLsd) ? '—' : (entry.count || '—');
-    const amountDisplay = isVape
+    let amountDisplay = isVape
         ? formatVapeUseSummary(entry, sub)
-        : (isLsd ? formatLsdUseSummary(entry) : `${entry.amount} ${entry.unit}`);
-    const countStr = isVape ? '—' : (entry.count || '—');
-    let amountDisplay = isVape ? formatVapeUseSummary(entry, sub) : `${entry.amount} ${entry.unit}`;
+        : (isLsd ? formatLsdUseSummary(entry) : (isNicotineNonVape ? formatNicotineUseLogLabel(entry) : `${entry.amount} ${entry.unit}`));
     if (isPercentLeftDistributedChildLog(entry)) {
         amountDisplay = `~${formatAmount(entry.amount)} puffs · Estimated daily use from percent-left log`;
     } else if (isPercentLeftCheckpointLog(entry) && getSpreadPercentLeftUsage()) {
@@ -11599,6 +12175,92 @@ function updateBuyWeedPreRollPreview() {
     }
 }
 
+function updateBuyNicotineProductTypeUI() {
+    const substanceId = document.getElementById('buy-substance')?.value;
+    if (!isNicotineTrackingMode(substanceId)) return;
+    const productType = getBuyFormNicotineProductType();
+    const isVape = productType === 'vape';
+    const isCigarettes = productType === 'cigarettes';
+    const isPouches = productType === 'pouches';
+    const isGum = productType === 'gum';
+    const isPatches = productType === 'patches';
+
+    document.getElementById('buy-vape-percent-group')?.classList.toggle('hidden', !isVape);
+    document.getElementById('buy-vape-liquid-group')?.classList.toggle('hidden', !isVape);
+    document.getElementById('buy-cigarettes-fields-group')?.classList.toggle('hidden', !isCigarettes);
+    document.getElementById('buy-pouches-fields-group')?.classList.toggle('hidden', !isPouches);
+    document.getElementById('buy-gum-fields-group')?.classList.toggle('hidden', !isGum);
+    document.getElementById('buy-patches-fields-group')?.classList.toggle('hidden', !isPatches);
+    document.getElementById('buy-time-group')?.classList.toggle('hidden', isVape);
+
+    const hideQty = isVape || isCigarettes || isPouches || isGum || isPatches;
+    document.getElementById('buy-quantity-group')?.classList.toggle('hidden', hideQty);
+    document.getElementById('buy-unit-group')?.classList.toggle('hidden', isNicotineTrackingMode(substanceId));
+
+    const qtyInput = document.getElementById('buy-quantity');
+    if (qtyInput) qtyInput.required = !hideQty;
+
+    const qtyLabel = document.getElementById('buy-quantity-label');
+    if (qtyLabel) {
+        if (isVape) qtyLabel.textContent = 'Puff count at 100%';
+        else if (hideQty) qtyLabel.textContent = 'Quantity';
+        else qtyLabel.textContent = 'Quantity Bought';
+    }
+
+    if (isVape) updateBuyVapeFieldsPreview();
+    if (isCigarettes) updateBuyCigarettesPreview();
+    if (isPouches) updateBuyPouchesPreview();
+    if (isGum) updateBuyGumPreview();
+    if (isPatches) updateBuyPatchesPreview();
+    updateBuyCostPerUnitPreview();
+}
+
+function updateBuyCigarettesPreview() {
+    const preview = document.getElementById('buy-cigarettes-preview');
+    if (!preview) return;
+    const fields = parseCigaretteFieldsFromForm();
+    const totalCost = parseFloat(document.getElementById('buy-total-cost')?.value);
+    const lines = [];
+    if (fields.totalCigarettes != null) lines.push(`Total cigarettes: ${formatAmount(fields.totalCigarettes)}`);
+    if (fields.totalCigarettes != null && Number.isFinite(totalCost) && totalCost > 0) {
+        lines.push(`Cost per cigarette: ${fmtSheetMoney(totalCost / fields.totalCigarettes, getCurrencySymbol())}`);
+        if (fields.packCount != null && fields.packCount > 0) {
+            lines.push(`Cost per pack: ${fmtSheetMoney(totalCost / fields.packCount, getCurrencySymbol())}`);
+        }
+    }
+    preview.textContent = lines.length ? lines.join(' · ') : '—';
+}
+
+function updateBuyPouchesPreview() {
+    const preview = document.getElementById('buy-pouches-preview');
+    if (!preview) return;
+    const fields = parseNicotinePouchesFieldsFromForm();
+    const lines = [];
+    if (fields.totalPouches != null) lines.push(`Total pouches: ${formatAmount(fields.totalPouches)}`);
+    if (fields.totalNicotineMg != null) lines.push(`Total nicotine: ${formatAmount(fields.totalNicotineMg)} mg`);
+    preview.textContent = lines.length ? lines.join(' · ') : '—';
+}
+
+function updateBuyGumPreview() {
+    const preview = document.getElementById('buy-gum-preview');
+    if (!preview) return;
+    const fields = parseNicotineGumFieldsFromForm();
+    const lines = [];
+    if (fields.pieceCount != null) lines.push(`Pieces: ${formatAmount(fields.pieceCount)}`);
+    if (fields.totalNicotineMg != null) lines.push(`Total nicotine: ${formatAmount(fields.totalNicotineMg)} mg`);
+    preview.textContent = lines.length ? lines.join(' · ') : '—';
+}
+
+function updateBuyPatchesPreview() {
+    const preview = document.getElementById('buy-patches-preview');
+    if (!preview) return;
+    const fields = parseNicotinePatchesFieldsFromForm();
+    const lines = [];
+    if (fields.patchCount != null) lines.push(`Patches: ${formatAmount(fields.patchCount)}`);
+    if (fields.mgPerPatch != null) lines.push(`${formatAmount(fields.mgPerPatch)} mg/patch · ${formatAmount(fields.patchDurationHours)}h duration`);
+    preview.textContent = lines.length ? lines.join(' · ') : '—';
+}
+
 function updateBuyWeedProductTypeUI() {
     const substanceId = document.getElementById('buy-substance')?.value;
     if (!isWeedTrackingMode(substanceId)) return;
@@ -11632,27 +12294,32 @@ function updateBuyWeedProductTypeUI() {
 
 function updateBuyVapeFieldsVisibility() {
     const substanceId = document.getElementById('buy-substance')?.value;
-    const isVape = isVapeTrackingMode(substanceId);
+    const isNicotine = isNicotineTrackingMode(substanceId);
+    const isVape = isNicotine ? getBuyFormNicotineProductType() === 'vape' : isVapeTrackingMode(substanceId);
     const isAlcohol = isAlcoholTrackingMode(substanceId);
     const isWeed = isWeedTrackingMode(substanceId);
-    const isCigarettes = isCigarettesTrackingMode(substanceId);
+    const isCigarettes = isNicotine ? getBuyFormNicotineProductType() === 'cigarettes' : isCigarettesTrackingMode(substanceId);
     const isLsd = isLsdSubstanceId(substanceId);
+    document.getElementById('buy-nicotine-fields-group')?.classList.toggle('hidden', !isNicotine);
     document.getElementById('buy-vape-percent-group')?.classList.toggle('hidden', !isVape);
     document.getElementById('buy-vape-liquid-group')?.classList.toggle('hidden', !isVape);
     document.getElementById('buy-alcohol-fields-group')?.classList.toggle('hidden', !isAlcohol);
     document.getElementById('buy-weed-fields-group')?.classList.toggle('hidden', !isWeed);
     document.getElementById('buy-cigarettes-fields-group')?.classList.toggle('hidden', !isCigarettes);
+    document.getElementById('buy-pouches-fields-group')?.classList.toggle('hidden', !isNicotine || getBuyFormNicotineProductType() !== 'pouches');
+    document.getElementById('buy-gum-fields-group')?.classList.toggle('hidden', !isNicotine || getBuyFormNicotineProductType() !== 'gum');
+    document.getElementById('buy-patches-fields-group')?.classList.toggle('hidden', !isNicotine || getBuyFormNicotineProductType() !== 'patches');
     document.getElementById('buy-lsd-fields-group')?.classList.toggle('hidden', !isLsd);
-    document.getElementById('buy-unit-group')?.classList.toggle('hidden', isLsd);
+    document.getElementById('buy-unit-group')?.classList.toggle('hidden', isLsd || isNicotine);
     document.getElementById('buy-time-group')?.classList.toggle('hidden', isVape);
-    if (!isWeed) {
+    if (!isWeed && !isNicotine) {
         document.getElementById('buy-quantity-group')?.classList.remove('hidden');
         const qtyInput = document.getElementById('buy-quantity');
         if (qtyInput) qtyInput.required = true;
     }
     const qtyLabel = document.getElementById('buy-quantity-label');
     const primaryUnit = getSubstancePrimaryUnit(substanceId);
-    if (qtyLabel && !isWeed) {
+    if (qtyLabel && !isWeed && !isNicotine) {
         qtyLabel.textContent = isVape
             ? 'Puff count at 100%'
             : (isLsd
@@ -11661,7 +12328,8 @@ function updateBuyVapeFieldsVisibility() {
                     ? `Quantity (${primaryUnit})`
                     : 'Quantity Bought'));
     }
-    if (isVape) updateBuyVapeFieldsPreview();
+    if (isNicotine) updateBuyNicotineProductTypeUI();
+    else if (isVape) updateBuyVapeFieldsPreview();
     if (isAlcohol) updateBuyAlcoholPreview();
     if (isWeed) updateBuyWeedProductTypeUI();
     if (isLsd) updateBuyLsdPreview();
@@ -11693,6 +12361,16 @@ function setupBuyTrackerForm() {
         document.getElementById(id)?.addEventListener('input', updateBuyAlcoholPreview);
     });
     document.getElementById('buy-weed-product-type')?.addEventListener('change', updateBuyWeedProductTypeUI);
+    document.getElementById('buy-nicotine-product-type')?.addEventListener('change', updateBuyNicotineProductTypeUI);
+    ['buy-cigarette-pack-count', 'buy-cigarette-count', 'buy-cigarettes-per-pack', 'buy-cigarette-nicotine-mg',
+        'buy-pouch-container-count', 'buy-pouches-per-container', 'buy-pouch-mg-per',
+        'buy-gum-piece-count', 'buy-gum-mg-per-piece', 'buy-patch-count', 'buy-patch-mg-per', 'buy-patch-duration-hours']
+        .forEach(id => {
+            document.getElementById(id)?.addEventListener('input', () => {
+                updateBuyNicotineProductTypeUI();
+                updateBuyCostPerUnitPreview();
+            });
+        });
     ['buy-preroll-count', 'buy-grams-per-preroll'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', () => {
             updateBuyWeedPreRollPreview();
@@ -11717,11 +12395,13 @@ function buildPurchaseFromForm() {
     const sub = getSubstance(substanceId);
     const qty = Number.isFinite(quantity) ? quantity : 0;
     const unit = document.getElementById('buy-unit')?.value || 'units';
-    const isVape = isVapeTrackingMode(substanceId) && isVapePuffUnit(unit);
+    const productType = isNicotineTrackingMode(substanceId) ? getBuyFormNicotineProductType() : null;
+    const isVape = productType === 'vape'
+        || (!isNicotineTrackingMode(substanceId) && isVapeTrackingMode(substanceId) && isVapePuffUnit(unit));
     const payload = {
         substanceId,
         substanceName: sub?.name || '',
-        trackingMode: getSubstanceTrackingMode(substanceId),
+        trackingMode: isNicotineTrackingMode(substanceId) ? 'nicotine' : getSubstanceTrackingMode(substanceId),
         date: document.getElementById('buy-date')?.value,
         time: isVape ? '12:00' : (document.getElementById('buy-time')?.value || '12:00'),
         quantityBought: qty,
@@ -11758,12 +12438,49 @@ function buildPurchaseFromForm() {
         applyWeedFieldsToPayload(payload, weedFields);
         applyWeedQuantityFromFields(payload, weedFields, payload.totalCost);
     }
-    if (isCigarettesTrackingMode(substanceId)) {
+    if (isNicotineTrackingMode(substanceId)) {
+        const productType = getBuyFormNicotineProductType();
+        payload.nicotineProductType = productType;
+        if (productType === 'cigarettes') {
+            const cigFields = parseCigaretteFieldsFromForm();
+            applyCigaretteFieldsToPayload(payload, cigFields);
+            if (cigFields.totalCigarettes != null) {
+                payload.costPerUnit = cigFields.totalCigarettes > 0 ? payload.totalCost / cigFields.totalCigarettes : 0;
+                if (cigFields.packCount != null && cigFields.packCount > 0) {
+                    payload.costPerPack = payload.totalCost / cigFields.packCount;
+                }
+            }
+        } else if (productType === 'pouches') {
+            const pouchFields = parseNicotinePouchesFieldsFromForm();
+            applyNicotinePouchesFieldsToPayload(payload, pouchFields);
+            if (pouchFields.totalPouches != null) {
+                payload.costPerUnit = pouchFields.totalPouches > 0 ? payload.totalCost / pouchFields.totalPouches : 0;
+                payload.costPerPouch = payload.costPerUnit;
+            }
+        } else if (productType === 'gum') {
+            const gumFields = parseNicotineGumFieldsFromForm();
+            applyNicotineGumFieldsToPayload(payload, gumFields);
+            if (gumFields.pieceCount != null) {
+                payload.costPerUnit = gumFields.pieceCount > 0 ? payload.totalCost / gumFields.pieceCount : 0;
+                payload.costPerPiece = payload.costPerUnit;
+            }
+        } else if (productType === 'patches') {
+            const patchFields = parseNicotinePatchesFieldsFromForm();
+            applyNicotinePatchesFieldsToPayload(payload, patchFields);
+            if (patchFields.patchCount != null) {
+                payload.costPerUnit = patchFields.patchCount > 0 ? payload.totalCost / patchFields.patchCount : 0;
+                payload.costPerPatch = payload.costPerUnit;
+            }
+        }
+    } else if (isCigarettesTrackingMode(substanceId)) {
         applyCigaretteFieldsToPayload(payload, parseCigaretteFieldsFromForm());
     }
     if (isLsdSubstanceId(substanceId)) {
         const lsdFields = parseLsdFieldsFromForm();
         applyLsdFieldsToPayload(payload, lsdFields, payload.totalCost);
+    }
+    if (isVape) {
+        payload.nicotineProductType = 'vape';
     }
     stripIrrelevantPurchaseFields(payload);
     return payload;
@@ -11873,6 +12590,18 @@ function resetBuyFormAfterSave() {
     setInputValue('buy-preroll-count', '');
     setInputValue('buy-grams-per-preroll', '');
     setInputValue('buy-cigarette-nicotine-mg', '');
+    setInputValue('buy-cigarette-pack-count', '');
+    setInputValue('buy-cigarette-count', '');
+    setInputValue('buy-cigarettes-per-pack', '20');
+    setInputValue('buy-nicotine-product-type', 'vape');
+    setInputValue('buy-pouch-container-count', '');
+    setInputValue('buy-pouches-per-container', '');
+    setInputValue('buy-pouch-mg-per', '');
+    setInputValue('buy-gum-piece-count', '');
+    setInputValue('buy-gum-mg-per-piece', '');
+    setInputValue('buy-patch-count', '');
+    setInputValue('buy-patch-mg-per', '');
+    setInputValue('buy-patch-duration-hours', '24');
     setBuyFormSubmitLabel('Save Purchase');
     document.getElementById('cancel-buy-edit-btn')?.classList.add('hidden');
     clearBuyFormFeedback();
@@ -11959,6 +12688,18 @@ function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
     setInputValue('buy-alcohol-percent', purchase.alcoholPercent ?? '');
     setInputValue('buy-net-volume-ml', purchase.netVolumeMl ?? '');
     setInputValue('buy-weed-product-type', purchase.weedProductType || 'bud');
+    setInputValue('buy-nicotine-product-type', purchase.nicotineProductType || getNicotineProductType(purchase) || 'vape');
+    setInputValue('buy-cigarette-pack-count', purchase.packCount ?? '');
+    setInputValue('buy-cigarette-count', purchase.cigaretteCount ?? purchase.totalCigarettes ?? '');
+    setInputValue('buy-cigarettes-per-pack', purchase.cigarettesPerPack ?? '20');
+    setInputValue('buy-pouch-container-count', purchase.containerCount ?? '');
+    setInputValue('buy-pouches-per-container', purchase.pouchesPerContainer ?? '');
+    setInputValue('buy-pouch-mg-per', purchase.mgPerPouch ?? '');
+    setInputValue('buy-gum-piece-count', purchase.pieceCount ?? '');
+    setInputValue('buy-gum-mg-per-piece', purchase.mgPerPiece ?? '');
+    setInputValue('buy-patch-count', purchase.patchCount ?? '');
+    setInputValue('buy-patch-mg-per', purchase.mgPerPatch ?? '');
+    setInputValue('buy-patch-duration-hours', purchase.patchDurationHours ?? '24');
     setInputValue('buy-bud-grams', purchase.budGrams ?? '');
     setInputValue('buy-cart-grams', purchase.cartGrams ?? '');
     setInputValue('buy-edibles-mg', purchase.ediblesMg ?? '');
@@ -11975,6 +12716,7 @@ function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
     updateBuyVapeFieldsPreview();
     updateBuyAlcoholPreview();
     updateBuyWeedProductTypeUI();
+    updateBuyNicotineProductTypeUI();
     updateBuyLsdPreview();
     return true;
 }
@@ -15046,6 +15788,147 @@ function getCigarettesInventoryAnalytics(purchases) {
     return { totalNicotineMg, perUnitSamples };
 }
 
+function getNicotineInventoryAnalytics(purchases, data = appData) {
+    const stats = {
+        vapeActive: 0,
+        vapeDepleted: 0,
+        cigarettePacks: 0,
+        pouches: 0,
+        gumPieces: 0,
+        patches: 0,
+        totalCost: 0,
+        costByType: {},
+        remainingByType: {}
+    };
+    purchases.forEach(p => {
+        if (!isNicotinePurchase(p, data)) return;
+        const type = getNicotineProductType(p, data);
+        const cost = parseFloat(getPurchaseTotalCost(p)) || 0;
+        stats.totalCost += cost;
+        stats.costByType[type] = (stats.costByType[type] || 0) + cost;
+        const rem = getPurchaseRemainingAmount(p);
+        const tab = getPurchaseInventoryTab(p);
+        if (type === 'vape' && isVapePuffPurchase(p, data)) {
+            if (tab === 'active' && rem > INVENTORY_EPS) stats.vapeActive++;
+            else if (tab === 'depleted' || rem <= INVENTORY_EPS) stats.vapeDepleted++;
+            stats.remainingByType.vape = (stats.remainingByType.vape || 0) + rem;
+        } else if (type === 'cigarettes') {
+            if (tab === 'active' && rem > INVENTORY_EPS) stats.cigarettePacks++;
+            stats.remainingByType.cigarettes = (stats.remainingByType.cigarettes || 0) + rem;
+        } else if (type === 'pouches') {
+            stats.pouches += rem > INVENTORY_EPS ? 1 : 0;
+            stats.remainingByType.pouches = (stats.remainingByType.pouches || 0) + rem;
+        } else if (type === 'gum') {
+            stats.gumPieces += rem > INVENTORY_EPS ? rem : 0;
+            stats.remainingByType.gum = (stats.remainingByType.gum || 0) + rem;
+        } else if (type === 'patches') {
+            stats.patches += rem > INVENTORY_EPS ? 1 : 0;
+            stats.remainingByType.patches = (stats.remainingByType.patches || 0) + rem;
+        }
+    });
+    return stats;
+}
+
+function getNicotineUseAnalytics(logs, data = appData) {
+    const stats = {
+        totalEntries: 0,
+        totalCost: 0,
+        vapePuffs: 0,
+        cigarettes: 0,
+        pouches: 0,
+        gumPieces: 0,
+        patches: 0,
+        nicotineMg: 0,
+        useByType: {},
+        costByType: {}
+    };
+    logs.filter(isPersonalUseLog).forEach(log => {
+        if (!isNicotineSubstanceId(getUseSubstanceId(log), data)) return;
+        const type = getNicotineProductType(log, data);
+        stats.totalEntries++;
+        stats.useByType[type] = (stats.useByType[type] || 0) + (parseFloat(log.amount) || 0);
+        if (type === 'vape' || isVapeUseLog(log, data)) stats.vapePuffs += parseFloat(log.estimatedPuffsUsed ?? log.amount) || 0;
+        else if (type === 'cigarettes') stats.cigarettes += parseFloat(log.cigarettesUsed ?? log.amount) || 0;
+        else if (type === 'pouches') stats.pouches += parseFloat(log.pouchesUsed ?? log.amount) || 0;
+        else if (type === 'gum') stats.gumPieces += parseFloat(log.piecesUsed ?? log.amount) || 0;
+        else if (type === 'patches') stats.patches += parseFloat(log.patchesUsed ?? log.amount) || 0;
+        const mg = parseFloat(log.nicotineMgUsed);
+        if (Number.isFinite(mg)) stats.nicotineMg += mg;
+    });
+    return stats;
+}
+
+function formatNicotinePurchaseDisplayLine(purchase) {
+    const type = getNicotineProductType(purchase);
+    const label = getNicotineProductTypeLabel(type);
+    if (type === 'vape') {
+        return `${label} · ${formatAmount(getVapeFullPuffCount(purchase))} puffs`;
+    }
+    if (type === 'cigarettes') {
+        const total = purchase.totalCigarettes ?? getPurchaseQuantityBought(purchase);
+        return `${label} · ${formatAmount(total)} cigarettes`;
+    }
+    if (type === 'pouches') {
+        return `${label} · ${formatAmount(purchase.totalPouches ?? getPurchaseQuantityBought(purchase))} pouches`;
+    }
+    if (type === 'gum') {
+        return `${label} · ${formatAmount(purchase.pieceCount ?? getPurchaseQuantityBought(purchase))} pieces`;
+    }
+    if (type === 'patches') {
+        return `${label} · ${formatAmount(purchase.patchCount ?? getPurchaseQuantityBought(purchase))} patches`;
+    }
+    return label;
+}
+
+function formatNicotineUseLogLabel(log) {
+    const type = getNicotineProductType(log);
+    const label = getNicotineProductTypeLabel(type);
+    if (type === 'vape' || isVapeUseLog(log)) {
+        const puffs = parseFloat(log.estimatedPuffsUsed ?? log.amount) || 0;
+        return `${label}: ${formatAmount(puffs)} puffs`;
+    }
+    if (type === 'cigarettes') {
+        return `${label}: ${formatAmount(log.cigarettesUsed ?? log.amount)} cigarettes`;
+    }
+    if (type === 'pouches') {
+        return `${label}: ${formatAmount(log.pouchesUsed ?? log.amount)} pouches`;
+    }
+    if (type === 'gum') {
+        return `${label}: ${formatAmount(log.piecesUsed ?? log.amount)} pieces`;
+    }
+    if (type === 'patches') {
+        return `${label}: ${formatAmount(log.patchesUsed ?? log.amount)} patches`;
+    }
+    return `${label}: ${formatAmount(log.amount)} ${log.unit || ''}`.trim();
+}
+
+function formatNicotineCalendarDayLines(logsForDay, data = appData) {
+    const byType = {};
+    logsForDay.filter(isPersonalUseLog).forEach(log => {
+        const type = getNicotineProductType(log, data);
+        if (!byType[type]) byType[type] = { amount: 0, unit: log.unit };
+        if (type === 'vape' || isVapeUseLog(log, data)) {
+            getVapeLogStatsAllocations(log, data).forEach(({ amount }) => {
+                byType.vape = byType.vape || { amount: 0 };
+                byType.vape.amount += amount;
+            });
+        } else {
+            byType[type].amount += parseFloat(log.amount) || 0;
+        }
+    });
+    return NICOTINE_PRODUCT_TYPES
+        .filter(type => byType[type]?.amount > INVENTORY_EPS)
+        .map(type => {
+            const { amount } = byType[type];
+            if (type === 'vape') return `${getNicotineProductTypeLabel(type)}: ${Math.round(amount).toLocaleString('en-US')} puffs`;
+            if (type === 'cigarettes') return `${getNicotineProductTypeLabel(type)}: ${formatAmount(amount)} cigarettes`;
+            if (type === 'pouches') return `${getNicotineProductTypeLabel(type)}: ${formatAmount(amount)} pouches`;
+            if (type === 'gum') return `${getNicotineProductTypeLabel(type)}: ${formatAmount(amount)} pieces`;
+            if (type === 'patches') return `${getNicotineProductTypeLabel(type)}: ${formatAmount(amount)} patches`;
+            return `${getNicotineProductTypeLabel(type)}: ${formatAmount(amount)}`;
+        });
+}
+
 function renderBuyInsights(substanceId, bounds) {
     renderStatsBuyAnalyticsCards(substanceId);
     renderStatsBuyWeekSummary(substanceId);
@@ -15199,19 +16082,48 @@ function renderStatsBuyAdvancedMetrics(substanceId) {
     const allPurchases = (appData.purchases || []).filter(p => getPurchaseSubstanceId(p) === substanceId);
     const cards = [];
 
-    if (isVapeNicotineSubstanceId(substanceId)) {
+    if (isNicotineSubstanceId(substanceId)) {
+        const invStats = getNicotineInventoryAnalytics(allPurchases);
+        const useLogs = getUseLogsForSubstance(substanceId, { personalUseOnly: true });
+        const useStats = getNicotineUseAnalytics(useLogs);
         const vapePurchases = allPurchases.filter(isVapePuffPurchase);
         const vapeCount = vapePurchases.length;
         const totalCost = allPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
-        const avgCostPerVape = vapeCount > 0 ? totalCost / vapeCount : null;
+        const avgCostPerVape = vapeCount > 0
+            ? vapePurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0) / vapeCount
+            : null;
         const buyMetrics = getBuyBreakMetrics(substanceId);
         cards.push(
-            renderSheetMetricCard('Vape count (all time)', vapeCount > 0 ? String(vapeCount) : '—', null),
-            renderSheetMetricCard('Avg cost/vape', formatCostPerVape(avgCostPerVape, cur), null),
+            renderSheetMetricCard('Total nicotine entries', useStats.totalEntries > 0 ? String(useStats.totalEntries) : '—', null),
+            renderSheetMetricCard('Total estimated cost', fmtSheetMoney(totalCost, cur), null),
+            renderSheetMetricCard('Vape puffs used', useStats.vapePuffs > 0 ? formatStatsPuffs(useStats.vapePuffs) : '—', null),
+            renderSheetMetricCard('Cigarettes smoked', useStats.cigarettes > 0 ? formatAmount(useStats.cigarettes) : '—', null),
+            renderSheetMetricCard('Pouches used', useStats.pouches > 0 ? formatAmount(useStats.pouches) : '—', null),
+            renderSheetMetricCard('Gum pieces used', useStats.gumPieces > 0 ? formatAmount(useStats.gumPieces) : '—', null),
+            renderSheetMetricCard('Patches used', useStats.patches > 0 ? formatAmount(useStats.patches) : '—', null)
+        );
+        if (useStats.nicotineMg > 0) {
+            cards.push(renderSheetMetricCard('Estimated nicotine mg', fmtSheetAmount(useStats.nicotineMg, 'mg'), null));
+        }
+        NICOTINE_PRODUCT_TYPES.forEach(type => {
+            const typeCost = invStats.costByType[type];
+            if (typeCost > 0) {
+                cards.push(renderSheetMetricCard(
+                    `Cost · ${getNicotineProductTypeLabel(type)}`,
+                    fmtSheetMoney(typeCost, cur),
+                    null
+                ));
+            }
+        });
+        if (vapeCount > 0) {
+            cards.push(renderSheetMetricCard('Vape count (inventory)', String(vapeCount), null));
+            cards.push(renderSheetMetricCard('Avg cost/vape', formatCostPerVape(avgCostPerVape, cur), null));
+        }
+        cards.push(
             renderSheetMetricCard('Longest buy break', buyMetrics.longest != null ? formatBuyBreakFromHours(buyMetrics.longest) : '—', null),
-            renderSheetMetricCard('Shortest buy break', buyMetrics.shortest != null ? formatBuyBreakFromHours(buyMetrics.shortest) : '—', null),
             renderSheetMetricCard('Time since last buy', buyMetrics.timeSinceLastBuy?.text || '—', null)
         );
+        cards.push(renderSheetMetricCard('Inventory summary', formatNicotineInventorySummary(substanceId), null));
     } else if (isAlcoholTrackingMode(substanceId)) {
         const alcoholStats = getAlcoholInventoryAnalytics(allPurchases);
         if (alcoholStats.totalPureAlcoholMl > 0) {
@@ -15442,9 +16354,13 @@ function formatCalendarDayLabel(dateStr) {
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', weekday: 'short' });
 }
 
-function formatCalendarUseAmount(amount, substanceId, unit) {
+function formatCalendarUseAmount(amount, substanceId, unit, logsForDay = null, data = appData) {
+    if (isNicotineSubstanceId(substanceId, data) && logsForDay?.length) {
+        const lines = formatNicotineCalendarDayLines(logsForDay, data);
+        return lines.length ? lines.join(' · ') : null;
+    }
     if (amount == null || Number.isNaN(amount) || amount <= INVENTORY_EPS) return null;
-    if (isVapeNicotineSubstanceId(substanceId)) {
+    if (isVapeNicotineSubstanceId(substanceId) && !logsForDay) {
         return `${Math.round(amount).toLocaleString('en-US')} puffs`;
     }
     return fmtSheetAmount(amount, unit);
@@ -15663,10 +16579,10 @@ function buildCalendarDayCellHtml(day, substanceId, opts) {
     }
 
     if (showAmount && day.hasUse) {
-        const amt = formatCalendarUseAmount(day.totalAmount, substanceId, day.unit);
+        const amt = formatCalendarUseAmount(day.totalAmount, substanceId, day.unit, day.logs);
         if (amt) lines.push(`<div class="cal-line cal-status-use">Use: ${amt}</div>`);
     } else if (compact && day.hasUse) {
-        const amt = formatCalendarUseAmount(day.totalAmount, substanceId, day.unit);
+        const amt = formatCalendarUseAmount(day.totalAmount, substanceId, day.unit, day.logs);
         if (amt) lines.push(`<div class="cal-line cal-status-use">${amt}</div>`);
     }
 
