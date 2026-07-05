@@ -1539,6 +1539,23 @@
                     </div>
                 </div>
 
+                <div class="collapsible-section" data-section="settingsVape">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsVape')">
+                        <span>Vape / Nicotine</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section">
+                    <p class="settings-hint">Options for percent-left logging and usage summaries.</p>
+                    <div class="form-group toggle-row">
+                        <label for="spread-percent-left-usage">Spread percent-left usage across days</label>
+                        <input type="checkbox" id="spread-percent-left-usage" checked onchange="setSpreadPercentLeftUsage(this.checked)">
+                    </div>
+                    <p class="settings-hint">When on, percent-left logs distribute estimated puffs evenly across days since the previous checkpoint (or purchase date). Summaries and charts use the daily split instead of one lump sum on the log date.</p>
+                </div>
+                    </div>
+                </div>
+
                 <div class="collapsible-section" data-section="settingsStores">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsStores')">
                         <span>Stores / Locations</span>

@@ -660,6 +660,213 @@ function updateVapeTaperModeNote() {
     el.classList.toggle('hidden', !spread);
 }
 
+function getSpreadPercentLeftUsage(data = appData) {
+    return data?.settings?.spreadPercentLeftUsage !== false;
+}
+
+function setSpreadPercentLeftUsage(enabled) {
+    if (!appData.settings) appData.settings = {};
+    appData.settings.spreadPercentLeftUsage = !!enabled;
+    saveData(appData);
+    syncSpreadPercentLeftToggle();
+    rebuildAllPercentLeftDistributions(appData);
+    refreshUseLogRelatedViews();
+    updateStats();
+    refreshTaperDashboard();
+}
+
+function syncSpreadPercentLeftToggle() {
+    const el = document.getElementById('spread-percent-left-usage');
+    if (el) el.checked = getSpreadPercentLeftUsage();
+}
+
+function isPercentLeftDistributedChildLog(log) {
+    return !!(log?.isEstimatedFromPercentLeft && log?.parentPercentLogId != null);
+}
+
+function isPercentLeftCheckpointLog(log) {
+    return !!log?.isPercentLeftCheckpoint;
+}
+
+function getDistributedChildrenForPercentLog(parentLogId, data = appData) {
+    return getUseEntries(data)
+        .filter(l => isPercentLeftDistributedChildLog(l)
+            && String(l.parentPercentLogId) === String(parentLogId))
+        .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+}
+
+function removeDistributedPercentLeftEntries(parentLogId, data = appData) {
+    data.logs = getUseEntries(data).filter(l =>
+        !(isPercentLeftDistributedChildLog(l)
+            && String(l.parentPercentLogId) === String(parentLogId)));
+}
+
+function clearPercentLeftCheckpointFlags(log) {
+    if (!log) return;
+    delete log.isPercentLeftCheckpoint;
+    delete log.excludeFromStats;
+    delete log.percentBefore;
+    delete log.distributedStartDate;
+    delete log.distributedEndDate;
+    delete log.originalTotalEstimatedPuffs;
+}
+
+function getPercentCheckpointLogsForPurchase(purchaseId, data = appData) {
+    return getLogsForPurchase(purchaseId, data)
+        .filter(l => isPersonalUseLog(l) && isVapeUseLog(l, data) && !l.needsReview)
+        .filter(l => !isPercentLeftDistributedChildLog(l))
+        .filter(l => isPercentBasedVapeLog(l));
+}
+
+function getPreviousPercentCheckpointInfo(purchase, logDate, excludeLogId, data = appData) {
+    const priorLogs = getPercentCheckpointLogsForPurchase(purchase.id, data)
+        .filter(l => excludeLogId == null || String(l.id) !== String(excludeLogId))
+        .filter(l => {
+            const dateCmp = (l.date || '').localeCompare(logDate || '');
+            if (dateCmp < 0) return true;
+            if (dateCmp > 0) return false;
+            if (excludeLogId == null) return true;
+            return String(l.id) < String(excludeLogId);
+        })
+        .sort((a, b) => {
+            const dateCmp = (a.date || '').localeCompare(b.date || '');
+            if (dateCmp !== 0) return dateCmp;
+            return String(a.id).localeCompare(String(b.id));
+        });
+
+    if (priorLogs.length) {
+        const prev = priorLogs[priorLogs.length - 1];
+        return {
+            startDate: prev.date,
+            percentBefore: parseFloat(prev.percentLeftAfter ?? prev.percentRemaining)
+        };
+    }
+    return {
+        startDate: purchase.date,
+        percentBefore: getVapePercentBoughtAt(purchase)
+    };
+}
+
+function distributePuffsEvenlyAcrossDays(totalPuffs, startDateStr, endDateStr) {
+    const roundedTotal = Math.round(totalPuffs);
+    if (roundedTotal <= 0) return [];
+    const dates = iterateDatesInRange(startDateStr, endDateStr);
+    if (!dates.length) return [];
+    const base = Math.floor(roundedTotal / dates.length);
+    const remainder = roundedTotal - base * dates.length;
+    return dates.map((date, index) => ({
+        date,
+        amount: base + (index === dates.length - 1 ? remainder : 0)
+    }));
+}
+
+function formatPercentLeftCheckpointSummary(log) {
+    const beforeRaw = log.percentBefore;
+    const afterRaw = log.percentLeftAfter ?? log.percentRemaining;
+    const beforeLabel = beforeRaw != null && Number.isFinite(parseFloat(beforeRaw))
+        ? (Number.isInteger(parseFloat(beforeRaw)) ? beforeRaw : parseFloat(beforeRaw).toFixed(1))
+        : '—';
+    const afterLabel = afterRaw != null && Number.isFinite(parseFloat(afterRaw))
+        ? (Number.isInteger(parseFloat(afterRaw)) ? afterRaw : parseFloat(afterRaw).toFixed(1))
+        : '—';
+    const total = log.originalTotalEstimatedPuffs ?? log.estimatedPuffsUsed ?? log.amount;
+    const start = log.distributedStartDate || log.date;
+    const end = log.distributedEndDate || log.date;
+    const rangeLabel = start === end
+        ? formatDate(start)
+        : `${formatDate(start)}–${formatDate(end)}`;
+    return `Percent-left log: ${beforeLabel}% → ${afterLabel}%, estimated ${formatAmount(total)} puffs over ${rangeLabel}`;
+}
+
+function syncDistributedPercentLeftEntries(parentLog, purchase, data = appData) {
+    removeDistributedPercentLeftEntries(parentLog.id, data);
+    clearPercentLeftCheckpointFlags(parentLog);
+
+    if (!getSpreadPercentLeftUsage(data)) return;
+    if (!isPercentBasedVapeLog(parentLog) || isPercentLeftDistributedChildLog(parentLog)) return;
+    if (!isVapeNicotineSubstanceId(getUseSubstanceId(parentLog), data)) return;
+
+    const fullPuffs = getVapeFullPuffCount(purchase);
+    if (!fullPuffs || fullPuffs <= 0) return;
+
+    const totalPuffs = Math.max(0, Math.round(parseFloat(parentLog.estimatedPuffsUsed ?? parentLog.amount) || 0));
+    if (totalPuffs <= INVENTORY_EPS) return;
+
+    const checkpoint = getPreviousPercentCheckpointInfo(purchase, parentLog.date, parentLog.id, data);
+    const percentAfter = parseFloat(parentLog.percentLeftAfter ?? parentLog.percentRemaining);
+    const percentBefore = checkpoint.percentBefore;
+    if (!Number.isFinite(percentAfter) || !Number.isFinite(percentBefore)) return;
+    if (percentAfter > percentBefore + 0.001) return;
+
+    const startDate = checkpoint.startDate;
+    const endDate = parentLog.date;
+    if (!startDate || !endDate || endDate < startDate) return;
+
+    const allocations = distributePuffsEvenlyAcrossDays(totalPuffs, startDate, endDate);
+    if (!allocations.length) return;
+
+    parentLog.isPercentLeftCheckpoint = true;
+    parentLog.excludeFromStats = true;
+    parentLog.percentBefore = percentBefore;
+    parentLog.distributedStartDate = startDate;
+    parentLog.distributedEndDate = endDate;
+    parentLog.originalTotalEstimatedPuffs = totalPuffs;
+
+    const now = new Date().toISOString();
+    const substanceId = getUseSubstanceId(parentLog);
+    let baseId = Date.now();
+    allocations.forEach((alloc, index) => {
+        data.logs.push({
+            id: baseId + index,
+            type: 'quick',
+            transactionType: 'use',
+            substanceId,
+            date: alloc.date,
+            amount: alloc.amount,
+            unit: 'puffs',
+            logMode: 'vape_puffs',
+            isEstimated: true,
+            isEstimatedFromPercentLeft: true,
+            estimatedFromPercent: false,
+            parentPercentLogId: parentLog.id,
+            linkedPurchaseId: purchase.id,
+            purchaseId: purchase.id,
+            inventoryId: purchase.id,
+            inventoryAffects: false,
+            excludeFromInventory: true,
+            distributedStartDate: startDate,
+            distributedEndDate: endDate,
+            percentBefore,
+            percentAfter,
+            originalTotalEstimatedPuffs: totalPuffs,
+            trackingMode: 'vape',
+            createdAt: now,
+            updatedAt: now,
+            timestamp: parentLog.timestamp || now
+        });
+    });
+}
+
+function rebuildAllPercentLeftDistributions(data = appData) {
+    data.logs = getUseEntries(data).filter(l => !isPercentLeftDistributedChildLog(l));
+    getUseEntries(data).forEach(l => clearPercentLeftCheckpointFlags(l));
+    (data.purchases || []).filter(isVapePuffPurchase).forEach(purchase => {
+        recalculateVapePurchaseInventory(purchase.id, data, { skipPercentSpread: true });
+    });
+    if (getSpreadPercentLeftUsage(data)) {
+        (data.purchases || []).filter(isVapePuffPurchase).forEach(purchase => {
+            getPercentCheckpointLogsForPurchase(purchase.id, data).forEach(log => {
+                syncDistributedPercentLeftEntries(log, purchase, data);
+            });
+        });
+    }
+}
+
+function togglePercentDistDays(parentId) {
+    const el = document.getElementById(`percent-dist-${parentId}`);
+    if (el) el.classList.toggle('hidden');
+}
+
 function migrateInventoryStatusFields(data) {
     (data.purchases || []).forEach(purchase => {
         if (!purchase || typeof purchase !== 'object') return;
@@ -2222,7 +2429,8 @@ const defaultData = {
     settings: {
         currency: '$',
         substanceSettings: getDefaultSubstanceSettings(),
-        vapeTaperCountMode: 'log-date'
+        vapeTaperCountMode: 'log-date',
+        spreadPercentLeftUsage: true
     },
     taperPlans: {},
     taperPlansV2: [],
@@ -2595,6 +2803,7 @@ function normalizeAppData(data) {
     delete data.reasons;
     migrateVapeDataV1(data);
     repairVapeInventoryLinks(data);
+    migrateVapePercentSpreadV1(data);
     migrateInventoryStatusFields(data);
     repairDataConsistency(data);
     return data;
@@ -2614,6 +2823,9 @@ function ensureAppDataSettings(data) {
     data.settings.currency = '$';
     if (!data.settings.vapeTaperCountMode) {
         data.settings.vapeTaperCountMode = 'log-date';
+    }
+    if (data.settings.spreadPercentLeftUsage === undefined) {
+        data.settings.spreadPercentLeftUsage = true;
     }
     ensureInsightPrefs(data);
     ensureTableColumnSettings(data);
@@ -2651,6 +2863,7 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     settingsSubstances: false,
     settingsAppearance: false,
     settingsStores: true,
+    settingsVape: false,
     settingsBackup: true,
     settingsDangerZone: true
 };
@@ -3893,8 +4106,20 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
             return `<td data-col="${colId}"${dataLabel}>${sub.icon || ''} ${sub.name}</td>`;
         case 'transactionType':
             return `<td data-col="${colId}"${dataLabel}>${formatUseHistoryTransactionType(entry)}</td>`;
-        case 'amount':
-            return `<td data-col="${colId}"${dataLabel}>${formatAmount(entry.amount)}</td>`;
+        case 'amount': {
+            let amountHtml = `${formatAmount(entry.amount)}`;
+            if (isPercentLeftDistributedChildLog(entry)) {
+                amountHtml = `~${formatAmount(entry.amount)} <span class="use-history-est-label">(est. daily)</span>`;
+            } else if (isPercentLeftCheckpointLog(entry) && getSpreadPercentLeftUsage()) {
+                const childCount = getDistributedChildrenForPercentLog(entry.id).length;
+                amountHtml = childCount
+                    ? `<span class="use-history-est-label">${formatPercentLeftCheckpointSummary(entry)}</span>`
+                    : `~${formatAmount(entry.amount)}`;
+            } else if (isVapeUseLog(entry) && (entry.isEstimated || entry.estimatedFromPercent)) {
+                amountHtml = `~${formatAmount(entry.amount)}`;
+            }
+            return `<td data-col="${colId}"${dataLabel}>${amountHtml}</td>`;
+        }
         case 'unit':
             return `<td data-col="${colId}"${dataLabel}>${entry.unit}</td>`;
         case 'count':
@@ -3908,7 +4133,10 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
             return `<td class="supply-cell session-supply-cell" data-col="inventory"${dataLabel}>${formatInventoryLinkDisplay(entry)}</td>`;
         case 'notes': {
             const splitNote = formatOvernightSplitNote(entry, sub.id);
-            const notesHtml = entry.notes || '';
+            let notesHtml = entry.notes || '';
+            if (isPercentLeftDistributedChildLog(entry)) {
+                notesHtml = `${notesHtml ? `${notesHtml}<br>` : ''}<span class="use-history-est-label">Estimated daily use from percent-left log</span>`;
+            }
             const splitHtml = splitNote ? `<div class="use-history-split-note cal-muted">${splitNote}</div>` : '';
             return `<td class="notes-cell session-notes-cell" data-col="${colId}"${dataLabel}>${notesHtml}${splitHtml}</td>`;
         }
@@ -4379,6 +4607,7 @@ function initializeApp() {
     updateLastSavedDisplay();
     applyCollapsedSections();
     persistLoadedAppDataIfNeeded();
+    syncSpreadPercentLeftToggle();
 
     if (appData.settings?.activeTab) {
         switchTab(appData.settings.activeTab);
@@ -7519,6 +7748,7 @@ function parsePurchaseStartedAt(purchase, data = appData) {
 function getVapePurchaseUseLogs(purchase, data = appData) {
     return getLogsForPurchase(purchase.id, data)
         .filter(l => isPersonalUseLog(l) && isVapeUseLog(l, data))
+        .filter(l => !isPercentLeftDistributedChildLog(l))
         .sort((a, b) => getVapeLogSortMs(a) - getVapeLogSortMs(b));
 }
 
@@ -7658,6 +7888,16 @@ function getVapeLogPuffAmount(log) {
 function getVapeLogStatsAllocations(log, data = appData) {
     const amount = getVapeLogPuffAmount(log);
     if (amount <= INVENTORY_EPS) return [];
+
+    if (isPercentLeftDistributedChildLog(log)) {
+        return log.date ? [{ date: log.date, amount }] : [];
+    }
+
+    if (isPercentLeftCheckpointLog(log) && log.excludeFromStats && getSpreadPercentLeftUsage(data)) {
+        const children = getDistributedChildrenForPercentLog(log.id, data);
+        if (children.length) return [];
+    }
+
     if (isVapeDateOnlyUseLog(log, data)) {
         return log.date ? [{ date: log.date, amount }] : [];
     }
@@ -7910,6 +8150,7 @@ function getVapeRemainingBeforeLog(purchase, logDate, data = appData, excludeLog
     let remaining = getVapeStartingPuffsLeft(purchase);
     const logs = getLogsForPurchase(purchase.id, data)
         .filter(l => isPersonalUseLog(l) && isVapeUseLog(l, data) && !l.needsReview)
+        .filter(l => !isPercentLeftDistributedChildLog(l))
         .filter(l => excludeLogId == null || String(l.id) !== String(excludeLogId))
         .filter(l => (l.date || '') <= (logDate || ''))
         .sort((a, b) => {
@@ -7927,11 +8168,12 @@ function recalculateVapePurchaseInventory(purchaseId, data = appData, options = 
     const purchase = findPurchaseInData(purchaseId, data);
     if (!purchase || !isVapePuffPurchase(purchase)) return;
     normalizeVapePurchaseFields(purchase);
-    const { excludeLogId = null } = options;
+    const { excludeLogId = null, skipPercentSpread = false } = options;
     const fullPuffs = getVapeFullPuffCount(purchase);
     const startingPuffs = getVapeStartingPuffsLeft(purchase);
     const logs = getLogsForPurchase(purchaseId, data)
         .filter(l => isPersonalUseLog(l) && isVapeUseLog(l, data) && !l.needsReview)
+        .filter(l => !isPercentLeftDistributedChildLog(l))
         .filter(l => excludeLogId == null || String(l.id) !== String(excludeLogId))
         .sort((a, b) => getVapeLogSortMs(a) - getVapeLogSortMs(b));
 
@@ -7985,6 +8227,19 @@ function recalculateVapePurchaseInventory(purchaseId, data = appData, options = 
     }
     syncVapePurchaseSupplyStartedAt(purchase, logs, data);
     purchase.updatedAt = new Date().toISOString();
+
+    if (!skipPercentSpread) {
+        if (getSpreadPercentLeftUsage(data)) {
+            logs.filter(l => isPercentBasedVapeLog(l)).forEach(log => {
+                syncDistributedPercentLeftEntries(log, purchase, data);
+            });
+        } else {
+            logs.filter(l => isPercentLeftCheckpointLog(l)).forEach(log => {
+                removeDistributedPercentLeftEntries(log.id, data);
+                clearPercentLeftCheckpointFlags(log);
+            });
+        }
+    }
 }
 
 function getVapeUsageRatePreview(purchase, newRemaining, useDate, useTime) {
@@ -8166,6 +8421,19 @@ function updateVapeUsePreview() {
         `${formatAmount(calc.puffsUsed)} puffs used → ${formatAmount(calc.currentRemaining)} puffs remaining (${pctLabel}% left).`
     ];
     if (calc.warning) lines.push(calc.warning);
+    if (calc.estimatedFromPercent && getSpreadPercentLeftUsage() && calc.puffsUsed > 0) {
+        const checkpoint = getPreviousPercentCheckpointInfo(
+            calc.purchase,
+            document.getElementById('use-date')?.value || getLocalDateString(),
+            editingUseId || null
+        );
+        const start = checkpoint.startDate;
+        const end = document.getElementById('use-date')?.value || getLocalDateString();
+        if (start && end && end >= start) {
+            const dayCount = iterateDatesInRange(start, end).length;
+            lines.push(`Will spread ~${formatAmount(calc.puffsUsed)} puffs evenly across ${dayCount} day(s) (${formatDate(start)}–${formatDate(end)}).`);
+        }
+    }
 
     preview.textContent = lines.join('\n');
 }
@@ -8264,6 +8532,15 @@ function formatVapeRecentUseDetailLines(log) {
         lines.push('Needs review');
         return lines;
     }
+    if (isPercentLeftDistributedChildLog(log)) {
+        lines.push(`~${formatAmount(log.amount)} puffs`);
+        lines.push('Estimated daily use from percent-left log');
+        return lines;
+    }
+    if (isPercentLeftCheckpointLog(log) && getSpreadPercentLeftUsage()) {
+        lines.push(formatPercentLeftCheckpointSummary(log));
+        return lines;
+    }
     const amount = parseFloat(log.estimatedPuffsUsed ?? log.amount);
     if (Number.isFinite(amount)) {
         lines.push(`~${formatAmount(amount)} puffs used`);
@@ -8360,6 +8637,18 @@ function migrateVapeDataV1(data) {
     });
     if (!data.migrations) data.migrations = {};
     data.migrations.vapePuffsV1 = true;
+}
+
+function migrateVapePercentSpreadV1(data) {
+    if (data.migrations?.vapePercentSpreadV1) return;
+    ensureAppDataSettings(data);
+    data.logs = getUseEntries(data).filter(l => !isPercentLeftDistributedChildLog(l));
+    getUseEntries(data).forEach(l => clearPercentLeftCheckpointFlags(l));
+    (data.purchases || []).filter(isVapePuffPurchase).forEach(purchase => {
+        recalculateVapePurchaseInventory(purchase.id, data);
+    });
+    if (!data.migrations) data.migrations = {};
+    data.migrations.vapePercentSpreadV1 = true;
 }
 
 function markVapePurchaseEmpty(purchaseId) {
@@ -9104,6 +9393,11 @@ function editUseEntry(id) {
     const entry = findUseEntry(id);
     if (!entry) return;
 
+    if (isPercentLeftDistributedChildLog(entry)) {
+        editUseEntry(entry.parentPercentLogId);
+        return;
+    }
+
     editingUseId = id;
     const isVape = isVapeUseLog(entry);
     const isWeed = isWeedTrackingMode(getUseSubstanceId(entry));
@@ -9664,6 +9958,10 @@ function handleUseLogSubmit(e) {
     if (isVapeUse) {
         vapeCalc = computeVapeUseFromForm({ editingId: editingUseId || null });
         if (vapeCalc?.error) return alert(vapeCalc.error);
+        if (vapeCalc.estimatedFromPercent && getSpreadPercentLeftUsage()
+            && (!vapeCalc.totalPuffs || vapeCalc.totalPuffs <= 0)) {
+            return alert('This vape has no puff capacity set. Cannot estimate usage from percent left.');
+        }
         const tx = document.getElementById('use-transaction-type')?.value || 'use';
         if (vapeCalc.puffsUsed < 0 && tx === 'use') {
             return alert(vapeCalc.warning || 'Percent left is higher than current inventory. This will be treated as an adjustment unless you choose a different vape.');
@@ -9836,10 +10134,21 @@ function handleUseLogSubmit(e) {
 }
 
 function deleteUseEntry(id) {
-    if (!confirm('Delete this entry?')) return;
     const entry = findUseEntry(id);
+    if (!entry) {
+        return;
+    }
+    if (isPercentLeftDistributedChildLog(entry)) {
+        if (!confirm('Delete the percent-left checkpoint and all distributed daily entries?')) return;
+        deleteUseEntry(entry.parentPercentLogId);
+        return;
+    }
+    if (!confirm('Delete this entry?')) return;
     if (editingUseId === id) cancelUseEdit();
     const vapePid = entry && isVapeUseLog(entry) ? getLogPurchaseId(entry) : null;
+    if (isPercentLeftCheckpointLog(entry)) {
+        removeDistributedPercentLeftEntries(entry.id);
+    }
     if (entry && !vapePid) restoreLogSupplyLinks(entry);
     appData.logs = getUseEntries().filter(l => l.id !== id && String(l.id) !== String(id));
     if (vapePid) recalculateVapePurchaseInventory(vapePid);
@@ -10262,6 +10571,8 @@ function getUseLogBadgeInfo(log) {
     if (tx === 'gift_given') return { label: 'Gift Given', className: 'badge-gift-given' };
     if (tx === 'gift_received') return { label: 'Gift Received', className: 'badge-gift-received' };
     if (tx === 'inventory_adjustment') return { label: 'Adjustment', className: 'badge-inventory' };
+    if (isPercentLeftDistributedChildLog(log)) return { label: 'Est. daily', className: 'badge-estimated' };
+    if (isPercentLeftCheckpointLog(log)) return { label: 'Percent-left', className: 'badge-estimated' };
     if (isWeedDateOnlyUseLog(log)) return { label: 'Use', className: 'badge-quick' };
     if (getUseLogType(log) === 'session') return { label: 'Session', className: 'badge-session' };
     return { label: 'Quick Use', className: 'badge-quick' };
@@ -10282,7 +10593,12 @@ function renderUseHistoryCard(entry, sub, avgRate) {
     const timeRange = hideTimeStats ? '' : formatUseSessionTimeRange(entry);
     const isVape = isVapeUseLog(entry);
     const countStr = isVape ? '—' : (entry.count || '—');
-    const amountDisplay = isVape ? formatVapeUseSummary(entry, sub) : `${entry.amount} ${entry.unit}`;
+    let amountDisplay = isVape ? formatVapeUseSummary(entry, sub) : `${entry.amount} ${entry.unit}`;
+    if (isPercentLeftDistributedChildLog(entry)) {
+        amountDisplay = `~${formatAmount(entry.amount)} puffs · Estimated daily use from percent-left log`;
+    } else if (isPercentLeftCheckpointLog(entry) && getSpreadPercentLeftUsage()) {
+        amountDisplay = formatPercentLeftCheckpointSummary(entry);
+    }
     const warningClass = warnings.length ? ` ${warnings.join(' ')}` : '';
 
     const splitNote = formatOvernightSplitNote(entry, sub.id);
@@ -10323,6 +10639,7 @@ function renderRecentUseList() {
     container.innerHTML = '';
     const filterId = getUseLogViewSubstanceId();
     let list = [...getUseEntries()].filter(l => logMatchesUseLogFilter(l));
+    list = list.filter(l => !isPercentLeftDistributedChildLog(l));
     if (filterId) list = list.filter(l => logMatchesSubstance(l, filterId));
     const recent = list.sort((a, b) => getLogDatetimeMs(b) - getLogDatetimeMs(a)).slice(0, 12);
     if (!recent.length) {
@@ -10335,6 +10652,8 @@ function renderRecentUseList() {
         const sub = getSubstance(substanceId);
         const enriched = enrichUseEntry(log, null);
         const isVape = isVapeUseLog(log);
+        const isCheckpoint = isPercentLeftCheckpointLog(log) && getSpreadPercentLeftUsage();
+        const distChildren = isCheckpoint ? getDistributedChildrenForPercentLog(log.id) : [];
         const countStr = getUseCount(log);
         const isWeedSimple = isWeedDateOnlyUseLog(log);
         const isSessionLog = !isVape && !isWeedSimple && log.endTime;
@@ -10344,6 +10663,12 @@ function renderRecentUseList() {
             : `${log.amount != null ? formatAmount(log.amount) : '—'} ${log.unit || ''}`;
         const vapeDetailHtml = isVape
             ? formatVapeRecentUseDetailLines(log).map(line => `<div class="use-recent-detail">${line}</div>`).join('')
+            : '';
+        const distDaysHtml = isCheckpoint && distChildren.length
+            ? `<button type="button" class="link-btn percent-dist-toggle" onclick="togglePercentDistDays(${log.id})">View distributed days (${distChildren.length})</button>
+               <div id="percent-dist-${log.id}" class="percent-dist-days hidden">
+                   ${distChildren.map(child => `<div class="use-recent-detail percent-dist-day">${formatDate(child.date)} · ~${formatAmount(child.amount)} puffs · Estimated daily use from percent-left log</div>`).join('')}
+               </div>`
             : '';
         const linkedLine = isVape ? formatVapeLinkedPurchaseLine(log) : formatInventoryLinkDisplay(log);
         const splitNote = !isVape ? formatOvernightSplitNote(log, substanceId) : '';
@@ -10355,7 +10680,7 @@ function renderRecentUseList() {
                 ${enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}`
             : `<div class="use-recent-sub">${sub?.icon || ''} ${sub?.name || 'Unknown'} · ${formatDate(log.date || '')}${timeRange && timeRange !== '—' ? ` · ${timeRange}` : ''}</div>`;
         const item = document.createElement('div');
-        item.className = 'use-recent-card';
+        item.className = `use-recent-card${isCheckpoint ? ' use-recent-checkpoint' : ''}`;
         item.innerHTML = `
             <div class="use-recent-main">
                 <div class="use-recent-top">
@@ -10364,6 +10689,7 @@ function renderRecentUseList() {
                 </div>
                 ${sessionBodyHtml}
                 ${vapeDetailHtml}
+                ${distDaysHtml}
                 ${!isSessionLog && !isVape && enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}
                 ${!isVape && formatSecondaryCountDisplay(substanceId, countStr) ? `<div class="use-recent-detail">${formatSecondaryCountDisplay(substanceId, countStr)}</div>` : ''}
                 ${log.notes ? `<div class="use-recent-notes">${log.notes}</div>` : ''}
@@ -11404,6 +11730,7 @@ function getPurchaseSupplyMetrics(purchase) {
     const purchaseId = purchase.id;
     const isVape = isVapePuffPurchase(purchase);
     const logs = getLogsForPurchase(purchaseId)
+        .filter(l => !isPercentLeftDistributedChildLog(l))
         .slice()
         .sort((a, b) => (isVape ? getVapeLogSortMs(a) - getVapeLogSortMs(b) : getLogDatetimeMs(a) - getLogDatetimeMs(b)));
     const bought = isVape
@@ -12070,6 +12397,7 @@ function getUseLogTotalsForView(substanceId = getUseLogViewSubstanceId()) {
     const bounds = getUseLogFilterBounds();
     const { startDate, endDate } = bounds;
     let logs = getUseEntries().filter(l => logMatchesUseLogFilter(l) && isPersonalUseLog(l));
+    logs = logs.filter(l => !isPercentLeftDistributedChildLog(l));
     if (substanceId) {
         logs = logs.filter(l => logMatchesSubstance(l, substanceId));
     }
@@ -19401,6 +19729,14 @@ function cleanExportData(data) {
             previousRemainingBeforeLog: l.previousRemainingBeforeLog ?? null,
             isEstimated: !!l.isEstimated,
             estimatedFromPercent: !!l.estimatedFromPercent,
+            isEstimatedFromPercentLeft: !!l.isEstimatedFromPercentLeft,
+            isPercentLeftCheckpoint: !!l.isPercentLeftCheckpoint,
+            excludeFromStats: !!l.excludeFromStats,
+            parentPercentLogId: l.parentPercentLogId ?? null,
+            distributedStartDate: l.distributedStartDate ?? null,
+            distributedEndDate: l.distributedEndDate ?? null,
+            percentBefore: l.percentBefore ?? null,
+            originalTotalEstimatedPuffs: l.originalTotalEstimatedPuffs ?? null,
             estimatedPuffsPerDay: l.estimatedPuffsPerDay ?? null,
             needsReview: !!l.needsReview,
             count: Number(l.count || 0),
@@ -19800,6 +20136,8 @@ if (typeof window !== 'undefined') {
         runInventoryBulkAction,
         setVapeLogInputMode,
         setVapeTaperCountMode,
+        setSpreadPercentLeftUsage,
+        togglePercentDistDays,
         setThemePreference,
         repairAppData,
         updateVapePurchaseSelectDetails,
