@@ -5454,8 +5454,15 @@ function applyCollapsedSections() {
 
 const TABLE_COLUMN_DEFAULTS = {
     useHistory: {
-        order: ['select', 'date', 'start', 'end', 'duration', 'substance', 'transactionType', 'amount', 'unit', 'count', 'rate', 'inventory', 'notes', 'actions'],
-        hidden: [],
+        order: [
+            'select', 'date', 'start', 'end', 'duration', 'substance', 'productType',
+            'transactionType', 'amount', 'unit', 'tabs', 'ug', 'pills', 'mg', 'strength',
+            'cost', 'sharedAmount', 'multiDayRange', 'dailyBreakdown',
+            'count', 'rate', 'inventory', 'notes', 'actions'
+        ],
+        // Family-specific columns are gated by getUseHistoryColumnCatalog / getUseHistoryVisibleColumns.
+        // Only keep rarely used generic metrics hidden by default.
+        hidden: ['count', 'rate'],
         widths: {
             select: 50,
             date: 130,
@@ -5463,13 +5470,23 @@ const TABLE_COLUMN_DEFAULTS = {
             end: 80,
             duration: 110,
             substance: 150,
+            productType: 110,
             transactionType: 130,
-            amount: 100,
+            amount: 180,
             unit: 80,
+            tabs: 80,
+            ug: 90,
+            pills: 80,
+            mg: 80,
+            strength: 120,
+            cost: 90,
+            sharedAmount: 140,
+            multiDayRange: 150,
+            dailyBreakdown: 180,
             count: 80,
             rate: 100,
             inventory: 160,
-            notes: 220,
+            notes: 180,
             actions: 150
         }
     },
@@ -5596,8 +5613,8 @@ const TABLE_COLUMN_DEFAULTS = {
         }
     },
     taperByWeek: {
-        order: ['week', 'dates', 'planned', 'used', 'difference', 'status', 'buyPlanned', 'bought', 'buyDiff', 'runningAmountBought', 'spendPlanned', 'spent', 'spendDiff', 'runningAmountSpent', 'buyAmountStatus', 'spendAmountStatus', 'weeklyBuyCapStatus', 'weeklySpendCapStatus', 'monthlyBuyCapStatus', 'monthlySpendCapStatus', 'purchaseOverallStatus', 'targets', 'buyInterval', 'vapeLifespans', 'dailyTarget', 'avgPerDay', 'reductionFromPrior', 'sessions', 'runningPlanned', 'runningUsed', 'remaining'],
-        hidden: ['buyPlanned', 'bought', 'runningAmountBought', 'spendPlanned', 'spent', 'runningAmountSpent', 'spendDiff', 'buyDiff', 'buyAmountStatus', 'spendAmountStatus', 'weeklyBuyCapStatus', 'weeklySpendCapStatus', 'monthlyBuyCapStatus', 'monthlySpendCapStatus', 'purchaseOverallStatus', 'targets', 'buyInterval', 'vapeLifespans', 'dailyTarget', 'avgPerDay', 'reductionFromPrior', 'sessions', 'runningPlanned', 'runningUsed', 'remaining'],
+        order: ['week', 'dates', 'planned', 'used', 'difference', 'status', 'buyPlanned', 'bought', 'buyDiff', 'runningAmountBought', 'spendPlanned', 'spent', 'spendDiff', 'runningPlannedSpend', 'runningAmountSpent', 'buyAmountStatus', 'spendAmountStatus', 'weeklyBuyCapStatus', 'weeklySpendCapStatus', 'monthlyBuyCapStatus', 'monthlySpendCapStatus', 'purchaseOverallStatus', 'targets', 'buyInterval', 'vapeLifespans', 'dailyTarget', 'avgPerDay', 'reductionFromPrior', 'sessions', 'runningPlanned', 'runningUsed', 'remaining'],
+        hidden: ['buyPlanned', 'bought', 'runningAmountBought', 'spendPlanned', 'spent', 'runningPlannedSpend', 'runningAmountSpent', 'spendDiff', 'buyDiff', 'buyAmountStatus', 'spendAmountStatus', 'weeklyBuyCapStatus', 'weeklySpendCapStatus', 'monthlyBuyCapStatus', 'monthlySpendCapStatus', 'purchaseOverallStatus', 'targets', 'buyInterval', 'vapeLifespans', 'dailyTarget', 'avgPerDay', 'reductionFromPrior', 'sessions', 'runningPlanned', 'runningUsed', 'remaining'],
         widths: {
             week: 70,
             dates: 170,
@@ -5617,6 +5634,7 @@ const TABLE_COLUMN_DEFAULTS = {
             runningAmountBought: 130,
             buyDiff: 90,
             spendPlanned: 110,
+            runningPlannedSpend: 140,
             runningAmountSpent: 130,
             spendDiff: 90,
             buyAmountStatus: 110,
@@ -5656,12 +5674,22 @@ const TABLE_COLUMN_LABELS = {
         end: 'End',
         duration: 'Duration',
         substance: 'Substance',
-        transactionType: 'Type',
+        productType: 'Product Type',
+        transactionType: 'Transaction Type',
         amount: 'Amount',
         unit: 'Unit',
+        tabs: 'Tabs',
+        ug: 'µg',
+        pills: 'Pills',
+        mg: 'mg',
+        strength: 'Strength per Pill',
+        cost: 'Cost',
+        sharedAmount: 'Shared Amount',
+        multiDayRange: 'Multi-Day Range',
+        dailyBreakdown: 'Daily Breakdown',
         count: 'Count',
         rate: 'Rate',
-        inventory: 'Inventory',
+        inventory: 'Linked Inventory',
         break: 'Break Since Previous',
         supply: 'Supply',
         notes: 'Notes',
@@ -5772,10 +5800,11 @@ const TABLE_COLUMN_LABELS = {
         runningAmountBought: 'Running Amount Bought',
         buyDiff: 'Buy +/-',
         spendPlanned: 'Spend Planned',
-        runningAmountSpent: 'Running Amount Spent',
-        spendDiff: 'Spend +/-',
+        runningPlannedSpend: 'Running Planned Spend',
+        runningAmountSpent: 'Running Actual Spend',
+        spendDiff: 'Spend Difference',
         buyAmountStatus: 'Buy amount status',
-        spendAmountStatus: 'Spending status',
+        spendAmountStatus: 'Weekly Spending Status',
         weeklyBuyCapStatus: 'Weekly Buy Status',
         weeklySpendCapStatus: 'Weekly Spending Status',
         monthlyBuyCapStatus: 'Monthly Buy Status',
@@ -6095,7 +6124,7 @@ const TAPER_BY_WEEK_UNIVERSAL_COLUMNS = [
 const TAPER_BY_WEEK_FAMILY_EXTRA_COLUMNS = {
     cocaine: [
         'bought', 'buyDiff', 'runningAmountBought', 'runningAmountSpent',
-        'buyPlanned', 'spendPlanned', 'spent', 'spendDiff',
+        'buyPlanned', 'spendPlanned', 'spent', 'spendDiff', 'runningPlannedSpend',
         'buyInterval', 'weeklyBuyCapStatus', 'weeklySpendCapStatus',
         'monthlyBuyCapStatus', 'monthlySpendCapStatus',
         'purchaseOverallStatus', 'targets',
@@ -6230,6 +6259,10 @@ function getDefaultTaperByWeekColumnSettings(substanceId, plan) {
             ['avgPerDay', 'spent', 'runningAmountSpent']
                 .forEach(id => { if (id in visible) visible[id] = true; });
         }
+    }
+    if (isAutoSpendFromCostPerGramEnabled(plan)) {
+        ['spendPlanned', 'spent', 'spendDiff', 'runningPlannedSpend', 'runningAmountSpent', 'spendAmountStatus']
+            .forEach(id => { if (id in visible) visible[id] = true; });
     }
     return filterTaperByWeekColumnSettingsToCatalog({ order: catalog, visible, widths: base.widths }, substanceId, plan);
 }
@@ -6752,7 +6785,9 @@ function renderColumnSettingsList(tableKey) {
         if (!order.includes(id)) order.push(id);
     });
     const plan = tableKey === 'taperByWeek' ? getSelectedTaperPlan() : null;
-    const substanceId = tableKey === 'taperByWeek' ? getTaperSubstanceId() : currentSubstanceId;
+    const substanceId = tableKey === 'taperByWeek'
+        ? getTaperSubstanceId()
+        : (tableKey === 'useHistory' ? getUseLogViewSubstanceId() : currentSubstanceId);
     let availableOrder = order;
     if (tableKey === 'purchaseHistory') {
         availableOrder = order.filter(colId =>
@@ -6764,6 +6799,13 @@ function renderColumnSettingsList(tableKey) {
         getTaperByWeekColumnCatalog(substanceId, plan).forEach(colId => {
             if (!availableOrder.includes(colId)) availableOrder.push(colId);
         });
+    } else if (tableKey === 'useHistory') {
+        const catalog = getUseHistoryColumnCatalog(substanceId);
+        const catalogSet = new Set(catalog);
+        availableOrder = order.filter(colId => catalogSet.has(colId));
+        catalog.forEach(colId => {
+            if (!availableOrder.includes(colId)) availableOrder.push(colId);
+        });
     }
 
     list.innerHTML = availableOrder.map(colId => {
@@ -6772,7 +6814,9 @@ function renderColumnSettingsList(tableKey) {
         const reqNote = required.has(colId) ? ' <span class="column-required-tag">(required)</span>' : '';
         const label = tableKey === 'taperByWeek'
             ? getTaperByWeekColumnLabel(colId, plan, substanceId)
-            : getTableColumnLabelForSubstance(tableKey, colId, currentSubstanceId);
+            : (tableKey === 'useHistory'
+                ? getUseHistoryColumnLabel(colId, substanceId)
+                : getTableColumnLabelForSubstance(tableKey, colId, currentSubstanceId));
         const widthPx = getTableColumnWidthPx(tableKey, colId, variantKey);
         const widthControl = `<div class="column-settings-width">
             <label class="column-settings-width-label" for="column-width-${tableKey}-${colId}">Width</label>
@@ -7067,15 +7111,63 @@ function setupColumnSettingsModal() {
     setupCustomizableTableColumnResize();
 }
 
-function renderUseHistoryHeaderCell(colId) {
-    const labels = TABLE_COLUMN_LABELS.useHistory;
-    const label = labels[colId] || colId;
+function formatUseHistoryVapeAmountHtml(entry) {
+    if (isSharedUseLog(entry)) {
+        const me = formatAmount(getLogPersonalAmount(entry));
+        const other = formatAmount(getLogSharedAmount(entry));
+        const name = entry.sharedWithName?.trim() || 'Other';
+        return `<span class="use-history-amount-compact">Shared Use · Me ${me} puffs · ${escapeHtml(name)} ${other} puffs</span>`;
+    }
+    if (isPercentLeftCheckpointLog(entry) && getSpreadPercentLeftUsage()) {
+        const beforeRaw = entry.percentBefore;
+        const afterRaw = entry.percentLeftAfter ?? entry.percentRemaining;
+        const beforeLabel = beforeRaw != null && Number.isFinite(parseFloat(beforeRaw))
+            ? (Number.isInteger(parseFloat(beforeRaw)) ? beforeRaw : parseFloat(beforeRaw).toFixed(1))
+            : '—';
+        const afterLabel = afterRaw != null && Number.isFinite(parseFloat(afterRaw))
+            ? (Number.isInteger(parseFloat(afterRaw)) ? afterRaw : parseFloat(afterRaw).toFixed(1))
+            : '—';
+        const total = entry.originalTotalEstimatedPuffs ?? entry.estimatedPuffsUsed ?? entry.amount;
+        const puffsLabel = Number.isFinite(parseFloat(total))
+            ? Math.round(parseFloat(total)).toLocaleString('en-US')
+            : formatAmount(total);
+        return `<span class="use-history-amount-compact">Percent-left checkpoint · ${beforeLabel}% → ${afterLabel}%</span>`
+            + `<span class="use-history-amount-sub">Estimated ${puffsLabel} puffs</span>`;
+    }
+    const puffs = parseFloat(entry.estimatedPuffsUsed ?? entry.amount);
+    const puffsLabel = Number.isFinite(puffs)
+        ? Math.round(puffs).toLocaleString('en-US')
+        : formatAmount(entry.amount);
+    const prefix = (entry.isEstimated || entry.estimatedFromPercent) ? 'Estimated ' : '';
+    return `<span class="use-history-amount-compact">${prefix}${puffsLabel} puffs</span>`;
+}
+
+function formatUseHistoryAmountHtml(entry) {
+    if (isLsdDateOnlyUseLog(entry)) return formatLsdUseSummary(entry);
+    if (isXanaxDateOnlyUseLog(entry)) return formatXanaxUseSummary(entry);
+    if (isVapeUseLog(entry) || (isNicotineSubstanceId(getUseSubstanceId(entry)) && getNicotineProductType(entry) === 'vape')) {
+        return formatUseHistoryVapeAmountHtml(entry);
+    }
+    if (isNicotineSubstanceId(getUseSubstanceId(entry))) {
+        return formatNicotineUseLogLabel(entry);
+    }
+    if (isAlcoholTrackingMode(getUseSubstanceId(entry))) {
+        return formatAlcoholUseSummary(entry);
+    }
+    if (isPercentLeftDistributedChildLog(entry)) {
+        return `~${formatAmount(entry.amount)} <span class="use-history-est-label">(est. daily)</span>`;
+    }
+    return `${formatAmount(entry.amount)}`;
+}
+
+function renderUseHistoryHeaderCell(colId, substanceId = getUseLogViewSubstanceId()) {
+    const label = getUseHistoryColumnLabel(colId, substanceId);
     const resize = colId === 'select' ? '' : renderColumnResizeHandle('useHistory', colId, label);
     if (colId === 'select') {
-        return `<th class="use-history-cb-col" data-col="${colId}"><span class="sr-only">${labels.select}</span></th>`;
+        return `<th class="use-history-cb-col" data-col="${colId}"><span class="sr-only">${label}</span></th>`;
     }
     if (colId === 'actions') {
-        return `<th class="actions-cell use-history-actions-header" data-col="${colId}"><span class="customizable-th-label">${labels.actions}</span>${resize}</th>`;
+        return `<th class="actions-cell use-history-actions-header" data-col="${colId}"><span class="customizable-th-label">${label}</span>${resize}</th>`;
     }
     return `<th data-col="${colId}"><span class="customizable-th-label">${label}</span>${resize}</th>`;
 }
@@ -7092,10 +7184,10 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
     const isWeedSimple = isWeedDateOnlyUseLog(entry);
     const isVapeDateOnly = isVapeDateOnlyUseLog(entry);
     const isLsdDateOnly = isLsdDateOnlyUseLog(entry);
-    const hideTimeStats = isWeedSimple || isVapeDateOnly || isLsdDateOnly;
+    const hideTimeStats = isWeedSimple || isVapeDateOnly || isLsdDateOnly || isXanaxDateOnlyUseLog(entry);
     const rateStr = (!hideTimeStats && entry.useRate != null) ? `${formatAmount(entry.useRate)}/${sub.defaultUnit}/hr` : '—';
     const checked = useHistorySelectionHas(entry.id) ? 'checked' : '';
-    const label = TABLE_COLUMN_LABELS.useHistory[colId] || colId;
+    const label = getUseHistoryColumnLabel(colId, getUseSubstanceId(entry) || sub?.id);
     const dataLabel = ` data-label="${escapeAttr(label)}"`;
     switch (colId) {
         case 'select':
@@ -7110,33 +7202,46 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
             return `<td data-col="${colId}"${dataLabel}>${hideTimeStats ? '—' : formatDurationHours(entry.durationHours)}</td>`;
         case 'substance':
             return `<td data-col="${colId}"${dataLabel}>${sub.icon || ''} ${sub.name}</td>`;
+        case 'productType':
+            return `<td data-col="${colId}"${dataLabel}>${getNicotineProductTypeLabel(getNicotineProductType(entry))}</td>`;
         case 'transactionType':
             return `<td data-col="${colId}"${dataLabel}>${formatUseHistoryTransactionType(entry)}</td>`;
-        case 'amount': {
-            let amountHtml;
-            if (isLsdDateOnlyUseLog(entry)) {
-                amountHtml = formatLsdUseSummary(entry);
-            } else if (isXanaxDateOnlyUseLog(entry)) {
-                amountHtml = formatXanaxUseSummary(entry);
-            } else if (isNicotineSubstanceId(getUseSubstanceId(entry)) && !isVapeUseLog(entry)) {
-                amountHtml = formatNicotineUseLogLabel(entry);
-            } else {
-                amountHtml = `${formatAmount(entry.amount)}`;
-                if (isPercentLeftDistributedChildLog(entry)) {
-                    amountHtml = `~${formatAmount(entry.amount)} <span class="use-history-est-label">(est. daily)</span>`;
-                } else if (isPercentLeftCheckpointLog(entry) && getSpreadPercentLeftUsage()) {
-                    const childCount = getDistributedChildrenForPercentLog(entry.id).length;
-                    amountHtml = childCount
-                        ? `<span class="use-history-est-label">${formatPercentLeftCheckpointSummary(entry)}</span>`
-                        : `~${formatAmount(entry.amount)}`;
-                } else if (isVapeUseLog(entry) && (entry.isEstimated || entry.estimatedFromPercent)) {
-                    amountHtml = `~${formatAmount(entry.amount)}`;
-                }
-            }
-            return `<td data-col="${colId}"${dataLabel}>${amountHtml}</td>`;
-        }
+        case 'amount':
+            return `<td class="use-history-amount-cell" data-col="${colId}"${dataLabel}>${formatUseHistoryAmountHtml(entry)}</td>`;
         case 'unit':
-            return `<td data-col="${colId}"${dataLabel}>${isLsdDateOnlyUseLog(entry) ? 'ug' : entry.unit}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${isLsdDateOnlyUseLog(entry) ? 'ug' : (entry.unit || '—')}</td>`;
+        case 'tabs':
+            return `<td data-col="${colId}"${dataLabel}>${entry.tabsUsed != null ? formatAmount(entry.tabsUsed) : '—'}</td>`;
+        case 'ug':
+            return `<td data-col="${colId}"${dataLabel}>${entry.ugUsed != null ? formatAmount(entry.ugUsed) : '—'}</td>`;
+        case 'pills':
+            return `<td data-col="${colId}"${dataLabel}>${entry.pillsUsed != null ? formatAmount(entry.pillsUsed) : '—'}</td>`;
+        case 'mg':
+            return `<td data-col="${colId}"${dataLabel}>${entry.mgUsed != null ? formatAmount(entry.mgUsed) : '—'}</td>`;
+        case 'strength': {
+            const strength = entry.strengthPerPillAtTimeOfUse ?? entry.mgPerPillAtTimeOfUse;
+            const unit = entry.strengthUnitAtTimeOfUse || 'mg';
+            return `<td data-col="${colId}"${dataLabel}>${strength != null ? `${formatAmount(strength)} ${unit}` : '—'}</td>`;
+        }
+        case 'cost': {
+            const cost = entry.estimatedCost;
+            return `<td data-col="${colId}"${dataLabel}>${cost != null && Number.isFinite(parseFloat(cost)) ? fmtSheetMoney(parseFloat(cost), getCurrencySymbol()) : '—'}</td>`;
+        }
+        case 'sharedAmount': {
+            if (!isSharedUseLog(entry)) return `<td data-col="${colId}"${dataLabel}>—</td>`;
+            return `<td data-col="${colId}"${dataLabel}>Me ${formatAmount(getLogPersonalAmount(entry))} · ${escapeHtml(entry.sharedWithName || 'Other')} ${formatAmount(getLogSharedAmount(entry))}</td>`;
+        }
+        case 'multiDayRange': {
+            if (!isAlcoholMultiDayParentLog(entry)) return `<td data-col="${colId}"${dataLabel}>—</td>`;
+            const start = entry.startDate || entry.distributedStartDate || entry.date;
+            const end = entry.endDate || entry.distributedEndDate || entry.date;
+            return `<td data-col="${colId}"${dataLabel}>${formatDate(start)} – ${formatDate(end)}</td>`;
+        }
+        case 'dailyBreakdown': {
+            if (!isAlcoholMultiDayParentLog(entry)) return `<td class="use-history-amount-cell" data-col="${colId}"${dataLabel}>—</td>`;
+            const lines = formatAlcoholMultiDayBreakdownLines(entry);
+            return `<td class="use-history-amount-cell" data-col="${colId}"${dataLabel}><span class="use-history-amount-compact">${lines.slice(0, 2).map(escapeHtml).join('<br>')}</span></td>`;
+        }
         case 'count':
             return `<td data-col="${colId}"${dataLabel}>${(isVapeUseLog(entry) || isLsdDateOnlyUseLog(entry)) ? '—' : (entry.count || '—')}</td>`;
         case 'rate':
@@ -8498,7 +8603,14 @@ function switchTab(tabId) {
 }
 
 // ——— Local date/time (app dates are YYYY-MM-DD in local timezone) ———
-function getLocalDateString(date = new Date()) {
+function getLocalDateString(date) {
+    if (arguments.length === 0 || date == null) {
+        if (testReferenceDateStr) {
+            const ref = parseLocalDate(testReferenceDateStr);
+            if (ref) return formatYYYYMMDD(ref);
+        }
+        date = new Date();
+    }
     return formatYYYYMMDD(date);
 }
 
@@ -8588,6 +8700,9 @@ function getStatsDisplayUnit(substanceId, fallbackUnit = 'units') {
 }
 
 function getTableColumnLabelForSubstance(tableKey, colId, substanceId = currentSubstanceId) {
+    if (tableKey === 'useHistory') {
+        return getUseHistoryColumnLabel(colId, substanceId === DASHBOARD_ALL ? null : substanceId);
+    }
     const labels = TABLE_COLUMN_LABELS[tableKey] || {};
     if (!isVapeNicotineSubstanceId(substanceId)) return labels[colId] || colId;
     const vapeBuyLabels = {
@@ -9203,11 +9318,38 @@ function getTaperWeekBounds(plan, dateStr) {
 
 function getTaperPlanWeekNumber(plan, dateStr) {
     if (!plan || !dateStr) return 1;
-    if (isManualWeeklyPlan(plan)) return getManualWeeklyWeekNumber(plan, dateStr);
-    const idx = (plan.weeklyTargets || []).findIndex(w => dateStr >= w.weekStart && dateStr <= w.weekEnd);
-    if (idx >= 0) return idx + 1;
-    if (plan.weeklyTargets?.length && dateStr < plan.weeklyTargets[0].weekStart) return 1;
-    return plan.weeklyTargets?.length || 1;
+    const row = getWeekRowForDate(plan, dateStr);
+    if (row) {
+        if (row.week != null && row.week !== '' && Number.isFinite(Number(row.week))) {
+            return Number(row.week);
+        }
+        const idx = (plan.weeklyTargets || []).findIndex(w =>
+            w.weekStart === row.weekStart && w.weekEnd === row.weekEnd
+        );
+        return idx >= 0 ? idx + 1 : 1;
+    }
+    const weeks = plan.weeklyTargets || [];
+    if (!weeks.length) return 1;
+    if (dateStr < weeks[0].weekStart) {
+        return weeks[0].week != null && Number.isFinite(Number(weeks[0].week))
+            ? Number(weeks[0].week)
+            : 1;
+    }
+    // After the final week / plan end: show the final week number (never negative remaining).
+    const last = weeks[weeks.length - 1];
+    if (last.week != null && last.week !== '' && Number.isFinite(Number(last.week))) {
+        return Number(last.week);
+    }
+    return weeks.length;
+}
+
+function isTaperPlanDateComplete(plan, dateStr = getLocalDateString()) {
+    if (!plan || !dateStr) return false;
+    if (plan.endDate && dateStr > plan.endDate) return true;
+    const weeks = plan.weeklyTargets || [];
+    if (!weeks.length) return false;
+    const lastEnd = weeks[weeks.length - 1].weekEnd;
+    return !!(lastEnd && dateStr > lastEnd && !getWeekRowForDate(plan, dateStr));
 }
 
 function getUsedAmountForTaperWeek(substanceId, dateStr, excludeLogId = null, data = appData) {
@@ -10930,6 +11072,90 @@ function getPurchaseHistoryVisibleColumns(substanceId = getInventorySubstanceFil
     const columns = getEffectiveColumnOrder('purchaseHistory');
     if (substanceShowsPurchaseFlavor(substanceId)) return columns;
     return columns.filter(colId => colId !== 'flavor');
+}
+
+/** Substance-family catalogs for Log → Use History columns. */
+const USE_HISTORY_FAMILY_COLUMNS = {
+    all: [
+        'select', 'date', 'start', 'end', 'duration', 'substance', 'transactionType',
+        'amount', 'unit', 'inventory', 'notes', 'actions'
+    ],
+    nicotine: [
+        'select', 'date', 'start', 'end', 'duration', 'productType', 'transactionType',
+        'amount', 'unit', 'sharedAmount', 'inventory', 'notes', 'actions'
+    ],
+    cocaine: [
+        'select', 'date', 'start', 'end', 'duration', 'transactionType',
+        'amount', 'unit', 'cost', 'inventory', 'notes', 'actions'
+    ],
+    cannabis: [
+        'select', 'date', 'start', 'end', 'duration', 'transactionType',
+        'amount', 'unit', 'cost', 'inventory', 'notes', 'actions'
+    ],
+    ketamine: [
+        'select', 'date', 'start', 'end', 'duration', 'transactionType',
+        'amount', 'unit', 'cost', 'inventory', 'notes', 'actions'
+    ],
+    lsd: [
+        'select', 'date', 'transactionType', 'tabs', 'ug', 'amount', 'inventory', 'notes', 'actions'
+    ],
+    xanax: [
+        'select', 'date', 'transactionType', 'pills', 'mg', 'strength', 'amount', 'inventory', 'notes', 'actions'
+    ],
+    alcohol: [
+        'select', 'date', 'transactionType', 'amount', 'unit',
+        'multiDayRange', 'dailyBreakdown', 'inventory', 'notes', 'actions'
+    ],
+    generic: [
+        'select', 'date', 'start', 'end', 'duration', 'transactionType',
+        'amount', 'unit', 'inventory', 'notes', 'actions'
+    ]
+};
+
+function getUseHistoryColumnFamily(substanceId, data = appData) {
+    if (!substanceId || substanceId === DASHBOARD_ALL) return 'all';
+    if (isNicotineTrackingMode(substanceId, data)) return 'nicotine';
+    if (isAlcoholTrackingMode(substanceId, data)) return 'alcohol';
+    if (isWeedTrackingMode(substanceId, data)) return 'cannabis';
+    if (isLsdSubstanceId(substanceId, data)) return 'lsd';
+    if (isXanaxSubstanceId(substanceId, data)) return 'xanax';
+    if (isCokeSubstanceId(substanceId) || isPowderTrackingMode(substanceId, data)) return 'cocaine';
+    const id = normalizeSubstanceRef(substanceId, data);
+    if (id === 'ketamine') return 'ketamine';
+    return 'generic';
+}
+
+function getUseHistoryColumnCatalog(substanceId = getUseLogViewSubstanceId(), data = appData) {
+    const family = getUseHistoryColumnFamily(substanceId, data);
+    const allowed = new Set(USE_HISTORY_FAMILY_COLUMNS[family] || USE_HISTORY_FAMILY_COLUMNS.generic);
+    return TABLE_COLUMN_DEFAULTS.useHistory.order.filter(id => allowed.has(id));
+}
+
+function getUseHistoryVisibleColumns(substanceId = getUseLogViewSubstanceId()) {
+    const catalog = getUseHistoryColumnCatalog(substanceId);
+    const config = getTableColumnConfig('useHistory');
+    const required = new Set(TABLE_COLUMNS_REQUIRED.useHistory || []);
+    const userVisible = config.visible || {};
+    // Show catalog columns unless the user explicitly hid them.
+    // Family-specific columns (e.g. Product Type) are included even if globally default-hidden.
+    return catalog.filter(id => required.has(id) || userVisible[id] !== false);
+}
+
+function getUseHistoryColumnLabel(colId, substanceId = getUseLogViewSubstanceId()) {
+    const labels = TABLE_COLUMN_LABELS.useHistory;
+    const family = getUseHistoryColumnFamily(substanceId);
+    if (colId === 'inventory') {
+        if (family === 'nicotine') return 'Linked Vape';
+        if (family === 'lsd') return 'Linked Purchase';
+        return 'Linked Inventory';
+    }
+    if (colId === 'amount') {
+        if (family === 'nicotine') return 'Puffs / Percent Left';
+        if (family === 'alcohol') return 'Drinks';
+        return labels.amount || colId;
+    }
+    if (colId === 'unit' && family === 'alcohol') return 'Unit';
+    return labels[colId] || colId;
 }
 
 function getVapePurchaseProductName(purchase) {
@@ -14843,14 +15069,50 @@ function useHistorySelectionHas(id) {
     return [...useHistorySelection].some(sid => String(sid) === String(id));
 }
 
+/**
+ * Single filtered Use Log dataset for summary cards, Recent Use, Use History,
+ * Bulk Actions selection, and CSV export.
+ */
+function getFilteredUseLogsForView(options = {}) {
+    const data = options.data || appData;
+    const substanceId = options.substanceId !== undefined
+        ? options.substanceId
+        : getUseLogViewSubstanceId();
+    const dateFilter = options.dateFilter !== undefined ? options.dateFilter : useLogDateFilter;
+    const productType = options.productType || null;
+    const productTypes = options.productTypes
+        || (productType ? [productType] : null);
+    const transactionTypes = options.transactionTypes || null;
+
+    let logs = getUseEntries(data).filter(l => logMatchesUseLogFilter(l, dateFilter));
+    logs = logs.filter(l => !isPercentLeftDistributedChildLog(l));
+    logs = logs.filter(l => !isAlcoholMultiDayChildLog(l));
+    logs = logs.filter(l => !l.deletedAt && !l.deleted && !l.hidden && !l.inventoryHidden);
+    if (substanceId) {
+        logs = logs.filter(l => logMatchesSubstance(l, substanceId, data));
+    }
+    if (productTypes?.length) {
+        const allowed = new Set(productTypes);
+        logs = logs.filter(l => allowed.has(getNicotineProductType(l, data) || 'other'));
+    }
+    if (transactionTypes?.length) {
+        const allowed = new Set(transactionTypes);
+        logs = logs.filter(l => allowed.has(getLogTransactionType(l)));
+    }
+    return logs;
+}
+
+function nicotineProductTypeSortIndex(log, data = appData) {
+    const type = getNicotineProductType(log, data) || 'other';
+    const idx = NICOTINE_PRODUCT_TYPES.indexOf(type);
+    return idx >= 0 ? idx : NICOTINE_PRODUCT_TYPES.length;
+}
+
 function buildUseHistoryRows(substanceIdOverride = undefined) {
     const filterId = substanceIdOverride !== undefined
         ? substanceIdOverride
         : getUseLogViewSubstanceId();
-    let entries = getUseEntries().filter(l => logMatchesUseLogFilter(l));
-    entries = entries.filter(l => !isPercentLeftDistributedChildLog(l));
-    entries = entries.filter(l => !isAlcoholMultiDayChildLog(l));
-    if (filterId) entries = entries.filter(l => logMatchesSubstance(l, filterId));
+    const entries = getFilteredUseLogsForView({ substanceId: filterId });
 
     const substanceIds = [...new Set(entries.map(l => getUseSubstanceId(l)).filter(Boolean))];
     let substances = substanceIds.map(id => getSubstance(id) || {
@@ -14892,7 +15154,12 @@ function buildUseHistoryRows(substanceIdOverride = undefined) {
         enriched.forEach(entry => allRows.push({ entry, sub, avgRate }));
     });
 
+    const nicotineView = filterId && isNicotineTrackingMode(filterId);
     allRows.sort((a, b) => {
+        if (nicotineView) {
+            const typeDiff = nicotineProductTypeSortIndex(a.entry) - nicotineProductTypeSortIndex(b.entry);
+            if (typeDiff !== 0) return typeDiff;
+        }
         const da = getLogDatetimeMs(a.entry);
         const db = getLogDatetimeMs(b.entry);
         return db - da;
@@ -15339,11 +15606,8 @@ function renderRecentUseList() {
     if (!container) return;
     container.innerHTML = '';
     const filterId = getUseLogViewSubstanceId();
-    let list = [...getUseEntries()].filter(l => logMatchesUseLogFilter(l));
-    list = list.filter(l => !isPercentLeftDistributedChildLog(l));
-    list = list.filter(l => !isAlcoholMultiDayChildLog(l));
-    if (filterId) list = list.filter(l => logMatchesSubstance(l, filterId));
-    const recent = list.sort((a, b) => getLogDatetimeMs(b) - getLogDatetimeMs(a)).slice(0, 12);
+    const list = getFilteredUseLogsForView({ substanceId: filterId });
+    const recent = [...list].sort((a, b) => getLogDatetimeMs(b) - getLogDatetimeMs(a)).slice(0, 12);
     if (!recent.length) {
         container.innerHTML = '<p class="empty-hint">No use entries yet</p>';
         applyCollapsedSections();
@@ -15433,37 +15697,50 @@ function renderRecentUseList() {
 function renderUseHistoryTable(options = {}) {
     const {
         wrapId = 'use-history-table-wrap',
-        substanceId = null,
+        // undefined → use current Log substance filter (do NOT default to null/"all")
+        substanceId = undefined,
         showLegend = true
     } = typeof options === 'object' ? options : { wrapId: options };
     const wrap = document.getElementById(wrapId);
     if (!wrap) return;
 
-    const allRows = buildUseHistoryRows(substanceId);
+    const filterId = substanceId !== undefined ? substanceId : getUseLogViewSubstanceId();
+    const allRows = buildUseHistoryRows(filterId);
 
     if (!allRows.length) {
         const hasEntries = getUseEntries().length > 0;
         wrap.innerHTML = hasEntries
             ? '<p class="empty-hint">No entries for the selected substance in this view.</p>'
             : '<p class="empty-hint">No entries yet. Log your first use above.</p>';
+        pruneUseHistorySelectionToVisible();
         updateUseHistorySelectionUI();
         syncUseHistorySelectAllCheckbox();
         applyCollapsedSections();
         return;
     }
 
-    const useColumns = getEffectiveColumnOrder('useHistory');
+    const useColumns = getUseHistoryVisibleColumns(filterId);
     const tableMinWidth = getTableMinWidth('useHistory', useColumns);
     const colgroup = buildTableColgroup('useHistory', useColumns);
-    let tableHtml = `<div class="use-history-table-view table-scroll"><table class="session-table history-table use-history-table customizable-table" style="min-width:${tableMinWidth}px;table-layout:fixed">${colgroup}<thead><tr>`;
+    const familyClass = `use-history-family-${getUseHistoryColumnFamily(filterId)}`;
+    let tableHtml = `<div class="use-history-table-view table-scroll"><table class="session-table history-table use-history-table customizable-table ${familyClass}" style="min-width:${tableMinWidth}px;table-layout:fixed">${colgroup}<thead><tr>`;
     useColumns.forEach(colId => {
-        tableHtml += renderUseHistoryHeaderCell(colId);
+        tableHtml += renderUseHistoryHeaderCell(colId, filterId);
     });
     tableHtml += '</tr></thead><tbody>';
 
     let cardsHtml = '<div class="use-history-cards">';
+    let lastProductType = null;
 
     allRows.forEach(({ entry, sub, avgRate }) => {
+        if (filterId && isNicotineTrackingMode(filterId)) {
+            const productType = getNicotineProductType(entry) || 'other';
+            if (productType !== lastProductType) {
+                lastProductType = productType;
+                const label = getNicotineProductTypeLabel(productType);
+                tableHtml += `<tr class="use-history-group-row"><td colspan="${useColumns.length}"><span class="use-history-group-label">${escapeHtml(label)}</span></td></tr>`;
+            }
+        }
         const warnings = getUseRowWarnings(entry, sub.id, avgRate);
         tableHtml += `<tr class="${warnings.join(' ')}">`;
         useColumns.forEach(colId => {
@@ -15484,9 +15761,17 @@ function renderUseHistoryTable(options = {}) {
     </div>` : '';
 
     wrap.innerHTML = tableHtml + cardsHtml + legendHtml;
+    pruneUseHistorySelectionToVisible();
     updateUseHistorySelectionUI();
     syncUseHistorySelectAllCheckbox();
     applyCollapsedSections();
+}
+
+function pruneUseHistorySelectionToVisible() {
+    const visible = new Set(getVisibleUseHistoryLogIds().map(String));
+    [...useHistorySelection].forEach(id => {
+        if (!visible.has(String(id))) useHistorySelection.delete(id);
+    });
 }
 
 function getTodayUseStats(substanceId) {
@@ -17439,35 +17724,6 @@ function setUseLogFilter(filter) {
     renderUseLogTab();
 }
 
-function getUseLogTotalsForView(substanceId = getUseLogViewSubstanceId()) {
-    const bounds = getUseLogFilterBounds();
-    const { startDate, endDate } = bounds;
-    let logs = getUseEntries().filter(l => logMatchesUseLogFilter(l) && isPersonalUseLog(l));
-    logs = logs.filter(l => !isPercentLeftDistributedChildLog(l));
-    if (substanceId) {
-        logs = logs.filter(l => logMatchesSubstance(l, substanceId));
-    }
-    let totalGrams;
-    let totalCost;
-    if (substanceId && (startDate || endDate)) {
-        totalGrams = sumUseAmountForRange(substanceId, startDate, endDate);
-        totalCost = sumUseCostForRange(substanceId, startDate, endDate);
-    } else if (substanceId) {
-        totalGrams = getDailyUseSegments(null, substanceId)
-            .reduce((s, seg) => s + seg.amount, 0);
-        totalCost = getDailyUseSegments(null, substanceId)
-            .reduce((s, seg) => s + (seg.cost || 0), 0);
-    } else {
-        totalGrams = getActiveSubstances().reduce(
-            (s, sub) => s + sumUseAmountForRange(sub.id, startDate, endDate), 0
-        );
-        totalCost = getActiveSubstances().reduce(
-            (s, sub) => s + sumUseCostForRange(sub.id, startDate, endDate), 0
-        );
-    }
-    return { totalGrams, totalCost, entryCount: logs.length };
-}
-
 function formatNicotineUseTotalsLabel(logs, data = appData) {
     const stats = getNicotineUseAnalytics(logs, data);
     const parts = [];
@@ -17479,21 +17735,79 @@ function formatNicotineUseTotalsLabel(logs, data = appData) {
     return parts.length ? parts.join(' · ') : '—';
 }
 
+function getUseLogTotalsForView(substanceId = getUseLogViewSubstanceId()) {
+    const bounds = getUseLogFilterBounds();
+    const { startDate, endDate } = bounds;
+    const logs = getFilteredUseLogsForView({ substanceId });
+    const personalLogs = logs.filter(isPersonalUseLog);
+    let totalGrams;
+    let totalCost;
+    if (substanceId && (startDate || endDate)) {
+        totalGrams = sumUseAmountForRange(substanceId, startDate, endDate);
+        totalCost = sumUseCostForRange(substanceId, startDate, endDate);
+    } else if (substanceId) {
+        totalGrams = getDailyUseSegments(null, substanceId)
+            .reduce((s, seg) => s + seg.amount, 0);
+        totalCost = getDailyUseSegments(null, substanceId)
+            .reduce((s, seg) => s + (seg.cost || 0), 0);
+    } else {
+        totalGrams = null;
+        totalCost = getActiveSubstances().reduce(
+            (s, sub) => s + sumUseCostForRange(sub.id, startDate, endDate), 0
+        );
+    }
+    return { totalGrams, totalCost, entryCount: logs.length, logs, personalLogs };
+}
+
+function formatMixedUseTotalsLabel(logs, data = appData) {
+    const bySubstance = new Map();
+    logs.forEach(log => {
+        const sid = getUseSubstanceId(log);
+        if (!sid) return;
+        if (!bySubstance.has(sid)) bySubstance.set(sid, []);
+        bySubstance.get(sid).push(log);
+    });
+    const parts = [];
+    bySubstance.forEach((subLogs, sid) => {
+        const name = getSubstanceName(sid) || sid;
+        if (isNicotineSubstanceId(sid, data)) {
+            const label = formatNicotineUseTotalsLabel(subLogs, data);
+            if (label && label !== '—') parts.push(`${name}: ${label}`);
+            return;
+        }
+        if (isLsdSubstanceId(sid, data)) {
+            let tabs = 0;
+            let ug = 0;
+            subLogs.filter(isPersonalUseLog).forEach(l => {
+                tabs += parseFloat(l.tabsUsed) || 0;
+                ug += parseFloat(l.ugUsed ?? l.amount) || 0;
+            });
+            const bits = [];
+            if (tabs > INVENTORY_EPS) bits.push(`${formatAmount(tabs)} tabs`);
+            if (ug > INVENTORY_EPS) bits.push(`${formatAmount(ug)} µg`);
+            if (bits.length) parts.push(`${name}: ${bits.join(' / ')}`);
+            return;
+        }
+        const { startDate, endDate } = getUseLogFilterBounds();
+        const amount = sumUseAmountForRange(sid, startDate, endDate);
+        const unit = getSubstanceDisplayUnit(sid, data);
+        if (amount > INVENTORY_EPS) parts.push(`${name}: ${formatAmount(amount)} ${unit}`);
+    });
+    return parts.length ? parts.join(' · ') : '—';
+}
+
 function renderUseLogTotals() {
     const container = document.getElementById('use-log-totals');
     if (!container) return;
     const substanceId = getUseLogViewSubstanceId();
     const sub = isSelectedAllSubstances() ? null : getSubstance(substanceId);
     const unit = sub?.defaultUnit || 'units';
-    const bounds = getUseLogFilterBounds();
-    const { startDate, endDate } = bounds;
-    let logs = getUseEntries().filter(l => logMatchesUseLogFilter(l) && isPersonalUseLog(l));
-    logs = logs.filter(l => !isPercentLeftDistributedChildLog(l));
-    if (substanceId) logs = logs.filter(l => logMatchesSubstance(l, substanceId));
-    const { totalGrams, totalCost, entryCount } = getUseLogTotalsForView();
+    const { totalGrams, totalCost, entryCount, logs } = getUseLogTotalsForView();
     const cur = getCurrencySymbol();
     let amountLabel;
-    if (isNicotineSubstanceId(substanceId)) {
+    if (!substanceId) {
+        amountLabel = formatMixedUseTotalsLabel(logs);
+    } else if (isNicotineSubstanceId(substanceId)) {
         amountLabel = formatNicotineUseTotalsLabel(logs);
     } else if (isVapeNicotineSubstanceId(substanceId)) {
         amountLabel = `${formatStatsPuffs(totalGrams)} puffs`;
@@ -22377,7 +22691,34 @@ function getDefaultBuyingReductionSettings() {
         monthlyPurchaseCap: { enabled: false, amount: null },
         monthlySpendingCap: { enabled: false, amount: null },
         manualWeeklyBuyPlan: { enabled: false, values: [] },
-        manualWeeklySpendingPlan: { enabled: false, values: [] }
+        manualWeeklySpendingPlan: { enabled: false, values: [] },
+        autoSpendFromCostPerGram: {
+            enabled: false,
+            source: 'auto',
+            manualCostPerGram: null,
+            baselineRange: 'last-30',
+            customStart: null,
+            customEnd: null
+        }
+    };
+}
+
+const AUTO_SPEND_BASELINE_RANGES = ['last-30', 'last-60', 'last-90', 'plan-period', 'custom'];
+
+function normalizeAutoSpendFromCostPerGramSettings(raw) {
+    const defaults = getDefaultBuyingReductionSettings().autoSpendFromCostPerGram;
+    if (!raw || typeof raw !== 'object') return { ...defaults };
+    return {
+        enabled: !!raw.enabled,
+        source: raw.source === 'manual' ? 'manual' : 'auto',
+        manualCostPerGram: raw.manualCostPerGram != null && Number.isFinite(parseFloat(raw.manualCostPerGram))
+            ? parseFloat(raw.manualCostPerGram)
+            : null,
+        baselineRange: AUTO_SPEND_BASELINE_RANGES.includes(raw.baselineRange)
+            ? raw.baselineRange
+            : 'last-30',
+        customStart: raw.customStart || null,
+        customEnd: raw.customEnd || null
     };
 }
 
@@ -22407,6 +22748,7 @@ function normalizeBuyingReductionSettings(raw) {
             if (src[field] !== undefined) out[key][field] = src[field];
         });
     });
+    out.autoSpendFromCostPerGram = normalizeAutoSpendFromCostPerGramSettings(raw.autoSpendFromCostPerGram);
     return out;
 }
 
@@ -22421,7 +22763,105 @@ function countEnabledBuyingReductionRules(settings) {
 }
 
 function hasAnyBuyingReductionRuleEnabled(settings) {
-    return countEnabledBuyingReductionRules(settings) > 0;
+    return countEnabledBuyingReductionRules(settings) > 0
+        || !!settings?.autoSpendFromCostPerGram?.enabled;
+}
+
+function isAutoSpendFromCostPerGramEnabled(plan) {
+    return !!getBuyingReductionSettings(plan).autoSpendFromCostPerGram?.enabled;
+}
+
+function purchaseQualifiesForCostPerGram(purchase, substanceId, data = appData) {
+    if (!purchase || purchase.archivedAt || purchase.inventoryHidden || purchase.deletedAt) return false;
+    if (purchase.isDeleted || purchase.deleted) return false;
+    if (purchase.isGiftReceived || purchase.source === 'gift_received' || purchase.transactionType === 'gift_received') {
+        return false;
+    }
+    if (substanceId && !purchaseMatchesSubstance(purchase, substanceId, data)) return false;
+    const cost = parseFloat(getPurchaseTotalCost(purchase));
+    const qty = parseFloat(getPurchaseQuantityBought(purchase));
+    if (!Number.isFinite(cost) || cost <= 0) return false;
+    if (!Number.isFinite(qty) || qty <= 0) return false;
+    return true;
+}
+
+function resolveCostPerGramBaselineBounds(plan, autoSettings, data = appData) {
+    const today = getLocalDateString();
+    const range = autoSettings?.baselineRange || 'last-30';
+    if (range === 'custom') {
+        const start = autoSettings.customStart || null;
+        const end = autoSettings.customEnd || today;
+        if (!start) return null;
+        return { startDate: start, endDate: end };
+    }
+    if (range === 'plan-period') {
+        return {
+            startDate: plan?.startDate || today,
+            endDate: plan?.endDate && plan.endDate < today ? plan.endDate : today
+        };
+    }
+    const days = range === 'last-60' ? 60 : range === 'last-90' ? 90 : 30;
+    return {
+        startDate: addDaysToDateStr(today, -(days - 1)),
+        endDate: today
+    };
+}
+
+function computeWeightedAverageCostPerGram(substanceId, bounds, data = appData) {
+    if (!bounds?.startDate || !bounds?.endDate) return null;
+    let totalCost = 0;
+    let totalQty = 0;
+    (data.purchases || []).forEach(purchase => {
+        if (!purchaseQualifiesForCostPerGram(purchase, substanceId, data)) return;
+        if (!purchaseInDateRange(purchase, bounds.startDate, bounds.endDate)) return;
+        totalCost += parseFloat(getPurchaseTotalCost(purchase)) || 0;
+        totalQty += parseFloat(getPurchaseQuantityBought(purchase)) || 0;
+    });
+    if (totalQty <= 0) return null;
+    return totalCost / totalQty;
+}
+
+function resolvePlanCostPerGram(plan, data = appData) {
+    const settings = getBuyingReductionSettings(plan).autoSpendFromCostPerGram;
+    if (!settings?.enabled) return null;
+    if (settings.source === 'manual') {
+        const manual = parseFloat(settings.manualCostPerGram);
+        return Number.isFinite(manual) && manual > 0 ? manual : null;
+    }
+    const bounds = resolveCostPerGramBaselineBounds(plan, settings, data);
+    return computeWeightedAverageCostPerGram(plan.substanceId, bounds, data);
+}
+
+function getTaperSpendLimitStatus(actual, planned) {
+    if (planned == null || planned <= 0) {
+        return { status: 'none', label: RECOVERY_TAPER_LABELS.none, emoji: '—' };
+    }
+    if (actual > planned) {
+        return { status: 'over', label: 'Above plan', emoji: '↑' };
+    }
+    if (actual >= planned * 0.9) {
+        return { status: 'close', label: 'Near limit', emoji: '~' };
+    }
+    return { status: 'under', label: 'On track', emoji: '✓' };
+}
+
+function applyAutoSpendGoalsFromCostPerGram(plan, data = appData) {
+    const settings = getBuyingReductionSettings(plan).autoSpendFromCostPerGram;
+    if (!settings?.enabled) return null;
+    const costPerGram = resolvePlanCostPerGram(plan, data);
+    plan.resolvedCostPerGram = costPerGram;
+    let totalPlannedSpend = 0;
+    (plan.weeklyTargets || []).forEach(row => {
+        const grams = getPlannedWeeklyTarget(plan, row);
+        if (costPerGram != null && grams != null && Number.isFinite(grams)) {
+            const spend = grams * costPerGram;
+            row.purchaseSpendTarget = spend;
+            row.generatedPurchaseSpendTarget = spend;
+            totalPlannedSpend += spend;
+        }
+    });
+    plan.totalPlannedSpendFromCostPerGram = totalPlannedSpend;
+    return costPerGram;
 }
 
 function migrateBuyingReductionSettings(plan) {
@@ -22649,7 +23089,10 @@ function isPurchaseTaperWeeklyAmountMode(plan) {
 
 function isPurchaseTaperWeeklySpendMode(plan) {
     const s = getBuyingReductionSettings(plan);
-    return s.reducePurchaseCost.enabled || s.weeklySpendingLimit.enabled || s.manualWeeklySpendingPlan.enabled;
+    return s.reducePurchaseCost.enabled
+        || s.weeklySpendingLimit.enabled
+        || s.manualWeeklySpendingPlan.enabled
+        || !!s.autoSpendFromCostPerGram?.enabled;
 }
 
 function isPurchaseTaperMonthlyAmountMode(plan) {
@@ -22778,7 +23221,7 @@ function getPurchaseRuleStatusLabel(ruleKey, status) {
     if (status === 'none') return '—';
     const labels = {
         reducePurchaseAmount: { under: 'On track', close: 'Near plan', over: 'Above plan' },
-        reducePurchaseCost: { under: 'On track', close: 'Near plan', over: 'Above plan' },
+        reducePurchaseCost: { under: 'On track', close: 'Near limit', over: 'Above plan' },
         weeklyPurchaseLimit: { under: 'On track', close: 'Near limit', over: 'Above cap' },
         weeklySpendingLimit: { under: 'On track', close: 'Near limit', over: 'Above cap' },
         monthlyPurchaseCap: { under: 'On track', close: 'Near limit', over: 'Above cap' },
@@ -22861,6 +23304,7 @@ function applyPurchaseTargetsToWeeklyRows(plan) {
     const rows = plan.weeklyTargets || [];
     const manualBuyMap = buildManualBuyPlanMap(settings);
     const manualSpendMap = buildManualSpendPlanMap(settings);
+    const autoSpendEnabled = !!settings.autoSpendFromCostPerGram?.enabled;
     const manualBuyOnly = settings.manualWeeklyBuyPlan.enabled
         && !settings.reducePurchaseAmount.enabled
         && !settings.weeklyPurchaseLimit.enabled
@@ -22868,7 +23312,8 @@ function applyPurchaseTargetsToWeeklyRows(plan) {
         && !settings.weeklySpendingLimit.enabled
         && !settings.monthlyPurchaseCap.enabled
         && !settings.monthlySpendingCap.enabled
-        && !settings.manualWeeklySpendingPlan.enabled;
+        && !settings.manualWeeklySpendingPlan.enabled
+        && !autoSpendEnabled;
     const manualSpendOnly = settings.manualWeeklySpendingPlan.enabled
         && !settings.manualWeeklyBuyPlan.enabled
         && !settings.reducePurchaseAmount.enabled
@@ -22876,7 +23321,8 @@ function applyPurchaseTargetsToWeeklyRows(plan) {
         && !settings.weeklyPurchaseLimit.enabled
         && !settings.weeklySpendingLimit.enabled
         && !settings.monthlyPurchaseCap.enabled
-        && !settings.monthlySpendingCap.enabled;
+        && !settings.monthlySpendingCap.enabled
+        && !autoSpendEnabled;
 
     if (manualBuyOnly || manualSpendOnly) {
         const manualWeeks = new Set([
@@ -22942,7 +23388,7 @@ function applyPurchaseTargetsToWeeklyRows(plan) {
             row.weeklyPurchaseLimitTarget = roundTaperValue(settings.weeklyPurchaseLimit.amount);
         }
 
-        if (settings.reducePurchaseCost.enabled) {
+        if (settings.reducePurchaseCost.enabled && !autoSpendEnabled) {
             row.generatedPurchaseSpendTarget = computeProgressivePurchaseSpendTarget(
                 settings.reducePurchaseCost, index, plan.substanceId
             );
@@ -22955,7 +23401,7 @@ function applyPurchaseTargetsToWeeklyRows(plan) {
             const manualSpend = manualSpendMap.get(weekNumber);
             if (manualSpend?.spend != null) {
                 row.purchaseSpendTarget = roundTaperActual(manualSpend.spend);
-            } else if (!settings.reducePurchaseCost.enabled) {
+            } else if (!settings.reducePurchaseCost.enabled && !autoSpendEnabled) {
                 row.purchaseSpendTarget = null;
             }
         }
@@ -22964,6 +23410,10 @@ function applyPurchaseTargetsToWeeklyRows(plan) {
             row.weeklySpendingLimitTarget = roundTaperActual(settings.weeklySpendingLimit.amount);
         }
     });
+
+    if (autoSpendEnabled && !settings.manualWeeklySpendingPlan.enabled) {
+        applyAutoSpendGoalsFromCostPerGram(plan);
+    }
 }
 
 function syncPurchaseTaperForPlan(plan, data = appData) {
@@ -23007,11 +23457,19 @@ function syncPurchaseTaperForPlan(plan, data = appData) {
             row.purchaseAmountStatus = 'none';
         }
 
-        if ((settings.reducePurchaseCost.enabled || settings.manualWeeklySpendingPlan.enabled)
+        if ((settings.reducePurchaseCost.enabled
+                || settings.manualWeeklySpendingPlan.enabled
+                || settings.autoSpendFromCostPerGram?.enabled)
             && row.purchaseSpendTarget != null) {
-            row.purchaseSpendDiff = roundTaperActual(row.actualPurchaseSpend - row.purchaseSpendTarget);
-            row.spendAmountStatus = getTaperLimitStatus(row.actualPurchaseSpend, row.purchaseSpendTarget).status;
+            row.purchaseSpendDiff = row.actualPurchaseSpend - row.purchaseSpendTarget;
+            const spendStatus = settings.autoSpendFromCostPerGram?.enabled
+                ? getTaperSpendLimitStatus(row.actualPurchaseSpend, row.purchaseSpendTarget)
+                : getTaperLimitStatus(row.actualPurchaseSpend, row.purchaseSpendTarget);
+            row.spendAmountStatus = spendStatus.status;
             row.purchaseSpendStatus = row.spendAmountStatus;
+            if (settings.autoSpendFromCostPerGram?.enabled) {
+                row.weeklySpendCapStatus = row.spendAmountStatus;
+            }
         } else {
             row.purchaseSpendDiff = null;
             row.purchaseSpendStatus = 'none';
@@ -23307,6 +23765,20 @@ function collectBuyingReductionSettingsFromForm() {
         ? collectManualPurchaseSpendTargetsFromForm()
         : [];
 
+    settings.autoSpendFromCostPerGram.enabled = !!document.getElementById('br-auto-spend-cost-per-gram')?.checked;
+    settings.autoSpendFromCostPerGram.source =
+        document.getElementById('auto-spend-cost-source')?.value === 'manual' ? 'manual' : 'auto';
+    settings.autoSpendFromCostPerGram.manualCostPerGram =
+        parseOptionalTaperNumber(document.getElementById('auto-spend-manual-cost'));
+    const baseline = document.getElementById('auto-spend-baseline-range')?.value || 'last-30';
+    settings.autoSpendFromCostPerGram.baselineRange = AUTO_SPEND_BASELINE_RANGES.includes(baseline)
+        ? baseline
+        : 'last-30';
+    settings.autoSpendFromCostPerGram.customStart =
+        document.getElementById('auto-spend-custom-start')?.value || null;
+    settings.autoSpendFromCostPerGram.customEnd =
+        document.getElementById('auto-spend-custom-end')?.value || null;
+
     return settings;
 }
 
@@ -23324,6 +23796,7 @@ function fillBuyingReductionSettingsForm(plan) {
     setChecked('br-monthly-spend-cap', settings.monthlySpendingCap.enabled);
     setChecked('br-manual-buy-plan', settings.manualWeeklyBuyPlan.enabled);
     setChecked('br-manual-spend-plan', settings.manualWeeklySpendingPlan.enabled);
+    setChecked('br-auto-spend-cost-per-gram', settings.autoSpendFromCostPerGram.enabled);
 
     setInputValue('purchase-start-amount', settings.reducePurchaseAmount.startingAmount ?? '');
     setInputValue('purchase-goal-amount', settings.reducePurchaseAmount.goalAmount ?? '');
@@ -23337,6 +23810,11 @@ function fillBuyingReductionSettingsForm(plan) {
     setInputValue('purchase-weekly-spend', settings.weeklySpendingLimit.amount ?? '');
     setInputValue('purchase-monthly-amount', settings.monthlyPurchaseCap.amount ?? '');
     setInputValue('purchase-monthly-spend', settings.monthlySpendingCap.amount ?? '');
+    setInputValue('auto-spend-cost-source', settings.autoSpendFromCostPerGram.source || 'auto');
+    setInputValue('auto-spend-manual-cost', settings.autoSpendFromCostPerGram.manualCostPerGram ?? '');
+    setInputValue('auto-spend-baseline-range', settings.autoSpendFromCostPerGram.baselineRange || 'last-30');
+    setInputValue('auto-spend-custom-start', settings.autoSpendFromCostPerGram.customStart || '');
+    setInputValue('auto-spend-custom-end', settings.autoSpendFromCostPerGram.customEnd || '');
 
     renderManualPurchaseTargetsEditor(null, settings);
 }
@@ -23417,6 +23895,33 @@ function togglePurchaseTaperFields() {
     document.getElementById('purchase-monthly-spend-group')?.classList.toggle('hidden', !flags.showMonthlySpend);
     document.getElementById('manual-purchase-buy-section')?.classList.toggle('hidden', !flags.showManualBuy);
     document.getElementById('manual-purchase-spend-section')?.classList.toggle('hidden', !flags.showManualSpend);
+
+    const autoSpend = settings.autoSpendFromCostPerGram || {};
+    const showAutoSpend = !!autoSpend.enabled;
+    document.getElementById('auto-spend-cost-per-gram-fields')?.classList.toggle('hidden', !showAutoSpend);
+    document.getElementById('auto-spend-manual-cost-group')?.classList.toggle('hidden', !showAutoSpend || autoSpend.source !== 'manual');
+    document.getElementById('auto-spend-baseline-group')?.classList.toggle('hidden', !showAutoSpend || autoSpend.source === 'manual');
+    document.getElementById('auto-spend-custom-range-row')?.classList.toggle(
+        'hidden',
+        !showAutoSpend || autoSpend.source === 'manual' || autoSpend.baselineRange !== 'custom'
+    );
+    if (showAutoSpend) {
+        const draftPlan = {
+            substanceId,
+            startDate: document.getElementById('taper-start-date')?.value || getLocalDateString(),
+            endDate: document.getElementById('taper-end-date')?.value || null,
+            buyingReductionSettings: settings,
+            purchaseTaperEnabled: true,
+            weeklyTargets: (getSelectedTaperPlan()?.weeklyTargets || []).map(w => ({ ...w }))
+        };
+        const costPerGram = resolvePlanCostPerGram(draftPlan);
+        const costEl = document.getElementById('auto-spend-cost-per-gram-value');
+        if (costEl) {
+            costEl.textContent = costPerGram != null
+                ? `${getCurrencySymbol()}${formatAmount(costPerGram, 2)}/g`
+                : '—';
+        }
+    }
 
     const warnings = detectBuyingReductionConflicts(settings);
     const warnEl = document.getElementById('purchase-reduction-warnings');
@@ -24372,12 +24877,9 @@ function updateManualWeeklyComputedPreviews() {
 }
 
 function getManualWeeklyWeekNumber(plan, dateStr) {
-    if (!plan?.startDate || !dateStr) return 1;
-    const start = parseLocalDate(plan.startDate);
-    const d = parseLocalDate(dateStr);
-    if (!start || !d) return 1;
-    const diffDays = Math.floor((d - start) / 86400000);
-    return Math.max(1, Math.floor(diffDays / 7) + 1);
+    // Match by inclusive week date range (not day-count from plan start).
+    // Mid-week plan starts create short Week 1 rows; day-count math drifts from those ranges.
+    return getTaperPlanWeekNumber(plan, dateStr);
 }
 
 function getManualWeeklyStatus(actual, target) {
@@ -24547,9 +25049,7 @@ function mountManualWeeklyFormFields(isManual) {
 
 function getCurrentManualWeekRow(plan, dateStr) {
     if (!plan?.weeklyTargets?.length) return null;
-    const weekNum = getManualWeeklyWeekNumber(plan, dateStr);
-    return plan.weeklyTargets.find(w => w.week === weekNum)
-        || plan.weeklyTargets[Math.min(weekNum - 1, plan.weeklyTargets.length - 1)];
+    return getWeekRowForDate(plan, dateStr);
 }
 
 function roundTaperValue(n) {
@@ -25203,6 +25703,10 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
     plan.goalAvg = plan.goalDailyAverage;
     plan.weeklyTargets = generateWeeklyTargets(plan);
     migrateTaperPlan(plan, substanceId, appData);
+    if (plan.purchaseTaperEnabled) {
+        applyPurchaseTargetsToWeeklyRows(plan);
+        syncPurchaseTaperForPlan(plan, appData);
+    }
     return plan;
 }
 
@@ -26009,7 +26513,35 @@ function renderTaperCurrentWeekSummary(substanceId) {
         return;
     }
 
-    const weeklyLimit = getWeeklyLimit(substanceId, today, plan);
+    const matchedWeek = getWeekRowForDate(plan, today);
+    const weekNum = getTaperPlanWeekNumber(plan, today);
+    const planComplete = isTaperPlanDateComplete(plan, today);
+
+    if (planComplete) {
+        const lastWeek = plan.weeklyTargets?.[plan.weeklyTargets.length - 1];
+        const finalTarget = lastWeek ? getPlannedWeeklyTarget(plan, lastWeek) : null;
+        set('taper-weekly-max-val', finalTarget != null
+            ? `Plan complete · Week ${weekNum}: ${formatTaperAmount(finalTarget, displayUnit)}`
+            : `Plan complete · Week ${weekNum}`);
+        set('taper-weekly-used', '—');
+        set('taper-weekly-remaining', '0');
+        set('taper-weekly-over-under', 'Plan complete');
+        set('taper-weekly-status-text', 'Plan complete');
+        set('taper-weekly-avg-day', avgStr);
+        set('taper-weekly-change-last', changeStr);
+        setTaperStatusBadge(document.getElementById('taper-weekly-status'), 'under', 'Plan complete');
+        applyTaperProgressBar(
+            document.getElementById('taper-weekly-bar'),
+            document.getElementById('taper-weekly-bar-text'),
+            finalTarget || 0,
+            finalTarget || 1
+        );
+        return;
+    }
+
+    const weeklyLimit = matchedWeek
+        ? getPlannedWeeklyTarget(plan, matchedWeek)
+        : getWeeklyLimit(substanceId, today, plan);
     const weeklyUsed = getTaperWeekUsage(substanceId, today, null, appData, plan);
 
     if (weeklyLimit != null) {
@@ -26024,19 +26556,18 @@ function renderTaperCurrentWeekSummary(substanceId) {
             weeklyStatusFn
         );
         if (isManualWeeklyPlan(plan)) {
-            const weekNum = getManualWeeklyWeekNumber(plan, today);
-            const weekRow = getCurrentManualWeekRow(plan, today);
-            const goalLabel = isManualWeeklyPercentMode(plan) && weekRow?.targetPercent != null
-                ? `${weekRow.targetPercent}% (${formatTaperAmount(weeklyLimit, displayUnit)})`
+            const goalLabel = isManualWeeklyPercentMode(plan) && matchedWeek?.targetPercent != null
+                ? `${matchedWeek.targetPercent}% (${formatTaperAmount(weeklyLimit, displayUnit)})`
                 : formatTaperAmount(weeklyLimit, displayUnit);
             set('taper-weekly-max-val', `Week ${weekNum}: ${goalLabel}`);
         } else if (isReducePuffsPlan(plan)) {
-            const weekRow = getWeekRowForDate(plan, today);
-            set('taper-weekly-max-val', weekRow?.targetPuffsPerDay != null
-                ? `${formatTaperAmount(weeklyLimit, 'puffs')} · ${formatTaperPuffsPerDay(weekRow.targetPuffsPerDay)}`
-                : formatTaperAmount(weeklyLimit, 'puffs'));
+            set('taper-weekly-max-val', matchedWeek?.targetPuffsPerDay != null
+                ? `Week ${weekNum}: ${formatTaperAmount(weeklyLimit, 'puffs')} · ${formatTaperPuffsPerDay(matchedWeek.targetPuffsPerDay)}`
+                : `Week ${weekNum}: ${formatTaperAmount(weeklyLimit, 'puffs')}`);
         } else {
-            set('taper-weekly-max-val', formatTaperAmount(weeklyLimit, displayUnit));
+            set('taper-weekly-max-val', matchedWeek
+                ? `Week ${weekNum}: ${formatTaperAmount(weeklyLimit, displayUnit)}`
+                : formatTaperAmount(weeklyLimit, displayUnit));
         }
         set('taper-weekly-used', formatTaperActualAmount(weeklyUsed, displayUnit));
         set('taper-weekly-remaining', formatTaperActualAmount(remW, displayUnit));
@@ -26169,8 +26700,15 @@ function renderTaperProgressCard(substanceId) {
 function getTaperWeeklySummary(plan, substanceId) {
     const today = getLocalDateString();
     const currentWeek = getWeekRowForDate(plan, today);
-    const weekIndex = currentWeek ? plan.weeklyTargets.findIndex(w => w.weekStart === currentWeek.weekStart) + 1 : 0;
-    const weeksRemaining = Math.max(0, (plan.weeklyTargets?.length || 0) - weekIndex);
+    const weekIndex = currentWeek
+        ? getTaperPlanWeekNumber(plan, today)
+        : (isTaperPlanDateComplete(plan, today) ? getTaperPlanWeekNumber(plan, today) : 0);
+    const totalWeeks = plan.weeklyTargets?.length || 0;
+    const weeksRemaining = currentWeek
+        ? Math.max(0, totalWeeks - (plan.weeklyTargets.findIndex(w =>
+            w.weekStart === currentWeek.weekStart && w.weekEnd === currentWeek.weekEnd
+        ) + 1))
+        : 0;
     const goal = plan.goalDailyAverage ?? 0;
     let start = plan.startingDailyAverage ?? 0;
     let totalReduction = Math.max(0, start - goal);
@@ -26447,7 +26985,12 @@ function renderTaperPlanSummary(substanceId) {
     set('taper-plan-start-date', plan.startDate ? formatDate(plan.startDate) : '—');
     set('taper-plan-end-date', plan.endDate ? formatDate(plan.endDate) : '—');
     set('taper-plan-substance-name', sub.name || '—');
-    set('taper-plan-current-week', `Week ${getTaperPlanWeekNumber(plan, today)}`);
+    set(
+        'taper-plan-current-week',
+        isTaperPlanDateComplete(plan, today)
+            ? `Plan complete · Week ${getTaperPlanWeekNumber(plan, today)}`
+            : `Week ${getTaperPlanWeekNumber(plan, today)}`
+    );
 
     const pauseBtn = document.getElementById('taper-pause-btn');
     if (pauseBtn) pauseBtn.textContent = isTaperPlanPaused(plan) ? '▶ Resume' : '⏸ Pause';
@@ -26734,6 +27277,7 @@ function buildTaperByWeekData(substanceId, plan = null) {
     const qualifyingPurchases = getQualifyingTaperPlanPurchases(substanceId, plan);
     let runningPlanned = 0;
     let runningUsed = 0;
+    let runningPlannedSpend = 0;
 
     const rows = plan.weeklyTargets.map((weekRow, index) => {
         const planned = getPlannedWeeklyTarget(plan, weekRow);
@@ -26770,7 +27314,8 @@ function buildTaperByWeekData(substanceId, plan = null) {
         const spent = isNicotineVapePurchasePlan(plan) && isNicotineVapeTaperEligible(substanceId)
             ? (weekRow.actualSpend ?? weeklyPurchaseTotals.spend)
             : (weekRow.actualPurchaseSpend ?? weeklyPurchaseTotals.spend);
-        const spendDiff = spendPlanned != null ? roundTaperActual(spent - spendPlanned) : null;
+        const spendDiff = spendPlanned != null ? (spent - spendPlanned) : null;
+        if (spendPlanned != null) runningPlannedSpend += spendPlanned;
         const runningAmountSpent = cumulativePurchaseTotals.spend;
         const prevPlanned = index > 0 ? getPlannedWeeklyTarget(plan, plan.weeklyTargets[index - 1]) : null;
         const reductionFromPrior = prevPlanned != null ? roundTaperActual(prevPlanned - planned) : null;
@@ -26801,6 +27346,7 @@ function buildTaperByWeekData(substanceId, plan = null) {
             spendPlanned,
             spent,
             spendDiff,
+            runningPlannedSpend,
             weeklyPurchaseTotals,
             cumulativePurchaseTotals,
             runningAmountSpent,
@@ -26894,6 +27440,7 @@ function buildTaperByWeekCellValues(row, plan, substanceId, unit, displayUnit) {
         buyDiff: row.buyDiff != null ? formatTaperWeekDiff(row.buyDiff, unit) : '—',
         spendPlanned: row.spendPlanned != null ? formatTaperMoney(row.spendPlanned) : '—',
         spent: formatTaperMoney(row.spent),
+        runningPlannedSpend: row.runningPlannedSpend != null ? formatTaperMoney(row.runningPlannedSpend) : '—',
         runningAmountSpent: formatTaperMoney(row.runningAmountSpent),
         spendDiff: row.spendDiff != null ? formatTaperWeekDiff(row.spendDiff, getCurrencySymbol()) : '—',
         targets: targets.length ? targets.join('<br>') : '—',
@@ -26905,10 +27452,17 @@ function buildTaperByWeekCellValues(row, plan, substanceId, unit, displayUnit) {
             row.buyAmountStatus,
             getPurchaseRuleStatusLabel('reducePurchaseAmount', row.buyAmountStatus)
         ),
-        spendAmountStatus: formatPurchaseStatusBadge(
-            row.spendAmountStatus,
-            getPurchaseRuleStatusLabel('reducePurchaseCost', row.spendAmountStatus)
-        ),
+        spendAmountStatus: (() => {
+            const spendStatus = row.spendPlanned != null
+                ? getTaperSpendLimitStatus(row.spent, row.spendPlanned)
+                : null;
+            return formatPurchaseStatusBadge(
+                row.spendAmountStatus,
+                spendStatus && spendStatus.status !== 'none'
+                    ? spendStatus.label
+                    : getPurchaseRuleStatusLabel('reducePurchaseCost', row.spendAmountStatus)
+            );
+        })(),
         weeklyBuyCapStatus: formatPurchaseStatusBadge(
             row.weeklyBuyCapStatus,
             getPurchaseRuleStatusLabel('weeklyPurchaseLimit', row.weeklyBuyCapStatus)
@@ -27331,10 +27885,78 @@ function csvEscape(value) {
     return s;
 }
 
+function buildUseHistoryCsvRows(options = {}) {
+    const substanceId = options.substanceId !== undefined
+        ? options.substanceId
+        : getUseLogViewSubstanceId();
+    const rows = buildUseHistoryRows(substanceId);
+    const family = getUseHistoryColumnFamily(substanceId);
+    const columns = getUseHistoryVisibleColumns(substanceId).filter(id => id !== 'select' && id !== 'actions');
+    const headers = columns.map(colId => getUseHistoryColumnLabel(colId, substanceId));
+    const body = rows.map(({ entry, sub }) => columns.map(colId => {
+        switch (colId) {
+            case 'date': return entry.date || '';
+            case 'start': return entry.startTime || entry.time || '';
+            case 'end': return entry.endTime || '';
+            case 'duration': return formatDurationHours(entry.durationHours) || '';
+            case 'substance': return sub?.name || getSubstanceName(getUseSubstanceId(entry)) || '';
+            case 'productType': return getNicotineProductTypeLabel(getNicotineProductType(entry));
+            case 'transactionType': return formatUseHistoryTransactionType(entry);
+            case 'amount': {
+                if (isVapeUseLog(entry) || getNicotineProductType(entry) === 'vape') {
+                    return String(formatUseHistoryVapeAmountHtml(entry)).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+                }
+                return String(formatUseHistoryAmountHtml(entry)).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            }
+            case 'unit': return entry.unit || '';
+            case 'tabs': return entry.tabsUsed ?? '';
+            case 'ug': return entry.ugUsed ?? '';
+            case 'pills': return entry.pillsUsed ?? '';
+            case 'mg': return entry.mgUsed ?? '';
+            case 'strength': {
+                const strength = entry.strengthPerPillAtTimeOfUse ?? entry.mgPerPillAtTimeOfUse;
+                return strength != null ? `${strength} ${entry.strengthUnitAtTimeOfUse || 'mg'}` : '';
+            }
+            case 'cost': return entry.estimatedCost ?? '';
+            case 'sharedAmount':
+                return isSharedUseLog(entry)
+                    ? `Me ${getLogPersonalAmount(entry)} · ${entry.sharedWithName || 'Other'} ${getLogSharedAmount(entry)}`
+                    : '';
+            case 'multiDayRange': {
+                if (!isAlcoholMultiDayParentLog(entry)) return '';
+                const start = entry.startDate || entry.distributedStartDate || entry.date;
+                const end = entry.endDate || entry.distributedEndDate || entry.date;
+                return `${start} – ${end}`;
+            }
+            case 'dailyBreakdown':
+                return isAlcoholMultiDayParentLog(entry)
+                    ? formatAlcoholMultiDayBreakdownLines(entry).join(' | ')
+                    : '';
+            case 'count': return entry.count ?? '';
+            case 'rate': return entry.useRate != null ? entry.useRate : '';
+            case 'inventory':
+            case 'supply':
+                return String(formatInventoryLinkDisplay(entry)).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+            case 'notes': return entry.notes || '';
+            default: return '';
+        }
+    }));
+    return { headers, body, family, rows, substanceId };
+}
+
+function exportUseHistoryCsv(options = {}) {
+    const { headers, body } = buildUseHistoryCsvRows(options);
+    const lines = [headers.map(csvEscape).join(',')];
+    body.forEach(row => lines.push(row.map(v => csvEscape(v)).join(',')));
+    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
+    downloadBlob(blob, `use-history-${getLocalDateString()}.csv`);
+}
+
 function exportDataCsv() {
     const rows = [];
-    rows.push(['Record Type', 'Substance', 'Date', 'Start', 'End', 'Amount', 'Unit', 'Transaction Type', 'Tabs Used', 'Ug Used', 'Pills Used', 'Mg Used', 'Count', 'Notes'].map(csvEscape).join(','));
-    appData.logs.forEach(log => {
+    rows.push(['Record Type', 'Substance', 'Date', 'Start', 'End', 'Amount', 'Unit', 'Transaction Type', 'Product Type', 'Tabs Used', 'Ug Used', 'Pills Used', 'Mg Used', 'Count', 'Notes'].map(csvEscape).join(','));
+    const filteredLogs = getFilteredUseLogsForView();
+    filteredLogs.forEach(log => {
         rows.push([
             log.type === 'session' ? 'Use Session' : 'Use Quick',
             getSubstanceName(log.substanceId),
@@ -27344,6 +27966,7 @@ function exportDataCsv() {
             log.amount,
             log.unit,
             getLogTransactionType(log),
+            isNicotineSubstanceId(getUseSubstanceId(log)) ? (getNicotineProductType(log) || '') : '',
             log.tabsUsed ?? '',
             log.ugUsed ?? '',
             log.pillsUsed ?? '',
@@ -27691,6 +28314,25 @@ function __getRecoveryTrackerTestExports() {
         __getStorageSnapshot,
         __reloadTestAppDataFromStorage,
         __getUseHistoryEntryCount,
+        getFilteredUseLogsForView,
+        buildUseHistoryRows,
+        getUseHistoryVisibleColumns,
+        getUseHistoryColumnCatalog,
+        getUseHistoryColumnFamily,
+        getUseHistoryColumnLabel,
+        getUseLogTotalsForView,
+        formatMixedUseTotalsLabel,
+        formatNicotineUseTotalsLabel,
+        formatUseHistoryVapeAmountHtml,
+        formatUseHistoryAmountHtml,
+        buildUseHistoryCsvRows,
+        setSelectedSubstanceId,
+        getUseLogViewSubstanceId,
+        setUseLogFilter,
+        renderUseHistoryTable,
+        renderUseLogTab,
+        renderUseLogTotals,
+        DASHBOARD_ALL,
         STORAGE_KEY,
         saveData,
         loadData,
@@ -27834,6 +28476,20 @@ function __getRecoveryTrackerTestExports() {
         applyPurchaseTargetsToWeeklyRows,
         syncPurchaseTaperForPlan,
         getPurchaseTaperMetrics,
+        getWeekRowForDate,
+        getTaperPlanWeekNumber,
+        isTaperPlanDateComplete,
+        getCurrentManualWeekRow,
+        getManualWeeklyWeekNumber,
+        getTaperWeeklySummary,
+        getPlannedWeeklyTarget,
+        resolvePlanCostPerGram,
+        computeWeightedAverageCostPerGram,
+        resolveCostPerGramBaselineBounds,
+        applyAutoSpendGoalsFromCostPerGram,
+        getTaperSpendLimitStatus,
+        purchaseQualifiesForCostPerGram,
+        isAutoSpendFromCostPerGramEnabled,
         computeProgressivePurchaseAmountTarget,
         computeProgressivePurchaseSpendTarget,
         isPurchaseTaperWeeklyAmountMode,
