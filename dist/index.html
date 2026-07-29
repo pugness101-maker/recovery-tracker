@@ -975,6 +975,11 @@
                         <span>⏸</span> Taper paused — limits are not enforced until you resume.
                     </div>
 
+                    <div id="taper-legacy-puff-banner" class="taper-alert hidden">
+                        <span>This plan uses legacy puff targets.</span>
+                        <button type="button" class="taper-chip-btn" onclick="convertSelectedTaperPlanToNicotineVapePurchase()">Convert to purchase-based nicotine plan</button>
+                    </div>
+
                     <div class="collapsible-section" data-section="taperPlanHeader">
                         <button type="button" class="section-toggle" onclick="toggleSection('taperPlanHeader')">
                             <span>Plan</span>
@@ -1070,6 +1075,16 @@
                         </div>
                     </div>
 
+                    <div class="collapsible-section hidden" data-section="taperPurchasePacing" id="taper-purchase-pacing-section">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperPurchasePacing')">
+                            <span>Purchase Pacing Timeline</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
+                            <div id="taper-purchase-pacing-timeline" class="taper-purchase-pacing-timeline"></div>
+                        </div>
+                    </div>
+
                     <div class="collapsible-section" data-section="taperWeeklyCalendar">
                         <button type="button" class="section-toggle" onclick="toggleSection('taperWeeklyCalendar')">
                             <span>Weekly Calendar</span>
@@ -1138,6 +1153,115 @@
                                 <option value="amount">Reduce by amount (puffs/week)</option>
                                 <option value="percent">Reduce by percent</option>
                             </select>
+                        </div>
+                        <div id="taper-nicotine-vape-section" class="taper-nicotine-vape-section hidden">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="nicotine-vape-strategy">Plan strategy</label>
+                                    <select id="nicotine-vape-strategy">
+                                        <option value="combined">Combined plan</option>
+                                        <option value="reduce-vapes-purchased">Reduce vapes purchased</option>
+                                        <option value="increase-buy-interval">Increase days between purchases</option>
+                                        <option value="extend-vape-lifespan">Make each vape last longer</option>
+                                        <option value="reduce-spending">Reduce spending</option>
+                                        <option value="reduce-personal-use">Reduce personal nicotine use</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="nicotine-vape-baseline-window">Baseline window</label>
+                                    <select id="nicotine-vape-baseline-window" onchange="onNicotineVapeBaselineWindowChange()">
+                                        <option value="30">Last 30 days</option>
+                                        <option value="60" selected>Last 60 days</option>
+                                        <option value="90">Last 90 days</option>
+                                        <option value="custom">Custom</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="nicotine-vape-taper-speed">Taper speed</label>
+                                    <select id="nicotine-vape-taper-speed">
+                                        <option value="gentle">Gentle</option>
+                                        <option value="moderate" selected>Moderate</option>
+                                        <option value="faster">Faster</option>
+                                        <option value="custom">Custom</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-row hidden" id="nicotine-vape-baseline-custom-row">
+                                <div class="form-group">
+                                    <label for="nicotine-vape-baseline-start">Baseline start</label>
+                                    <input type="date" id="nicotine-vape-baseline-start">
+                                </div>
+                                <div class="form-group">
+                                    <label for="nicotine-vape-baseline-end">Baseline end</label>
+                                    <input type="date" id="nicotine-vape-baseline-end">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="nicotine-vape-current-vpm">Current vapes bought per month</label>
+                                    <input type="number" id="nicotine-vape-current-vpm" min="0" step="0.1">
+                                </div>
+                                <div class="form-group">
+                                    <label for="nicotine-vape-goal-vpm">Goal vapes bought per month</label>
+                                    <input type="number" id="nicotine-vape-goal-vpm" min="0" step="0.1">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="nicotine-vape-current-gap">Current avg days between purchases</label>
+                                    <input type="number" id="nicotine-vape-current-gap" min="0" step="0.5">
+                                </div>
+                                <div class="form-group">
+                                    <label for="nicotine-vape-goal-gap">Goal days between purchases</label>
+                                    <input type="number" id="nicotine-vape-goal-gap" min="0" step="0.5">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="nicotine-vape-current-lifespan">Current avg lifespan per vape (days)</label>
+                                    <input type="number" id="nicotine-vape-current-lifespan" min="0" step="0.5">
+                                </div>
+                                <div class="form-group">
+                                    <label for="nicotine-vape-goal-lifespan">Goal lifespan per vape (days)</label>
+                                    <input type="number" id="nicotine-vape-goal-lifespan" min="0" step="0.5">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="nicotine-vape-current-spend">Current monthly spending</label>
+                                    <input type="number" id="nicotine-vape-current-spend" min="0" step="0.01">
+                                </div>
+                                <div class="form-group">
+                                    <label for="nicotine-vape-goal-spend">Goal monthly spending</label>
+                                    <input type="number" id="nicotine-vape-goal-spend" min="0" step="0.01">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="monthly-max">Monthly vape purchase cap</label>
+                                    <input type="number" id="monthly-max" min="0" step="0.1" placeholder="Optional">
+                                </div>
+                                <div class="form-group">
+                                    <label for="nicotine-vape-weekly-spend-cap">Weekly spending cap (optional)</label>
+                                    <input type="number" id="nicotine-vape-weekly-spend-cap" min="0" step="0.01">
+                                </div>
+                                <div class="form-group">
+                                    <label for="nicotine-vape-monthly-spend-cap">Monthly spending cap</label>
+                                    <input type="number" id="nicotine-vape-monthly-spend-cap" min="0" step="0.01">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="nicotine-vape-no-buy-days">Optional no-buy days target</label>
+                                    <input type="number" id="nicotine-vape-no-buy-days" min="0" step="1">
+                                </div>
+                                <div class="form-group">
+                                    <label for="nicotine-vape-free-days">Optional nicotine-free days target</label>
+                                    <input type="number" id="nicotine-vape-free-days" min="0" step="1">
+                                </div>
+                            </div>
+                            <button type="button" class="secondary-btn" onclick="generateSuggestedNicotineVapePlanFromForm()">Generate Suggested Plan</button>
+                            <p class="field-hint">Baseline values are auto-filled from vape purchase history and can be edited before saving.</p>
                         </div>
                         <div class="form-row hidden" id="taper-vape-buying-section">
                             <div class="form-group">
@@ -1242,36 +1366,47 @@
                                 <input type="checkbox" id="purchase-taper-enabled" onchange="togglePurchaseTaperFields()">
                             </div>
                             <div id="purchase-taper-fields" class="hidden">
-                                <div class="form-group">
-                                    <label for="purchase-reduction-mode">Reduction target</label>
-                                    <select id="purchase-reduction-mode" onchange="togglePurchaseTaperFields()">
-                                        <option value="reduce_buy_amount">Reduce purchase amount</option>
-                                        <option value="reduce_buy_spend">Reduce purchase cost</option>
-                                        <option value="weekly_buy_amount">Fixed weekly purchase limit</option>
-                                        <option value="weekly_spend">Fixed weekly spending limit</option>
-                                        <option value="monthly_buy_amount">Fixed monthly purchase cap</option>
-                                        <option value="monthly_spend">Fixed monthly spending cap</option>
-                                        <option value="manual_weekly_buy_amount">Manual weekly buy plan</option>
-                                        <option value="manual_weekly_spend">Manual weekly spending plan</option>
-                                    </select>
+                                <div class="purchase-reduction-toggles">
+                                    <p class="form-hint">Enable any combination of buying and spending rules.</p>
+                                    <div class="purchase-reduction-toggle-grid">
+                                        <label class="toggle-row"><input type="checkbox" id="br-reduce-amount" onchange="togglePurchaseTaperFields()"> Reduce purchase amount</label>
+                                        <label class="toggle-row"><input type="checkbox" id="br-reduce-spend" onchange="togglePurchaseTaperFields()"> Reduce purchase cost</label>
+                                        <label class="toggle-row"><input type="checkbox" id="br-weekly-buy-limit" onchange="togglePurchaseTaperFields()"> Fixed weekly purchase limit</label>
+                                        <label class="toggle-row"><input type="checkbox" id="br-weekly-spend-limit" onchange="togglePurchaseTaperFields()"> Fixed weekly spending limit</label>
+                                        <label class="toggle-row"><input type="checkbox" id="br-monthly-buy-cap" onchange="togglePurchaseTaperFields()"> Fixed monthly purchase cap</label>
+                                        <label class="toggle-row"><input type="checkbox" id="br-monthly-spend-cap" onchange="togglePurchaseTaperFields()"> Fixed monthly spending cap</label>
+                                        <label class="toggle-row"><input type="checkbox" id="br-manual-buy-plan" onchange="togglePurchaseTaperFields()"> Manual weekly buy plan</label>
+                                        <label class="toggle-row"><input type="checkbox" id="br-manual-spend-plan" onchange="togglePurchaseTaperFields()"> Manual weekly spending plan</label>
+                                    </div>
                                 </div>
+                                <div id="purchase-reduction-warnings"></div>
                                 <div class="form-row">
                                     <div class="form-group hidden" id="purchase-start-amount-group">
                                         <label for="purchase-start-amount" id="purchase-start-amount-label">Starting weekly purchase amount</label>
                                         <input type="number" id="purchase-start-amount" min="0" step="0.1">
                                     </div>
+                                    <div class="form-group hidden" id="purchase-goal-amount-group">
+                                        <label for="purchase-goal-amount" id="purchase-goal-amount-label">Goal weekly purchase amount</label>
+                                        <input type="number" id="purchase-goal-amount" min="0" step="0.1">
+                                    </div>
+                                </div>
+                                <div class="form-row">
                                     <div class="form-group hidden" id="purchase-start-spend-group">
-                                        <label for="purchase-start-spend" id="purchase-start-spend-label">Starting weekly spend</label>
+                                        <label for="purchase-start-spend" id="purchase-start-spend-label">Starting weekly spending</label>
                                         <input type="number" id="purchase-start-spend" min="0" step="0.01">
+                                    </div>
+                                    <div class="form-group hidden" id="purchase-goal-spend-group">
+                                        <label for="purchase-goal-spend" id="purchase-goal-spend-label">Goal weekly spending</label>
+                                        <input type="number" id="purchase-goal-spend" min="0" step="0.01">
                                     </div>
                                 </div>
                                 <div class="form-row">
                                     <div class="form-group hidden" id="purchase-weekly-amount-group">
-                                        <label for="purchase-weekly-amount" id="purchase-weekly-amount-label">Weekly purchase target</label>
+                                        <label for="purchase-weekly-amount" id="purchase-weekly-amount-label">Weekly purchase limit</label>
                                         <input type="number" id="purchase-weekly-amount" min="0" step="0.1">
                                     </div>
                                     <div class="form-group hidden" id="purchase-weekly-spend-group">
-                                        <label for="purchase-weekly-spend" id="purchase-weekly-spend-label">Weekly spending target</label>
+                                        <label for="purchase-weekly-spend" id="purchase-weekly-spend-label">Weekly spending limit</label>
                                         <input type="number" id="purchase-weekly-spend" min="0" step="0.01">
                                     </div>
                                 </div>
@@ -1291,16 +1426,34 @@
                                         <input type="number" id="purchase-reduction-amount" min="0" step="0.1">
                                     </div>
                                     <div class="form-group hidden" id="purchase-reduction-percent-group">
-                                        <label for="purchase-reduction-percent" id="purchase-reduction-percent-label">Reduction percent per week</label>
+                                        <label for="purchase-reduction-percent" id="purchase-reduction-percent-label">Reduction percentage per week</label>
                                         <input type="number" id="purchase-reduction-percent" min="0" max="100" step="1">
                                     </div>
                                 </div>
-                                <div id="manual-purchase-plan-section" class="manual-weekly-plan-section hidden">
-                                    <h4>Manual Weekly Purchase Targets</h4>
-                                    <div id="manual-purchase-targets-list" class="manual-weekly-targets-list"></div>
+                                <div class="form-row">
+                                    <div class="form-group hidden" id="purchase-spend-reduction-amount-group">
+                                        <label for="purchase-spend-reduction-amount" id="purchase-spend-reduction-amount-label">Spending reduction per week</label>
+                                        <input type="number" id="purchase-spend-reduction-amount" min="0" step="0.01">
+                                    </div>
+                                    <div class="form-group hidden" id="purchase-spend-reduction-percent-group">
+                                        <label for="purchase-spend-reduction-percent" id="purchase-spend-reduction-percent-label">Spending reduction percentage per week</label>
+                                        <input type="number" id="purchase-spend-reduction-percent" min="0" max="100" step="1">
+                                    </div>
+                                </div>
+                                <div id="manual-purchase-buy-section" class="manual-weekly-plan-section hidden">
+                                    <h4>Manual Weekly Buy Plan</h4>
+                                    <div id="manual-purchase-buy-list" class="manual-weekly-targets-list"></div>
                                     <div class="manual-weekly-targets-actions">
-                                        <button type="button" class="secondary-btn" onclick="addManualPurchaseWeek()">+ Add Week</button>
-                                        <button type="button" class="secondary-btn" onclick="removeManualPurchaseWeek()">Remove Week</button>
+                                        <button type="button" class="secondary-btn" onclick="addManualPurchaseWeek('buy')">+ Add Week</button>
+                                        <button type="button" class="secondary-btn" onclick="removeManualPurchaseWeek('buy')">Remove Week</button>
+                                    </div>
+                                </div>
+                                <div id="manual-purchase-spend-section" class="manual-weekly-plan-section hidden">
+                                    <h4>Manual Weekly Spending Plan</h4>
+                                    <div id="manual-purchase-spend-list" class="manual-weekly-targets-list"></div>
+                                    <div class="manual-weekly-targets-actions">
+                                        <button type="button" class="secondary-btn" onclick="addManualPurchaseWeek('spend')">+ Add Week</button>
+                                        <button type="button" class="secondary-btn" onclick="removeManualPurchaseWeek('spend')">Remove Week</button>
                                     </div>
                                 </div>
                             </div>
@@ -1887,10 +2040,14 @@
     <div id="column-settings-modal" class="modal hidden">
         <div class="modal-content modal-wide">
             <h2 id="column-settings-title">Customize Columns</h2>
-            <p class="settings-hint">Drag rows to reorder columns. Uncheck to hide a column.</p>
+            <p class="settings-hint">Drag rows to reorder columns. Uncheck to hide optional columns; required columns stay visible.</p>
+            <div class="column-settings-bulk-actions">
+                <button type="button" class="secondary-btn btn-sm" id="column-settings-show-all">Show all</button>
+                <button type="button" class="secondary-btn btn-sm" id="column-settings-hide-optional">Hide all optional</button>
+            </div>
             <ul id="column-settings-list" class="column-settings-list"></ul>
             <div class="modal-actions column-settings-actions">
-                <button type="button" class="secondary-btn" id="column-settings-reset">Reset Columns</button>
+                <button type="button" class="secondary-btn" id="column-settings-reset">Reset to default</button>
                 <button type="button" class="secondary-btn" id="column-settings-close">Cancel</button>
                 <button type="button" class="submit-btn" id="column-settings-apply">Done</button>
             </div>

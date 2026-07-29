@@ -1533,13 +1533,33 @@ input[type="range"]::-webkit-slider-thumb {
     border-top: 1px solid var(--border);
 }
 
+.purchase-reduction-toggle-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 8px 16px;
+    margin-bottom: 12px;
+}
+
+.purchase-reduction-toggle-grid .toggle-row {
+    margin: 0;
+}
+
+.form-warning {
+    color: var(--warning, #b45309);
+}
+
 .manual-purchase-header,
 .manual-purchase-week-row {
     display: grid;
-    grid-template-columns: 64px 1fr 1fr 1fr;
+    grid-template-columns: 64px 1fr 1fr 1fr 80px;
     gap: 8px;
     align-items: center;
     margin-bottom: 8px;
+}
+
+#manual-purchase-spend-section .manual-purchase-header,
+#manual-purchase-spend-section .manual-purchase-week-row {
+    grid-template-columns: 64px 1fr 1fr 1fr;
 }
 
 .manual-purchase-header {
@@ -2070,6 +2090,89 @@ input[type="range"]::-webkit-slider-thumb {
 
 .taper-current-week-summary .taper-mini-stats {
     margin-bottom: 12px;
+}
+
+.taper-current-week-summary.nicotine-vape-mode .nicotine-vape-summary-stats {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+}
+
+.taper-alert {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 14px;
+    margin-bottom: 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: var(--bg-secondary);
+}
+
+.taper-purchase-pacing-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.taper-purchase-pacing-item {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    background: var(--bg-secondary);
+}
+
+.taper-purchase-pacing-head {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-bottom: 6px;
+}
+
+.taper-purchase-pacing-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 14px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
+.taper-purchase-timing-badge {
+    font-size: 0.78rem;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--bg-tertiary);
+}
+
+.taper-purchase-timing-early .taper-purchase-timing-badge {
+    color: var(--warning, #c77800);
+}
+
+.taper-purchase-timing-late .taper-purchase-timing-badge {
+    color: var(--danger, #c0392b);
+}
+
+.taper-purchase-timing-on-time .taper-purchase-timing-badge {
+    color: var(--success, #2e7d32);
+}
+
+.taper-pacing-streak {
+    margin-top: 10px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.taper-optional-puff-detail {
+    margin-top: 8px;
+    font-size: 0.85rem;
+}
+
+.taper-nicotine-vape-section {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px;
+    margin-bottom: 14px;
+    background: var(--bg-secondary);
 }
 
 .taper-spending-purchases .taper-spending-stats {
@@ -5725,6 +5828,13 @@ body.table-col-resizing {
 
 .use-history-columns-btn {
     margin-left: auto;
+}
+
+.column-settings-bulk-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
 }
 
 .column-settings-list {
