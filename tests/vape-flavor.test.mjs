@@ -117,3 +117,62 @@ test('json export and import preserve flavor', () => {
     const exported = rt.cleanExportData(rt.__getTestAppData());
     assert.equal(exported.purchases[0].flavor, 'Sour Gush');
 });
+
+test('Coke hides flavor column and uses store/notes search placeholder', () => {
+    const rt = setup(makeNicotineData());
+    assert.equal(rt.substanceShowsPurchaseFlavor('coke'), false);
+    assert.equal(rt.getInventorySearchPlaceholder('coke'), 'Search store, notes…');
+    assert.equal(rt.getPurchaseHistoryVisibleColumns('coke').includes('flavor'), false);
+});
+
+test('Nicotine Vape keeps flavor column and flavor search placeholder', () => {
+    const rt = setup(makeNicotineData());
+    assert.equal(rt.substanceShowsPurchaseFlavor(NICOTINE_ID), true);
+    assert.equal(rt.getInventorySearchPlaceholder(NICOTINE_ID), 'Search store, notes, flavor…');
+    assert.equal(rt.getPurchaseHistoryVisibleColumns(NICOTINE_ID).includes('flavor'), true);
+    assert.equal(rt.purchaseSupportsFlavor(makeVapePurchase({ flavor: 'Sour Gush' })), true);
+});
+
+test('Coke purchases with leftover flavor data stay in storage but are excluded from search', () => {
+    const cokePurchase = {
+        id: 'coke-1',
+        substanceId: 'coke',
+        date: '2026-07-01',
+        quantityBought: 3.5,
+        quantity: 3.5,
+        unit: 'g',
+        store: 'Main',
+        notes: 'Weekend',
+        flavor: 'ShouldNotSearch',
+        totalCost: 140,
+        remainingAmount: 3.5
+    };
+    const rt = setup({
+        substances: [{
+            id: 'coke',
+            name: 'Coke',
+            icon: '❄️',
+            color: '#90caf9',
+            trackingMode: 'powder',
+            primaryUnit: 'g',
+            units: ['g'],
+            defaultUnit: 'g',
+            costTrackingEnabled: true,
+            taperTrackingEnabled: true
+        }],
+        logs: [],
+        purchases: [cokePurchase],
+        cravings: [],
+        settings: { currency: '$', substanceSettings: {} },
+        taperPlans: {},
+        taperPlansV2: [],
+        recoveryStreaks: {},
+        privacy: { enabled: false, pinHash: '', autoLockMinutes: 5 },
+        migrations: {}
+    });
+    assert.equal(rt.purchaseSupportsFlavor(cokePurchase), false);
+    assert.equal(rt.purchaseMatchesInventorySearch(cokePurchase, 'ShouldNotSearch'), false);
+    assert.equal(rt.purchaseMatchesInventorySearch(cokePurchase, 'weekend'), true);
+    const exported = rt.cleanExportData(rt.__getTestAppData());
+    assert.equal(exported.purchases[0].flavor, 'ShouldNotSearch');
+});

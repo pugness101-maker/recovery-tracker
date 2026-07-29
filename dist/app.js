@@ -3116,10 +3116,14 @@ function purchaseMatchesInventorySearch(purchase, query, data = appData) {
     if (!query) return true;
     const q = query.toLowerCase();
     const sub = getSubstance(getPurchaseSubstanceId(purchase), data);
-    const haystack = [
-        purchase.store, purchase.location, purchase.notes, purchase.flavor, purchase.substanceName,
+    const haystackParts = [
+        purchase.store, purchase.location, purchase.notes, purchase.substanceName,
         sub?.name, purchase.paymentMethod
-    ].filter(Boolean).join(' ').toLowerCase();
+    ];
+    if (purchaseSupportsFlavor(purchase, data)) {
+        haystackParts.push(getVapePurchaseFlavor(purchase));
+    }
+    const haystack = haystackParts.filter(Boolean).join(' ').toLowerCase();
     return haystack.includes(q);
 }
 
@@ -3149,7 +3153,7 @@ function getInventoryFilteredPurchases(substanceId, data = appData) {
         list = list.filter(p => purchaseMatchesInventorySearch(p, inventorySearchQuery, data));
     }
     list = list.filter(p => purchaseMatchesInventoryFilters(p, inventoryListFilters, data));
-    if (purchaseHistorySort.colId === 'flavor') {
+    if (purchaseHistorySort.colId === 'flavor' && substanceShowsPurchaseFlavor(substanceId)) {
         return list.sort((a, b) => comparePurchaseHistoryByFlavor(a, b, purchaseHistorySort.dir));
     }
     return list.sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
@@ -3701,6 +3705,7 @@ function updateInventoryFiltersPanelUI() {
     const count = countActiveInventoryFilters();
     if (countEl) countEl.textContent = count > 0 ? `(${count})` : '';
     renderInventoryFilterChips();
+    syncInventorySearchPlaceholder();
 }
 
 function clearInventoryFilters() {
@@ -3853,6 +3858,11 @@ function setSelectedSubstanceId(id, { source = null, refresh = true } = {}) {
     syncPageSubstanceSelectors(source);
     syncUseLogFormFromSelectedSubstance();
     syncBuyFormFromSelectedSubstance();
+    syncInventorySearchPlaceholder();
+    if (!substanceShowsPurchaseFlavor(getInventorySubstanceFilterId())
+        && purchaseHistorySort.colId === 'flavor') {
+        purchaseHistorySort = { colId: null, dir: 'asc' };
+    }
     if (!refresh) return;
     renderUseLogTab();
     renderInventorySummaryCards();
@@ -6478,8 +6488,11 @@ function renderColumnSettingsList(tableKey) {
     });
     const plan = tableKey === 'taperByWeek' ? getSelectedTaperPlan() : null;
     const substanceId = tableKey === 'taperByWeek' ? getTaperSubstanceId() : currentSubstanceId;
+    const availableOrder = tableKey === 'purchaseHistory'
+        ? order.filter(colId => colId !== 'flavor' || substanceShowsPurchaseFlavor(getInventorySubstanceFilterId() || substanceId))
+        : order;
 
-    list.innerHTML = order.map(colId => {
+    list.innerHTML = availableOrder.map(colId => {
         const checked = visible[colId] !== false;
         const disabled = required.has(colId) ? 'disabled checked' : (checked ? 'checked' : '');
         const reqNote = required.has(colId) ? ' <span class="column-required-tag">(required)</span>' : '';
@@ -6543,15 +6556,26 @@ function readColumnSettingsFromModal(tableKey) {
     const variantKey = tableKey === 'taperByWeek' ? columnSettingsVariantKey : null;
     if (!list) return getTableColumnConfig(tableKey, variantKey);
     const required = new Set(TABLE_COLUMNS_REQUIRED[tableKey] || []);
+    const previous = getTableColumnConfig(tableKey, variantKey);
     const order = [...list.querySelectorAll('.column-settings-item')].map(li => li.dataset.colId);
-    const visible = {};
-    order.forEach(id => { visible[id] = true; });
+    // Preserve context-hidden columns (e.g. Flavor while viewing Coke) so they
+    // remain available when switching back to flavored product types.
+    if (tableKey === 'purchaseHistory' && !order.includes('flavor')
+        && (previous.order || []).includes('flavor')) {
+        const flavorIndex = previous.order.indexOf('flavor');
+        const insertAt = Math.min(Math.max(flavorIndex, 0), order.length);
+        order.splice(insertAt, 0, 'flavor');
+    }
+    const visible = { ...(previous.visible || {}) };
+    order.forEach(id => {
+        if (!(id in visible)) visible[id] = true;
+    });
     list.querySelectorAll('.column-settings-visible').forEach(input => {
         const colId = input.dataset.colId;
         if (!colId) return;
         visible[colId] = required.has(colId) ? true : input.checked;
     });
-    const widths = { ...(getTableColumnConfig(tableKey, variantKey).widths || {}) };
+    const widths = { ...(previous.widths || {}) };
     list.querySelectorAll('.column-settings-width-input').forEach(input => {
         const colId = input.dataset.colId;
         const px = parseInt(input.value, 10);
@@ -10591,6 +10615,36 @@ function getVapeFullPuffCount(purchase) {
 function getVapePurchaseFlavor(purchase) {
     if (!purchase?.flavor) return '';
     return String(purchase.flavor).trim();
+}
+
+function purchaseSupportsFlavor(purchase, data = appData) {
+    if (!purchase) return false;
+    return isVapePuffPurchase(purchase, data) || isNicotineVapeProduct(purchase, data);
+}
+
+function substanceShowsPurchaseFlavor(substanceId, data = appData) {
+    if (!substanceId || substanceId === DASHBOARD_ALL) return true;
+    if (isCokeSubstanceId(substanceId)) return false;
+    if (isNicotineSubstanceId(substanceId, data) || isVapeNicotineSubstanceId(substanceId, data)) return true;
+    if (isVapeTrackingMode(substanceId, data)) return true;
+    return false;
+}
+
+function getInventorySearchPlaceholder(substanceId = getInventorySubstanceFilterId()) {
+    return substanceShowsPurchaseFlavor(substanceId)
+        ? 'Search store, notes, flavor…'
+        : 'Search store, notes…';
+}
+
+function syncInventorySearchPlaceholder(substanceId = getInventorySubstanceFilterId()) {
+    const el = document.getElementById('inventory-search');
+    if (el) el.placeholder = getInventorySearchPlaceholder(substanceId);
+}
+
+function getPurchaseHistoryVisibleColumns(substanceId = getInventorySubstanceFilterId()) {
+    const columns = getEffectiveColumnOrder('purchaseHistory');
+    if (substanceShowsPurchaseFlavor(substanceId)) return columns;
+    return columns.filter(colId => colId !== 'flavor');
 }
 
 function getVapePurchaseProductName(purchase) {
@@ -16824,6 +16878,7 @@ function getBuyStats(substanceId) {
 }
 
 function renderBuyTrackerTab() {
+    syncInventorySearchPlaceholder();
     renderInventorySummaryCards();
     renderPurchaseHistory(null);
     updateInventoryFiltersPanelUI();
@@ -16856,7 +16911,7 @@ function renderPurchaseHistory(substanceId, containerId = null) {
     }
 
     const cur = getCurrencySymbol();
-    const purchaseColumns = getEffectiveColumnOrder('purchaseHistory');
+    const purchaseColumns = getPurchaseHistoryVisibleColumns(filterId);
     const tableMinWidth = getPurchaseHistoryTableMinWidth(purchaseColumns);
     const colgroup = buildPurchaseHistoryColgroup(purchaseColumns);
     let html = `<div class="table-scroll purchase-history-scroll"><table class="session-table history-table purchase-history-table inventory-history-table customizable-table" style="min-width:${tableMinWidth}px;table-layout:fixed">${colgroup}<thead><tr class="inventory-history-header">`;
@@ -26810,7 +26865,7 @@ function exportDataCsv() {
             p.totalMg ?? '',
             p.totalCost ?? '',
             p.store || '',
-            getVapePurchaseFlavor(p),
+            purchaseSupportsFlavor(p) ? getVapePurchaseFlavor(p) : '',
             p.notes || ''
         ].map(csvEscape).join(','));
     });
@@ -27185,6 +27240,11 @@ function __getRecoveryTrackerTestExports() {
         logMatchesUseLogFilter,
         getUseEntries: () => getUseEntries(appData),
         getVapePurchaseFlavor,
+        purchaseSupportsFlavor,
+        substanceShowsPurchaseFlavor,
+        getInventorySearchPlaceholder,
+        getPurchaseHistoryVisibleColumns,
+        syncInventorySearchPlaceholder,
         formatVapePurchaseTitleLine,
         formatVapePurchaseDetailLine,
         parseVapeFlavorFromForm,
