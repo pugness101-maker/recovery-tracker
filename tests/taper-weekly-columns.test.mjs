@@ -251,15 +251,17 @@ test('hiding and restoring optional columns', () => {
     assert.ok(order.includes('runningAmountSpent'));
 });
 
-test('column settings persistence per plan type', () => {
+test('column settings persistence per substance family', () => {
     const rt = setup(makeData({ substance: makeSubstance('nicotine'), taperPlansV2: [] }));
     const vapePlan = {
         substanceId: NICOTINE_ID,
         reductionType: 'nicotine-vape-purchase'
     };
     const cokePlan = { substanceId: COKE_ID, reductionType: 'reduce-amount' };
-    const vapeKey = rt.getTaperByWeekColumnVariantKey(NICOTINE_ID, vapePlan);
+    const nicotineKey = rt.getTaperByWeekColumnVariantKey(NICOTINE_ID, vapePlan);
     const cokeKey = rt.getTaperByWeekColumnVariantKey(COKE_ID, cokePlan);
+    assert.equal(nicotineKey, 'nicotine');
+    assert.equal(cokeKey, 'cocaine');
 
     rt.saveTableColumnConfig('taperByWeek', {
         order: ['week', 'dates', 'planned', 'used', 'difference', 'status', 'runningAmountBought'],
@@ -268,7 +270,7 @@ test('column settings persistence per plan type', () => {
             runningAmountBought: true, buyInterval: true
         },
         widths: { runningAmountBought: 150 }
-    }, vapeKey);
+    }, nicotineKey);
 
     rt.saveTableColumnConfig('taperByWeek', {
         order: ['week', 'dates', 'planned', 'used', 'difference', 'status'],
@@ -280,11 +282,133 @@ test('column settings persistence per plan type', () => {
     }, cokeKey);
 
     const reloaded = rt.loadColumnSettingsStore();
-    const vapeStorage = reloaded[rt.resolveColumnStorageKey('taperByWeek', vapeKey)];
+    const nicotineStorage = reloaded[rt.resolveColumnStorageKey('taperByWeek', nicotineKey)];
     const cokeStorage = reloaded[rt.resolveColumnStorageKey('taperByWeek', cokeKey)];
-    assert.equal(vapeStorage.visible.runningAmountBought, true);
-    assert.equal(vapeStorage.widths.runningAmountBought, 150);
+    assert.equal(nicotineStorage.visible.runningAmountBought, true);
+    assert.equal(nicotineStorage.widths.runningAmountBought, 150);
     assert.equal(cokeStorage.visible.runningAmountBought, false);
+});
+
+test('cocaine catalog excludes nicotine and alcohol columns', () => {
+    const rt = setup(makeData({ substance: makeSubstance('coke'), taperPlansV2: [makeCokeTaperPlan()] }));
+    const catalog = rt.getTaperByWeekColumnCatalog(COKE_ID, makeCokeTaperPlan());
+    assert.ok(catalog.includes('bought'));
+    assert.ok(catalog.includes('runningAmountBought'));
+    assert.ok(catalog.includes('weeklyBuyCapStatus'));
+    assert.ok(catalog.includes('targets'));
+    assert.ok(!catalog.includes('vapeLifespans'));
+    assert.ok(!catalog.includes('avgPerDay'));
+    assert.equal(rt.getTaperByWeekColumnFamilyLabel(COKE_ID), 'Cocaine Taper');
+});
+
+test('nicotine catalog excludes cocaine buying columns', () => {
+    const rt = setup(makeData({ substance: makeSubstance('nicotine'), taperPlansV2: [] }));
+    const plan = { substanceId: NICOTINE_ID, reductionType: 'nicotine-vape-purchase' };
+    const catalog = rt.getTaperByWeekColumnCatalog(NICOTINE_ID, plan);
+    assert.ok(catalog.includes('vapeLifespans'));
+    assert.ok(catalog.includes('avgPerDay'));
+    assert.ok(catalog.includes('buyInterval'));
+    assert.ok(catalog.includes('runningAmountSpent'));
+    assert.ok(!catalog.includes('buyPlanned'));
+    assert.ok(!catalog.includes('buyDiff'));
+    assert.ok(!catalog.includes('monthlyBuyCapStatus'));
+    assert.ok(!catalog.includes('targets'));
+    assert.equal(rt.getTaperByWeekColumnLabel('avgPerDay', plan, NICOTINE_ID), 'Avg Puffs/Day');
+    assert.equal(rt.getTaperByWeekColumnLabel('runningAmountBought', plan, NICOTINE_ID), 'Running Purchases');
+});
+
+test('alcohol catalog excludes nicotine and cocaine columns', () => {
+    const alcohol = {
+        id: 'alcohol',
+        name: 'Alcohol',
+        trackingMode: 'alcohol',
+        primaryUnit: 'drinks',
+        defaultUnit: 'drinks',
+        costTrackingEnabled: true,
+        taperTrackingEnabled: true
+    };
+    const rt = setup(makeData({ substance: alcohol, taperPlansV2: [] }));
+    const catalog = rt.getTaperByWeekColumnCatalog('alcohol', { substanceId: 'alcohol' });
+    assert.ok(catalog.includes('avgPerDay'));
+    assert.ok(catalog.includes('spent'));
+    assert.ok(catalog.includes('runningAmountSpent'));
+    assert.ok(catalog.includes('sessions'));
+    assert.ok(!catalog.includes('vapeLifespans'));
+    assert.ok(!catalog.includes('bought'));
+    assert.ok(!catalog.includes('buyPlanned'));
+    assert.ok(!catalog.includes('monthlyBuyCapStatus'));
+    assert.equal(rt.getTaperByWeekColumnFamilyLabel('alcohol'), 'Alcohol Taper');
+    assert.equal(
+        rt.getTaperByWeekColumnLabel('planned', { substanceId: 'alcohol' }, 'alcohol'),
+        'Drinks Planned'
+    );
+});
+
+test('lsd and xanax catalogs hide purchasing metrics', () => {
+    const lsd = {
+        id: 'lsd',
+        name: 'LSD',
+        trackingMode: 'dose',
+        primaryUnit: 'ug',
+        defaultUnit: 'ug',
+        costTrackingEnabled: true,
+        taperTrackingEnabled: true
+    };
+    const xanax = {
+        id: 'xannax',
+        name: 'Xanax',
+        trackingMode: 'dose',
+        primaryUnit: 'mg',
+        defaultUnit: 'mg',
+        costTrackingEnabled: true,
+        taperTrackingEnabled: true
+    };
+    const rtLsd = setup(makeData({ substance: lsd, taperPlansV2: [] }));
+    const lsdCatalog = rtLsd.getTaperByWeekColumnCatalog('lsd', { substanceId: 'lsd' });
+    assert.ok(lsdCatalog.includes('planned'));
+    assert.ok(lsdCatalog.includes('sessions'));
+    assert.ok(!lsdCatalog.includes('bought'));
+    assert.ok(!lsdCatalog.includes('vapeLifespans'));
+    assert.ok(!lsdCatalog.includes('runningAmountBought'));
+    assert.equal(rtLsd.getTaperByWeekColumnLabel('planned', { substanceId: 'lsd' }, 'lsd'), 'Tabs Planned');
+
+    const rtXanax = setup(makeData({ substance: xanax, taperPlansV2: [] }));
+    const xanaxCatalog = rtXanax.getTaperByWeekColumnCatalog('xannax', { substanceId: 'xannax' });
+    assert.ok(xanaxCatalog.includes('avgPerDay'));
+    assert.ok(!xanaxCatalog.includes('bought'));
+    assert.ok(!xanaxCatalog.includes('vapeLifespans'));
+    assert.equal(
+        rtXanax.getTaperByWeekColumnLabel('used', { substanceId: 'xannax' }, 'xannax'),
+        'Pills Used'
+    );
+});
+
+test('cannabis catalog keeps gram and purchase metrics only', () => {
+    const rt = setup(makeData({ substance: makeSubstance('weed'), taperPlansV2: [] }));
+    const catalog = rt.getTaperByWeekColumnCatalog(WEED_ID, { substanceId: WEED_ID });
+    assert.ok(catalog.includes('bought'));
+    assert.ok(catalog.includes('runningAmountBought'));
+    assert.ok(catalog.includes('spent'));
+    assert.ok(catalog.includes('buyInterval'));
+    assert.ok(!catalog.includes('vapeLifespans'));
+    assert.ok(!catalog.includes('monthlyBuyCapStatus'));
+    assert.equal(rt.getTaperByWeekColumnFamily(WEED_ID), 'cannabis');
+});
+
+test('effective column order never includes out-of-family columns', () => {
+    const rt = setup(makeData({ substance: makeSubstance('coke'), taperPlansV2: [makeCokeTaperPlan()] }));
+    const variantKey = rt.getTaperByWeekColumnVariantKey(COKE_ID, makeCokeTaperPlan());
+    rt.saveTableColumnConfig('taperByWeek', {
+        order: ['week', 'dates', 'planned', 'used', 'difference', 'status', 'vapeLifespans', 'bought'],
+        visible: {
+            week: true, dates: true, planned: true, used: true, difference: true, status: true,
+            vapeLifespans: true, bought: true
+        },
+        widths: {}
+    }, variantKey);
+    const order = rt.getEffectiveColumnOrder('taperByWeek', variantKey);
+    assert.ok(order.includes('bought'));
+    assert.ok(!order.includes('vapeLifespans'));
 });
 
 test('nicotine vape plan counts running vapes bought', () => {

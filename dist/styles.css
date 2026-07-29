@@ -6066,6 +6066,14 @@ body.table-col-resizing {
     margin-left: auto;
 }
 
+.column-settings-subtitle {
+    margin: 0 0 0.65rem;
+}
+
+.column-settings-subtitle strong {
+    font-weight: 650;
+}
+
 .column-settings-bulk-actions {
     display: flex;
     flex-wrap: wrap;

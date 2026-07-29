@@ -5541,17 +5541,32 @@ const TABLE_COLUMN_DEFAULTS = {
         }
     },
     buyWeekly: {
-        order: ['startWeek', 'endWeek', 'purchased', 'monthRunning', 'cost', 'costPerUnit', 'gPerDay', 'supplyDuration'],
-        hidden: [],
+        order: [
+            'week',
+            'purchased',
+            'cost',
+            'costPerUnit',
+            'purchaseCount',
+            'avgBreak',
+            'runningAmountBought',
+            'runningCostThisMonth',
+            'runningPurchaseCount',
+            'store',
+            'payment'
+        ],
+        hidden: ['runningPurchaseCount', 'store', 'payment'],
         widths: {
-            startWeek: 110,
-            endWeek: 110,
+            week: 150,
             purchased: 110,
-            monthRunning: 120,
-            cost: 90,
-            costPerUnit: 100,
-            gPerDay: 90,
-            supplyDuration: 120
+            cost: 100,
+            costPerUnit: 130,
+            purchaseCount: 110,
+            avgBreak: 140,
+            runningAmountBought: 160,
+            runningCostThisMonth: 160,
+            runningPurchaseCount: 150,
+            store: 130,
+            payment: 120
         }
     },
     buyMonthly: {
@@ -5708,14 +5723,17 @@ const TABLE_COLUMN_LABELS = {
         status: 'Status'
     },
     buyWeekly: {
-        startWeek: 'Start Week',
-        endWeek: 'End Week',
+        week: 'Week',
         purchased: 'Purchased',
-        monthRunning: 'Month running',
         cost: 'Cost',
-        costPerUnit: 'Cost/unit',
-        gPerDay: 'g/day',
-        supplyDuration: 'Supply Duration'
+        costPerUnit: 'Average Cost per Unit',
+        purchaseCount: 'Purchase Count',
+        avgBreak: 'Break Between Buys',
+        runningAmountBought: 'Running Amount Bought',
+        runningCostThisMonth: 'Running Cost This Month',
+        runningPurchaseCount: 'Running Purchase Count',
+        store: 'Store',
+        payment: 'Payment Method'
     },
     buyMonthly: {
         month: 'Month',
@@ -5740,32 +5758,32 @@ const TABLE_COLUMN_LABELS = {
         dates: 'Dates',
         planned: 'Planned',
         used: 'Used',
-        difference: '+/-',
+        difference: 'Difference (+/-)',
         dailyTarget: 'Daily target',
         avgPerDay: 'Avg/day',
         reductionFromPrior: 'Reduction from prior week',
         spent: 'Spending',
         sessions: 'Sessions',
-        runningPlanned: 'Running planned',
-        runningUsed: 'Running used',
+        runningPlanned: 'Running Planned',
+        runningUsed: 'Running Used',
         remaining: 'Running +/-',
-        buyPlanned: 'Buy planned',
+        buyPlanned: 'Buy Planned',
         bought: 'Bought',
         runningAmountBought: 'Running Amount Bought',
         buyDiff: 'Buy +/-',
-        spendPlanned: 'Spend planned',
+        spendPlanned: 'Spend Planned',
         runningAmountSpent: 'Running Amount Spent',
         spendDiff: 'Spend +/-',
         buyAmountStatus: 'Buy amount status',
         spendAmountStatus: 'Spending status',
-        weeklyBuyCapStatus: 'Weekly buy status',
-        weeklySpendCapStatus: 'Weekly spending status',
-        monthlyBuyCapStatus: 'Monthly buy status',
-        monthlySpendCapStatus: 'Monthly spending status',
-        purchaseOverallStatus: 'Overall status',
+        weeklyBuyCapStatus: 'Weekly Buy Status',
+        weeklySpendCapStatus: 'Weekly Spending Status',
+        monthlyBuyCapStatus: 'Monthly Buy Status',
+        monthlySpendCapStatus: 'Monthly Spending Status',
+        purchaseOverallStatus: 'Overall Status',
         targets: 'Targets',
-        buyInterval: 'Days between buys',
-        vapeLifespans: 'Lifespan of completed vapes',
+        buyInterval: 'Break Between Buys',
+        vapeLifespans: 'Lifespan of Completed Vapes',
         status: 'Status'
     },
     statsCalendarYearSummary: {
@@ -5779,6 +5797,21 @@ const TABLE_COLUMN_LABELS = {
         status: 'Status'
     }
 };
+
+const TABLE_COLUMN_TOOLTIPS = {
+    statsWeekly: {
+        monthRunning: 'Cumulative use within the calendar month of this row. Resets on the first day of each month.'
+    },
+    buyWeekly: {
+        runningAmountBought: 'Cumulative amount purchased within the calendar month of this row. Resets on the first day of each month.',
+        runningCostThisMonth: 'Cumulative spending within the calendar month of this row. Resets on the first day of each month.',
+        runningPurchaseCount: 'Cumulative purchase count within the calendar month of this row. Resets on the first day of each month.'
+    }
+};
+
+function getTableColumnTooltip(tableKey, colId) {
+    return TABLE_COLUMN_TOOLTIPS[tableKey]?.[colId] || '';
+}
 
 const COLUMN_MODAL_TITLES = {
     useHistory: 'Customize Use History Columns',
@@ -5796,6 +5829,7 @@ const TABLE_COLUMNS_REQUIRED = {
     useHistory: ['select', 'actions'],
     purchaseHistory: ['select', 'actions'],
     taperByWeek: ['week', 'dates', 'planned', 'used', 'difference', 'status'],
+    buyWeekly: ['week', 'purchased', 'cost'],
     buyMonthly: ['month', 'purchased', 'cost'],
     buyPurchaseDetails: ['date', 'amount', 'cost']
 };
@@ -6048,54 +6082,234 @@ function resolveColumnStorageKey(tableKey, variantKey = null) {
     return tableKey;
 }
 
+/** Universal weekly taper columns shown for every substance. */
+const TAPER_BY_WEEK_UNIVERSAL_COLUMNS = [
+    'week', 'dates', 'planned', 'used', 'difference', 'status',
+    'sessions', 'runningPlanned', 'runningUsed', 'remaining'
+];
+
+/**
+ * Substance-family optional columns for Plan → Customize Weekly Table Columns.
+ * Only columns that exist in TABLE_COLUMN_DEFAULTS.taperByWeek are listed.
+ */
+const TAPER_BY_WEEK_FAMILY_EXTRA_COLUMNS = {
+    cocaine: [
+        'bought', 'buyDiff', 'runningAmountBought', 'runningAmountSpent',
+        'buyPlanned', 'spendPlanned', 'spent', 'spendDiff',
+        'buyInterval', 'weeklyBuyCapStatus', 'weeklySpendCapStatus',
+        'monthlyBuyCapStatus', 'monthlySpendCapStatus',
+        'purchaseOverallStatus', 'targets',
+        'buyAmountStatus', 'spendAmountStatus'
+    ],
+    nicotine: [
+        'avgPerDay', 'runningAmountBought', 'runningAmountSpent',
+        'bought', 'spent', 'buyInterval', 'vapeLifespans',
+        'weeklySpendCapStatus', 'purchaseOverallStatus', 'dailyTarget'
+    ],
+    alcohol: [
+        'avgPerDay', 'spent', 'runningAmountSpent'
+    ],
+    cannabis: [
+        'bought', 'runningAmountBought', 'spent', 'runningAmountSpent',
+        'buyInterval', 'avgPerDay'
+    ],
+    lsd: [
+        'avgPerDay'
+    ],
+    xanax: [
+        'avgPerDay'
+    ],
+    generic: [
+        'bought', 'runningAmountBought', 'spent', 'runningAmountSpent',
+        'avgPerDay', 'dailyTarget', 'reductionFromPrior'
+    ]
+};
+
+const TAPER_BY_WEEK_FAMILY_LABELS = {
+    cocaine: 'Cocaine Taper',
+    nicotine: 'Nicotine Taper',
+    alcohol: 'Alcohol Taper',
+    cannabis: 'Cannabis Taper',
+    lsd: 'LSD Taper',
+    xanax: 'Xanax Taper',
+    generic: 'Taper'
+};
+
+function getTaperByWeekColumnFamily(substanceId, data = appData) {
+    if (isNicotineTrackingMode(substanceId, data)) return 'nicotine';
+    if (isAlcoholTrackingMode(substanceId, data)) return 'alcohol';
+    if (isWeedTrackingMode(substanceId, data)) return 'cannabis';
+    if (isLsdSubstanceId(substanceId, data)) return 'lsd';
+    if (isXanaxSubstanceId(substanceId, data)) return 'xanax';
+    if (isCokeSubstanceId(substanceId) || isPowderTrackingMode(substanceId, data)) return 'cocaine';
+    return 'generic';
+}
+
+function getTaperByWeekColumnFamilyLabel(familyOrSubstanceId, data = appData) {
+    const family = TAPER_BY_WEEK_FAMILY_LABELS[familyOrSubstanceId]
+        ? familyOrSubstanceId
+        : getTaperByWeekColumnFamily(familyOrSubstanceId, data);
+    return TAPER_BY_WEEK_FAMILY_LABELS[family] || TAPER_BY_WEEK_FAMILY_LABELS.generic;
+}
+
 function getTaperByWeekColumnVariantKey(substanceId, plan) {
-    const subId = substanceId || plan?.substanceId || 'unknown';
-    const reductionType = plan?.reductionType || 'reduce-amount';
-    return `${subId}__${reductionType}`;
+    return getTaperByWeekColumnFamily(substanceId || plan?.substanceId);
+}
+
+function getTaperByWeekColumnCatalog(substanceId, plan = null, data = appData) {
+    const family = getTaperByWeekColumnFamily(substanceId || plan?.substanceId, data);
+    const allowed = new Set([
+        ...TAPER_BY_WEEK_UNIVERSAL_COLUMNS,
+        ...(TAPER_BY_WEEK_FAMILY_EXTRA_COLUMNS[family] || TAPER_BY_WEEK_FAMILY_EXTRA_COLUMNS.generic)
+    ]);
+    return TABLE_COLUMN_DEFAULTS.taperByWeek.order.filter(id => allowed.has(id));
+}
+
+function filterTaperByWeekColumnSettingsToCatalog(settings, substanceId, plan = null) {
+    const catalog = getTaperByWeekColumnCatalog(substanceId, plan);
+    const catalogSet = new Set(catalog);
+    const order = [];
+    (settings?.order || []).forEach(id => {
+        if (catalogSet.has(id) && !order.includes(id)) order.push(id);
+    });
+    catalog.forEach(id => {
+        if (!order.includes(id)) order.push(id);
+    });
+    const visible = {};
+    order.forEach(id => {
+        visible[id] = settings?.visible?.[id] !== false;
+    });
+    (TABLE_COLUMNS_REQUIRED.taperByWeek || []).forEach(id => {
+        if (catalogSet.has(id)) visible[id] = true;
+    });
+    const widths = {};
+    order.forEach(id => {
+        if (settings?.widths?.[id] != null) widths[id] = settings.widths[id];
+        else if (TABLE_COLUMN_DEFAULTS.taperByWeek.widths?.[id] != null) {
+            widths[id] = TABLE_COLUMN_DEFAULTS.taperByWeek.widths[id];
+        }
+    });
+    return { order, visible, widths };
 }
 
 function getDefaultTaperByWeekColumnSettings(substanceId, plan) {
+    const catalog = getTaperByWeekColumnCatalog(substanceId, plan);
     const base = getDefaultColumnSettings('taperByWeek');
-    if (!plan) return base;
-    const visible = { ...base.visible };
+    const visible = {};
+    catalog.forEach(id => {
+        visible[id] = base.visible[id] !== false;
+    });
+    // Keep most optional columns hidden by default; reveal purchase-relevant ones by plan type.
+    catalog.forEach(id => {
+        if ((TABLE_COLUMNS_REQUIRED.taperByWeek || []).includes(id)) {
+            visible[id] = true;
+            return;
+        }
+        if (TAPER_BY_WEEK_UNIVERSAL_COLUMNS.includes(id)
+            && !['sessions', 'runningPlanned', 'runningUsed', 'remaining'].includes(id)) {
+            visible[id] = true;
+            return;
+        }
+        visible[id] = false;
+    });
     if (isNicotineVapePurchasePlan(plan)) {
-        visible.runningAmountBought = true;
-        visible.runningAmountSpent = true;
-        visible.buyInterval = true;
-        visible.vapeLifespans = true;
-        visible.bought = true;
-        visible.spent = true;
+        ['runningAmountBought', 'runningAmountSpent', 'buyInterval', 'vapeLifespans', 'bought', 'spent']
+            .forEach(id => { if (id in visible) visible[id] = true; });
     } else if (isReduceBuyingPlan(plan)) {
-        visible.targets = true;
-        visible.bought = true;
-        visible.spent = true;
-        visible.runningAmountBought = true;
-        visible.runningAmountSpent = true;
+        ['targets', 'bought', 'spent', 'runningAmountBought', 'runningAmountSpent']
+            .forEach(id => { if (id in visible) visible[id] = true; });
     } else if (supportsPurchaseTaper(substanceId) || getSubstance(substanceId)?.costTrackingEnabled) {
-        visible.bought = true;
-        visible.runningAmountBought = true;
-        visible.runningAmountSpent = true;
-        visible.buyPlanned = true;
-        visible.spendPlanned = true;
-        visible.purchaseOverallStatus = true;
+        const family = getTaperByWeekColumnFamily(substanceId);
+        if (family === 'cocaine' || family === 'cannabis' || family === 'generic') {
+            ['bought', 'runningAmountBought', 'runningAmountSpent', 'buyPlanned', 'spendPlanned', 'purchaseOverallStatus']
+                .forEach(id => { if (id in visible) visible[id] = true; });
+        } else if (family === 'nicotine') {
+            ['avgPerDay', 'runningAmountBought', 'runningAmountSpent']
+                .forEach(id => { if (id in visible) visible[id] = true; });
+        } else if (family === 'alcohol') {
+            ['avgPerDay', 'spent', 'runningAmountSpent']
+                .forEach(id => { if (id in visible) visible[id] = true; });
+        }
     }
-    return normalizeStoredColumnSettings('taperByWeek', { ...base, visible });
+    return filterTaperByWeekColumnSettingsToCatalog({ order: catalog, visible, widths: base.widths }, substanceId, plan);
+}
+
+function findLegacyTaperByWeekColumnSettings(store, family) {
+    if (!store || !family) return null;
+    const prefix = 'taperByWeek::';
+    const matches = Object.keys(store).filter(key => {
+        if (!key.startsWith(prefix) || key === `${prefix}${family}`) return false;
+        const variant = key.slice(prefix.length);
+        // Legacy keys were `${substanceId}__${reductionType}`.
+        if (!variant.includes('__')) return false;
+        const substanceId = variant.split('__')[0];
+        return getTaperByWeekColumnFamily(substanceId) === family;
+    });
+    if (!matches.length) return null;
+    return store[matches[0]] || null;
 }
 
 function getTaperByWeekColumnLabel(colId, plan, substanceId) {
     const labels = TABLE_COLUMN_LABELS.taperByWeek;
+    const family = getTaperByWeekColumnFamily(substanceId);
     if (colId === 'runningAmountBought') {
-        if (isNicotineVapePurchasePlan(plan) || isReduceBuyingPlan(plan)) return 'Running Vapes Bought';
+        if (family === 'nicotine') return 'Running Purchases';
+        if (family === 'cannabis') return 'Running Grams';
         return labels.runningAmountBought;
     }
-    if (colId === 'runningAmountSpent') return labels.runningAmountSpent;
+    if (colId === 'runningAmountSpent') {
+        if (family === 'nicotine' || family === 'alcohol' || family === 'cannabis') return 'Running Cost';
+        return labels.runningAmountSpent;
+    }
+    if (colId === 'bought') {
+        if (family === 'cannabis') return 'Grams';
+        if (family === 'nicotine') return 'Purchases';
+        return labels.bought;
+    }
+    if (colId === 'spent') {
+        if (family === 'alcohol' || family === 'cannabis') return 'Cost';
+        return labels.spent;
+    }
+    if (colId === 'buyInterval') {
+        if (family === 'nicotine') return 'Days Between Buys';
+        if (family === 'cannabis') return 'Breaks';
+        return labels.buyInterval;
+    }
+    if (colId === 'avgPerDay') {
+        if (family === 'nicotine') return 'Avg Puffs/Day';
+        if (family === 'alcohol') return 'Avg Drinks/Day';
+        if (family === 'xanax') return 'Avg mg/day';
+        if (family === 'lsd') return 'Avg ug/session';
+        return labels.avgPerDay;
+    }
     if (colId === 'planned') {
         if (isNicotineVapePurchasePlan(plan)) return 'Planned max';
         if (isReduceNicotinePlan(plan)) return 'Target mg/mL';
+        if (family === 'alcohol') return 'Drinks Planned';
+        if (family === 'lsd') return 'Tabs Planned';
+        if (family === 'xanax') return 'Pills Planned';
+        if (family === 'nicotine') return 'Puffs Planned';
     }
     if (colId === 'used') {
         if (isNicotineVapePurchasePlan(plan) || isReduceBuyingPlan(plan)) return 'Vapes bought';
         if (isReduceNicotinePlan(plan)) return 'Current mg/mL';
+        if (family === 'alcohol') return 'Drinks Used';
+        if (family === 'lsd') return 'Tabs Used';
+        if (family === 'xanax') return 'Pills Used';
+        if (family === 'nicotine') return 'Puffs Used';
+        if (family === 'cannabis') return 'Grams';
+    }
+    if (colId === 'runningUsed') {
+        if (family === 'nicotine') return 'Running Puffs';
+        if (family === 'alcohol') return 'Running Drinks';
+        if (family === 'lsd') return 'Running Tabs';
+        if (family === 'xanax') return 'Running Pills';
+        if (family === 'cannabis') return 'Running Grams';
+    }
+    if (colId === 'runningPlanned') {
+        if (family === 'alcohol') return 'Running Weekly Drinks';
+        if (family === 'lsd') return 'Running Tabs';
+        if (family === 'xanax') return 'Running Pills';
     }
     if (colId === 'difference' && isReduceNicotinePlan(plan)) return 'Strength +/-';
     return getTableColumnLabelForSubstance('taperByWeek', colId, substanceId)
@@ -6108,14 +6322,40 @@ function getTableColumnConfig(tableKey, variantKey = null) {
     const store = loadColumnSettingsStore();
     const storageKey = resolveColumnStorageKey(tableKey, variantKey);
     if (store[storageKey]) {
-        return normalizeStoredColumnSettings(tableKey, store[storageKey]);
+        const normalized = normalizeStoredColumnSettings(tableKey, store[storageKey]);
+        if (tableKey === 'taperByWeek' && variantKey) {
+            const substanceId = getTaperSubstanceIdForColumnFamily(variantKey);
+            return filterTaperByWeekColumnSettingsToCatalog(
+                normalized,
+                substanceId,
+                getSelectedTaperPlan()
+            );
+        }
+        return normalized;
     }
     if (tableKey === 'taperByWeek' && variantKey) {
-        const substanceId = variantKey.split('__')[0];
-        const reductionType = variantKey.split('__').slice(1).join('__');
-        return getDefaultTaperByWeekColumnSettings(substanceId, { substanceId, reductionType });
+        const legacy = findLegacyTaperByWeekColumnSettings(store, variantKey);
+        const substanceId = getTaperSubstanceIdForColumnFamily(variantKey);
+        if (legacy) {
+            return filterTaperByWeekColumnSettingsToCatalog(
+                normalizeStoredColumnSettings(tableKey, legacy),
+                substanceId,
+                getSelectedTaperPlan()
+            );
+        }
+        return getDefaultTaperByWeekColumnSettings(substanceId, getSelectedTaperPlan() || {
+            substanceId,
+            reductionType: 'reduce-amount'
+        });
     }
     return store[tableKey] || getDefaultColumnSettings(tableKey);
+}
+
+function getTaperSubstanceIdForColumnFamily(family) {
+    const currentId = getTaperSubstanceId();
+    if (getTaperByWeekColumnFamily(currentId) === family) return currentId;
+    const match = (appData.substances || []).find(sub => getTaperByWeekColumnFamily(sub.id) === family);
+    return match?.id || currentId || family;
 }
 
 function getEffectiveColumnOrder(tableKey, variantKey = null) {
@@ -6127,7 +6367,15 @@ function getEffectiveColumnOrder(tableKey, variantKey = null) {
     defaults.order.forEach(id => {
         if (!order.includes(id)) order.push(id);
     });
-    return order.filter(id => defaults.order.includes(id) && (visible[id] !== false || required.has(id)));
+    let allowedIds = defaults.order;
+    if (tableKey === 'taperByWeek') {
+        const substanceId = variantKey
+            ? getTaperSubstanceIdForColumnFamily(variantKey)
+            : getTaperSubstanceId();
+        allowedIds = getTaperByWeekColumnCatalog(substanceId, getSelectedTaperPlan());
+    }
+    const allowed = new Set(allowedIds);
+    return order.filter(id => allowed.has(id) && (visible[id] !== false || required.has(id)));
 }
 
 function saveTableColumnConfig(tableKey, config, variantKey = null) {
@@ -6441,12 +6689,28 @@ function setupUseStatsSettingsModal() {
 
 function resetTableColumnConfig(tableKey, variantKey = null) {
     const config = tableKey === 'taperByWeek' && variantKey
-        ? getDefaultTaperByWeekColumnSettings(variantKey.split('__')[0], {
-            substanceId: variantKey.split('__')[0],
-            reductionType: variantKey.split('__').slice(1).join('__')
-        })
+        ? getDefaultTaperByWeekColumnSettings(
+            getTaperSubstanceIdForColumnFamily(variantKey),
+            getSelectedTaperPlan() || {
+                substanceId: getTaperSubstanceIdForColumnFamily(variantKey),
+                reductionType: 'reduce-amount'
+            }
+        )
         : getDefaultColumnSettings(tableKey);
     saveTableColumnConfig(tableKey, config, variantKey);
+}
+
+function updateColumnSettingsSubtitle(tableKey, variantKey = null) {
+    const subtitle = document.getElementById('column-settings-subtitle');
+    if (!subtitle) return;
+    if (tableKey === 'taperByWeek' && variantKey) {
+        const label = getTaperByWeekColumnFamilyLabel(variantKey);
+        subtitle.innerHTML = `Showing columns for <strong>${escapeHtml(label)}</strong>`;
+        subtitle.classList.remove('hidden');
+        return;
+    }
+    subtitle.textContent = '';
+    subtitle.classList.add('hidden');
 }
 
 function openColumnSettingsModal(tableKey, variantKey = null) {
@@ -6457,6 +6721,7 @@ function openColumnSettingsModal(tableKey, variantKey = null) {
     if (title) {
         title.textContent = COLUMN_MODAL_TITLES[tableKey] || 'Customize Columns';
     }
+    updateColumnSettingsSubtitle(tableKey, variantKey);
     const runningWrap = document.getElementById('column-settings-buy-month-running-wrap');
     const runningSelect = document.getElementById('column-settings-buy-month-running-mode');
     if (runningWrap) {
@@ -6488,9 +6753,18 @@ function renderColumnSettingsList(tableKey) {
     });
     const plan = tableKey === 'taperByWeek' ? getSelectedTaperPlan() : null;
     const substanceId = tableKey === 'taperByWeek' ? getTaperSubstanceId() : currentSubstanceId;
-    const availableOrder = tableKey === 'purchaseHistory'
-        ? order.filter(colId => colId !== 'flavor' || substanceShowsPurchaseFlavor(getInventorySubstanceFilterId() || substanceId))
-        : order;
+    let availableOrder = order;
+    if (tableKey === 'purchaseHistory') {
+        availableOrder = order.filter(colId =>
+            colId !== 'flavor' || substanceShowsPurchaseFlavor(getInventorySubstanceFilterId() || substanceId)
+        );
+    } else if (tableKey === 'taperByWeek') {
+        const catalog = new Set(getTaperByWeekColumnCatalog(substanceId, plan));
+        availableOrder = order.filter(colId => catalog.has(colId));
+        getTaperByWeekColumnCatalog(substanceId, plan).forEach(colId => {
+            if (!availableOrder.includes(colId)) availableOrder.push(colId);
+        });
+    }
 
     list.innerHTML = availableOrder.map(colId => {
         const checked = visible[colId] !== false;
@@ -6583,6 +6857,13 @@ function readColumnSettingsFromModal(tableKey) {
             widths[colId] = Math.max(getTableColumnMinWidth(tableKey, colId), px);
         }
     });
+    if (tableKey === 'taperByWeek') {
+        return filterTaperByWeekColumnSettingsToCatalog(
+            { order, visible, widths },
+            getTaperSubstanceId(),
+            getSelectedTaperPlan()
+        );
+    }
     return { order, visible, widths };
 }
 
@@ -6607,14 +6888,15 @@ function refreshTableAfterColumnChange(tableKey) {
         case 'statsCalendarYearSummary':
             renderStatsCalendarView();
             break;
-        case 'buyMonthly': {
-            const { bounds } = getStatsLogsForSubstance(currentSubstanceId);
-            renderStatsBuyMonthSummary(currentSubstanceId, bounds);
-            break;
-        }
+        case 'buyWeekly':
+        case 'buyMonthly':
         case 'buyPurchaseDetails': {
-            const { bounds } = getStatsLogsForSubstance(currentSubstanceId);
-            renderStatsBuyPurchaseDetails(currentSubstanceId, bounds);
+            if (currentSubstanceId && currentSubstanceId !== DASHBOARD_ALL) {
+                const insights = buildInsightsDataset(currentSubstanceId);
+                if (tableKey === 'buyWeekly') renderStatsBuyWeekSummary(insights);
+                else if (tableKey === 'buyMonthly') renderStatsBuyMonthSummary(insights);
+                else renderStatsBuyPurchaseDetails(insights);
+            }
             break;
         }
         default:
@@ -6712,6 +6994,9 @@ function setupColumnSettingsModal() {
     });
     document.getElementById('stats-monthly-customize-columns')?.addEventListener('click', () => {
         openColumnSettingsModal('statsMonthly');
+    });
+    document.getElementById('stats-buy-week-customize-columns')?.addEventListener('click', () => {
+        openColumnSettingsModal('buyWeekly');
     });
     document.getElementById('stats-buy-month-customize-columns')?.addEventListener('click', () => {
         openColumnSettingsModal('buyMonthly');
@@ -15329,7 +15614,7 @@ function getPurchasesForBuyMetrics(substanceId, data = appData) {
     if (substanceId) {
         list = list.filter(p => purchaseMatchesSubstance(p, substanceId, data));
     }
-    return list.filter(p => !p.archivedAt);
+    return list.filter(p => !p.archivedAt && !p.inventoryHidden);
 }
 
 function getPurchasesForInsightMetrics(substanceId, data = appData) {
@@ -17035,15 +17320,22 @@ function getMonthPersonalUseTotal(substanceId, dateStr = getLocalDateString(), d
 }
 
 function sumPersonalUseAmountThroughDate(substanceId, endDate, data = appData) {
+    return sumMonthlyRunningTotalThroughDate(substanceId, endDate, null, data);
+}
+
+function sumMonthlyRunningTotalThroughDate(substanceId, endDate, bounds = null, data = appData) {
     if (!substanceId || !endDate) return 0;
     const monthStart = getMonthStartDateStr(endDate);
-    let total;
-    if (isVapeNicotineSubstanceId(substanceId, data)) {
-        total = getStatsUsageInRange(substanceId, monthStart, endDate, data);
-    } else {
-        total = sumUseAmountForRange(substanceId, monthStart, endDate, null, data);
+    let startDate = monthStart;
+    if (bounds?.startDate && bounds.startDate > startDate) {
+        startDate = bounds.startDate;
     }
-    return normalizeUsageTotal(total);
+    let cappedEnd = endDate;
+    if (bounds?.endDate && bounds.endDate < cappedEnd) {
+        cappedEnd = bounds.endDate;
+    }
+    if (!startDate || !cappedEnd || startDate > cappedEnd) return 0;
+    return sumPersonalUseAmountInRange(substanceId, startDate, cappedEnd, data);
 }
 
 function getWeekPersonalUseTotal(substanceId, dateStr = getLocalDateString(), data = appData) {
@@ -18984,8 +19276,10 @@ function renderConfigurableSheetTable(tableKey, rows, renderCell, substanceId = 
     let html = `<div class="table-scroll"><table class="sheet-table customizable-table" data-table-key="${tableKey}" style="min-width:${tableMinWidth}px;table-layout:fixed">${colgroup}<thead><tr>`;
     order.forEach(colId => {
         const label = getTableColumnLabelForSubstance(tableKey, colId, substanceId);
+        const tooltip = getTableColumnTooltip(tableKey, colId);
+        const titleAttr = tooltip ? ` title="${escapeAttr(tooltip)}"` : '';
         const resize = renderColumnResizeHandle(tableKey, colId, label);
-        html += `<th data-col="${colId}"><span class="customizable-th-label">${label}</span>${resize}</th>`;
+        html += `<th data-col="${colId}"${titleAttr}><span class="customizable-th-label">${label}</span>${resize}</th>`;
     });
     html += '</tr></thead><tbody>';
     rows.forEach(rowData => {
@@ -19245,7 +19539,6 @@ function getWeeklyTrackingSummaries(substanceId, boundsOrLimit = null, data = ap
         bounds = boundsOrLimit;
     }
 
-    const logs = getUseLogsForSubstance(substanceId, { sortAsc: true, personalUseOnly: true, data });
     const isVape = isVapeNicotineSubstanceId(substanceId, data);
     let baseRows = [];
     if (isVape) {
@@ -19253,8 +19546,12 @@ function getWeeklyTrackingSummaries(substanceId, boundsOrLimit = null, data = ap
         getVapeDistributedUsageMap(substanceId, data).forEach((amount, date) => {
             if (amount > INVENTORY_EPS) distributedEntries.push({ date, amount });
         });
+        const fallbackLogs = getUseLogsForSubstance(substanceId, { sortAsc: true, data })
+            .filter(logCountsTowardPersonalUseStats)
+            .map(log => ({ date: log.date, amount: getLogStatsAmount(log) }))
+            .filter(e => e.date && e.amount > INVENTORY_EPS);
         const rangeSource = filterEntriesToInsightsBounds(
-            distributedEntries.length ? distributedEntries : logs,
+            distributedEntries.length ? distributedEntries : fallbackLogs,
             e => e.date,
             bounds
         );
@@ -19262,7 +19559,7 @@ function getWeeklyTrackingSummaries(substanceId, boundsOrLimit = null, data = ap
         baseRows = buildMonthSplitWeeklyRows(rangeSource, e => e.amount || 0, e => e.date, limit);
     } else {
         const segmentEntries = filterEntriesToInsightsBounds(
-            getUsageSegments(logs, { substanceId })
+            getUsageSegments(null, { substanceId, data })
                 .filter(seg => seg.amount > INVENTORY_EPS)
                 .map(seg => ({ date: seg.date, amount: seg.amount })),
             e => e.date,
@@ -19276,15 +19573,14 @@ function getWeeklyTrackingSummaries(substanceId, boundsOrLimit = null, data = ap
         baseRows = baseRows.filter(row => weekRangeIntersectsBounds(row.weekStart, row.weekEnd, bounds));
     }
 
+    // Chronological rows for cumulative calc; reverse for newest-first display.
     return baseRows.slice().reverse().map(row => {
         const { weekStart, weekEnd } = bounds
             ? clampWeekRangeToBounds(row.weekStart, row.weekEnd, bounds)
             : row;
         return {
             ...calculateWeeklyTrackingSummary(substanceId, weekStart, weekEnd),
-            runningTotal: bounds
-                ? sumPersonalUseAmountInRange(substanceId, bounds.startDate, weekEnd, data)
-                : sumPersonalUseAmountThroughDate(substanceId, row.weekEnd, data)
+            runningTotal: sumMonthlyRunningTotalThroughDate(substanceId, weekEnd, bounds, data)
         };
     });
 }
@@ -19345,25 +19641,94 @@ function formatBuyInsightsMonthLabel(monthStart) {
     return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
-function getBuyWeeklySummaries(substanceId, bounds = null, limit = 8) {
-    const purchases = filterPurchasesByStatsBounds(
-        getPurchasesForInsightMetrics(substanceId),
-        bounds
-    );
-    if (!purchases.length) return [];
-    let baseRows = buildMonthSplitWeeklyRows(
-        purchases,
-        p => getPurchaseQuantity(p),
-        p => getPurchaseDateStr(p),
-        limit
-    );
-    if (bounds) {
-        baseRows = baseRows.filter(row => weekRangeIntersectsBounds(row.weekStart, row.weekEnd, bounds));
+function buildMonthSplitWeeklyRangesForDateSpan(startDate, endDate) {
+    if (!startDate || !endDate || startDate > endDate) return [];
+    const rangeMap = new Map();
+    let cursor = startDate;
+    while (cursor <= endDate) {
+        const range = getMonthSplitWeekRangeForDate(cursor);
+        rangeMap.set(getMonthSplitWeekRangeKey(range), range);
+        cursor = addDaysToDateStr(cursor, 1);
     }
-    const sub = getSubstance(substanceId);
+    return [...rangeMap.values()].sort((a, b) =>
+        a.weekStart.localeCompare(b.weekStart) || a.weekEnd.localeCompare(b.weekEnd)
+    );
+}
+
+function summarizeWeekPurchaseField(purchases, getter) {
+    const values = [];
+    const seen = new Set();
+    (purchases || []).forEach(purchase => {
+        const value = getter(purchase);
+        if (!value) return;
+        const key = String(value).toLowerCase();
+        if (seen.has(key)) return;
+        seen.add(key);
+        values.push(value);
+    });
+    if (!values.length) return '';
+    if (values.length === 1) return values[0];
+    return 'Multiple';
+}
+
+function sumBuyMetricsThroughDateInMonth(purchases, endDate, bounds = null) {
+    if (!endDate) {
+        return { runningAmountBought: 0, runningCostThisMonth: 0, runningPurchaseCount: 0 };
+    }
+    const monthStart = getMonthStartDateStr(endDate);
+    let startDate = monthStart;
+    if (bounds?.startDate && bounds.startDate > startDate) startDate = bounds.startDate;
+    let cappedEnd = endDate;
+    if (bounds?.endDate && bounds.endDate < cappedEnd) cappedEnd = bounds.endDate;
+    if (!startDate || !cappedEnd || startDate > cappedEnd) {
+        return { runningAmountBought: 0, runningCostThisMonth: 0, runningPurchaseCount: 0 };
+    }
+    let runningAmountBought = 0;
+    let runningCostThisMonth = 0;
+    let runningPurchaseCount = 0;
+    (purchases || []).forEach(purchase => {
+        const dateStr = getPurchaseDateStr(purchase);
+        if (!dateStr || dateStr < startDate || dateStr > cappedEnd) return;
+        runningAmountBought += parseFloat(getPurchaseQuantity(purchase)) || 0;
+        runningCostThisMonth += getPurchaseSpendAmount(purchase);
+        runningPurchaseCount += 1;
+    });
+    return { runningAmountBought, runningCostThisMonth, runningPurchaseCount };
+}
+
+function getBuyWeeklySummaries(substanceId, bounds = null, data = appData, limit = null) {
+    // Back-compat: older callers passed a numeric limit as the 3rd argument.
+    if (typeof data === 'number') {
+        limit = data;
+        data = appData;
+    }
+
+    const allPurchases = getPurchasesForInsightMetrics(substanceId, data);
+    const purchases = filterPurchasesByStatsBounds(allPurchases, bounds);
+    const dated = allPurchases.map(p => getPurchaseDateStr(p)).filter(Boolean).sort();
+    if (!dated.length && !bounds) return [];
+
+    let spanStart = bounds?.startDate || dated[0];
+    let spanEnd = bounds?.endDate || dated[dated.length - 1];
+    if (!spanStart || !spanEnd) return [];
+    if (dated.length) {
+        if (!bounds?.startDate) spanStart = dated[0];
+        if (!bounds?.endDate) spanEnd = dated[dated.length - 1];
+    }
+
+    let ranges = buildMonthSplitWeeklyRangesForDateSpan(spanStart, spanEnd);
+    if (bounds) {
+        ranges = ranges.filter(row => weekRangeIntersectsBounds(row.weekStart, row.weekEnd, bounds));
+    }
+    if (limit != null && limit > 0) {
+        ranges = ranges.slice(-limit);
+    }
+
+    const sub = getSubstance(substanceId, data);
     const unit = sub?.defaultUnit || 'units';
     const cur = getCurrencySymbol();
-    return baseRows.slice().reverse().map(row => {
+
+    return ranges.slice().reverse().map(row => {
         const { weekStart, weekEnd } = bounds
             ? clampWeekRangeToBounds(row.weekStart, row.weekEnd, bounds)
             : row;
@@ -19374,6 +19739,7 @@ function getBuyWeeklySummaries(substanceId, bounds = null, limit = 8) {
         const purchased = weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
         const cost = weekPurchases.reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
         const costPerUnit = purchased > 0 ? cost / purchased : null;
+        const running = sumBuyMetricsThroughDateInMonth(allPurchases, weekEnd, bounds);
         return {
             weekStart,
             weekEnd,
@@ -19383,6 +19749,11 @@ function getBuyWeeklySummaries(substanceId, bounds = null, limit = 8) {
             costPerUnit,
             purchaseCount: weekPurchases.length,
             avgBreakHours: avgPurchaseBreakHours(weekPurchases),
+            runningAmountBought: running.runningAmountBought,
+            runningCostThisMonth: running.runningCostThisMonth,
+            runningPurchaseCount: running.runningPurchaseCount,
+            store: summarizeWeekPurchaseField(weekPurchases, p => normalizeStoreName(p.store || p.location || '')),
+            payment: summarizeWeekPurchaseField(weekPurchases, p => (p.paymentMethod || '').trim()),
             unit,
             cur
         };
@@ -20056,19 +20427,32 @@ function renderStatsBuyWeekSummary(insights) {
         container.innerHTML = '<p class="empty-hint">No purchases yet.</p>';
         return;
     }
-    const sub = getSubstance(substanceId);
     const displayUnit = getSubstanceBuyDisplayUnit(substanceId);
-    container.innerHTML = renderSheetTable(
-        ['Week', 'Purchased', 'Cost', 'Avg Cost/g', 'Purchases', 'Break Between Buys'],
-        summaries.map(s => [
-            s.weekLabel,
-            s.purchased > 0 ? fmtSheetAmount(s.purchased, displayUnit) : '—',
-            fmtSheetMoney(s.cost, s.cur),
-            s.costPerUnit != null ? fmtAvgCostPerGram(s.cost, s.purchased, displayUnit, s.cur) : '—',
-            s.purchaseCount > 0 ? String(s.purchaseCount) : '—',
-            s.avgBreakHours != null ? formatBuyBreakFromHours(s.avgBreakHours) : '—'
-        ])
-    );
+    container.innerHTML = renderConfigurableSheetTable('buyWeekly', summaries, (colId, s) => {
+        switch (colId) {
+            case 'week': return s.weekLabel;
+            case 'purchased': return s.purchased > 0 ? fmtSheetAmount(s.purchased, displayUnit) : '—';
+            case 'cost': return fmtSheetMoney(s.cost, s.cur);
+            case 'costPerUnit':
+                return s.costPerUnit != null
+                    ? fmtAvgCostPerGram(s.cost, s.purchased, displayUnit, s.cur)
+                    : '—';
+            case 'purchaseCount': return s.purchaseCount > 0 ? String(s.purchaseCount) : '—';
+            case 'avgBreak':
+                return s.avgBreakHours != null ? formatBuyBreakFromHours(s.avgBreakHours) : '—';
+            case 'runningAmountBought':
+                return s.runningAmountBought > 0
+                    ? fmtSheetAmount(s.runningAmountBought, displayUnit)
+                    : '—';
+            case 'runningCostThisMonth':
+                return fmtSheetMoney(s.runningCostThisMonth, s.cur);
+            case 'runningPurchaseCount':
+                return s.runningPurchaseCount > 0 ? String(s.runningPurchaseCount) : '—';
+            case 'store': return s.store || '—';
+            case 'payment': return s.payment || '—';
+            default: return '—';
+        }
+    }, substanceId);
 }
 
 function renderStatsBuyMonthSummary(insights) {
@@ -20142,6 +20526,111 @@ function renderStatsBuyPurchaseDetails(insights) {
             default: return '—';
         }
     }, substanceId);
+}
+
+function buildStatsWeeklySummaryCsvRows(substanceId, bounds = null, data = appData) {
+    const summaries = getWeeklyTrackingSummaries(substanceId, bounds, data);
+    const sub = getSubstance(substanceId, data);
+    const displayUnit = getStatsDisplayUnit(substanceId, sub?.defaultUnit || 'units');
+    const rows = [['Week Start', 'Week End', 'Usage', 'Unit', 'Monthly Running Total']];
+    summaries.forEach(summary => {
+        rows.push([
+            summary.weekStart,
+            summary.weekEnd,
+            summary.totalUsage,
+            displayUnit,
+            summary.runningTotal
+        ]);
+    });
+    return rows;
+}
+
+function getBuyWeeklySummaryCsvCellValue(colId, summary, displayUnit) {
+    switch (colId) {
+        case 'week': return summary.weekLabel;
+        case 'purchased': return summary.purchased > 0 ? summary.purchased : '';
+        case 'cost': return Number.isFinite(summary.cost) ? Number(summary.cost.toFixed(2)) : '';
+        case 'costPerUnit':
+            return summary.costPerUnit != null && Number.isFinite(summary.costPerUnit)
+                ? Number(summary.costPerUnit.toFixed(4))
+                : '';
+        case 'purchaseCount': return summary.purchaseCount > 0 ? summary.purchaseCount : '';
+        case 'avgBreak':
+            return summary.avgBreakHours != null ? formatBuyBreakFromHours(summary.avgBreakHours) : '';
+        case 'runningAmountBought':
+            return summary.runningAmountBought > 0 ? summary.runningAmountBought : '';
+        case 'runningCostThisMonth':
+            return Number.isFinite(summary.runningCostThisMonth)
+                ? Number(summary.runningCostThisMonth.toFixed(2))
+                : '';
+        case 'runningPurchaseCount':
+            return summary.runningPurchaseCount > 0 ? summary.runningPurchaseCount : '';
+        case 'store': return summary.store || '';
+        case 'payment': return summary.payment || '';
+        default: return '';
+    }
+}
+
+function buildBuyWeeklySummaryCsvRows(substanceId, bounds = null, data = appData) {
+    const summaries = getBuyWeeklySummaries(substanceId, bounds, data);
+    const columns = getEffectiveColumnOrder('buyWeekly');
+    const displayUnit = getSubstanceBuyDisplayUnit(substanceId);
+    const headers = columns.map(colId => getTableColumnLabelForSubstance('buyWeekly', colId, substanceId));
+    const rows = [headers];
+    summaries.forEach(summary => {
+        rows.push(columns.map(colId => getBuyWeeklySummaryCsvCellValue(colId, summary, displayUnit)));
+    });
+    return rows;
+}
+
+function exportStatsBuyWeekSummaryCsv() {
+    const substanceId = isAllSubstancesView() ? null : currentSubstanceId;
+    if (!substanceId) {
+        alert('Select a specific substance to export Week Summary.');
+        return;
+    }
+    const sub = getSubstance(substanceId);
+    if (!sub) {
+        alert('Select a substance to export.');
+        return;
+    }
+    const insights = buildInsightsDataset(substanceId);
+    const csvMatrix = buildBuyWeeklySummaryCsvRows(substanceId, insights.bounds);
+    if (csvMatrix.length <= 1) {
+        alert('No weekly purchase data to export.');
+        return;
+    }
+    const csvRows = csvMatrix.map(row => row.map(csvEscape).join(','));
+    const safeName = getSubstanceDisplayName(sub).replace(/[^\w.-]+/g, '_');
+    downloadBlob(
+        new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8' }),
+        `recovery-tracker-spending-week-summary-${safeName}-${getLocalDateString()}.csv`
+    );
+}
+
+function exportStatsWeeklySummaryCsv() {
+    const substanceId = isAllSubstancesView() ? null : currentSubstanceId;
+    if (!substanceId) {
+        alert('Select a specific substance to export Weekly Use Summary.');
+        return;
+    }
+    const sub = getSubstance(substanceId);
+    if (!sub) {
+        alert('Select a substance to export.');
+        return;
+    }
+    const insights = buildInsightsDataset(substanceId);
+    const csvMatrix = buildStatsWeeklySummaryCsvRows(substanceId, insights.bounds);
+    if (csvMatrix.length <= 1) {
+        alert('No weekly data to export.');
+        return;
+    }
+    const csvRows = csvMatrix.map(row => row.map(csvEscape).join(','));
+    const safeName = getSubstanceDisplayName(sub).replace(/[^\w.-]+/g, '_');
+    downloadBlob(
+        new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8' }),
+        `recovery-tracker-weekly-use-summary-${safeName}-${getLocalDateString()}.csv`
+    );
 }
 
 function exportStatsBuyMonthSummaryCsv() {
@@ -21334,6 +21823,8 @@ function setupStatsCalendarControls() {
 
     document.getElementById('stats-calendar-today-btn')?.addEventListener('click', goStatsCalendarToday);
     document.getElementById('stats-calendar-export-btn')?.addEventListener('click', exportStatsCalendarCsv);
+    document.getElementById('stats-weekly-export-btn')?.addEventListener('click', exportStatsWeeklySummaryCsv);
+    document.getElementById('stats-buy-week-export-btn')?.addEventListener('click', exportStatsBuyWeekSummaryCsv);
     document.getElementById('stats-buy-month-export-btn')?.addEventListener('click', exportStatsBuyMonthSummaryCsv);
 
     document.getElementById('stats-cal-compact')?.addEventListener('change', (e) => {
@@ -24741,6 +25232,12 @@ function onTaperSubstanceChange() {
     toggleTaperPlanTypeFields();
     prefillVapeTaperDefaults(getTaperSubstanceId());
     refreshTaperDashboard();
+    if (columnSettingsTableKey === 'taperByWeek') {
+        openColumnSettingsModal(
+            'taperByWeek',
+            getTaperByWeekColumnVariantKey(getTaperSubstanceId(), getSelectedTaperPlan())
+        );
+    }
 }
 
 function onTaperPlanChange() {
@@ -24748,6 +25245,12 @@ function onTaperPlanChange() {
     selectedTaperPlanId = select?.value || null;
     taperEditingPlan = false;
     refreshTaperDashboard();
+    if (columnSettingsTableKey === 'taperByWeek') {
+        openColumnSettingsModal(
+            'taperByWeek',
+            getTaperByWeekColumnVariantKey(getTaperSubstanceId(), getSelectedTaperPlan())
+        );
+    }
 }
 
 function onTaperShowArchivedChange() {
@@ -27194,6 +27697,10 @@ function __getRecoveryTrackerTestExports() {
         normalizeAppDataSafe,
         getWeeklyTrackingSummaries,
         sumPersonalUseAmountThroughDate,
+        sumMonthlyRunningTotalThroughDate,
+        buildStatsWeeklySummaryCsvRows,
+        getTableColumnTooltip,
+        TABLE_COLUMN_TOOLTIPS,
         getDefaultAppData,
         getDefaultSubstances,
         formatAmount,
@@ -27345,10 +27852,19 @@ function __getRecoveryTrackerTestExports() {
         formatTaperRunningAmountBought,
         purchaseQualifiesForTaperPlan,
         getTaperByWeekColumnVariantKey,
+        getTaperByWeekColumnFamily,
+        getTaperByWeekColumnFamilyLabel,
+        getTaperByWeekColumnCatalog,
+        getTaperByWeekColumnLabel,
+        getDefaultTaperByWeekColumnSettings,
+        filterTaperByWeekColumnSettingsToCatalog,
         getTableColumnConfig,
         getEffectiveColumnOrder,
         saveTableColumnConfig,
         resolveColumnStorageKey,
+        openColumnSettingsModal,
+        renderColumnSettingsList,
+        closeColumnSettingsModal,
         COLUMN_SETTINGS_STORAGE_KEY,
         loadColumnSettingsStore,
         getBuyMonthSummaryRows,
@@ -27379,6 +27895,9 @@ function __getRecoveryTrackerTestExports() {
         getBuyBreakMetricsFromPurchases,
         getBuyBreakMetrics,
         getBuyWeeklySummaries,
+        sumBuyMetricsThroughDateInMonth,
+        buildBuyWeeklySummaryCsvRows,
+        getDefaultColumnSettings,
         getWeeklyTrackingSummaries,
         getMonthlyTrackingSummaries,
         calculateMonthlyTrackingSummary,

@@ -904,6 +904,7 @@
                     <div class="section-content">
                         <div class="sheet-table-toolbar">
                             <button type="button" class="secondary-btn table-columns-btn" id="stats-weekly-customize-columns">Customize Columns</button>
+                            <button type="button" class="secondary-btn" id="stats-weekly-export-btn">Export CSV</button>
                         </div>
                         <div id="stats-weekly-summary" class="sheet-table-wrap"></div>
                     </div>
@@ -918,7 +919,13 @@
                         <div id="stats-buy-analytics-cards" class="sheet-summary-grid"></div>
 
                         <div class="stats-section">
-                            <h4 class="stats-inline-heading">Week Summary</h4>
+                            <div class="stats-section-heading-row">
+                                <h4 class="stats-inline-heading">Week Summary</h4>
+                                <div class="stats-section-heading-actions">
+                                    <button type="button" class="secondary-btn btn-sm table-columns-btn" id="stats-buy-week-customize-columns">Customize Columns</button>
+                                    <button type="button" class="secondary-btn btn-sm" id="stats-buy-week-export-btn">Export CSV</button>
+                                </div>
+                            </div>
                             <div id="stats-buy-week-summary" class="sheet-table-wrap"></div>
                         </div>
 
@@ -2089,6 +2096,7 @@
     <div id="column-settings-modal" class="modal hidden">
         <div class="modal-content modal-wide">
             <h2 id="column-settings-title">Customize Columns</h2>
+            <p id="column-settings-subtitle" class="settings-hint column-settings-subtitle hidden"></p>
             <p class="settings-hint">Drag rows to reorder columns. Uncheck to hide optional columns; required columns stay visible.</p>
             <div class="column-settings-bulk-actions">
                 <button type="button" class="secondary-btn btn-sm" id="column-settings-show-all">Show all</button>
