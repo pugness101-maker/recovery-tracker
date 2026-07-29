@@ -93,8 +93,10 @@ function initTheme() {
     updateThemePreviewUI();
 }
 
-const SUBSTANCE_ICONS = ['🚬', '💨', '🍺', '🌿', '💊', '☕', '🍬', '💉', '🎯', '⚡', '🧪', '📦', '🔥', '❄️', '💧', '🌸', '🌀'];
+const SUBSTANCE_ICONS = ['🚬', '💨', '🍺', '🌿', '💊', '🍬', '💉', '🎯', '⚡', '🧪', '📦', '🔥', '❄️', '💧', '🌸', '🌀'];
 const SUBSTANCE_COLORS = ['#4caf50', '#42a5f5', '#ffb74d', '#66bb6a', '#ab47bc', '#ef5350', '#78909c', '#26a69a', '#ff7043', '#5c6bc0'];
+
+const CAFFEINE_SUBSTANCE_ID = 'caffeine';
 
 const V1_NAME_TO_ID = {
     'Cigarettes': 'nicotine',
@@ -104,7 +106,6 @@ const V1_NAME_TO_ID = {
     'Coke': 'coke',
     'Alcohol': 'alcohol',
     'Weed/THC': 'weed-thc',
-    'Caffeine': 'caffeine',
     'LSD': 'lsd',
     'Molly': 'molly',
     'Xannax': 'xannax',
@@ -317,18 +318,6 @@ const DEFAULT_SUBSTANCE_CATALOG = [
         taperTrackingEnabled: true
     },
     {
-        id: 'caffeine',
-        name: 'Caffeine',
-        icon: '☕',
-        color: '#8d6e63',
-        trackingMode: 'caffeine',
-        primaryUnit: 'mg',
-        units: ['mg', 'cups', 'drinks', 'pills'],
-        defaultUnit: 'mg',
-        costTrackingEnabled: true,
-        taperTrackingEnabled: true
-    },
-    {
         id: 'lsd',
         name: 'LSD',
         icon: '🧪',
@@ -407,9 +396,11 @@ function inferTrackingModeFromSubstance(sub) {
 function getSubstanceTrackingMode(substanceId, data = appData) {
     if (!substanceId) return 'standard';
     if (substanceId === 'coke') return 'powder';
+    if (isCaffeineSubstanceRef(substanceId)) return 'standard';
     const sub = typeof getSubstance === 'function' ? getSubstance(substanceId, data) : null;
     if (sub) {
         if (sub.id === 'coke' || normalizeSubstanceName(sub.name) === 'coke') return 'powder';
+        if (sub.trackingMode === 'caffeine') return 'standard';
         if (sub.trackingMode) return sub.trackingMode;
         return inferTrackingModeFromSubstance(sub);
     }
@@ -1092,6 +1083,80 @@ function migrateSubstanceNameDedupe(data) {
     data.migrations.substanceNameDedupeV1 = true;
 }
 
+function isCaffeineSubstanceRecord(sub) {
+    if (!sub || typeof sub !== 'object') return false;
+    if (sub.id === CAFFEINE_SUBSTANCE_ID) return true;
+    if (normalizeSubstanceName(sub.name) === 'caffeine') return true;
+    if (sub.trackingMode === 'caffeine') return true;
+    return false;
+}
+
+function isCaffeineSubstanceRef(ref) {
+    if (ref == null || ref === '') return false;
+    const value = String(ref).trim();
+    if (!value) return false;
+    if (value === CAFFEINE_SUBSTANCE_ID || value === 'Caffeine') return true;
+    return normalizeSubstanceName(value) === 'caffeine';
+}
+
+/** Strip retired caffeine substance and related records from older saves/imports. Idempotent. */
+function migrateRemoveCaffeine(data) {
+    if (!data || typeof data !== 'object') return;
+    ensureAppDataMigrations(data);
+
+    const caffeineIds = new Set([CAFFEINE_SUBSTANCE_ID]);
+    (data.substances || []).forEach(sub => {
+        if (isCaffeineSubstanceRecord(sub) && sub.id) caffeineIds.add(sub.id);
+    });
+
+    const matchesCaffeineId = (id) => caffeineIds.has(id) || isCaffeineSubstanceRef(id);
+
+    data.substances = (data.substances || []).filter(sub => !isCaffeineSubstanceRecord(sub));
+
+    data.logs = (data.logs || []).filter(log => {
+        const sid = log?.substanceId || log?.substance;
+        return !matchesCaffeineId(sid);
+    });
+
+    data.purchases = (data.purchases || []).filter(purchase => {
+        const sid = purchase?.substanceId || purchase?.substance;
+        return !matchesCaffeineId(sid);
+    });
+
+    data.cravings = (data.cravings || []).filter(craving => {
+        const sid = craving?.substanceId || craving?.substance;
+        return !matchesCaffeineId(sid);
+    });
+
+    if (data.settings?.substanceSettings && typeof data.settings.substanceSettings === 'object') {
+        Object.keys(data.settings.substanceSettings).forEach(key => {
+            if (matchesCaffeineId(key)) delete data.settings.substanceSettings[key];
+        });
+    }
+
+    if (data.taperPlans && typeof data.taperPlans === 'object') {
+        Object.keys(data.taperPlans).forEach(key => {
+            if (matchesCaffeineId(key)) delete data.taperPlans[key];
+        });
+    }
+
+    if (Array.isArray(data.taperPlansV2)) {
+        data.taperPlansV2 = data.taperPlansV2.filter(plan => !matchesCaffeineId(plan?.substanceId));
+    }
+
+    if (data.recoveryStreaks && typeof data.recoveryStreaks === 'object') {
+        Object.keys(data.recoveryStreaks).forEach(key => {
+            if (matchesCaffeineId(key)) delete data.recoveryStreaks[key];
+        });
+    }
+
+    if (matchesCaffeineId(data.settings?.dashboardSubstanceId)) {
+        data.settings.dashboardSubstanceId = DASHBOARD_ALL;
+    }
+
+    data.migrations.removeCaffeineV1 = true;
+}
+
 function migrateSubstanceTrackingModes(data) {
     if (!Array.isArray(data.substances)) data.substances = [];
 
@@ -1099,6 +1164,9 @@ function migrateSubstanceTrackingModes(data) {
         if (!sub || typeof sub !== 'object') return;
         const defaults = getSubstanceTrackingDefaults(sub.id);
         if (!sub.trackingMode) sub.trackingMode = inferTrackingModeFromSubstance(sub);
+        if (sub.trackingMode === 'caffeine' || isCaffeineSubstanceRecord(sub)) {
+            sub.trackingMode = 'standard';
+        }
         if (sub.id === 'coke' || normalizeSubstanceName(sub.name) === 'coke') {
             sub.trackingMode = 'powder';
             sub.primaryUnit = sub.primaryUnit || 'g';
@@ -2701,7 +2769,6 @@ function getDefaultSubstanceSettings() {
         coke: { packPrice: 80, unitsPerPack: 1, baseline: 0.5, quitGoal: '' },
         alcohol: { packPrice: 15, unitsPerPack: 6, baseline: 2, quitGoal: '' },
         'weed-thc': { packPrice: 50, unitsPerPack: 28, baseline: 1, quitGoal: '' },
-        caffeine: { packPrice: 5, unitsPerPack: 30, baseline: 200, quitGoal: '' },
         lsd: { packPrice: 15, unitsPerPack: 10, baseline: 1, quitGoal: '' },
         molly: { packPrice: 25, unitsPerPack: 1, baseline: 100, quitGoal: '' },
         xannax: { packPrice: 10, unitsPerPack: 30, baseline: 1, quitGoal: '' },
@@ -3608,6 +3675,7 @@ function normalizeAppData(data) {
     ensureDefaultSubstanceSettings(data);
     migrateSubstanceTrackingModes(data);
     migrateSubstanceNameDedupe(data);
+    migrateRemoveCaffeine(data);
     migrateInventorySubstanceFields(data);
     normalizeMainSubstances(data);
     migrateTaperPlansSafely(data);
