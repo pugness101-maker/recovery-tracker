@@ -306,15 +306,20 @@ test('nicotine catalog excludes cocaine buying columns', () => {
     const plan = { substanceId: NICOTINE_ID, reductionType: 'nicotine-vape-purchase' };
     const catalog = rt.getTaperByWeekColumnCatalog(NICOTINE_ID, plan);
     assert.ok(catalog.includes('vapeLifespans'));
-    assert.ok(catalog.includes('avgPerDay'));
     assert.ok(catalog.includes('buyInterval'));
     assert.ok(catalog.includes('runningAmountSpent'));
+    assert.ok(catalog.includes('lifespanGoal'));
+    assert.ok(catalog.includes('sharedPuffs'));
+    assert.ok(catalog.includes('giftedPuffs'));
+    assert.ok(!catalog.includes('avgPerDay'));
     assert.ok(!catalog.includes('buyPlanned'));
     assert.ok(!catalog.includes('buyDiff'));
     assert.ok(!catalog.includes('monthlyBuyCapStatus'));
     assert.ok(!catalog.includes('targets'));
-    assert.equal(rt.getTaperByWeekColumnLabel('avgPerDay', plan, NICOTINE_ID), 'Avg Puffs/Day');
-    assert.equal(rt.getTaperByWeekColumnLabel('runningAmountBought', plan, NICOTINE_ID), 'Running Purchases');
+    assert.equal(rt.getTaperByWeekColumnLabel('buyInterval', plan, NICOTINE_ID), 'Days Between Purchases');
+    assert.equal(rt.getTaperByWeekColumnLabel('runningAmountBought', plan, NICOTINE_ID), 'Monthly Running Vapes Bought');
+    assert.equal(rt.getTaperByWeekColumnLabel('planned', plan, NICOTINE_ID), 'Puff Target');
+    assert.equal(rt.getTaperByWeekColumnLabel('used', plan, NICOTINE_ID), 'Personal Puffs');
 });
 
 test('alcohol catalog excludes nicotine and cocaine columns', () => {

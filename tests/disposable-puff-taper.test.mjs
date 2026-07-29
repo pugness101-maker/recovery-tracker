@@ -89,13 +89,13 @@ function setup(data) {
     return rt;
 }
 
-test('Daily Puff Taper is default recommended option for nicotine', () => {
+test('Vape Taper is default recommended option for nicotine', () => {
     const rt = setup(makeNicotineData());
     const types = rt.getTaperReductionTypesForSubstance(NICOTINE_ID);
-    assert.equal(types.join(','), 'reduce-puffs,nicotine-vape-purchase,manual-weekly');
-    assert.equal(types[0], 'reduce-puffs');
-    assert.equal(rt.TAPER_REDUCTION_LABELS['reduce-puffs'], 'Daily Puff Taper');
-    assert.equal(rt.TAPER_REDUCTION_LABELS['nicotine-vape-purchase'], 'Purchase Schedule');
+    assert.equal(types.join(','), 'nicotine-vape-purchase,reduce-puffs,manual-weekly');
+    assert.equal(types[0], 'nicotine-vape-purchase');
+    assert.equal(rt.TAPER_REDUCTION_LABELS['reduce-puffs'], 'Puff-only Taper');
+    assert.equal(rt.TAPER_REDUCTION_LABELS['nicotine-vape-purchase'], 'Vape Taper');
     assert.equal(rt.TAPER_REDUCTION_LABELS['manual-weekly'], 'Custom Plan');
     assert.ok(!types.includes('reduce-nicotine'));
     assert.ok(!types.includes('reduce-buying'));
@@ -253,5 +253,5 @@ test('labels no longer use Legacy wording for puff taper', () => {
     const rt = setup(makeNicotineData());
     const labels = Object.values(rt.TAPER_REDUCTION_LABELS).join(' ').toLowerCase();
     assert.ok(!labels.includes('(legacy)'));
-    assert.equal(rt.TAPER_REDUCTION_LABELS['reduce-puffs'], 'Daily Puff Taper');
+    assert.equal(rt.TAPER_REDUCTION_LABELS['reduce-puffs'], 'Puff-only Taper');
 });
