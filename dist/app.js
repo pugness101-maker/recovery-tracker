@@ -912,6 +912,9 @@ function commitUseLogEntry(log, options = {}) {
     if (isLsdSubstanceId(getUseSubstanceId(log), data)) {
         finalizeLsdUseLogForSave(log, options.lsdCalc || null, data);
     }
+    if (isXanaxSubstanceId(getUseSubstanceId(log), data)) {
+        finalizeXanaxUseLogForSave(log, options.xanaxCalc || null, data);
+    }
     syncGiftPartyFields(log);
     syncLogPurchaseFields(log);
 
@@ -1303,21 +1306,29 @@ function computeXanaxUseFromForm(options = {}) {
     const substanceId = document.getElementById('use-substance')?.value;
     if (!isXanaxSubstanceId(substanceId)) return null;
 
+    const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
     const purchaseId = getUsePurchaseLinkMode() === 'manual'
         ? parsePurchaseSelectId(document.getElementById('use-purchase-select')?.value)
-        : resolveLinkedPurchaseId(substanceId, 'use');
+        : resolveLinkedPurchaseId(substanceId, transactionType);
     const purchase = purchaseId ? findPurchase(purchaseId) : null;
     const mgPerPill = purchase ? getXanaxMgPerPill(purchase) : null;
-    if (!mgPerPill) {
-        return { error: 'Link to a Xanax purchase with strength per pill set, or add inventory with strength first.' };
-    }
     const inputMode = getXanaxLogInputMode();
+    const needsStrength = transactionType === 'use'
+        || transactionType === 'gift_given'
+        || (transactionType === 'inventory_adjustment' && getUseAdjustmentDirection() === 'remove');
+    const needsStrengthForMg = needsStrength
+        || transactionType === 'gift_received'
+        || transactionType === 'inventory_adjustment';
 
     if (inputMode === 'pills') {
         const pillsRaw = parseFloat(document.getElementById('use-xanax-pills-used')?.value);
         if (!Number.isFinite(pillsRaw) || pillsRaw < 0) return { error: 'Enter pills used.' };
+        if (needsStrength && !mgPerPill) {
+            return { error: 'Link to a Xanax purchase with strength per pill set, or add inventory with strength first.' };
+        }
         const pillsUsed = pillsRaw;
-        const mgUsed = normalizeUsageTotal(pillsUsed * mgPerPill);
+        if (pillsUsed <= 0) return { error: 'Enter a valid amount greater than 0.' };
+        const mgUsed = mgPerPill ? normalizeUsageTotal(pillsUsed * mgPerPill) : 0;
         return {
             purchaseId,
             purchase,
@@ -1325,8 +1336,8 @@ function computeXanaxUseFromForm(options = {}) {
             mgUsed,
             amount: pillsUsed,
             unit: 'pills',
-            strengthPerPillAtTimeOfUse: getXanaxStrengthPerPill(purchase),
-            strengthUnitAtTimeOfUse: getXanaxStrengthUnit(purchase),
+            strengthPerPillAtTimeOfUse: purchase ? getXanaxStrengthPerPill(purchase) : null,
+            strengthUnitAtTimeOfUse: purchase ? getXanaxStrengthUnit(purchase) : null,
             mgPerPillAtTimeOfUse: mgPerPill
         };
     }
@@ -1334,18 +1345,42 @@ function computeXanaxUseFromForm(options = {}) {
     const mgRaw = parseFloat(document.getElementById('use-xanax-mg-used')?.value);
     if (!Number.isFinite(mgRaw) || mgRaw < 0) return { error: 'Enter mg used.' };
     const mgUsed = normalizeUsageTotal(mgRaw);
-    const pillsUsed = mgUsed / mgPerPill;
+    if (mgUsed <= 0) return { error: 'Enter a valid amount greater than 0.' };
+    if (needsStrengthForMg && !mgPerPill) {
+        return { error: 'Link to a Xanax purchase with strength per pill set, or add inventory with strength first.' };
+    }
+    const pillsUsed = mgPerPill > 0 ? mgUsed / mgPerPill : null;
     return {
         purchaseId,
         purchase,
         pillsUsed,
         mgUsed,
-        amount: pillsUsed,
+        amount: pillsUsed ?? mgUsed,
         unit: 'pills',
-        strengthPerPillAtTimeOfUse: getXanaxStrengthPerPill(purchase),
-        strengthUnitAtTimeOfUse: getXanaxStrengthUnit(purchase),
+        strengthPerPillAtTimeOfUse: purchase ? getXanaxStrengthPerPill(purchase) : null,
+        strengthUnitAtTimeOfUse: purchase ? getXanaxStrengthUnit(purchase) : null,
         mgPerPillAtTimeOfUse: mgPerPill
     };
+}
+
+function validateXanaxUseSubmit(xanaxCalc, transactionType) {
+    if (xanaxCalc?.error) return xanaxCalc.error;
+    const pills = parseFloat(xanaxCalc?.pillsUsed);
+    const mg = parseFloat(xanaxCalc?.mgUsed);
+    if ((!Number.isFinite(pills) || pills <= 0) && (!Number.isFinite(mg) || mg <= 0)) {
+        return 'Enter a valid Xanax amount greater than 0.';
+    }
+    const linkMode = getUsePurchaseLinkMode();
+    const needsPurchaseStrength = transactionType === 'use'
+        || transactionType === 'gift_given'
+        || (transactionType === 'inventory_adjustment' && getUseAdjustmentDirection() === 'remove');
+    if (needsPurchaseStrength && linkMode !== 'none' && !xanaxCalc.purchaseId) {
+        return 'Link to a Xanax purchase with strength per pill set, or add inventory with strength first.';
+    }
+    if (needsPurchaseStrength && linkMode !== 'none' && !xanaxCalc.mgPerPillAtTimeOfUse) {
+        return 'Link to a Xanax purchase with strength per pill set, or add inventory with strength first.';
+    }
+    return null;
 }
 
 function updateXanaxUsePreview() {
@@ -1360,7 +1395,44 @@ function updateXanaxUsePreview() {
         preview.textContent = calc?.error || 'Enter use amount.';
         return;
     }
-    preview.textContent = `${formatAmount(calc.pillsUsed)} pills = ${formatAmount(calc.mgUsed)} mg used (${formatAmount(calc.mgPerPillAtTimeOfUse)} mg/pill).`;
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    const pillPart = calc.pillsUsed != null ? formatXanaxPillCountLabel(calc.pillsUsed) : '— pills';
+    const mgPart = `${formatAmount(calc.mgUsed)} mg`;
+    const conversion = calc.mgPerPillAtTimeOfUse
+        ? ` (${formatAmount(calc.mgPerPillAtTimeOfUse)} mg/pill)`
+        : '';
+    if (tx === 'gift_given') {
+        preview.textContent = `Gift given: ${pillPart} · ${mgPart}${conversion}`;
+        return;
+    }
+    if (tx === 'gift_received') {
+        preview.textContent = `Gift received: ${pillPart} · ${mgPart}${conversion}`;
+        return;
+    }
+    if (tx === 'inventory_adjustment') {
+        const dir = getUseAdjustmentDirection() === 'remove' ? 'Remove' : 'Add';
+        preview.textContent = `${dir}: ${pillPart} · ${mgPart}${conversion}`;
+        return;
+    }
+    preview.textContent = `${pillPart} = ${mgPart} used${conversion}.`;
+}
+
+function syncXanaxUseDatetimeUI() {
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    const isNonUse = isNonUseTransactionType(tx);
+    const startLabel = document.getElementById('use-start-time-label');
+    if (startLabel) startLabel.textContent = 'Start time';
+    document.getElementById('use-start-time-group')?.classList.toggle('hidden', !isNonUse);
+    document.getElementById('use-end-time-group')?.classList.add('hidden');
+    document.getElementById('use-end-date-group')?.classList.add('hidden');
+    const startEl = document.getElementById('use-start-time');
+    if (startEl) startEl.required = isNonUse;
+    if (!isNonUse && startEl) startEl.value = '';
+    const endTimeEl = document.getElementById('use-end-time');
+    if (endTimeEl) endTimeEl.value = '';
+    const endDateEl = document.getElementById('use-end-date');
+    if (endDateEl) endDateEl.value = '';
+    document.getElementById('use-duration-preview')?.classList.add('hidden');
 }
 
 function updateXanaxUseFormUI() {
@@ -1372,24 +1444,24 @@ function updateXanaxUseFormUI() {
     document.getElementById('use-amount-mode-group')?.classList.toggle('hidden', hideGenericAmount);
     if (isXanax) {
         setUseLogType('quick');
-        setUseTransactionType('use');
+        syncXanaxUseDatetimeUI();
         ensureXanaxUseFormDefaults();
         updateXanaxUsePreview();
+        updateUsePurchaseLinkUI();
     }
 }
 
 function ensureXanaxUseFormDefaults() {
     if (!isXanaxDateOnlyUseForm()) return;
-    const startEl = document.getElementById('use-start-time');
-    if (startEl) {
-        startEl.value = '';
-        startEl.required = false;
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    if (isNonUseTransactionType(tx)) {
+        const now = new Date();
+        const dateEl = document.getElementById('use-date');
+        const startEl = document.getElementById('use-start-time');
+        if (dateEl && !dateEl.value) dateEl.value = getLocalDateString(now);
+        if (startEl && !startEl.value) startEl.value = getLocalTimeString(now);
     }
-    const endTimeEl = document.getElementById('use-end-time');
-    if (endTimeEl) endTimeEl.value = '';
-    const endDateEl = document.getElementById('use-end-date');
-    if (endDateEl) endDateEl.value = '';
-    document.getElementById('use-duration-preview')?.classList.add('hidden');
+    syncXanaxUseDatetimeUI();
 }
 
 function getXanaxLogPillsAmount(log) {
@@ -1410,10 +1482,84 @@ function getXanaxLogMgAmount(log) {
     return 0;
 }
 
+function formatXanaxPillCountLabel(pills) {
+    const n = parseFloat(pills);
+    if (!Number.isFinite(n)) return '— pills';
+    const rounded = Math.abs(n - 1) < 0.001;
+    return `${formatAmount(n)} pill${rounded ? '' : 's'}`;
+}
+
 function formatXanaxUseSummary(log) {
     const pills = getXanaxLogPillsAmount(log);
     const mg = getXanaxLogMgAmount(log);
+    const detail = `${formatXanaxPillCountLabel(pills)} · ${formatAmount(mg)} mg`;
+    const tx = getLogTransactionType(log);
+    if (tx === 'gift_given') return `Gift Given · ${detail}`;
+    if (tx === 'gift_received') return `Gift Received · ${detail}`;
+    if (tx === 'inventory_adjustment') {
+        const dir = getAdjustmentDirection(log) === 'remove' ? '−' : '+';
+        return `Adjustment · ${dir}${detail}`;
+    }
     return `${formatAmount(pills)} pills · ${formatAmount(mg)} mg`;
+}
+
+function computeXanaxUseLogEstimatedCost(log, data = appData) {
+    if (!isXanaxSubstanceId(getUseSubstanceId(log), data)) return null;
+    const pills = getXanaxLogPillsAmount(log);
+    if (pills <= INVENTORY_EPS) return null;
+    const pid = getLogPurchaseId(log);
+    if (pid) {
+        const purchase = findPurchaseInData(pid, data);
+        if (purchase) {
+            const costPerPill = parseFloat(purchase.costPerPill);
+            if (Number.isFinite(costPerPill) && costPerPill > 0) return pills * costPerPill;
+            const totalPills = getXanaxPillQuantity(purchase);
+            const totalCost = parseFloat(getPurchaseTotalCost(purchase)) || 0;
+            if (totalPills > 0 && totalCost > 0) return (pills / totalPills) * totalCost;
+        }
+    }
+    const avg = getAveragePurchaseCostPerUnit(getUseSubstanceId(log), data);
+    return avg != null ? pills * avg : null;
+}
+
+function finalizeXanaxUseLogForSave(log, xanaxCalc = null, data = appData) {
+    if (!log || !isXanaxSubstanceId(getUseSubstanceId(log), data)) return log;
+    log.type = 'quick';
+    log.logMode = 'xanax_dose';
+    log.unit = 'pills';
+    if (xanaxCalc && !xanaxCalc.error) {
+        log.pillsUsed = xanaxCalc.pillsUsed;
+        log.mgUsed = xanaxCalc.mgUsed;
+        log.amount = Number.isFinite(xanaxCalc.pillsUsed) ? xanaxCalc.pillsUsed : (xanaxCalc.amount ?? 0);
+        log.strengthPerPillAtTimeOfUse = xanaxCalc.strengthPerPillAtTimeOfUse;
+        log.strengthUnitAtTimeOfUse = xanaxCalc.strengthUnitAtTimeOfUse;
+        log.mgPerPillAtTimeOfUse = xanaxCalc.mgPerPillAtTimeOfUse;
+        if (xanaxCalc.purchaseId && log.inventoryAffects !== false) {
+            setLogPurchaseId(log, xanaxCalc.purchaseId);
+        }
+    } else {
+        log.pillsUsed = getXanaxLogPillsAmount(log);
+        log.mgUsed = getXanaxLogMgAmount(log);
+        log.amount = log.pillsUsed;
+    }
+    const tx = getLogTransactionType(log);
+    if (tx !== 'use') {
+        log.startTime = log.startTime || log.time || '';
+        log.time = log.time || log.startTime || '';
+    } else {
+        log.startTime = '';
+        log.time = '';
+    }
+    log.endTime = '';
+    delete log.endDate;
+    delete log.startedAt;
+    delete log.endedAt;
+    delete log.durationMs;
+    syncGiftPartyFields(log);
+    syncLogPurchaseFields(log);
+    const cost = computeXanaxUseLogEstimatedCost(log, data);
+    if (cost != null) log.estimatedCost = cost;
+    return log;
 }
 
 function migrateXanaxInventoryV1(data) {
@@ -4288,6 +4434,15 @@ function normalizeAppData(data) {
             }
             if (log.estimatedCost == null) {
                 const cost = computeLsdUseLogEstimatedCost(log, data);
+                if (cost != null) log.estimatedCost = cost;
+            }
+        }
+        if (isXanaxSubstanceId(getUseSubstanceId(log), data)) {
+            if (!log.logMode) log.logMode = 'xanax_dose';
+            if (log.pillsUsed == null && log.amount != null) log.pillsUsed = parseFloat(log.amount) || 0;
+            if (log.mgUsed == null) log.mgUsed = getXanaxLogMgAmount(log);
+            if (log.estimatedCost == null) {
+                const cost = computeXanaxUseLogEstimatedCost(log, data);
                 if (cost != null) log.estimatedCost = cost;
             }
         }
@@ -8529,7 +8684,7 @@ function setUseTransactionType(tx) {
     const isAdjustment = tx === 'inventory_adjustment';
     const isNonUse = isGift || isAdjustment;
 
-    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isNonUse || isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm() || isLsdDateOnlyUseForm());
+    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isNonUse || isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm() || isLsdDateOnlyUseForm() || isXanaxDateOnlyUseForm());
     document.getElementById('use-adjustment-direction-group')?.classList.toggle('hidden', !isAdjustment);
     document.getElementById('use-gift-party-group')?.classList.toggle('hidden', !isGift);
 
@@ -8578,6 +8733,7 @@ function setUseAdjustmentDirection(dir) {
     });
     updateUsePurchaseLinkUI();
     updateLsdUsePreview();
+    updateXanaxUsePreview();
 }
 
 function setUseFormSubmitLabel(text) {
@@ -8617,7 +8773,8 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
     const isAdjustment = transactionType === 'inventory_adjustment';
     let type = (isGift || isAdjustment || isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple || isNicotineSimple) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
     const date = document.getElementById('use-date')?.value;
-    const startTime = (isWeedSimple || isVapeDateOnly || isXanaxSimple || isNicotineSimple)
+    const xanaxOmitsStartTime = isXanaxSimple && !isGift && !isAdjustment;
+    const startTime = (isWeedSimple || isVapeDateOnly || isNicotineSimple || xanaxOmitsStartTime)
         ? ''
         : (document.getElementById('use-start-time')?.value || '12:00');
     const endDate = (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple || isNicotineSimple) ? null : (document.getElementById('use-end-date')?.value || date);
@@ -10398,14 +10555,14 @@ function updateVapeUseFormUI() {
     document.getElementById('use-log-form')?.classList.toggle('is-lsd-simple', isLsd);
     document.getElementById('use-log-form')?.classList.toggle('is-xanax-simple', isXanax);
     document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isVape || isWeed || isLsd || isXanax || isNicotineSimple || isNonUse);
-    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', isVape || isXanax || isNicotineSimple);
-    document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape || isXanax || isNicotineSimple);
+    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', isVape || isNicotineSimple);
+    document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape || isNicotineSimple);
 
     const dateLabel = document.getElementById('use-date-label');
     if (dateLabel) dateLabel.textContent = 'Date';
     const startTimeInput = document.getElementById('use-start-time');
     if (startTimeInput) {
-        startTimeInput.required = !isWeed && !isVape && !isXanax && !isNicotineSimple;
+        startTimeInput.required = !isWeed && !isVape && !isNicotineSimple && !(isXanax && isNonUse);
     }
     if (isLsd) {
         syncLsdUseDatetimeUI();
@@ -11480,7 +11637,7 @@ function editUseEntry(id) {
         if (isWeed) {
             setInputValue('use-weed-product-type', entry.weedProductType || 'bud');
         }
-        if (isLsd) {
+        if (isLsd || (isXanax && !isPersonalUseLog(entry))) {
             setInputValue('use-start-time', entry.startTime || entry.time || getLocalTimeString(new Date()));
         } else {
             setInputValue('use-start-time', '');
@@ -11755,7 +11912,7 @@ function isNonUseTransactionType(tx) {
 }
 
 function updateUseEndTimeVisibility() {
-    if (isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm() || isLsdDateOnlyUseForm()) {
+    if (isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm() || isLsdDateOnlyUseForm() || isXanaxDateOnlyUseForm()) {
         document.getElementById('use-end-date-group')?.classList.add('hidden');
         document.getElementById('use-end-time-group')?.classList.add('hidden');
         return;
@@ -12094,7 +12251,9 @@ function handleUseLogSubmit(e) {
 
     if (isXanaxUse) {
         xanaxCalc = computeXanaxUseFromForm({ editingId: editingUseId || null });
-        if (xanaxCalc?.error) return alert(xanaxCalc.error);
+        const xanaxTx = document.getElementById('use-transaction-type')?.value || 'use';
+        const xanaxErr = validateXanaxUseSubmit(xanaxCalc, xanaxTx);
+        if (xanaxErr) return alert(xanaxErr);
     }
 
     const payload = buildUseEntryFromForm(vapeCalc, lsdCalc, nicotineCalc, xanaxCalc);
@@ -12104,7 +12263,7 @@ function handleUseLogSubmit(e) {
     const now = new Date().toISOString();
     const useVapeInventory = isVapeUse && vapeCalc?.purchase && payload.inventoryAffects;
     const useLsdInventory = isLsdUse && payload.inventoryAffects;
-    const useXanaxInventory = isXanaxUse && xanaxCalc?.purchase && payload.inventoryAffects;
+    const useXanaxInventory = isXanaxUse && payload.inventoryAffects;
     const useNicotineInventory = isNicotineSimple && nicotineCalc?.purchaseId && payload.inventoryAffects;
 
     if (isCokeSubstanceId(substanceId) && type === 'session') {
@@ -12197,15 +12356,7 @@ function handleUseLogSubmit(e) {
             finalizeLsdUseLogForSave(updated, lsdCalc);
         }
         if (isXanaxSubstanceId(substanceId)) {
-            updated.type = 'quick';
-            updated.logMode = 'xanax_dose';
-            updated.startTime = '';
-            updated.time = '';
-            updated.endTime = '';
-            delete updated.endDate;
-            delete updated.startedAt;
-            delete updated.endedAt;
-            delete updated.durationMs;
+            finalizeXanaxUseLogForSave(updated, xanaxCalc);
         }
 
         if (isVapeEdit || useVapeInventory) {
@@ -12293,18 +12444,18 @@ function handleUseLogSubmit(e) {
         delete log.durationMs;
     }
     if (isXanaxSubstanceId(substanceId)) {
-        log.type = 'quick';
-        log.logMode = 'xanax_dose';
-        log.startTime = '';
-        log.time = '';
-        log.endTime = '';
-        delete log.endDate;
-        delete log.startedAt;
-        delete log.endedAt;
-        delete log.durationMs;
+        finalizeXanaxUseLogForSave(log, xanaxCalc);
+        const commitResult = commitUseLogEntry(log, {
+            xanaxCalc,
+            applyInventory: useXanaxInventory || logInventoryAffects(log)
+        });
+        if (!commitResult.ok) return alert(commitResult.error || 'Could not save this entry.');
+        resetUseFormAfterSave();
+        populateAllSubstanceDropdowns();
+        refreshUseLogRelatedViews();
+        alert(getUseSaveSuccessMessage(log));
+        return;
     }
-
-    if (!Array.isArray(appData.logs)) appData.logs = [];
 
     if (isLsdSubstanceId(substanceId)) {
         finalizeLsdUseLogForSave(log, lsdCalc);
@@ -12325,9 +12476,6 @@ function handleUseLogSubmit(e) {
     if (useVapeInventory && vapeCalc.purchaseId) {
         setLogPurchaseId(log, vapeCalc.purchaseId);
         recalculateVapePurchaseInventory(vapeCalc.purchaseId);
-    } else if (useXanaxInventory && xanaxCalc.purchaseId) {
-        setLogPurchaseId(log, xanaxCalc.purchaseId);
-        recalculatePurchaseRemaining(xanaxCalc.purchaseId);
     } else if (useNicotineInventory && nicotineCalc.purchaseId) {
         setLogPurchaseId(log, nicotineCalc.purchaseId);
         const purchase = findPurchase(nicotineCalc.purchaseId);
@@ -12336,7 +12484,7 @@ function handleUseLogSubmit(e) {
         } else {
             recalculatePurchaseRemaining(nicotineCalc.purchaseId);
         }
-    } else if (!useVapeInventory && !useXanaxInventory && !useNicotineInventory) {
+    } else if (!useVapeInventory && !useNicotineInventory) {
         const inv = applyLogInventoryEffect(log);
         if (!inv.ok) {
             appData.logs.pop();
@@ -22519,6 +22667,11 @@ function cleanExportData(data) {
             tabsUsed: l.tabsUsed ?? null,
             ugUsed: l.ugUsed ?? null,
             ugPerTabAtTimeOfUse: l.ugPerTabAtTimeOfUse ?? null,
+            pillsUsed: l.pillsUsed ?? null,
+            mgUsed: l.mgUsed ?? null,
+            strengthPerPillAtTimeOfUse: l.strengthPerPillAtTimeOfUse ?? null,
+            strengthUnitAtTimeOfUse: l.strengthUnitAtTimeOfUse ?? null,
+            mgPerPillAtTimeOfUse: l.mgPerPillAtTimeOfUse ?? null,
             isEstimatedFromPercentLeft: !!l.isEstimatedFromPercentLeft,
             isPercentLeftCheckpoint: !!l.isPercentLeftCheckpoint,
             excludeFromStats: !!l.excludeFromStats,
@@ -23017,8 +23170,12 @@ function __getRecoveryTrackerTestExports() {
         formatXanaxPurchaseDisplayLine,
         formatXanaxRemainingDisplay,
         formatXanaxUseSummary,
+        formatXanaxPillCountLabel,
         getXanaxLogPillsAmount,
         getXanaxLogMgAmount,
+        finalizeXanaxUseLogForSave,
+        computeXanaxUseLogEstimatedCost,
+        validateXanaxUseSubmit,
         xanaxPurchaseNeedsStrengthInfo,
         isXanaxPurchase,
         computeLsdUseFromForm,
