@@ -1,0 +1,1944 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+    <title>Recovery Tracker</title>
+    <script>
+        (function () {
+            var key = 'recoveryTracker.themePreference';
+            var pref = 'dark';
+            try {
+                var saved = localStorage.getItem(key);
+                if (saved === 'dark' || saved === 'light' || saved === 'system') pref = saved;
+            } catch (e) { /* ignore */ }
+            var resolved = 'dark';
+            if (pref === 'light') {
+                resolved = 'light';
+            } else if (pref === 'system') {
+                resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+            }
+            document.documentElement.dataset.theme = resolved;
+        })();
+    </script>
+    <link rel="stylesheet" href="styles.css">
+    <style>
+        /* Fallback styles to ensure page is visible before CSS loads */
+        html[data-theme="light"] body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f6f7f8;
+            color: #1d1d1f;
+            margin: 0;
+            padding: 0;
+        }
+        html[data-theme="dark"] body,
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f0f0f;
+            color: #f5f5f5;
+            margin: 0;
+            padding: 0;
+        }
+        .app-container {
+            max-width: 600px;
+            margin: 0 auto;
+        }
+        header {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        h1 {
+            color: #4caf50;
+            margin: 0;
+        }
+        .tab {
+            display: none;
+        }
+        .tab.active {
+            display: block;
+        }
+        button {
+            padding: 12px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .primary {
+            background: #4caf50;
+            color: white;
+        }
+        .danger {
+            background: #f44336;
+            color: white;
+        }
+        .secondary {
+            background: #ff9800;
+            color: white;
+        }
+        .stat-card {
+            background: #2d2d2d;
+            padding: 16px;
+            margin: 8px;
+            border-radius: 8px;
+            display: inline-block;
+            width: 45%;
+        }
+        .bottom-nav {
+            display: flex;
+            justify-content: space-around;
+            position: fixed;
+            left: 50%;
+            transform: translateX(-50%);
+            bottom: 0;
+            z-index: 9999;
+            width: 100%;
+            max-width: 600px;
+            background: #1e1e1e;
+            padding: 8px 0;
+            padding-bottom: env(safe-area-inset-bottom);
+            border-top: 1px solid #404040;
+        }
+        .nav-btn {
+            background: none;
+            border: none;
+            color: #b0b0b0;
+            cursor: pointer;
+            padding: 8px;
+        }
+        .nav-btn.active {
+            color: #4caf50;
+        }
+        form {
+            background: #2d2d2d;
+            padding: 16px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        input, select, textarea {
+            width: 100%;
+            padding: 10px;
+            margin: 5px 0 15px 0;
+            background: #1e1e1e;
+            border: 1px solid #404040;
+            color: white;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+        label {
+            display: block;
+            margin-top: 10px;
+            color: #b0b0b0;
+        }
+    </style>
+</head>
+<body>
+    <noscript>
+        <div style="background: #f44336; color: white; padding: 20px; text-align: center;">
+            <h2>JavaScript is required for this app to work properly.</h2>
+            <p>Please enable JavaScript in your browser settings.</p>
+        </div>
+    </noscript>
+    <div class="app-container">
+        <header>
+            <h1>Recovery Tracker</h1>
+            <p class="subtitle">Track your progress, one day at a time</p>
+            <p id="dashboard-last-saved" class="last-saved-status">Last Saved: Never</p>
+        </header>
+
+        <main>
+            <!-- Dashboard Tab -->
+            <section id="dashboard-tab" class="tab active dashboard-page">
+                <div class="safety-notice dash-safety">
+                    <strong>Safety Note:</strong> If you feel unsafe, may overdose, or have severe withdrawal symptoms, call emergency services or a medical professional immediately.
+                </div>
+
+                <header class="dash-header">
+                    <div class="dash-header-top">
+                        <h2 class="dash-title">Home</h2>
+                        <div class="dash-header-meta">
+                            <p class="dash-main-substance" id="dashboard-main-substance">Main: —</p>
+                            <p class="dash-viewing-label" id="dashboard-viewing-label"></p>
+                        </div>
+                    </div>
+                    <div class="form-group dash-substance-field">
+                        <label for="dashboard-substance">Viewing</label>
+                        <select id="dashboard-substance" onchange="switchSubstance(this.value)"></select>
+                    </div>
+                </header>
+
+                <div id="substance-compare" class="substance-compare hidden"></div>
+
+                <!-- Key metrics (usage + spend; streak lives in Recovery) -->
+                <div class="dash-recovery-metrics" id="dashboard-main-stats">
+                    <div class="dash-metric-card"><span class="dash-metric-label">Today Used</span><strong id="dash-card-today">0</strong></div>
+                    <div class="dash-metric-card"><span class="dash-metric-label">This Week Used</span><strong id="dash-card-week">0</strong></div>
+                    <div class="dash-metric-card"><span class="dash-metric-label">This Month Used</span><strong id="dash-card-month">0</strong></div>
+                    <div class="dash-metric-card"><span class="dash-metric-label">Spent This Month</span><strong id="dash-card-spent">$0</strong></div>
+                    <div class="dash-metric-card"><span class="dash-metric-label">Remaining Monthly Cap</span><strong id="dash-card-month-cap">—</strong></div>
+                </div>
+                <span class="hidden" id="dash-card-streak"></span>
+
+                <!-- Quick Actions -->
+                <div class="quick-actions dash-quick-actions">
+                    <button id="quick-log-btn" class="quick-btn primary" onclick="logOneUse()">
+                        <span class="quick-icon">⚡</span>
+                        <span class="quick-label">Quick Use</span>
+                    </button>
+                    <button class="quick-btn secondary" onclick="openUseLogSession()">
+                        <span>⏱️</span>
+                        <span>Session</span>
+                    </button>
+                    <button class="quick-btn success" onclick="openBuyTrackerModal()">
+                        <span>🛒</span>
+                        <span>Buy</span>
+                    </button>
+                    <button class="quick-btn danger" onclick="undoLastUse()">
+                        <span>↩️</span>
+                        <span>Undo</span>
+                    </button>
+                </div>
+
+                <div class="collapsible-section dash-vape-section" data-section="dashVapeSection">
+                    <button type="button" class="section-toggle" onclick="toggleSection('dashVapeSection')">
+                        <span>Vape / Nicotine Details</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div id="vape-dashboard-section" class="hidden vape-dashboard-section">
+                    <div class="vape-dash-grid">
+                        <div class="dash-card vape-dash-card">
+                            <h4>Active Vape</h4>
+                            <div class="vape-dash-rows">
+                                <div class="vape-dash-row"><span>Name</span><strong id="vape-dash-name">—</strong></div>
+                                <div class="vape-dash-row"><span>Purchase date</span><strong id="vape-dash-purchase-date">—</strong></div>
+                                <div class="vape-dash-row"><span>First use</span><strong id="vape-dash-started">—</strong></div>
+                                <div class="vape-dash-row"><span>Full puff count</span><strong id="vape-dash-full-puffs">—</strong></div>
+                                <div class="vape-dash-row"><span>Puffs left</span><strong id="vape-dash-puffs-left">—</strong></div>
+                                <div class="vape-dash-row"><span>Percent left</span><strong id="vape-dash-percent-left">—</strong></div>
+                                <div class="vape-dash-row"><span>Status</span><strong id="vape-dash-status" class="vape-dash-status">—</strong></div>
+                            </div>
+                        </div>
+                        <div class="dash-card vape-dash-card">
+                            <h4>Usage</h4>
+                            <div class="vape-dash-rows">
+                                <div class="vape-dash-row"><span>Week puffs</span><strong id="vape-dash-week-puffs">—</strong></div>
+                                <div class="vape-dash-row"><span>Month puffs</span><strong id="vape-dash-month-puffs">—</strong></div>
+                                <div class="vape-dash-row"><span>Avg puffs/day</span><strong id="vape-dash-avg-day">—</strong></div>
+                                <div class="vape-dash-row"><span>Avg puffs/session</span><strong id="vape-dash-avg-session">—</strong></div>
+                                <div class="vape-dash-row"><span>Last log</span><strong id="vape-dash-last-log">—</strong></div>
+                                <div class="vape-dash-row"><span>Est. daily (percent logs)</span><strong id="vape-dash-est-daily">—</strong></div>
+                            </div>
+                        </div>
+                        <div class="dash-card vape-dash-card">
+                            <h4>Cost</h4>
+                            <div class="vape-dash-rows">
+                                <div class="vape-dash-row"><span>Avg cost/vape</span><strong id="vape-dash-avg-cost-vape">—</strong></div>
+                                <div class="vape-dash-row"><span>Cost/day</span><strong id="vape-dash-cost-day">—</strong></div>
+                                <div class="vape-dash-row"><span>Cost / 1,000 puffs</span><strong id="vape-dash-cost-1k">—</strong></div>
+                                <div class="vape-dash-row"><span>Month spend</span><strong id="vape-dash-month-spend">—</strong></div>
+                                <div class="vape-dash-row"><span>All-time spend</span><strong id="vape-dash-all-spend">—</strong></div>
+                            </div>
+                        </div>
+                        <div class="dash-card vape-dash-card">
+                            <h4>Nicotine Estimate</h4>
+                            <p class="settings-hint">Estimate based on mL and mg/mL</p>
+                            <div class="vape-dash-rows">
+                                <div class="vape-dash-row"><span>Total mg/vape</span><strong id="vape-dash-total-nic">—</strong></div>
+                                <div class="vape-dash-row"><span>Est. mg used</span><strong id="vape-dash-nic-used">—</strong></div>
+                                <div class="vape-dash-row"><span>Avg mg/day</span><strong id="vape-dash-nic-day">—</strong></div>
+                                <div class="vape-dash-row"><span>Est. mg left</span><strong id="vape-dash-nic-left">—</strong></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                    </div>
+                </div>
+
+                <!-- Legacy today detail (hidden, for JS compatibility) -->
+                <span class="hidden" id="dash-today-total-use"></span>
+                <span class="hidden" id="dash-today-session-count"></span>
+                <span class="hidden" id="dash-today-duration"></span>
+                <span class="hidden" id="dash-today-avg-session"></span>
+                <span class="hidden" id="dash-supply-total"></span>
+                <span class="hidden" id="dash-time-since-last-use"></span>
+
+                <!-- Recovery (metrics + insights) -->
+                <div class="collapsible-section dash-recovery-section" data-section="dashRecovery">
+                    <button type="button" class="section-toggle" onclick="toggleSection('dashRecovery')">
+                        <span>Recovery</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="dash-recovery-insights" class="dash-insights-wrap">
+                            <div class="dash-recovery-top-row">
+                                <div class="dash-recovery-stat">
+                                    <span class="dash-recovery-label">Streak</span>
+                                    <strong class="dash-recovery-value" id="recovery-streak-current">0 days</strong>
+                                    <span class="dash-recovery-sub" id="recovery-streak-since">—</span>
+                                </div>
+                                <div class="dash-recovery-stat">
+                                    <span class="dash-recovery-label">Current break</span>
+                                    <strong class="dash-recovery-value" id="dash-break-current">—</strong>
+                                </div>
+                                <div class="dash-recovery-stat">
+                                    <span class="dash-recovery-label">Longest break</span>
+                                    <strong class="dash-recovery-value" id="dash-break-longest">—</strong>
+                                </div>
+                                <div class="dash-recovery-stat">
+                                    <span class="dash-recovery-label">30-day avg break</span>
+                                    <strong class="dash-recovery-value" id="dash-break-avg-30">—</strong>
+                                </div>
+                            </div>
+                            <div id="dash-recovery-insights-all" class="hidden"></div>
+                            <div id="dash-recovery-insights-detail">
+                                <div class="dash-insight-stats">
+                                    <div class="dash-insight-stat"><span>Avg daily use</span><strong id="insight-avg-daily">—</strong></div>
+                                    <div class="dash-insight-stat"><span>Highest-use day</span><strong id="insight-highest-day">—</strong></div>
+                                    <div class="dash-insight-stat"><span>No-use days this month</span><strong id="insight-no-use-days">—</strong></div>
+                                </div>
+                                <div class="collapsible-section dash-recovery-details-section" data-section="dashRecoveryDetails">
+                                    <button type="button" class="section-toggle" onclick="toggleSection('dashRecoveryDetails')">
+                                        <span>Usage &amp; cost details</span>
+                                        <span class="chevron">⌄</span>
+                                    </button>
+                                    <div class="section-content">
+                                        <div class="dash-insight-toggles">
+                                            <label class="dash-insight-toggle">
+                                                <input type="checkbox" id="insight-show-zero-usage" checked>
+                                                Show zero-use days
+                                            </label>
+                                            <label class="dash-insight-toggle">
+                                                <input type="checkbox" id="insight-show-zero-cost">
+                                                Show $0 purchase days
+                                            </label>
+                                        </div>
+                                        <div class="dash-insight-sections">
+                                            <div class="dash-insight-section">
+                                                <h4>Usage by day</h4>
+                                                <div id="insight-rows-day" class="dash-insight-rows"></div>
+                                            </div>
+                                            <div class="dash-insight-section">
+                                                <h4>Usage by week</h4>
+                                                <div id="insight-rows-week" class="dash-insight-rows"></div>
+                                            </div>
+                                            <div class="dash-insight-section">
+                                                <h4>Usage by month</h4>
+                                                <div id="insight-rows-month" class="dash-insight-rows"></div>
+                                            </div>
+                                            <div class="dash-insight-section dash-insight-section-cost">
+                                                <h4>Cost over time</h4>
+                                                <div id="insight-rows-cost" class="dash-insight-rows dash-insight-rows-cost"></div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                    <span class="hidden" id="recovery-streak-best"></span>
+                    <span class="hidden" id="dash-break-average"></span>
+                    <span class="hidden" id="dash-break-streak-no-use"></span>
+                </div>
+
+                <!-- Inventory preview (full detail on Inventory tab) -->
+                <div class="dash-card dash-inventory-preview">
+                    <div class="dash-inventory-preview-head">
+                        <h3 class="dash-card-title" id="dash-supply-card-title">Inventory</h3>
+                        <button type="button" class="secondary-btn btn-sm" onclick="switchTab('buy-tracker-tab')">Open Inventory</button>
+                    </div>
+                    <div id="dash-supply-rows-standard" class="dash-inventory-preview-rows">
+                        <div class="dash-inventory-preview-line"><span>Remaining</span><strong id="dash-supply-remaining">—</strong></div>
+                        <div class="dash-inventory-preview-line"><span>Est. days left</span><strong id="dash-supply-days-left">—</strong></div>
+                    </div>
+                    <div id="dash-supply-all-substances" class="dash-supply-all hidden"></div>
+                    <!-- Legacy supply ids (hidden, for JS that may reference them) -->
+                    <span class="hidden" id="dash-supply-last-buy-date"></span>
+                    <span class="hidden" id="dash-supply-last-used"></span>
+                    <span class="hidden" id="dash-supply-since-last-use"></span>
+                    <span class="hidden" id="dash-supply-since-last-buy"></span>
+                    <span class="hidden" id="dash-supply-avg-buy-break"></span>
+                    <span class="hidden" id="dash-supply-est-next-buy"></span>
+                    <span class="hidden" id="dash-supply-last-purchase"></span>
+                    <span class="hidden" id="dash-supply-purchased"></span>
+                    <span class="hidden" id="dash-supply-used"></span>
+                    <span class="hidden" id="dash-supply-gifted"></span>
+                    <span class="hidden" id="dash-supply-received"></span>
+                    <span class="hidden" id="dash-supply-remaining-breakdown"></span>
+                    <span class="hidden" id="dash-gift-given"></span>
+                    <span class="hidden" id="dash-gift-received"></span>
+                    <span class="hidden" id="dash-gift-net"></span>
+                    <span class="hidden" id="dash-spent-today-buy"></span>
+                    <span class="hidden" id="dash-last-purchase"></span>
+                </div>
+
+
+            </section>
+
+            <!-- Log Tab -->
+            <section id="use-log-tab" class="tab use-log-page">
+                <div class="page-header-row use-log-page-header">
+                    <h2>Log</h2>
+                    <div class="page-substance-selector substance-select-card">
+                        <label for="use-log-substance" class="page-substance-label">Substance</label>
+                        <select id="use-log-substance" class="page-substance-select" onchange="onUseLogSubstanceChange()"></select>
+                    </div>
+                </div>
+
+                <div class="use-log-filter-bar">
+                    <span class="use-log-filter-label">Show</span>
+                    <button type="button" class="use-log-filter-btn active" data-filter="all" onclick="setUseLogFilter('all')">All</button>
+                    <button type="button" class="use-log-filter-btn" data-filter="today" onclick="setUseLogFilter('today')">Today</button>
+                    <button type="button" class="use-log-filter-btn" data-filter="week" onclick="setUseLogFilter('week')">This Week</button>
+                    <button type="button" class="use-log-filter-btn" data-filter="month" onclick="setUseLogFilter('month')">This Month</button>
+                </div>
+                <div id="use-log-totals" class="use-log-totals"></div>
+
+                <div class="collapsible-section" data-section="useLogForm">
+                    <button type="button" class="section-toggle" onclick="toggleSection('useLogForm')">
+                        <span>Quick Use / Session / Gift or Adjustment</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <form id="use-log-form" class="use-log-form">
+                    <div class="use-log-entry-toggle" id="use-entry-type-group">
+                        <button type="button" class="use-entry-toggle-btn type-toggle-btn active" data-type="quick" onclick="setUseLogType('quick')">
+                            <span class="use-entry-toggle-icon">⚡</span>
+                            <span class="use-entry-toggle-label">Quick Use</span>
+                        </button>
+                        <button type="button" class="use-entry-toggle-btn type-toggle-btn" data-type="session" onclick="setUseLogType('session')">
+                            <span class="use-entry-toggle-icon">⏱️</span>
+                            <span class="use-entry-toggle-label">Session</span>
+                        </button>
+                        <input type="hidden" id="use-type" value="quick">
+                    </div>
+
+                    <div class="use-log-field-block" id="use-transaction-type-block">
+                        <span class="use-log-field-label">Transaction Type</span>
+                        <div class="use-tx-pills" role="group" aria-label="Transaction type">
+                            <button type="button" class="use-tx-pill active" data-tx="use" onclick="setUseTransactionType('use')">Personal Use</button>
+                            <button type="button" class="use-tx-pill" data-tx="gift_given" onclick="setUseTransactionType('gift_given')">Gift Given</button>
+                            <button type="button" class="use-tx-pill" data-tx="gift_received" onclick="setUseTransactionType('gift_received')">Gift Received</button>
+                            <button type="button" class="use-tx-pill" data-tx="inventory_adjustment" onclick="setUseTransactionType('inventory_adjustment')">Adjustment</button>
+                        </div>
+                        <input type="hidden" id="use-transaction-type" value="use">
+                    </div>
+
+                    <div class="use-log-field-block hidden" id="use-adjustment-direction-group">
+                        <span class="use-log-field-label">Adjustment</span>
+                        <div class="use-adj-pills" role="group" aria-label="Adjustment direction">
+                            <button type="button" class="use-adj-pill active" data-dir="add" onclick="setUseAdjustmentDirection('add')">Add to inventory</button>
+                            <button type="button" class="use-adj-pill" data-dir="remove" onclick="setUseAdjustmentDirection('remove')">Remove from inventory</button>
+                        </div>
+                    </div>
+
+                    <div class="use-log-core-card">
+                        <div class="form-group use-log-compact" id="use-substance-group">
+                            <label for="use-substance">Substance</label>
+                            <select id="use-substance" required></select>
+                        </div>
+
+                        <div class="use-log-datetime-grid" id="use-datetime-grid">
+                            <div class="form-group use-log-compact use-date-field">
+                                <label for="use-date" id="use-date-label">Date</label>
+                                <input type="date" id="use-date" required>
+                            </div>
+                            <div class="form-group use-log-compact" id="use-start-time-group">
+                                <label for="use-start-time" id="use-start-time-label">Start</label>
+                                <input type="time" id="use-start-time" required>
+                            </div>
+                            <div class="form-group use-log-compact use-end-date-field hidden" id="use-end-date-group">
+                                <label for="use-end-date">End date</label>
+                                <input type="date" id="use-end-date">
+                            </div>
+                            <div class="form-group use-log-compact use-end-time-field hidden" id="use-end-time-group">
+                                <label for="use-end-time">End time</label>
+                                <input type="time" id="use-end-time">
+                            </div>
+                        </div>
+                        <p id="use-duration-preview" class="use-duration-preview hidden">Duration: —</p>
+
+                        <div class="use-log-amount-grid" id="use-amount-mode-group">
+                            <div class="form-group use-log-compact">
+                                <label for="use-amount" id="use-amount-label">Amount</label>
+                                <input type="number" id="use-amount" min="0" step="0.01" value="1" required>
+                            </div>
+                            <div class="form-group use-log-compact" id="use-unit-group">
+                                <label for="use-unit">Unit</label>
+                                <select id="use-unit" required></select>
+                            </div>
+                        </div>
+
+                        <div class="form-group use-log-compact hidden" id="use-weed-product-type-group">
+                            <label for="use-weed-product-type">Product type</label>
+                            <select id="use-weed-product-type">
+                                <option value="bud">Bud</option>
+                                <option value="cart">Cart</option>
+                                <option value="edibles">Edibles</option>
+                                <option value="prerolls">Pre-rolls</option>
+                            </select>
+                        </div>
+
+                        <div class="form-group use-log-compact hidden" id="use-nicotine-product-type-group">
+                            <label for="use-nicotine-product-type">Product type</label>
+                            <select id="use-nicotine-product-type" onchange="updateUseNicotineProductTypeUI()">
+                                <option value="vape">Vape</option>
+                                <option value="cigarettes">Cigarettes</option>
+                                <option value="pouches">Nicotine pouches</option>
+                                <option value="gum">Nicotine gum</option>
+                                <option value="patches">Nicotine patches</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+
+                        <div id="use-cigarettes-fields-group" class="hidden">
+                            <div class="form-group use-log-compact">
+                                <label for="use-cigarettes-smoked">Cigarettes smoked</label>
+                                <input type="number" id="use-cigarettes-smoked" min="0" step="1" placeholder="e.g. 5">
+                            </div>
+                            <p id="use-cigarettes-preview" class="use-supply-preview">—</p>
+                        </div>
+
+                        <div id="use-pouches-fields-group" class="hidden">
+                            <div class="form-group use-log-compact">
+                                <label for="use-pouches-used">Pouches used</label>
+                                <input type="number" id="use-pouches-used" min="0" step="1" placeholder="e.g. 3">
+                            </div>
+                            <p id="use-pouches-preview" class="use-supply-preview">—</p>
+                        </div>
+
+                        <div id="use-gum-fields-group" class="hidden">
+                            <div class="form-group use-log-compact">
+                                <label for="use-gum-pieces-used">Pieces used</label>
+                                <input type="number" id="use-gum-pieces-used" min="0" step="1" placeholder="e.g. 2">
+                            </div>
+                            <p id="use-gum-preview" class="use-supply-preview">—</p>
+                        </div>
+
+                        <div id="use-patches-fields-group" class="hidden">
+                            <div class="form-row">
+                                <div class="form-group use-log-compact">
+                                    <label for="use-patches-used">Patches used</label>
+                                    <input type="number" id="use-patches-used" min="0" step="1" placeholder="1">
+                                </div>
+                                <div class="form-group use-log-compact">
+                                    <label for="use-patch-hours-worn">Hours worn</label>
+                                    <input type="number" id="use-patch-hours-worn" min="0" step="0.5" placeholder="24">
+                                </div>
+                            </div>
+                            <p id="use-patches-preview" class="use-supply-preview">—</p>
+                        </div>
+
+                        <div id="use-vape-fields-group" class="use-vape-fields-group hidden">
+                            <div id="use-vape-purchase-block" class="hidden">
+                                <div class="form-group use-log-compact">
+                                    <label for="use-vape-purchase-select">Active vape</label>
+                                    <select id="use-vape-purchase-select" onchange="updateVapePurchaseSelectDetails()"></select>
+                                </div>
+                                <p id="use-vape-purchase-detail" class="use-supply-preview">—</p>
+                                <div class="use-vape-mode-toggle">
+                                    <button type="button" class="use-vape-mode-btn active" data-vape-mode="percent" onclick="setVapeLogInputMode('percent')">Log by percent left</button>
+                                    <button type="button" class="use-vape-mode-btn" data-vape-mode="puffs" onclick="setVapeLogInputMode('puffs')">Log by puffs used</button>
+                                </div>
+                                <input type="hidden" id="use-vape-log-mode" value="percent">
+                            </div>
+                            <div id="use-vape-percent-group" class="form-group use-log-compact">
+                                <label for="use-percent-after">Percent Left After</label>
+                                <input type="number" id="use-percent-after" min="0" max="100" step="0.1" placeholder="e.g. 85">
+                            </div>
+                            <div id="use-vape-puffs-group" class="form-group use-log-compact hidden">
+                                <label for="use-vape-puffs-used">Puffs used</label>
+                                <input type="number" id="use-vape-puffs-used" min="0" step="1" placeholder="e.g. 12">
+                            </div>
+                            <p id="use-vape-preview" class="use-supply-preview">—</p>
+                        </div>
+
+                        <div id="use-lsd-fields-group" class="use-lsd-fields-group hidden">
+                            <div class="use-lsd-mode-toggle use-vape-mode-toggle">
+                                <button type="button" class="use-lsd-mode-btn use-vape-mode-btn active" data-lsd-mode="tabs" onclick="setLsdLogInputMode('tabs')">Log by tabs</button>
+                                <button type="button" class="use-lsd-mode-btn use-vape-mode-btn" data-lsd-mode="ug" onclick="setLsdLogInputMode('ug')">Log by ug</button>
+                            </div>
+                            <input type="hidden" id="use-lsd-log-mode" value="tabs">
+                            <div id="use-lsd-tabs-group" class="form-group use-log-compact">
+                                <label for="use-lsd-tabs-used">Tabs used</label>
+                                <input type="number" id="use-lsd-tabs-used" min="0" step="0.01" placeholder="e.g. 1">
+                            </div>
+                            <div id="use-lsd-ug-group" class="form-group use-log-compact hidden">
+                                <label for="use-lsd-ug-used">ug used</label>
+                                <input type="number" id="use-lsd-ug-used" min="0" step="0.01" placeholder="e.g. 100">
+                            </div>
+                            <p id="use-lsd-preview" class="use-supply-preview">—</p>
+                        </div>
+
+                        <div class="form-group use-log-compact hidden" id="use-gift-party-group">
+                            <label for="use-gift-party" id="use-gift-party-label">Recipient Name</label>
+                            <input type="text" id="use-gift-party" placeholder="Name">
+                        </div>
+
+                        <div id="use-inventory-core-anchor"></div>
+
+                        <div class="form-group use-log-compact use-log-notes-group">
+                            <label for="use-notes">Notes</label>
+                            <textarea id="use-notes" rows="2" placeholder="Optional notes…"></textarea>
+                        </div>
+                    </div>
+
+                    <details class="use-log-advanced" id="use-advanced-section">
+                        <summary class="use-log-advanced-summary">Advanced options</summary>
+                        <div class="use-log-advanced-body">
+                            <div id="use-inventory-fields-group">
+                                <div class="form-group use-log-compact">
+                                    <label for="use-purchase-link-mode" id="use-purchase-link-label">Use From Inventory</label>
+                                    <select id="use-purchase-link-mode" onchange="updateUsePurchaseLinkUI()">
+                                        <option value="auto">Auto-select current supply</option>
+                                        <option value="manual">Manual select purchase</option>
+                                        <option value="none">No linked purchase</option>
+                                    </select>
+                                </div>
+                                <div id="use-purchase-manual-wrap" class="form-group use-log-compact hidden">
+                                    <label for="use-purchase-select">Select purchase</label>
+                                    <select id="use-purchase-select"></select>
+                                </div>
+                                <p id="use-purchase-preview" class="use-supply-preview hidden">—</p>
+                            </div>
+                            <div class="form-group use-log-compact" id="use-count-group">
+                                <label for="use-count">Count (lines/hits/drinks)</label>
+                                <input type="number" id="use-count" min="0" step="1" placeholder="Optional">
+                            </div>
+                        </div>
+                    </details>
+
+                    <div class="use-log-form-actions">
+                        <button type="submit" class="submit-btn" id="use-submit-btn">Save Entry</button>
+                        <button type="button" id="cancel-use-edit-btn" class="secondary-btn hidden" onclick="cancelUseEdit()">Cancel Edit</button>
+                    </div>
+                </form>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="recentUse">
+                    <button type="button" class="section-toggle" onclick="toggleSection('recentUse')">
+                        <span>Recent Use</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="recent-logs use-log-recent">
+                    <div id="recent-use-list" class="use-recent-list"></div>
+                </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="bulkActions">
+                    <button type="button" class="section-toggle" onclick="toggleSection('bulkActions')">
+                        <span>Bulk Actions</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                    <div class="bulk-actions-body">
+                        <p class="settings-hint">FIFO link sessions to purchases by substance and date. Preview before applying.</p>
+                        <div class="bulk-actions-row">
+                            <button type="button" class="secondary-btn" onclick="startBulkLinkSessions('all')">🔗 Auto Link</button>
+                            <button type="button" class="secondary-btn" onclick="startBulkLinkSessions('unlinked_only')">Link Unlinked</button>
+                            <button type="button" class="secondary-btn" onclick="startBulkLinkSessions('clear')">Clear Links</button>
+                            <button type="button" class="secondary-btn" id="manual-link-selected-btn" onclick="openManualBulkLinkModal()" disabled>📎 Manual Link Selected</button>
+                        </div>
+                    </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="useHistory">
+                    <button type="button" class="section-toggle" onclick="toggleSection('useHistory')">
+                        <span>Use History</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="use-history-section use-log-history">
+                    <div class="use-history-toolbar" id="use-history-toolbar">
+                        <label class="use-history-select-all-label">
+                            <input type="checkbox" id="use-history-select-all" aria-label="Select all visible sessions">
+                            Select all
+                        </label>
+                        <button type="button" class="secondary-btn use-history-clear-btn" id="use-history-clear-selection">Clear</button>
+                        <span class="use-history-selected-count" id="use-history-selected-count">0 selected</span>
+                        <button type="button" class="secondary-btn use-history-columns-btn" id="use-history-customize-columns">Customize Columns</button>
+                    </div>
+                    <div id="use-history-table-wrap"></div>
+                </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Insights Tab -->
+            <section id="stats-tab" class="tab insights-page">
+                <div class="page-header-row insights-page-header">
+                    <h2>Insights</h2>
+                    <p class="page-substance-hint settings-hint">Analytics for the substance selected in Date Range below.</p>
+                </div>
+
+                <div class="collapsible-section" data-section="statsDateRange">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsDateRange')">
+                        <span>Date Range &amp; Substance</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="form-group">
+                    <label for="stats-substance">Substance</label>
+                    <select id="stats-substance" onchange="switchStatsSubstance(this.value)"></select>
+                </div>
+
+                <div class="stats-date-range-toolbar">
+                    <div class="form-group">
+                        <label for="stats-date-range">Date Range</label>
+                        <select id="stats-date-range" onchange="onStatsDateRangeChange()">
+                            <option value="last-7">Last 7 Days</option>
+                            <option value="last-14">Last 14 Days</option>
+                            <option value="last-30">Last 30 Days</option>
+                            <option value="this-week">This Week</option>
+                            <option value="this-month">This Month</option>
+                            <option value="last-month">Last Month</option>
+                            <option value="all-time">All Time</option>
+                            <option value="custom">Custom Range</option>
+                        </select>
+                    </div>
+                    <div id="stats-custom-range-wrap" class="stats-custom-range hidden">
+                        <div class="form-group">
+                            <label for="stats-custom-start">Start Date</label>
+                            <input type="date" id="stats-custom-start">
+                        </div>
+                        <div class="form-group">
+                            <label for="stats-custom-end">End Date</label>
+                            <input type="date" id="stats-custom-end">
+                        </div>
+                        <button type="button" class="secondary-btn" onclick="applyStatsCustomRange()">Apply</button>
+                    </div>
+                    <p class="stats-range-summary" id="stats-range-summary"></p>
+                </div>
+                    </div>
+                </div>
+
+                <div id="stats-all-view" class="hidden">
+                    <div class="stats-section">
+                        <h3>By Substance</h3>
+                        <div id="stats-by-substance"></div>
+                    </div>
+                </div>
+
+                <div id="stats-single-view">
+
+                <div class="collapsible-section" data-section="statsSummaryDashboard">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsSummaryDashboard')">
+                        <span>Overview</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="stats-summary-dashboard" class="sheet-summary-grid"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsCalendarView">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsCalendarView')">
+                        <span>Calendar View</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="stats-calendar-toolbar">
+                            <div class="stats-calendar-toolbar-row">
+                                <div class="form-group stats-cal-mode-group">
+                                    <label>View mode</label>
+                                    <div class="stats-cal-mode-btns" id="stats-calendar-mode-btns">
+                                        <button type="button" class="secondary-btn stats-cal-mode-btn" data-mode="week">Week</button>
+                                        <button type="button" class="secondary-btn stats-cal-mode-btn active" data-mode="month">Month</button>
+                                        <button type="button" class="secondary-btn stats-cal-mode-btn" data-mode="year">Year</button>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="stats-calendar-substance">Substance</label>
+                                    <select id="stats-calendar-substance"></select>
+                                </div>
+                                <div class="form-group" id="stats-calendar-period-group">
+                                    <label for="stats-calendar-period" id="stats-calendar-period-label">Month</label>
+                                    <input type="month" id="stats-calendar-period" class="stats-calendar-period-input">
+                                </div>
+                                <div class="form-group stats-cal-actions-group">
+                                    <label>&nbsp;</label>
+                                    <div class="stats-cal-action-btns">
+                                        <button type="button" class="secondary-btn" id="stats-calendar-today-btn">Today</button>
+                                        <button type="button" class="secondary-btn" id="stats-calendar-export-btn">Export CSV</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="stats-calendar-toolbar-row stats-calendar-toggles-row">
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-amount" checked> Show use amount</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-duration" checked> Show duration</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-break" checked> Show break</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-next" checked> Show next use</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-cost"> Show cost</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-taper" checked> Show taper status</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-compact"> Compact</label>
+                            </div>
+                            <div class="stats-calendar-toolbar-row hidden" id="stats-calendar-year-type-row">
+                                <div class="form-group">
+                                    <label>Year layout</label>
+                                    <div class="stats-cal-mode-btns" id="stats-calendar-year-type-btns">
+                                        <button type="button" class="secondary-btn stats-cal-year-type-btn active" data-type="mini">Mini calendar</button>
+                                        <button type="button" class="secondary-btn stats-cal-year-type-btn" data-type="summary">Summary table</button>
+                                    </div>
+                                </div>
+                                <div class="sheet-table-toolbar hidden" id="stats-calendar-year-summary-toolbar">
+                                    <button type="button" class="secondary-btn table-columns-btn" id="stats-calendar-year-customize-columns">Customize Columns</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="stats-calendar-container" class="stats-calendar-container"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsMonthlySummary">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsMonthlySummary')">
+                        <span>Monthly Use Summary</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="sheet-table-toolbar">
+                            <button type="button" class="secondary-btn table-columns-btn" id="stats-monthly-customize-columns">Customize Columns</button>
+                        </div>
+                        <div id="stats-monthly-summary" class="sheet-table-wrap"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsWeeklySummary">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsWeeklySummary')">
+                        <span>Weekly Use Summary</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="sheet-table-toolbar">
+                            <button type="button" class="secondary-btn table-columns-btn" id="stats-weekly-customize-columns">Customize Columns</button>
+                        </div>
+                        <div id="stats-weekly-summary" class="sheet-table-wrap"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsBuyAnalytics">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsBuyAnalytics')">
+                        <span>Spending &amp; Purchases</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="stats-buy-analytics-cards" class="sheet-summary-grid"></div>
+
+                        <div class="stats-section">
+                            <h4 class="stats-inline-heading">Week Summary</h4>
+                            <div id="stats-buy-week-summary" class="sheet-table-wrap"></div>
+                        </div>
+
+                        <div class="stats-section">
+                            <div class="stats-section-heading-row">
+                                <h4 class="stats-inline-heading">Month Summary</h4>
+                                <button type="button" class="secondary-btn btn-sm" id="stats-buy-month-export-btn">Export CSV</button>
+                            </div>
+                            <div id="stats-buy-month-summary" class="sheet-table-wrap stats-buy-month-summary-wrap"></div>
+                        </div>
+
+                        <div class="collapsible-section stats-buy-nested" data-section="statsBuyStoreBreakdown">
+                            <button type="button" class="section-toggle" onclick="toggleSection('statsBuyStoreBreakdown')">
+                                <span>Store Breakdown</span>
+                                <span class="chevron">⌄</span>
+                            </button>
+                            <div class="section-content">
+                                <div id="stats-buy-store-summary" class="sheet-table-wrap"></div>
+                            </div>
+                        </div>
+
+                        <div class="collapsible-section stats-buy-nested" data-section="statsBuyAdvanced">
+                            <button type="button" class="section-toggle" onclick="toggleSection('statsBuyAdvanced')">
+                                <span>Advanced purchase metrics</span>
+                                <span class="chevron">⌄</span>
+                            </button>
+                            <div class="section-content">
+                                <div id="stats-buy-advanced-metrics" class="sheet-summary-grid"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                </div>
+            </section>
+
+            <!-- Taper Tab -->
+            <section id="taper-tab" class="tab taper-page">
+                <div class="page-header-row taper-page-header">
+                    <h2>Plan</h2>
+                    <div class="page-substance-selector substance-select-card taper-toolbar">
+                        <label for="taper-substance" class="page-substance-label taper-toolbar-label">Substance</label>
+                        <select id="taper-substance" class="page-substance-select taper-toolbar-select" required onchange="onTaperSubstanceChange()"></select>
+                    </div>
+                </div>
+
+                <div id="taper-plan-toolbar" class="taper-plan-toolbar hidden">
+                    <div class="taper-plan-toolbar-left">
+                        <div class="page-substance-selector substance-select-card taper-plan-select-card">
+                            <label for="taper-plan-select" class="page-substance-label">Plan</label>
+                            <select id="taper-plan-select" class="page-substance-select" onchange="onTaperPlanChange()"></select>
+                        </div>
+                        <span id="taper-plan-count" class="taper-plan-count"></span>
+                        <label class="taper-show-archived-toggle">
+                            <input type="checkbox" id="taper-show-archived" onchange="onTaperShowArchivedChange()">
+                            Show archived
+                        </label>
+                    </div>
+                    <div class="taper-plan-actions-bar">
+                        <button type="button" class="taper-chip-btn" onclick="showNewTaperPlan()">+ New Plan</button>
+                        <button type="button" class="taper-chip-btn" onclick="duplicateSelectedTaperPlan()">Duplicate</button>
+                        <button type="button" class="taper-chip-btn" onclick="renameSelectedTaperPlan()">Rename</button>
+                        <button type="button" class="taper-chip-btn" onclick="archiveSelectedTaperPlan()">Archive</button>
+                        <button type="button" class="taper-chip-btn" onclick="setSelectedTaperPlanPrimary()">Set Primary</button>
+                        <button type="button" class="taper-chip-btn" onclick="openManageTaperPlansModal()">Manage Plans</button>
+                    </div>
+                </div>
+
+                <p id="taper-disabled-msg" class="taper-empty-state hidden">Taper tracking is disabled for this substance. Enable it in <strong>Settings → Manage Substances</strong>.</p>
+
+                <div id="taper-dashboard" class="taper-dashboard hidden">
+                    <div id="taper-paused-banner" class="taper-alert taper-alert-warn hidden">
+                        <span>⏸</span> Taper paused — limits are not enforced until you resume.
+                    </div>
+
+                    <div class="collapsible-section" data-section="taperTodayStatus">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperTodayStatus')">
+                            <span>Active Taper Plan</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
+                    <!-- KPI strip -->
+                    <div class="taper-kpi-row">
+                        <div class="taper-kpi-tile" id="taper-kpi-used-today">
+                            <span class="taper-kpi-label">Used Today</span>
+                            <span class="taper-kpi-value" id="taper-kpi-used-today-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile" id="taper-kpi-used-week">
+                            <span class="taper-kpi-label">Used This Week</span>
+                            <span class="taper-kpi-value" id="taper-kpi-used-week-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-kpi-highlight" id="taper-kpi-remaining-week">
+                            <span class="taper-kpi-label">Remaining This Week</span>
+                            <span class="taper-kpi-value" id="taper-kpi-remaining-week-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile" id="taper-kpi-status">
+                            <span class="taper-kpi-label">Status</span>
+                            <span class="taper-kpi-value taper-kpi-status-text" id="taper-kpi-status-val">—</span>
+                        </div>
+                    </div>
+
+                    <div id="taper-purchase-kpi-row" class="taper-kpi-row taper-purchase-kpi-row hidden">
+                        <div class="taper-kpi-tile taper-purchase-kpi-tile hidden" id="taper-kpi-bought-week">
+                            <span class="taper-kpi-label">Bought this week</span>
+                            <span class="taper-kpi-value" id="taper-kpi-bought-week-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-kpi-highlight taper-purchase-kpi-tile hidden" id="taper-kpi-buy-remaining-week">
+                            <span class="taper-kpi-label">Buy amount remaining this week</span>
+                            <span class="taper-kpi-value" id="taper-kpi-buy-remaining-week-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-purchase-kpi-tile hidden" id="taper-kpi-spent-week">
+                            <span class="taper-kpi-label">Spent this week</span>
+                            <span class="taper-kpi-value" id="taper-kpi-spent-week-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-kpi-highlight taper-purchase-kpi-tile hidden" id="taper-kpi-spend-remaining-week">
+                            <span class="taper-kpi-label">Spending remaining this week</span>
+                            <span class="taper-kpi-value" id="taper-kpi-spend-remaining-week-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-purchase-kpi-tile hidden" id="taper-kpi-bought-month">
+                            <span class="taper-kpi-label">Bought this month</span>
+                            <span class="taper-kpi-value" id="taper-kpi-bought-month-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-kpi-highlight taper-purchase-kpi-tile hidden" id="taper-kpi-buy-remaining-month">
+                            <span class="taper-kpi-label">Monthly buy remaining</span>
+                            <span class="taper-kpi-value" id="taper-kpi-buy-remaining-month-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-purchase-kpi-tile hidden" id="taper-kpi-spent-month">
+                            <span class="taper-kpi-label">Spent this month</span>
+                            <span class="taper-kpi-value" id="taper-kpi-spent-month-val">—</span>
+                        </div>
+                        <div class="taper-kpi-tile taper-kpi-highlight taper-purchase-kpi-tile hidden" id="taper-kpi-spend-remaining-month">
+                            <span class="taper-kpi-label">Monthly spending remaining</span>
+                            <span class="taper-kpi-value" id="taper-kpi-spend-remaining-month-val">—</span>
+                        </div>
+                    </div>
+
+                    <!-- Plan control strip -->
+                    <div class="taper-plan-strip" id="taper-plan-summary-card">
+                        <div class="taper-plan-strip-main">
+                            <span class="taper-plan-icon" id="taper-plan-icon">📉</span>
+                            <div class="taper-plan-strip-copy">
+                                <p id="taper-plan-summary-text" class="taper-plan-strip-title">—</p>
+                                <div id="taper-plan-badges" class="taper-plan-badges"></div>
+                                <div class="taper-plan-meta-grid">
+                                    <div class="taper-plan-meta-item">
+                                        <span>Start</span>
+                                        <strong id="taper-plan-start-date">—</strong>
+                                    </div>
+                                    <div class="taper-plan-meta-item">
+                                        <span>End</span>
+                                        <strong id="taper-plan-end-date">—</strong>
+                                    </div>
+                                    <div class="taper-plan-meta-item">
+                                        <span>Weeks</span>
+                                        <strong id="taper-plan-week-count">—</strong>
+                                    </div>
+                                    <div class="taper-plan-meta-item">
+                                        <span>Current week</span>
+                                        <strong id="taper-plan-current-week">—</strong>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="taper-plan-strip-progress">
+                            <span class="taper-plan-pct" id="taper-plan-pct-label">Plan progress</span>
+                            <div class="taper-plan-pct-bar"><div class="taper-plan-pct-fill" id="taper-plan-pct-fill"></div></div>
+                        </div>
+                        <div class="taper-plan-actions">
+                            <button type="button" class="taper-chip-btn" onclick="editTaperPlan()">✏️ Edit</button>
+                            <button type="button" class="taper-chip-btn" id="taper-pause-btn" onclick="pauseTaper()">⏸ Pause</button>
+                            <button type="button" class="taper-chip-btn taper-chip-danger" onclick="resetTaper()">Reset</button>
+                        </div>
+                    </div>
+
+                    <div class="taper-dash-grid">
+                        <div class="taper-dash-main">
+                            <!-- Progress -->
+                            <div class="taper-panel" id="taper-progress-card">
+                                <div class="taper-panel-header">
+                                    <h3>Progress Tracking</h3>
+                                </div>
+                                <div class="taper-progress-panel taper-progress-weekly">
+                                    <div class="taper-progress-panel-head">
+                                        <span class="taper-panel-badge">Weekly</span>
+                                        <span id="taper-weekly-status" class="taper-status-badge">—</span>
+                                    </div>
+                                    <div class="taper-mini-stats">
+                                        <div class="taper-mini-stat"><span>Weekly target</span><strong id="taper-weekly-max-val">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Used this week</span><strong id="taper-weekly-used">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Remaining</span><strong id="taper-weekly-remaining">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Over / under</span><strong id="taper-weekly-over-under">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Monthly cap</span><strong id="taper-monthly-cap-val">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Used this month</span><strong id="taper-monthly-used-val">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Month remaining</span><strong id="taper-monthly-remaining-val">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Weekly %</span><strong id="taper-weekly-pct">—</strong></div>
+                                    </div>
+                                    <div class="progress-bar-container dns-bar-container taper-bar">
+                                        <div class="progress-bar dns-bar" id="taper-weekly-bar"><span class="progress-text" id="taper-weekly-bar-text"></span></div>
+                                    </div>
+                                </div>
+                                <p id="taper-weekly-days-left" class="taper-panel-footer hidden">—</p>
+
+                                <div id="taper-purchase-progress" class="taper-progress-panel taper-progress-purchase hidden">
+                                    <div class="taper-progress-panel-head">
+                                        <span class="taper-panel-badge">Buying Progress</span>
+                                        <span id="taper-purchase-status" class="taper-status-badge">—</span>
+                                    </div>
+                                    <div class="taper-mini-stats">
+                                        <div class="taper-mini-stat"><span>Weekly buy target</span><strong id="taper-purchase-weekly-buy-target">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Bought this week</span><strong id="taper-purchase-bought-week">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Buy remaining</span><strong id="taper-purchase-buy-remaining">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Buy over / under</span><strong id="taper-purchase-buy-over-under">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Weekly spend target</span><strong id="taper-purchase-weekly-spend-target">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Spent this week</span><strong id="taper-purchase-spent-week">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Spend remaining</span><strong id="taper-purchase-spend-remaining">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Spend over / under</span><strong id="taper-purchase-spend-over-under">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Monthly buy cap</span><strong id="taper-purchase-monthly-buy-cap">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Bought this month</span><strong id="taper-purchase-bought-month">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Monthly buy remaining</span><strong id="taper-purchase-buy-month-remaining">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Monthly spend cap</span><strong id="taper-purchase-monthly-spend-cap">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Spent this month</span><strong id="taper-purchase-spent-month">—</strong></div>
+                                        <div class="taper-mini-stat"><span>Monthly spend remaining</span><strong id="taper-purchase-spend-month-remaining">—</strong></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                        </div>
+                    </div>
+
+                    <div class="collapsible-section" data-section="taperWeeklyPlan">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperWeeklyPlan')">
+                            <span>Weekly Plan</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
+                            <div class="taper-panel" id="taper-weekly-plan-card">
+                                <div id="taper-weekly-summary" class="taper-kpi-chips"></div>
+                                <div id="taper-weekly-table" class="taper-table-wrap"></div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="collapsible-section" data-section="taperByWeek">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperByWeek')">
+                            <span>Taper by Week</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
+                            <div class="sheet-table-toolbar">
+                                <button type="button" class="secondary-btn table-columns-btn" id="taper-by-week-customize-columns">Customize Columns</button>
+                            </div>
+                            <div id="taper-by-week-summary" class="taper-kpi-chips taper-by-week-summary"></div>
+                            <div id="taper-by-week-table" class="taper-table-wrap"></div>
+                        </div>
+                    </div>
+
+                    <div class="collapsible-section" data-section="taperWeeklyCalendar">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperWeeklyCalendar')">
+                            <span>Weekly Calendar</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
+                            <div id="taper-weekly-calendar" class="taper-weekly-calendar"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="taper-no-plan" class="taper-empty-dashboard hidden">
+                    <div class="taper-empty-icon">📉</div>
+                    <h3>No taper plans for this substance yet.</h3>
+                    <p>Set starting and goal averages, pick a reduction style, and track progress week by week.</p>
+                    <button type="button" class="submit-btn" onclick="showNewTaperPlan()">Create taper plan</button>
+                </div>
+
+                <div id="taper-setup" class="taper-editor-panel hidden">
+                    <div class="taper-editor-header">
+                        <h3 id="taper-setup-title">Create Taper Plan</h3>
+                        <button type="button" class="taper-chip-btn" onclick="cancelTaperEdit()">← Back to dashboard</button>
+                    </div>
+                    <form id="taper-form" class="taper-form-compact">
+                        <div class="form-group">
+                            <label for="taper-plan-name">Plan name</label>
+                            <input type="text" id="taper-plan-name" required placeholder="e.g. June manual weekly plan">
+                        </div>
+                        <label class="checkbox-label taper-set-primary-label">
+                            <input type="checkbox" id="taper-set-primary">
+                            Set as primary plan for this substance
+                        </label>
+                        <div class="form-row" id="taper-date-row">
+                            <div class="form-group" id="start-date-group">
+                                <label for="start-date">Start Date</label>
+                                <input type="date" id="start-date" required>
+                            </div>
+                            <div class="form-group" id="end-date-group">
+                                <label for="end-date" id="end-date-label">End Date</label>
+                                <input type="date" id="end-date" required>
+                            </div>
+                        </div>
+                        <div class="form-row" id="taper-start-goal-row">
+                            <div class="form-group" id="taper-start-avg-group">
+                                <label for="current-avg">Starting Daily Average (optional)</label>
+                                <input type="number" id="current-avg" min="0" step="0.1">
+                            </div>
+                            <div class="form-group" id="goal-avg-group">
+                                <label for="goal-avg" id="goal-avg-label">Daily average allowed</label>
+                                <input type="number" id="goal-avg" min="0" step="0.1" required>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="reduction-type">Reduction Target</label>
+                            <select id="reduction-type" onchange="toggleTaperPlanTypeFields()">
+                                <option value="reduce-amount">Reduce by amount</option>
+                                <option value="reduce-percent">Reduce by percent</option>
+                                <option value="fixed">Fixed daily limit</option>
+                                <option value="manual-weekly">Manual weekly plan</option>
+                            </select>
+                            <p class="field-hint" id="plan-type-hint">Reduce a set amount each week until you reach your goal.</p>
+                        </div>
+                        <div id="taper-vape-puffs-extra" class="form-group hidden">
+                            <label for="puff-reduction-mode">Puff reduction type</label>
+                            <select id="puff-reduction-mode" onchange="toggleTaperPlanTypeFields()">
+                                <option value="amount">Reduce by amount (puffs/week)</option>
+                                <option value="percent">Reduce by percent</option>
+                            </select>
+                        </div>
+                        <div class="form-row hidden" id="taper-vape-buying-section">
+                            <div class="form-group">
+                                <label for="vape-current-buy-days">Current buying frequency (every X days)</label>
+                                <input type="number" id="vape-current-buy-days" min="1" step="0.5" placeholder="e.g. 5">
+                                <p class="field-hint">Baseline from purchase gaps and supply duration when left blank on save.</p>
+                            </div>
+                            <div class="form-group">
+                                <label for="vape-goal-buy-days">Goal buying frequency (every X days)</label>
+                                <input type="number" id="vape-goal-buy-days" min="1" step="0.5" placeholder="e.g. 10">
+                            </div>
+                            <div class="form-group">
+                                <label for="vape-weekly-spend-cap">Weekly spend cap (optional)</label>
+                                <input type="number" id="vape-weekly-spend-cap" min="0" step="0.01" placeholder="Optional">
+                            </div>
+                        </div>
+                        <div class="form-row hidden" id="taper-vape-nicotine-section">
+                            <div class="form-group">
+                                <label for="vape-start-nicotine">Starting nicotine strength (mg/mL)</label>
+                                <input type="number" id="vape-start-nicotine" min="0" step="0.1" placeholder="e.g. 50">
+                            </div>
+                            <div class="form-group">
+                                <label for="vape-goal-nicotine">Goal nicotine strength (mg/mL)</label>
+                                <input type="number" id="vape-goal-nicotine" min="0" step="0.1" placeholder="e.g. 0">
+                            </div>
+                            <div class="form-group">
+                                <label for="vape-nicotine-step">Step-down amount (mg/mL)</label>
+                                <input type="number" id="vape-nicotine-step" min="0.1" step="0.1" placeholder="e.g. 5">
+                            </div>
+                            <div class="form-group">
+                                <label for="vape-nicotine-interval">Step-down interval</label>
+                                <select id="vape-nicotine-interval">
+                                    <option value="weekly">Weekly</option>
+                                    <option value="biweekly">Every 2 weeks</option>
+                                    <option value="monthly">Monthly</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="form-row" id="taper-reduction-fields-row">
+                            <div class="form-group" id="reduction-amount-group">
+                                <label for="reduction-amount">Reduction amount (per week)</label>
+                                <input type="number" id="reduction-amount" min="0" step="0.1" placeholder="e.g. 0.5">
+                            </div>
+                            <div class="form-group hidden" id="reduction-percent-group">
+                                <label for="reduction-percent">Reduction percent (per week)</label>
+                                <input type="number" id="reduction-percent" min="0" max="100" step="1" placeholder="e.g. 10">
+                            </div>
+                        </div>
+                        <div id="manual-weekly-plan-section" class="manual-weekly-plan-section hidden">
+                            <div class="manual-weekly-mode-toggle" role="group" aria-label="Manual weekly planning mode">
+                                <button type="button" class="manual-mode-btn active" data-mode="amount" onclick="setManualWeeklyMode('amount')">Amount</button>
+                                <button type="button" class="manual-mode-btn" data-mode="percent" onclick="setManualWeeklyMode('percent')">Percent</button>
+                            </div>
+                            <div class="form-group manual-weekly-unit-group">
+                                <label for="manual-weekly-unit">Unit</label>
+                                <select id="manual-weekly-unit" onchange="onManualWeeklyUnitChange()"></select>
+                                <input type="text" id="manual-weekly-unit-custom" class="hidden" placeholder="Custom unit" oninput="updateManualWeeklyComputedPreviews()">
+                            </div>
+                            <div id="manual-weekly-baseline-group" class="form-group hidden">
+                                <label for="manual-weekly-baseline">Baseline amount (Week 1 = 100%)</label>
+                                <input type="number" id="manual-weekly-baseline" min="0" step="0.1" oninput="updateManualWeeklyComputedPreviews()">
+                            </div>
+                            <p class="manual-weekly-intro" id="manual-weekly-intro">Enter a weekly goal amount for each week.</p>
+                            <p class="field-hint manual-weekly-example" id="manual-weekly-example">Example: Week 1: 70 cigarettes · Week 2: 63 cigarettes · Week 3: 56 cigarettes</p>
+                            <h4>Weekly Targets</h4>
+                            <div id="manual-weekly-targets-list" class="manual-weekly-targets-list"></div>
+                            <div class="manual-weekly-targets-actions">
+                                <button type="button" class="secondary-btn" onclick="addManualWeeklyWeek()">+ Add Week</button>
+                                <button type="button" class="secondary-btn" onclick="removeManualWeeklyWeek()">Remove Week</button>
+                            </div>
+                        </div>
+                        <div class="form-row" id="taper-end-weekly-row">
+                            <div class="form-group" id="weekly-max-group">
+                                <label for="weekly-max">Weekly target</label>
+                                <input type="number" id="weekly-max" min="0" step="0.1" placeholder="Optional">
+                                <p class="field-hint">Max amount for the current week.</p>
+                            </div>
+                            <div class="form-group" id="monthly-max-group">
+                                <label for="monthly-max">Monthly cap</label>
+                                <input type="number" id="monthly-max" min="0" step="0.1" placeholder="Optional">
+                                <p class="field-hint">Optional monthly limit for your taper plan.</p>
+                            </div>
+                        </div>
+                        <div class="form-group" id="taper-notes-group">
+                            <label for="taper-notes">Plan notes</label>
+                            <textarea id="taper-notes" rows="2" placeholder="Personal reminders..."></textarea>
+                        </div>
+                        <div id="taper-warn-toggles">
+                        <div class="form-group toggle-row">
+                            <label for="do-not-surpass-daily">Do not surpass daily limit</label>
+                            <input type="checkbox" id="do-not-surpass-daily" checked>
+                        </div>
+                        <div class="form-group toggle-row">
+                            <label for="do-not-surpass-weekly">Do not surpass weekly limit</label>
+                            <input type="checkbox" id="do-not-surpass-weekly">
+                        </div>
+                        </div>
+                        <div id="purchase-taper-section" class="purchase-taper-section hidden">
+                            <h4>Buying / Spending Reduction</h4>
+                            <div class="form-group toggle-row">
+                                <label for="purchase-taper-enabled">Track buying reduction</label>
+                                <input type="checkbox" id="purchase-taper-enabled" onchange="togglePurchaseTaperFields()">
+                            </div>
+                            <div id="purchase-taper-fields" class="hidden">
+                                <div class="form-group">
+                                    <label for="purchase-reduction-mode">Reduction target</label>
+                                    <select id="purchase-reduction-mode" onchange="togglePurchaseTaperFields()">
+                                        <option value="reduce_buy_amount">Reduce purchase amount</option>
+                                        <option value="reduce_buy_spend">Reduce purchase cost</option>
+                                        <option value="weekly_buy_amount">Fixed weekly purchase limit</option>
+                                        <option value="weekly_spend">Fixed weekly spending limit</option>
+                                        <option value="monthly_buy_amount">Fixed monthly purchase cap</option>
+                                        <option value="monthly_spend">Fixed monthly spending cap</option>
+                                        <option value="manual_weekly_buy_amount">Manual weekly buy plan</option>
+                                        <option value="manual_weekly_spend">Manual weekly spending plan</option>
+                                    </select>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group hidden" id="purchase-start-amount-group">
+                                        <label for="purchase-start-amount" id="purchase-start-amount-label">Starting weekly purchase amount</label>
+                                        <input type="number" id="purchase-start-amount" min="0" step="0.1">
+                                    </div>
+                                    <div class="form-group hidden" id="purchase-start-spend-group">
+                                        <label for="purchase-start-spend" id="purchase-start-spend-label">Starting weekly spend</label>
+                                        <input type="number" id="purchase-start-spend" min="0" step="0.01">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group hidden" id="purchase-weekly-amount-group">
+                                        <label for="purchase-weekly-amount" id="purchase-weekly-amount-label">Weekly purchase target</label>
+                                        <input type="number" id="purchase-weekly-amount" min="0" step="0.1">
+                                    </div>
+                                    <div class="form-group hidden" id="purchase-weekly-spend-group">
+                                        <label for="purchase-weekly-spend" id="purchase-weekly-spend-label">Weekly spending target</label>
+                                        <input type="number" id="purchase-weekly-spend" min="0" step="0.01">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group hidden" id="purchase-monthly-amount-group">
+                                        <label for="purchase-monthly-amount" id="purchase-monthly-amount-label">Monthly purchase cap</label>
+                                        <input type="number" id="purchase-monthly-amount" min="0" step="0.1">
+                                    </div>
+                                    <div class="form-group hidden" id="purchase-monthly-spend-group">
+                                        <label for="purchase-monthly-spend" id="purchase-monthly-spend-label">Monthly spending cap</label>
+                                        <input type="number" id="purchase-monthly-spend" min="0" step="0.01">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group hidden" id="purchase-reduction-amount-group">
+                                        <label for="purchase-reduction-amount" id="purchase-reduction-amount-label">Reduction amount per week</label>
+                                        <input type="number" id="purchase-reduction-amount" min="0" step="0.1">
+                                    </div>
+                                    <div class="form-group hidden" id="purchase-reduction-percent-group">
+                                        <label for="purchase-reduction-percent" id="purchase-reduction-percent-label">Reduction percent per week</label>
+                                        <input type="number" id="purchase-reduction-percent" min="0" max="100" step="1">
+                                    </div>
+                                </div>
+                                <div id="manual-purchase-plan-section" class="manual-weekly-plan-section hidden">
+                                    <h4>Manual Weekly Purchase Targets</h4>
+                                    <div id="manual-purchase-targets-list" class="manual-weekly-targets-list"></div>
+                                    <div class="manual-weekly-targets-actions">
+                                        <button type="button" class="secondary-btn" onclick="addManualPurchaseWeek()">+ Add Week</button>
+                                        <button type="button" class="secondary-btn" onclick="removeManualPurchaseWeek()">Remove Week</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="taper-form-actions">
+                            <button type="button" class="secondary-btn hidden" id="taper-cancel-edit-btn" onclick="cancelTaperEdit()">Cancel Edit</button>
+                            <button type="submit" class="submit-btn" id="taper-generate-btn">Save Plan</button>
+                        </div>
+                    </form>
+                </div>
+
+            </section>
+
+            <!-- Buy Tracker Tab -->
+            <section id="buy-tracker-tab" class="tab">
+                <div class="page-header-row inventory-page-header">
+                    <h2>Inventory</h2>
+                    <div class="page-substance-selector substance-select-card inventory-substance-field">
+                        <label for="inventory-substance" class="page-substance-label">Substance</label>
+                        <select id="inventory-substance" class="page-substance-select" onchange="onInventorySubstanceChange()"></select>
+                    </div>
+                </div>
+
+                <div id="inventory-summary-cards" class="inventory-summary-wrap"></div>
+
+                <section class="inventory-filter-card">
+                    <div class="inventory-toolbar">
+                        <input type="search" id="inventory-search" class="inventory-search-input" placeholder="Search store, notes…" oninput="applyInventorySearchFilters()">
+                        <select id="inventory-filter-status" class="inventory-status-select" onchange="applyInventorySearchFilters()" aria-label="Status">
+                            <option value="all" selected>All status</option>
+                            <option value="active">Active</option>
+                            <option value="depleted">Depleted</option>
+                            <option value="hidden">Hidden</option>
+                        </select>
+                        <button type="button" id="inventory-filter-toggle" class="inventory-more-filters-btn secondary-btn btn-sm" onclick="toggleInventoryFiltersPanel()">
+                            More filters<span id="inventory-filter-count"></span>
+                        </button>
+                    </div>
+                    <div id="inventory-filter-chips" class="inventory-filter-chips hidden"></div>
+                    <div id="inventory-filter-panel" class="inventory-filter-panel hidden">
+                        <div class="inventory-filter-grid">
+                            <div class="inventory-filter-field">
+                                <label for="inventory-filter-date-start">From date</label>
+                                <input type="date" id="inventory-filter-date-start" onchange="applyInventorySearchFilters()">
+                            </div>
+                            <div class="inventory-filter-field">
+                                <label for="inventory-filter-date-end">To date</label>
+                                <input type="date" id="inventory-filter-date-end" onchange="applyInventorySearchFilters()">
+                            </div>
+                            <div class="inventory-filter-field">
+                                <label for="inventory-filter-payment">Payment</label>
+                                <select id="inventory-filter-payment" onchange="applyInventorySearchFilters()">
+                                    <option value="">Any payment</option>
+                                    <option value="Cash">Cash</option>
+                                    <option value="Card">Card</option>
+                                    <option value="Apple Pay">Apple Pay</option>
+                                    <option value="Other">Other</option>
+                                </select>
+                            </div>
+                            <div class="inventory-filter-field">
+                                <label for="inventory-filter-remaining">Remaining</label>
+                                <select id="inventory-filter-remaining" onchange="applyInventorySearchFilters()">
+                                    <option value="">Any remaining</option>
+                                    <option value="yes">Has remaining</option>
+                                    <option value="no">No remaining</option>
+                                </select>
+                            </div>
+                            <div class="inventory-filter-field">
+                                <label for="inventory-filter-cost">Cost</label>
+                                <select id="inventory-filter-cost" onchange="applyInventorySearchFilters()">
+                                    <option value="">Any cost</option>
+                                    <option value="yes">Has cost</option>
+                                    <option value="no">No cost</option>
+                                </select>
+                            </div>
+                            <label class="inventory-filter-check"><input type="checkbox" id="inventory-filter-vape-only" onchange="applyInventorySearchFilters()"> Vape only</label>
+                            <div class="inventory-filter-actions">
+                                <button type="button" class="secondary-btn btn-sm" onclick="clearInventoryFilters()">Clear filters</button>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <div class="collapsible-section" data-section="purchaseHistory">
+                    <button type="button" class="section-toggle" onclick="toggleSection('purchaseHistory')">
+                        <span>Purchase History</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content" id="purchase-history-content">
+                        <div id="inventory-bulk-bar" class="inventory-bulk-bar hidden">
+                            <span id="inventory-bulk-count" class="inventory-bulk-count"></span>
+                            <div class="inventory-bulk-actions">
+                                <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('active')">Active</button>
+                                <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('depleted')">Depleted</button>
+                                <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('hide')">Hide</button>
+                                <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('unhide')">Unhide</button>
+                                <button type="button" class="secondary-btn btn-sm" onclick="runInventoryBulkAction('recalculate')">Recalc</button>
+                                <button type="button" class="delete-btn btn-sm" onclick="runInventoryBulkAction('delete')">Delete</button>
+                            </div>
+                        </div>
+                        <div class="purchase-history-header">
+                            <button type="button" class="secondary-btn btn-sm" id="purchase-history-customize-columns">Columns</button>
+                        </div>
+                        <div id="purchase-history-list"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="purchaseForm">
+                    <button type="button" class="section-toggle" onclick="toggleSection('purchaseForm')">
+                        <span>Add Inventory</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <form id="buy-form">
+                    <div class="form-group">
+                        <label for="buy-substance">Item / Substance</label>
+                        <select id="buy-substance" required></select>
+                    </div>
+                    <div class="form-row buy-form-date-qty">
+                        <div class="form-group">
+                            <label for="buy-date">Date</label>
+                            <input type="date" id="buy-date" required>
+                        </div>
+                        <div class="form-group" id="buy-time-group">
+                            <label for="buy-time">Time</label>
+                            <input type="time" id="buy-time" value="12:00">
+                        </div>
+                        <div class="form-group" id="buy-quantity-group">
+                            <label for="buy-quantity" id="buy-quantity-label">Quantity Bought</label>
+                            <input type="number" id="buy-quantity" min="0.01" step="0.01" required>
+                        </div>
+                    </div>
+                    <div id="buy-nicotine-fields-group" class="hidden">
+                        <div class="form-group">
+                            <label for="buy-nicotine-product-type">Product type</label>
+                            <select id="buy-nicotine-product-type" onchange="updateBuyNicotineProductTypeUI()">
+                                <option value="vape">Vape</option>
+                                <option value="cigarettes">Cigarettes</option>
+                                <option value="pouches">Nicotine pouches</option>
+                                <option value="gum">Nicotine gum</option>
+                                <option value="patches">Nicotine patches</option>
+                                <option value="other">Other</option>
+                            </select>
+                        </div>
+                    </div>
+                    <div id="buy-vape-percent-group" class="form-group hidden">
+                        <label for="buy-percent-bought">Percent bought at</label>
+                        <input type="number" id="buy-percent-bought" min="0" max="100" step="0.1" value="100">
+                        <p id="buy-vape-start-preview" class="buy-preview">—</p>
+                    </div>
+                    <div id="buy-vape-liquid-group" class="hidden">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="buy-eliquid-capacity">E-liquid Capacity (mL)</label>
+                                <input type="number" id="buy-eliquid-capacity" min="0" step="0.1" placeholder="20">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-nicotine-strength">Nicotine mg/mL</label>
+                                <input type="number" id="buy-nicotine-strength" min="0" step="0.1" placeholder="50">
+                            </div>
+                        </div>
+                        <p id="buy-vape-nicotine-preview" class="buy-preview">—</p>
+                    </div>
+                    <div id="buy-alcohol-fields-group" class="hidden">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="buy-alcohol-percent">Alcohol %</label>
+                                <input type="number" id="buy-alcohol-percent" min="0" max="100" step="0.1" placeholder="15">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-net-volume-ml">Net volume (mL)</label>
+                                <input type="number" id="buy-net-volume-ml" min="0" step="0.1" placeholder="750">
+                            </div>
+                        </div>
+                        <p id="buy-alcohol-preview" class="buy-preview">—</p>
+                    </div>
+                    <div id="buy-weed-fields-group" class="hidden">
+                        <div class="form-group">
+                            <label for="buy-weed-product-type">Product type</label>
+                            <select id="buy-weed-product-type">
+                                <option value="bud">Bud</option>
+                                <option value="cart">Cart</option>
+                                <option value="edibles">Edibles</option>
+                                <option value="prerolls">Pre-rolls</option>
+                            </select>
+                        </div>
+                        <div class="form-group" id="buy-weed-bud-group">
+                            <label for="buy-bud-grams">Bud grams</label>
+                            <input type="number" id="buy-bud-grams" min="0" step="0.01">
+                        </div>
+                        <div class="form-group hidden" id="buy-weed-cart-group">
+                            <label for="buy-cart-grams">Cart grams</label>
+                            <input type="number" id="buy-cart-grams" min="0" step="0.01">
+                        </div>
+                        <div class="form-group hidden" id="buy-weed-edibles-group">
+                            <label for="buy-edibles-mg">Edibles mg</label>
+                            <input type="number" id="buy-edibles-mg" min="0" step="0.1">
+                        </div>
+                        <div class="hidden" id="buy-weed-prerolls-group">
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="buy-preroll-count">Pre-roll count</label>
+                                    <input type="number" id="buy-preroll-count" min="0" step="1">
+                                </div>
+                                <div class="form-group">
+                                    <label for="buy-grams-per-preroll">Grams per pre-roll</label>
+                                    <input type="number" id="buy-grams-per-preroll" min="0" step="0.01">
+                                </div>
+                            </div>
+                            <p id="buy-preroll-preview" class="buy-preview">—</p>
+                        </div>
+                    </div>
+                    <div id="buy-cigarettes-fields-group" class="hidden">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="buy-cigarette-pack-count">Pack count</label>
+                                <input type="number" id="buy-cigarette-pack-count" min="0" step="1" placeholder="1">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-cigarette-count">Cigarette count</label>
+                                <input type="number" id="buy-cigarette-count" min="0" step="1" placeholder="20">
+                            </div>
+                        </div>
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="buy-cigarettes-per-pack">Cigarettes per pack</label>
+                                <input type="number" id="buy-cigarettes-per-pack" min="1" step="1" value="20">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-cigarette-nicotine-mg">Nicotine (mg per cigarette)</label>
+                                <input type="number" id="buy-cigarette-nicotine-mg" min="0" step="0.01" placeholder="1.2">
+                            </div>
+                        </div>
+                        <p id="buy-cigarettes-preview" class="buy-preview">—</p>
+                    </div>
+                    <div id="buy-pouches-fields-group" class="hidden">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="buy-pouch-container-count">Can/container count</label>
+                                <input type="number" id="buy-pouch-container-count" min="0" step="1" placeholder="1">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-pouches-per-container">Pouches per container</label>
+                                <input type="number" id="buy-pouches-per-container" min="0" step="1" placeholder="20">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="buy-pouch-mg-per">Mg nicotine per pouch</label>
+                            <input type="number" id="buy-pouch-mg-per" min="0" step="0.1" placeholder="6">
+                        </div>
+                        <p id="buy-pouches-preview" class="buy-preview">—</p>
+                    </div>
+                    <div id="buy-gum-fields-group" class="hidden">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="buy-gum-piece-count">Piece count</label>
+                                <input type="number" id="buy-gum-piece-count" min="0" step="1" placeholder="20">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-gum-mg-per-piece">Mg nicotine per piece</label>
+                                <input type="number" id="buy-gum-mg-per-piece" min="0" step="0.1" placeholder="2">
+                            </div>
+                        </div>
+                        <p id="buy-gum-preview" class="buy-preview">—</p>
+                    </div>
+                    <div id="buy-patches-fields-group" class="hidden">
+                        <div class="form-row">
+                            <div class="form-group">
+                                <label for="buy-patch-count">Patch count</label>
+                                <input type="number" id="buy-patch-count" min="0" step="1" placeholder="14">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-patch-mg-per">Mg per patch</label>
+                                <input type="number" id="buy-patch-mg-per" min="0" step="0.1" placeholder="21">
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="buy-patch-duration-hours">Patch duration (hours)</label>
+                            <input type="number" id="buy-patch-duration-hours" min="1" step="1" value="24">
+                        </div>
+                        <p id="buy-patches-preview" class="buy-preview">—</p>
+                    </div>
+                    <div id="buy-lsd-fields-group" class="hidden">
+                        <div class="form-group">
+                            <label for="buy-ug-per-tab">ug per tab</label>
+                            <input type="number" id="buy-ug-per-tab" min="0.01" step="0.01" placeholder="100">
+                        </div>
+                        <p id="buy-lsd-preview" class="buy-preview">—</p>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group" id="buy-unit-group">
+                            <label for="buy-unit">Unit</label>
+                            <select id="buy-unit" required></select>
+                        </div>
+                        <div class="form-group">
+                            <label for="buy-total-cost">Total Cost ($)</label>
+                            <input type="number" id="buy-total-cost" step="0.01" min="0" required>
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Cost Per Unit</label>
+                            <p id="buy-cost-per-unit-preview" class="buy-preview">—</p>
+                        </div>
+                    </div>
+                    <div class="form-group" id="buy-store-group">
+                        <label for="buy-store-select">Store / Location</label>
+                        <select id="buy-store-select"></select>
+                        <div class="form-group buy-store-new-group hidden" id="buy-store-new-group">
+                            <label for="buy-store-new">New Store / Location</label>
+                            <input type="text" id="buy-store-new" placeholder="Enter store or location name" autocomplete="off">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label for="buy-payment">Payment Method (optional)</label>
+                        <select id="buy-payment">
+                            <option value="">—</option>
+                            <option value="Cash">Cash</option>
+                            <option value="Card">Card</option>
+                            <option value="Apple Pay">Apple Pay</option>
+                            <option value="Other">Other</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="buy-notes">Notes</label>
+                        <textarea id="buy-notes" rows="2" placeholder="Purchase notes..."></textarea>
+                    </div>
+                    <p id="buy-form-feedback" class="settings-hint hidden" role="status"></p>
+                    <button type="submit" class="submit-btn" id="buy-submit-btn">Save Purchase</button>
+                    <button type="button" class="secondary-btn hidden" id="cancel-buy-edit-btn" onclick="cancelBuyEdit()">Cancel Edit</button>
+                </form>
+                    </div>
+                </div>
+
+            </section>
+
+            <!-- Settings Tab -->
+            <section id="settings-tab" class="tab">
+                <h2>Settings</h2>
+
+                <div class="collapsible-section" data-section="settingsAppearance">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsAppearance')">
+                        <span>Appearance</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section">
+                    <div class="form-group">
+                        <label for="theme-preference">Theme</label>
+                        <select id="theme-preference" onchange="setThemePreference(this.value)">
+                            <option value="dark">Dark</option>
+                            <option value="light">Light</option>
+                            <option value="system">System</option>
+                        </select>
+                    </div>
+                    <p id="theme-preview-text" class="settings-hint theme-preview-text">Current theme: Dark</p>
+                    <p id="theme-system-note" class="settings-hint theme-system-note hidden"></p>
+                </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="settingsSubstances">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsSubstances')">
+                        <span>Manage Substances</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section">
+                    <p class="settings-hint">Add custom substances, set icons, colors, units, and tracking options.</p>
+                    <button type="button" class="submit-btn" onclick="openSubstanceEditor()">+ Add Substance</button>
+                    <div id="substances-list" class="substances-list"></div>
+                </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="settingsVape">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsVape')">
+                        <span>Vape / Nicotine</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section">
+                    <p class="settings-hint">Options for percent-left logging and usage summaries.</p>
+                    <div class="form-group toggle-row">
+                        <label for="spread-percent-left-usage">Spread percent-left usage across days</label>
+                        <input type="checkbox" id="spread-percent-left-usage" checked onchange="setSpreadPercentLeftUsage(this.checked)">
+                    </div>
+                    <p class="settings-hint">When on, percent-left logs distribute estimated puffs evenly across days since the previous checkpoint (or purchase date). Summaries and charts use the daily split instead of one lump sum on the log date.</p>
+                </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="settingsStores">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsStores')">
+                        <span>Stores / Locations</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section">
+                    <p class="settings-hint">Saved from Buy Tracker purchases. Add new stores when logging a purchase.</p>
+                    <div id="settings-stores-list"></div>
+                </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="settingsBackup">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsBackup')">
+                        <span>Data Backup</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section">
+                    <p id="settings-last-saved" class="last-saved-status">Last Saved: Never</p>
+                    <p class="last-saved-status">Last auto-backup: <span id="settings-auto-backup-date">Never</span></p>
+                    <p class="data-storage-note">Data is stored only in this browser (localStorage). A local backup is created automatically before import, reset, or migration.</p>
+                    <input type="file" id="import-json-input" accept=".json,application/json" class="hidden" onchange="handleImportJsonFile(event)">
+                    <div class="data-management-buttons">
+                        <button type="button" class="secondary-btn" onclick="exportJsonBackup()">Export JSON Backup</button>
+                        <button type="button" class="secondary-btn" onclick="triggerImportJsonBackup()">Import JSON Backup</button>
+                        <button type="button" class="secondary-btn" onclick="restoreLastAutoBackup()">Restore Last Backup</button>
+                        <button type="button" class="secondary-btn" onclick="exportDataCsv()">Export CSV</button>
+                        <button type="button" class="secondary-btn" onclick="repairAppData()">Repair Data</button>
+                    </div>
+                </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="settingsDangerZone">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsDangerZone')">
+                        <span>Danger Zone</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section danger-zone-section">
+                    <p class="settings-hint">Permanently delete all logs, substances, and settings. An automatic backup is created first.</p>
+                    <button type="button" class="danger-btn" onclick="clearAllData()">Clear All Data</button>
+                </div>
+                    </div>
+                </div>
+            </section>
+        </main>
+    </div>
+
+    <nav class="bottom-nav" aria-label="Main navigation">
+        <button class="nav-btn active" data-tab="dashboard-tab" onclick="switchTab('dashboard-tab')">
+            <span>🏠</span>
+            <span>Home</span>
+        </button>
+        <button class="nav-btn" data-tab="use-log-tab" onclick="switchTab('use-log-tab')">
+            <span>📝</span>
+            <span>Log</span>
+        </button>
+        <button class="nav-btn" data-tab="buy-tracker-tab" onclick="switchTab('buy-tracker-tab')">
+            <span>📦</span>
+            <span>Inventory</span>
+        </button>
+        <button class="nav-btn" data-tab="stats-tab" onclick="switchTab('stats-tab')">
+            <span>📈</span>
+            <span>Insights</span>
+        </button>
+        <button class="nav-btn" data-tab="taper-tab" onclick="switchTab('taper-tab')">
+            <span>📉</span>
+            <span>Plan</span>
+        </button>
+        <button class="nav-btn" data-tab="settings-tab" onclick="switchTab('settings-tab')">
+            <span>⚙️</span>
+            <span>Settings</span>
+        </button>
+    </nav>
+
+    <!-- Substance Editor Modal -->
+    <div id="substance-modal" class="modal hidden">
+        <div class="modal-content modal-wide substance-modal-content">
+            <h2 id="substance-editor-title">Add Substance</h2>
+            <form id="substance-form" novalidate>
+                <div class="form-group">
+                    <label for="substance-name">Name</label>
+                    <input type="text" id="substance-name" required placeholder="e.g. Sugar, Kratom">
+                </div>
+                <div class="form-group">
+                    <label>Icon</label>
+                    <input type="hidden" id="substance-icon" value="📦">
+                    <div id="substance-icon-picker" class="picker-grid"></div>
+                </div>
+                <div class="form-group">
+                    <label>Color</label>
+                    <input type="hidden" id="substance-color" value="#4caf50">
+                    <div id="substance-color-picker" class="picker-grid color-grid"></div>
+                </div>
+                <div class="form-group">
+                    <label for="substance-units">Units (comma-separated)</label>
+                    <input type="text" id="substance-units" placeholder="grams, servings, mg" value="units">
+                </div>
+                <div class="form-group">
+                    <label for="substance-default-unit">Default unit</label>
+                    <input type="text" id="substance-default-unit" placeholder="grams">
+                </div>
+                <div class="form-group toggle-row">
+                    <label for="substance-cost-tracking">Cost tracking</label>
+                    <input type="checkbox" id="substance-cost-tracking" checked>
+                </div>
+                <div class="form-group toggle-row">
+                    <label for="substance-taper-tracking">Taper tracking</label>
+                    <input type="checkbox" id="substance-taper-tracking" checked>
+                </div>
+                <div class="modal-actions">
+                    <button type="button" class="secondary-btn" onclick="closeSubstanceModal()">Cancel</button>
+                    <button id="save-substance-btn" type="button" class="submit-btn">Save Substance</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Bulk Link Preview Modal -->
+    <div id="bulk-link-modal" class="modal hidden">
+        <div class="modal-content">
+            <h2 id="bulk-link-modal-title">Bulk Link Preview</h2>
+            <div id="bulk-link-summary" class="bulk-link-summary"></div>
+            <div class="modal-actions">
+                <button type="button" class="secondary-btn" onclick="closeBulkLinkModal()">Cancel</button>
+                <button type="button" class="submit-btn" onclick="applyBulkLinkPreview()">Apply</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manual Bulk Link Modal -->
+    <div id="manual-bulk-link-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <h2>Manual Link Selected to Supply</h2>
+            <p class="settings-hint">Link checkbox-selected sessions to one purchase (or split across later purchases).</p>
+            <div class="manual-link-stats">
+                <p><strong>Selected sessions:</strong> <span id="manual-link-session-count">0</span></p>
+                <p><strong>Total selected amount:</strong> <span id="manual-link-total-amount">—</span></p>
+            </div>
+            <div class="form-group">
+                <label for="manual-link-substance">Substance</label>
+                <select id="manual-link-substance"></select>
+            </div>
+            <div class="form-group">
+                <label for="manual-link-purchase">Purchase / supply</label>
+                <select id="manual-link-purchase" required></select>
+            </div>
+            <div class="form-group toggle-row">
+                <label for="manual-link-reset">Reset selected sessions’ old links first</label>
+                <input type="checkbox" id="manual-link-reset" checked>
+            </div>
+            <div class="form-group toggle-row">
+                <label for="manual-link-overdraw">Allow overdraw supply</label>
+                <input type="checkbox" id="manual-link-overdraw">
+            </div>
+            <div class="form-group toggle-row">
+                <label for="manual-link-split">Split into next purchases if selected supply runs out</label>
+                <input type="checkbox" id="manual-link-split">
+            </div>
+            <div id="manual-link-preview" class="bulk-link-summary manual-link-preview"></div>
+            <div class="modal-actions">
+                <button type="button" class="secondary-btn" onclick="closeManualBulkLinkModal()">Cancel</button>
+                <button type="button" class="submit-btn" id="manual-link-apply-btn" onclick="applyManualBulkLink()">Apply Link</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Column Settings Modal -->
+    <div id="column-settings-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <h2 id="column-settings-title">Customize Columns</h2>
+            <p class="settings-hint">Drag rows to reorder columns. Uncheck to hide a column.</p>
+            <ul id="column-settings-list" class="column-settings-list"></ul>
+            <div class="modal-actions column-settings-actions">
+                <button type="button" class="secondary-btn" id="column-settings-reset">Reset Columns</button>
+                <button type="button" class="secondary-btn" id="column-settings-close">Cancel</button>
+                <button type="button" class="submit-btn" id="column-settings-apply">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Use Stats Settings Modal -->
+    <div id="use-stats-settings-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <h2>Edit Use Stats</h2>
+            <p class="settings-hint">Choose which stats appear and drag to reorder.</p>
+            <ul id="use-stats-settings-list" class="column-settings-list"></ul>
+            <div class="modal-actions column-settings-actions">
+                <button type="button" class="secondary-btn" id="use-stats-settings-reset">Reset to Default</button>
+                <button type="button" class="secondary-btn" id="use-stats-settings-close">Cancel</button>
+                <button type="button" class="submit-btn" id="use-stats-settings-apply">Done</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Manage Taper Plans Modal -->
+    <div id="manage-taper-plans-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <h2>Manage Taper Plans</h2>
+            <p class="settings-hint">Plans for the selected substance. Archived plans are hidden from the default dropdown unless you enable Show archived.</p>
+            <div class="manage-taper-filter-bar">
+                <button type="button" class="secondary-btn manage-taper-filter-btn active" data-filter="active" onclick="setManageTaperPlansFilter('active')">Active</button>
+                <button type="button" class="secondary-btn manage-taper-filter-btn" data-filter="paused" onclick="setManageTaperPlansFilter('paused')">Paused</button>
+                <button type="button" class="secondary-btn manage-taper-filter-btn" data-filter="completed" onclick="setManageTaperPlansFilter('completed')">Completed</button>
+                <button type="button" class="secondary-btn manage-taper-filter-btn" data-filter="archived" onclick="setManageTaperPlansFilter('archived')">Archived</button>
+                <button type="button" class="secondary-btn manage-taper-filter-btn" data-filter="all" onclick="setManageTaperPlansFilter('all')">All</button>
+            </div>
+            <div id="manage-taper-plans-list" class="manage-taper-plans-list"></div>
+            <div class="modal-actions">
+                <button type="button" class="secondary-btn" onclick="closeManageTaperPlansModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="stats-calendar-day-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <h3 id="stats-calendar-day-modal-title">Day Details</h3>
+            <div id="stats-calendar-day-modal-summary" class="stats-cal-day-modal-summary"></div>
+            <div id="stats-calendar-day-modal-logs" class="stats-cal-day-modal-logs"></div>
+            <div class="modal-actions">
+                <button type="button" class="primary-btn" id="stats-calendar-day-add-log-btn">Add log for this date</button>
+                <button type="button" class="secondary-btn" onclick="closeStatsCalendarDayModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="app.js" defer></script>
+</body>
+</html>
