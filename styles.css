@@ -6104,6 +6104,14 @@ body.purchase-history-col-resizing {
 }
 
 .purchase-history-table .purchase-vape-bought-cell,
+.purchase-history-table .purchase-nicotine-bought-cell,
+.purchase-history-table .purchase-quantity-compact,
+.purchase-history-table .purchase-cost-cell {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .purchase-history-table .supply-cell {
     white-space: normal;
 }

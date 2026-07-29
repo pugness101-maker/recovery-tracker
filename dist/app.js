@@ -5995,10 +5995,10 @@ function renderPurchaseBoughtMetaInner(purchase) {
             <div class="purchase-vape-meta">${formatXanaxPurchaseCostLine(purchase)}</div>`;
     }
     if (isCigarettesPurchase(purchase)) {
-        return `<div class="purchase-vape-meta">${formatNicotinePurchaseDisplayLine(purchase)}</div>`;
+        return `<div class="purchase-vape-meta">${formatNicotinePurchaseQuantitySummary(purchase)}</div>`;
     }
     if (isNicotinePurchase(purchase)) {
-        return `<div class="purchase-vape-meta">${formatNicotinePurchaseDisplayLine(purchase)}</div>`;
+        return `<div class="purchase-vape-meta">${formatNicotinePurchaseQuantitySummary(purchase)}</div>`;
     }
     return '';
 }
@@ -6018,22 +6018,11 @@ function renderPurchaseXanaxBoughtCell(purchase) {
 }
 
 function renderPurchaseVapeBoughtCell(purchase) {
-    const full = getVapeFullPuffCount(purchase);
-    const pctBought = getVapePercentBoughtAt(purchase);
-    const starting = getVapeStartingPuffsLeft(purchase);
-    const cap = getVapeELiquidCapacityMl(purchase);
-    const strength = getVapeNicotineMgPerMl(purchase);
-    const totalNic = getVapeTotalNicotineMg(purchase);
-    let liquidLines = '';
-    if (cap != null) liquidLines += `<div class="purchase-vape-meta">E-liquid: ${formatAmount(cap)} mL</div>`;
-    if (strength != null) liquidLines += `<div class="purchase-vape-meta">Nicotine: ${formatAmount(strength)} mg/mL</div>`;
-    if (totalNic != null) liquidLines += `<div class="purchase-vape-meta">Total nicotine: ${formatAmount(totalNic)} mg</div>`;
-    const titleLine = formatVapePurchaseTitleLine(purchase);
-    return phTd('bought', `<div>${escapeHtml(titleLine)}</div>
-        <div class="purchase-vape-meta">Full puff count: ${formatAmount(full)}</div>
-        <div class="purchase-vape-meta">Bought at: ${pctBought}%</div>
-        <div class="purchase-vape-meta">Started left: ${formatAmount(starting)} puffs</div>
-        ${liquidLines}`, 'purchase-vape-bought-cell');
+    return phTd('bought', formatVapePurchaseQuantitySummary(purchase), 'purchase-vape-bought-cell purchase-quantity-compact');
+}
+
+function renderPurchaseNicotineBoughtCell(purchase) {
+    return phTd('bought', formatNicotinePurchaseQuantitySummary(purchase), 'purchase-nicotine-bought-cell purchase-quantity-compact');
 }
 
 function renderPurchaseInventoryStatusButtons(purchase) {
@@ -6071,6 +6060,9 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
             if (isVapePuffPurchase(purchase)) {
                 return renderPurchaseVapeBoughtCell(purchase);
             }
+            if (isNicotinePurchase(purchase)) {
+                return renderPurchaseNicotineBoughtCell(purchase);
+            }
             if (isWeedPurchase(purchase)) {
                 return renderPurchaseWeedBoughtCell(purchase);
             }
@@ -6101,8 +6093,15 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
                 `<span class="purchase-supply-status ${supply.className}">${supply.label}</span>`,
                 'supply-cell'
             );
-        case 'cost':
-            return phTd('cost', `${fmtSheetMoney(totalNum, cur)} <small>(${fmtSheetMoney(cpu, cur)}/u)</small>`);
+        case 'cost': {
+            const cpu = getPurchaseHistoryCostPerUnit(purchase, totalNum);
+            const cpuSuffix = getPurchaseHistoryCostPerUnitSuffix(purchase);
+            return phTd(
+                'cost',
+                `${fmtSheetMoney(totalNum, cur)} <small>(${fmtSheetMoney(cpu, cur)}/${cpuSuffix})</small>`,
+                'purchase-cost-cell'
+            );
+        }
         case 'store':
             return phTd('store', store || '—');
         case 'payment':
@@ -9560,6 +9559,81 @@ function formatVapePurchaseDetailLine(purchase) {
     return parts.join(' · ');
 }
 
+function getVapePurchaseDeviceCount(purchase, data = appData) {
+    const raw = purchase?.vapeDeviceCount ?? purchase?.productCount ?? purchase?.deviceCount;
+    const count = parseFloat(raw);
+    if (Number.isFinite(count) && count > 0) return count;
+    if (isVapePuffPurchase(purchase, data) || isNicotineVapeProduct(purchase, data)) return 1;
+    return null;
+}
+
+function formatVapePurchaseQuantitySummary(purchase, data = appData) {
+    const full = getVapeFullPuffCount(purchase);
+    const puffPart = full > 0 ? formatAmountWithUnit(full, 'puffs') : '';
+    const deviceCount = getVapePurchaseDeviceCount(purchase, data);
+    if (deviceCount != null && deviceCount > 0 && puffPart) {
+        const deviceLabel = deviceCount === 1 ? 'vape' : 'vapes';
+        return `${formatAmount(deviceCount)} ${deviceLabel} · ${puffPart}`;
+    }
+    if (puffPart) return puffPart;
+    if (deviceCount != null && deviceCount > 0) {
+        return deviceCount === 1 ? '1 vape' : `${formatAmount(deviceCount)} vapes`;
+    }
+    return '—';
+}
+
+function formatNicotinePurchaseQuantitySummary(purchase, data = appData) {
+    const type = getNicotineProductType(purchase, data);
+    if (type === 'vape') return formatVapePurchaseQuantitySummary(purchase, data);
+    if (type === 'cigarettes') {
+        const total = purchase.totalCigarettes ?? getPurchaseQuantityBought(purchase);
+        return `${formatAmount(total)} cigarettes`;
+    }
+    if (type === 'pouches') {
+        return `${formatAmount(purchase.totalPouches ?? getPurchaseQuantityBought(purchase))} pouches`;
+    }
+    if (type === 'gum') {
+        return `${formatAmount(purchase.pieceCount ?? getPurchaseQuantityBought(purchase))} pieces`;
+    }
+    if (type === 'patches') {
+        return `${formatAmount(purchase.patchCount ?? getPurchaseQuantityBought(purchase))} patches`;
+    }
+    const qty = getPurchaseQuantityBought(purchase);
+    const unit = purchase.unit || 'units';
+    return `${formatAmount(qty)} ${unit}`;
+}
+
+function getPurchaseHistoryCostPerUnit(purchase, totalNum) {
+    const total = Number.isFinite(totalNum) ? totalNum : (parseFloat(getPurchaseTotalCost(purchase)) || 0);
+    if (isVapePuffPurchase(purchase)) {
+        const devices = getVapePurchaseDeviceCount(purchase) || 1;
+        return devices > 0 ? total / devices : total;
+    }
+    const stored = parseFloat(purchase?.costPerUnit);
+    if (Number.isFinite(stored) && stored > 0) return stored;
+    const qtyNum = parseFloat(getPurchaseQuantity(purchase)) || 0;
+    return qtyNum > 0 ? total / qtyNum : 0;
+}
+
+function getPurchaseHistoryCostPerUnitSuffix(purchase) {
+    if (isVapePuffPurchase(purchase)) return 'vape';
+    if (isNicotinePurchase(purchase)) {
+        const type = getNicotineProductType(purchase);
+        if (type === 'cigarettes') return 'cigarette';
+        if (type === 'pouches') return 'pouch';
+        if (type === 'gum') return 'piece';
+        if (type === 'patches') return 'patch';
+    }
+    return 'u';
+}
+
+function syncVapePurchaseCostPerUnit(purchase) {
+    if (!isVapePuffPurchase(purchase)) return;
+    const total = parseFloat(getPurchaseTotalCost(purchase)) || 0;
+    const devices = getVapePurchaseDeviceCount(purchase) || 1;
+    purchase.costPerUnit = devices > 0 ? total / devices : total;
+}
+
 function parseVapeFlavorFromForm() {
     return document.getElementById('buy-vape-flavor')?.value?.trim() || '';
 }
@@ -9600,6 +9674,7 @@ function normalizeVapePurchaseFields(purchase) {
         purchase.remainingPuffs = getPurchaseRemainingAmount(purchase);
     }
     syncVapeNicotineFields(purchase);
+    syncVapePurchaseCostPerUnit(purchase);
 }
 
 function getVapeELiquidCapacityMl(purchase) {
@@ -14150,6 +14225,7 @@ function buildPurchaseFromForm() {
         payload.supplyStartedAt = null;
         payload.startedAt = null;
         payload.finishedAt = null;
+        payload.costPerUnit = Number.isFinite(totalCost) ? totalCost : 0;
     }
     if (isAlcoholTrackingMode(substanceId)) {
         applyAlcoholFieldsToPayload(payload, parseAlcoholFieldsFromForm());
@@ -14268,10 +14344,7 @@ function applyPurchaseQuantityEdit(existing, newQty, options = {}) {
         }
         syncVapeNicotineFields(existing);
         recalculateVapePurchaseInventory(existing.id);
-        if (full > 0) {
-            const total = parseFloat(getPurchaseTotalCost(existing)) || 0;
-            existing.costPerUnit = total / full;
-        }
+        syncVapePurchaseCostPerUnit(existing);
         existing.updatedAt = new Date().toISOString();
         return;
     }
@@ -15258,8 +15331,7 @@ function renderPurchaseHistory(substanceId, containerId = null) {
         const purchaseSubstanceId = getPurchaseSubstanceId(purchase);
         const sub = getSubstance(purchaseSubstanceId);
         const totalNum = parseFloat(getPurchaseTotalCost(purchase)) || 0;
-        const qtyNum = parseFloat(getPurchaseQuantity(purchase)) || 0;
-        const cpu = purchase.costPerUnit ?? (qtyNum > 0 ? totalNum / qtyNum : 0);
+        const cpu = getPurchaseHistoryCostPerUnit(purchase, totalNum);
         const store = purchase.store || purchase.location || '';
         const bought = getPurchaseQuantityBought(purchase);
         const remaining = getPurchaseRemainingAmount(purchase);
@@ -23655,6 +23727,13 @@ function __getRecoveryTrackerTestExports() {
         buildUseEntryFromForm,
         computeVapeUseFromForm,
         getPurchaseRemainingAmount,
+        getVapePurchaseDeviceCount,
+        formatVapePurchaseQuantitySummary,
+        formatNicotinePurchaseQuantitySummary,
+        getPurchaseHistoryCostPerUnit,
+        getPurchaseHistoryCostPerUnitSuffix,
+        formatPurchaseRemainingDisplay,
+        getPurchasePercentUsed,
         getVapePurchaseSupplyStartAt,
         getVapePurchaseSupplyEndAt,
         getVapePurchaseSupplyDurationMs,
