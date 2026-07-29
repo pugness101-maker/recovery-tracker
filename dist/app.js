@@ -696,21 +696,25 @@ function computeLsdUseFromForm(options = {}) {
     const substanceId = document.getElementById('use-substance')?.value;
     if (!isLsdSubstanceId(substanceId)) return null;
 
+    const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
     const purchaseId = getUsePurchaseLinkMode() === 'manual'
         ? parsePurchaseSelectId(document.getElementById('use-purchase-select')?.value)
-        : resolveLinkedPurchaseId(substanceId, 'use');
+        : resolveLinkedPurchaseId(substanceId, transactionType);
     const purchase = purchaseId ? findPurchase(purchaseId) : null;
     const ugPerTab = purchase ? getLsdUgPerTab(purchase) : null;
     const inputMode = getLsdLogInputMode();
+    const needsUgPerTab = transactionType === 'use'
+        || transactionType === 'gift_given'
+        || transactionType === 'inventory_adjustment';
 
     if (inputMode === 'tabs') {
         const tabsRaw = parseFloat(document.getElementById('use-lsd-tabs-used')?.value);
         if (!Number.isFinite(tabsRaw) || tabsRaw < 0) return { error: 'Enter tabs used.' };
-        if (!ugPerTab) {
+        if (needsUgPerTab && !ugPerTab) {
             return { error: 'Link to an LSD purchase with ug per tab set, or add inventory with ug per tab first.' };
         }
         const tabsUsed = tabsRaw;
-        const ugUsed = tabsUsed * ugPerTab;
+        const ugUsed = ugPerTab ? tabsUsed * ugPerTab : 0;
         return {
             purchaseId,
             purchase,
@@ -724,11 +728,11 @@ function computeLsdUseFromForm(options = {}) {
 
     const ugRaw = parseFloat(document.getElementById('use-lsd-ug-used')?.value);
     if (!Number.isFinite(ugRaw) || ugRaw < 0) return { error: 'Enter ug used.' };
-    if (!ugPerTab) {
+    const ugUsed = ugRaw;
+    const tabsUsed = ugPerTab > 0 ? ugUsed / ugPerTab : null;
+    if (needsUgPerTab && !ugPerTab) {
         return { error: 'Link to an LSD purchase with ug per tab set, or add inventory with ug per tab first.' };
     }
-    const ugUsed = ugRaw;
-    const tabsUsed = ugUsed / ugPerTab;
     return {
         purchaseId,
         purchase,
@@ -752,19 +756,39 @@ function updateLsdUsePreview() {
         preview.textContent = calc?.error || 'Enter use amount.';
         return;
     }
-    preview.textContent = `${formatAmount(calc.tabsUsed)} tabs = ${formatAmount(calc.ugUsed)} ug used (${formatAmount(calc.ugPerTabAtTimeOfUse)} ug/tab).`;
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    const tabPart = calc.tabsUsed != null ? formatLsdTabCountLabel(calc.tabsUsed) : '— tabs';
+    const ugPart = `${formatAmount(calc.ugUsed)} ug`;
+    const conversion = calc.ugPerTabAtTimeOfUse
+        ? ` (${formatAmount(calc.ugPerTabAtTimeOfUse)} ug/tab)`
+        : '';
+    if (tx === 'gift_given') {
+        preview.textContent = `Gift given: ${tabPart} · ${ugPart}${conversion}`;
+        return;
+    }
+    if (tx === 'gift_received') {
+        preview.textContent = `Gift received: ${tabPart} · ${ugPart}${conversion}`;
+        return;
+    }
+    if (tx === 'inventory_adjustment') {
+        const dir = getUseAdjustmentDirection() === 'remove' ? 'Remove' : 'Add';
+        preview.textContent = `${dir}: ${tabPart} · ${ugPart}${conversion}`;
+        return;
+    }
+    preview.textContent = `${tabPart} = ${ugPart} used${conversion}.`;
 }
 
 function updateLsdUseFormUI() {
     const substanceId = document.getElementById('use-substance')?.value;
     const isLsd = isLsdSubstanceId(substanceId);
     document.getElementById('use-lsd-fields-group')?.classList.toggle('hidden', !isLsd);
-    document.getElementById('use-amount-mode-group')?.classList.toggle('hidden', isLsd || isVapeTrackingMode(substanceId) || isWeedTrackingMode(substanceId));
+    document.getElementById('use-xanax-fields-group')?.classList.toggle('hidden', true);
+    document.getElementById('use-amount-mode-group')?.classList.toggle('hidden', isLsd || isVapeTrackingMode(substanceId) || isWeedTrackingMode(substanceId) || isXanaxSubstanceId(substanceId));
     if (isLsd) {
         setUseLogType('quick');
-        setUseTransactionType('use');
         ensureLsdUseFormDefaults();
         updateLsdUsePreview();
+        updateUsePurchaseLinkUI();
     }
 }
 
@@ -808,6 +832,20 @@ function getLsdTotalRemainingSummary(substanceId, data = appData) {
     return { tabs, ug };
 }
 
+function getXanaxTotalRemainingSummary(substanceId, data = appData) {
+    let pills = 0;
+    let mg = 0;
+    (data.purchases || [])
+        .filter(p => getPurchaseSubstanceId(p) === substanceId && !p.isDepleted && getPurchaseRemainingAmount(p) > INVENTORY_EPS)
+        .forEach(p => {
+            const remPills = getXanaxRemainingPills(p);
+            const remMg = getXanaxRemainingMg(p);
+            if (remPills != null) pills += remPills;
+            if (remMg != null) mg += remMg;
+        });
+    return { pills, mg };
+}
+
 function migrateLsdInventoryV1(data) {
     if (data.migrations?.lsdInventoryV1) return;
     (data.purchases || []).forEach(purchase => {
@@ -820,6 +858,433 @@ function migrateLsdInventoryV1(data) {
     });
     if (!data.migrations) data.migrations = {};
     data.migrations.lsdInventoryV1 = true;
+}
+
+const XANAX_SUBSTANCE_ID = 'xannax';
+
+function isXanaxSubstanceId(substanceId, data = appData) {
+    return normalizeSubstanceRef(substanceId, data) === XANAX_SUBSTANCE_ID;
+}
+
+function isXanaxPurchase(purchase, data = appData) {
+    return isXanaxSubstanceId(getPurchaseSubstanceId(purchase), data);
+}
+
+function isXanaxDateOnlyUseForm() {
+    return isXanaxSubstanceId(document.getElementById('use-substance')?.value);
+}
+
+function isXanaxDateOnlyUseLog(log, data = appData) {
+    if (!log || !isXanaxSubstanceId(getUseSubstanceId(log, data), data)) return false;
+    return getUseLogType(log) === 'quick' || log.logMode === 'xanax_dose' || !log.endTime;
+}
+
+function normalizeXanaxStrengthUnit(unit) {
+    return unit === 'g' ? 'g' : 'mg';
+}
+
+function strengthPerPillToMg(strengthPerPill, strengthUnit = 'mg') {
+    const strength = parseFloat(strengthPerPill);
+    if (!Number.isFinite(strength) || strength <= 0) return null;
+    return normalizeXanaxStrengthUnit(strengthUnit) === 'g' ? strength * 1000 : strength;
+}
+
+function computeXanaxTotalMg(pillQuantity, strengthPerPill, strengthUnit = 'mg') {
+    const pills = parseFloat(pillQuantity);
+    const mgPerPill = strengthPerPillToMg(strengthPerPill, strengthUnit);
+    if (!Number.isFinite(pills) || pills <= 0 || mgPerPill == null) return null;
+    return normalizeUsageTotal(pills * mgPerPill);
+}
+
+function getXanaxStrengthPerPill(purchase) {
+    if (!purchase) return null;
+    const strength = parseFloat(purchase.strengthPerPill);
+    if (Number.isFinite(strength) && strength > 0) return strength;
+    return null;
+}
+
+function getXanaxStrengthUnit(purchase) {
+    return normalizeXanaxStrengthUnit(purchase?.strengthUnit);
+}
+
+function getXanaxMgPerPill(purchase) {
+    const strength = getXanaxStrengthPerPill(purchase);
+    if (strength == null) return null;
+    return strengthPerPillToMg(strength, getXanaxStrengthUnit(purchase));
+}
+
+function getXanaxPillQuantity(purchase) {
+    if (!purchase) return null;
+    const pills = parseFloat(purchase.pillQuantity);
+    if (Number.isFinite(pills) && pills > 0) return pills;
+    if ((purchase.unit || '') === 'pills') return getPurchaseQuantityBought(purchase);
+    return null;
+}
+
+function getXanaxTotalMg(purchase) {
+    if (!purchase) return null;
+    const total = parseFloat(purchase.totalMg);
+    if (Number.isFinite(total) && total > 0) return total;
+    const pills = getXanaxPillQuantity(purchase);
+    const mgPerPill = getXanaxMgPerPill(purchase);
+    if (pills != null && mgPerPill != null) return normalizeUsageTotal(pills * mgPerPill);
+    if ((purchase.unit || '') === 'mg') return getPurchaseQuantityBought(purchase);
+    return null;
+}
+
+function getXanaxRemainingPills(purchase) {
+    if (!purchase) return null;
+    if (purchase.remainingPills != null && purchase.remainingPills !== '') {
+        return Math.max(0, parseFloat(purchase.remainingPills) || 0);
+    }
+    if ((purchase.unit || '') === 'pills' || purchase.pillQuantity != null) {
+        return Math.max(0, getPurchaseRemainingAmount(purchase));
+    }
+    const remainingMg = getXanaxRemainingMg(purchase);
+    const mgPerPill = getXanaxMgPerPill(purchase);
+    if (remainingMg != null && mgPerPill > 0) return remainingMg / mgPerPill;
+    return null;
+}
+
+function getXanaxRemainingMg(purchase) {
+    if (!purchase) return null;
+    if (purchase.remainingMg != null && purchase.remainingMg !== '') {
+        return Math.max(0, parseFloat(purchase.remainingMg) || 0);
+    }
+    const remainingPills = getXanaxRemainingPills(purchase);
+    const mgPerPill = getXanaxMgPerPill(purchase);
+    if (remainingPills != null && mgPerPill != null) return normalizeUsageTotal(remainingPills * mgPerPill);
+    if ((purchase.unit || '') === 'mg') return Math.max(0, getPurchaseRemainingAmount(purchase));
+    return null;
+}
+
+function xanaxPurchaseNeedsStrengthInfo(purchase) {
+    return !!purchase?.needsStrengthInfo || getXanaxMgPerPill(purchase) == null;
+}
+
+function syncXanaxPurchaseFields(purchase, totalCost = null) {
+    if (!isXanaxPurchase(purchase)) return;
+    const pills = getXanaxPillQuantity(purchase);
+    const strength = getXanaxStrengthPerPill(purchase);
+    const strengthUnit = getXanaxStrengthUnit(purchase);
+    if (pills != null) {
+        purchase.pillQuantity = pills;
+        purchase.quantityBought = pills;
+        purchase.quantity = pills;
+        purchase.unit = 'pills';
+    }
+    if (strength != null) {
+        purchase.strengthPerPill = strength;
+        purchase.strengthUnit = strengthUnit;
+    }
+    const totalMg = computeXanaxTotalMg(pills, strength, strengthUnit)
+        ?? (purchase.unit === 'mg' ? getPurchaseQuantityBought(purchase) : null);
+    if (totalMg != null) purchase.totalMg = totalMg;
+    const cost = totalCost != null ? totalCost : (parseFloat(getPurchaseTotalCost(purchase)) || 0);
+    purchase.costPerPill = pills > 0 && cost >= 0 ? cost / pills : null;
+    purchase.costPerMg = totalMg > 0 && cost >= 0 ? cost / totalMg : null;
+    if (pills > 0 && cost >= 0) purchase.costPerUnit = cost / pills;
+    syncXanaxPurchaseRemaining(purchase);
+}
+
+function syncXanaxPurchaseRemaining(purchase) {
+    if (!isXanaxPurchase(purchase)) return;
+    const remainingPills = getPurchaseRemainingAmount(purchase);
+    purchase.remainingPills = remainingPills;
+    const mgPerPill = getXanaxMgPerPill(purchase);
+    purchase.remainingMg = mgPerPill != null ? normalizeUsageTotal(remainingPills * mgPerPill) : null;
+}
+
+function formatXanaxStrengthLabel(strength, unit = 'mg') {
+    if (strength == null || Number.isNaN(strength)) return '—';
+    return `${formatAmount(strength)} ${unit} each`;
+}
+
+function formatXanaxPurchaseDisplayLine(purchase) {
+    if (xanaxPurchaseNeedsStrengthInfo(purchase)) {
+        const pills = getXanaxPillQuantity(purchase);
+        const totalMg = getXanaxTotalMg(purchase);
+        const parts = [];
+        if (pills != null) parts.push(`${formatAmount(pills)} pills`);
+        if (totalMg != null && pills == null) parts.push(`${formatAmount(totalMg)} mg total`);
+        parts.push('Strength needed');
+        return parts.length ? parts.join(' · ') : 'Strength needed';
+    }
+    const pills = getXanaxPillQuantity(purchase);
+    const strength = getXanaxStrengthPerPill(purchase);
+    const strengthUnit = getXanaxStrengthUnit(purchase);
+    const totalMg = getXanaxTotalMg(purchase);
+    const parts = [];
+    if (pills != null) parts.push(`${formatAmount(pills)} pills`);
+    if (strength != null) parts.push(formatXanaxStrengthLabel(strength, strengthUnit));
+    if (totalMg != null) parts.push(`${formatAmount(totalMg)} mg total`);
+    return parts.length ? parts.join(' · ') : '—';
+}
+
+function formatXanaxPurchaseCostLine(purchase) {
+    const totalCost = parseFloat(getPurchaseTotalCost(purchase));
+    const hasCost = Number.isFinite(totalCost) && totalCost >= 0;
+    const cur = getCurrencySymbol();
+    const pills = getXanaxPillQuantity(purchase);
+    const totalMg = getXanaxTotalMg(purchase);
+    const costPerPill = purchase.costPerPill ?? (hasCost && pills > 0 ? totalCost / pills : null);
+    const costPerMg = purchase.costPerMg ?? (hasCost && totalMg > 0 ? totalCost / totalMg : null);
+    const parts = [];
+    parts.push(hasCost ? `${fmtSheetMoney(totalCost, cur)} total` : '— total');
+    parts.push(costPerPill != null ? `${fmtSheetMoney(costPerPill, cur)}/pill` : '—/pill');
+    parts.push(costPerMg != null ? `${fmtSheetMoney(costPerMg, cur)}/mg` : '—/mg');
+    return parts.join(' · ');
+}
+
+function formatXanaxRemainingDisplay(purchase) {
+    const pills = getXanaxRemainingPills(purchase);
+    const mg = getXanaxRemainingMg(purchase);
+    if (xanaxPurchaseNeedsStrengthInfo(purchase)) {
+        if (pills != null) return `${formatAmount(pills)} pills · Strength needed`;
+        if (mg != null) return `${formatAmount(mg)} mg · Strength needed`;
+        return 'Strength needed';
+    }
+    if (pills != null && mg != null) {
+        return `${formatAmount(pills)} pills · ${formatAmount(mg)} mg remaining`;
+    }
+    if (pills != null) return `${formatAmount(pills)} pills remaining`;
+    if (mg != null) return `${formatAmount(mg)} mg remaining`;
+    return formatPurchaseRemainingWithUnit(purchase);
+}
+
+function parseXanaxFieldsFromForm() {
+    const pillsRaw = parseFloat(document.getElementById('buy-quantity')?.value);
+    const strengthRaw = parseFloat(document.getElementById('buy-strength-per-pill')?.value);
+    const strengthUnit = normalizeXanaxStrengthUnit(document.getElementById('buy-strength-unit')?.value);
+    const pillQuantity = Number.isFinite(pillsRaw) && pillsRaw > 0 ? pillsRaw : null;
+    const strengthPerPill = Number.isFinite(strengthRaw) && strengthRaw > 0 ? strengthRaw : null;
+    const totalMg = computeXanaxTotalMg(pillQuantity, strengthPerPill, strengthUnit);
+    return { pillQuantity, strengthPerPill, strengthUnit, totalMg };
+}
+
+function applyXanaxFieldsToPayload(payload, fields, totalCost) {
+    if (fields.pillQuantity != null) payload.pillQuantity = fields.pillQuantity;
+    if (fields.strengthPerPill != null) {
+        payload.strengthPerPill = fields.strengthPerPill;
+        payload.strengthUnit = fields.strengthUnit || 'mg';
+    }
+    if (fields.totalMg != null) payload.totalMg = fields.totalMg;
+    if (fields.pillQuantity != null) {
+        payload.quantityBought = fields.pillQuantity;
+        payload.quantity = fields.pillQuantity;
+        payload.unit = 'pills';
+        payload.remainingAmount = fields.pillQuantity;
+        payload.remainingPills = fields.pillQuantity;
+        payload.remainingMg = fields.totalMg;
+    }
+    const cost = Number.isFinite(totalCost) ? totalCost : 0;
+    payload.costPerPill = fields.pillQuantity > 0 && cost >= 0 ? cost / fields.pillQuantity : null;
+    payload.costPerMg = fields.totalMg > 0 && cost >= 0 ? cost / fields.totalMg : null;
+    payload.costPerUnit = fields.pillQuantity > 0 && cost >= 0 ? cost / fields.pillQuantity : 0;
+    payload.needsStrengthInfo = !(fields.pillQuantity > 0 && fields.strengthPerPill > 0 && fields.totalMg > 0);
+}
+
+function validateXanaxBuyForm(substanceId) {
+    if (!isXanaxSubstanceId(substanceId)) return null;
+    const fields = parseXanaxFieldsFromForm();
+    if (!fields.pillQuantity) return 'Quantity of pills must be greater than 0.';
+    if (!fields.strengthPerPill) return 'Enter strength per pill to track Xanax accurately.';
+    if (!fields.totalMg) return 'Total active amount could not be calculated. Check pill quantity and strength.';
+    return null;
+}
+
+function updateBuyXanaxPreview() {
+    const preview = document.getElementById('buy-xanax-preview');
+    if (!preview) return;
+    if (!isXanaxSubstanceId(document.getElementById('buy-substance')?.value)) {
+        preview.textContent = '—';
+        return;
+    }
+    const fields = parseXanaxFieldsFromForm();
+    const totalCost = parseFloat(document.getElementById('buy-total-cost')?.value);
+    const cur = getCurrencySymbol();
+    const lines = [];
+    if (fields.pillQuantity && fields.strengthPerPill) {
+        lines.push(`${formatAmount(fields.pillQuantity)} pills × ${formatAmount(fields.strengthPerPill)} ${fields.strengthUnit} = ${formatAmount(fields.totalMg)} mg total`);
+    } else if (fields.pillQuantity) {
+        lines.push(`${formatAmount(fields.pillQuantity)} pills — enter strength per pill`);
+    } else {
+        lines.push('Enter quantity of pills and strength per pill.');
+    }
+    if (Number.isFinite(totalCost) && totalCost >= 0 && fields.pillQuantity > 0) {
+        lines.push(`Cost per pill: ${fmtSheetMoney(totalCost / fields.pillQuantity, cur)}`);
+    } else {
+        lines.push('Cost per pill: —');
+    }
+    if (Number.isFinite(totalCost) && totalCost >= 0 && fields.totalMg > 0) {
+        lines.push(`Cost per mg: ${fmtSheetMoney(totalCost / fields.totalMg, cur)}`);
+    } else {
+        lines.push('Cost per mg: —');
+    }
+    preview.textContent = lines.join(' · ');
+}
+
+function getXanaxLogInputMode() {
+    return document.getElementById('use-xanax-log-mode')?.value === 'mg' ? 'mg' : 'pills';
+}
+
+function setXanaxLogInputMode(mode) {
+    const val = mode === 'mg' ? 'mg' : 'pills';
+    setInputValue('use-xanax-log-mode', val);
+    document.querySelectorAll('.use-xanax-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.xanaxMode === val);
+    });
+    document.getElementById('use-xanax-pills-group')?.classList.toggle('hidden', val === 'mg');
+    document.getElementById('use-xanax-mg-group')?.classList.toggle('hidden', val !== 'mg');
+    updateXanaxUsePreview();
+}
+
+function computeXanaxUseFromForm(options = {}) {
+    const substanceId = document.getElementById('use-substance')?.value;
+    if (!isXanaxSubstanceId(substanceId)) return null;
+
+    const purchaseId = getUsePurchaseLinkMode() === 'manual'
+        ? parsePurchaseSelectId(document.getElementById('use-purchase-select')?.value)
+        : resolveLinkedPurchaseId(substanceId, 'use');
+    const purchase = purchaseId ? findPurchase(purchaseId) : null;
+    const mgPerPill = purchase ? getXanaxMgPerPill(purchase) : null;
+    if (!mgPerPill) {
+        return { error: 'Link to a Xanax purchase with strength per pill set, or add inventory with strength first.' };
+    }
+    const inputMode = getXanaxLogInputMode();
+
+    if (inputMode === 'pills') {
+        const pillsRaw = parseFloat(document.getElementById('use-xanax-pills-used')?.value);
+        if (!Number.isFinite(pillsRaw) || pillsRaw < 0) return { error: 'Enter pills used.' };
+        const pillsUsed = pillsRaw;
+        const mgUsed = normalizeUsageTotal(pillsUsed * mgPerPill);
+        return {
+            purchaseId,
+            purchase,
+            pillsUsed,
+            mgUsed,
+            amount: pillsUsed,
+            unit: 'pills',
+            strengthPerPillAtTimeOfUse: getXanaxStrengthPerPill(purchase),
+            strengthUnitAtTimeOfUse: getXanaxStrengthUnit(purchase),
+            mgPerPillAtTimeOfUse: mgPerPill
+        };
+    }
+
+    const mgRaw = parseFloat(document.getElementById('use-xanax-mg-used')?.value);
+    if (!Number.isFinite(mgRaw) || mgRaw < 0) return { error: 'Enter mg used.' };
+    const mgUsed = normalizeUsageTotal(mgRaw);
+    const pillsUsed = mgUsed / mgPerPill;
+    return {
+        purchaseId,
+        purchase,
+        pillsUsed,
+        mgUsed,
+        amount: pillsUsed,
+        unit: 'pills',
+        strengthPerPillAtTimeOfUse: getXanaxStrengthPerPill(purchase),
+        strengthUnitAtTimeOfUse: getXanaxStrengthUnit(purchase),
+        mgPerPillAtTimeOfUse: mgPerPill
+    };
+}
+
+function updateXanaxUsePreview() {
+    const preview = document.getElementById('use-xanax-preview');
+    if (!preview) return;
+    if (!isXanaxDateOnlyUseForm()) {
+        preview.textContent = '—';
+        return;
+    }
+    const calc = computeXanaxUseFromForm();
+    if (!calc || calc.error) {
+        preview.textContent = calc?.error || 'Enter use amount.';
+        return;
+    }
+    preview.textContent = `${formatAmount(calc.pillsUsed)} pills = ${formatAmount(calc.mgUsed)} mg used (${formatAmount(calc.mgPerPillAtTimeOfUse)} mg/pill).`;
+}
+
+function updateXanaxUseFormUI() {
+    const substanceId = document.getElementById('use-substance')?.value;
+    const isXanax = isXanaxSubstanceId(substanceId);
+    document.getElementById('use-xanax-fields-group')?.classList.toggle('hidden', !isXanax);
+    document.getElementById('use-lsd-fields-group')?.classList.toggle('hidden', true);
+    const hideGenericAmount = isXanax || isLsdSubstanceId(substanceId) || isVapeTrackingMode(substanceId) || isWeedTrackingMode(substanceId);
+    document.getElementById('use-amount-mode-group')?.classList.toggle('hidden', hideGenericAmount);
+    if (isXanax) {
+        setUseLogType('quick');
+        setUseTransactionType('use');
+        ensureXanaxUseFormDefaults();
+        updateXanaxUsePreview();
+    }
+}
+
+function ensureXanaxUseFormDefaults() {
+    if (!isXanaxDateOnlyUseForm()) return;
+    const startEl = document.getElementById('use-start-time');
+    if (startEl) {
+        startEl.value = '';
+        startEl.required = false;
+    }
+    const endTimeEl = document.getElementById('use-end-time');
+    if (endTimeEl) endTimeEl.value = '';
+    const endDateEl = document.getElementById('use-end-date');
+    if (endDateEl) endDateEl.value = '';
+    document.getElementById('use-duration-preview')?.classList.add('hidden');
+}
+
+function getXanaxLogPillsAmount(log) {
+    if (log?.pillsUsed != null && log.pillsUsed !== '') return parseFloat(log.pillsUsed) || 0;
+    if ((log?.unit || '') === 'pills') return parseFloat(log?.amount) || 0;
+    const mg = getXanaxLogMgAmount(log);
+    const mgPerPill = parseFloat(log?.mgPerPillAtTimeOfUse);
+    if (mgPerPill > 0) return mg / mgPerPill;
+    return parseFloat(log?.amount) || 0;
+}
+
+function getXanaxLogMgAmount(log) {
+    if (log?.mgUsed != null && log.mgUsed !== '') return parseFloat(log.mgUsed) || 0;
+    const pills = parseFloat(log?.pillsUsed ?? log?.amount);
+    const mgPerPill = parseFloat(log?.mgPerPillAtTimeOfUse);
+    if (Number.isFinite(pills) && mgPerPill > 0) return normalizeUsageTotal(pills * mgPerPill);
+    if ((log?.unit || '') === 'mg') return parseFloat(log?.amount) || 0;
+    return 0;
+}
+
+function formatXanaxUseSummary(log) {
+    const pills = getXanaxLogPillsAmount(log);
+    const mg = getXanaxLogMgAmount(log);
+    return `${formatAmount(pills)} pills · ${formatAmount(mg)} mg`;
+}
+
+function migrateXanaxInventoryV1(data) {
+    if (data.migrations?.xanaxInventoryV1) return;
+    (data.purchases || []).forEach(purchase => {
+        if (!isXanaxPurchase(purchase, data)) return;
+        if (purchase.pillQuantity == null) {
+            const unit = (purchase.unit || '').toLowerCase();
+            const qty = getPurchaseQuantityBought(purchase);
+            if (unit === 'pills' || unit === 'bars') {
+                purchase.pillQuantity = qty;
+                purchase.unit = 'pills';
+            } else if (unit === 'mg') {
+                purchase.totalMg = qty;
+            }
+        }
+        if (purchase.strengthPerPill == null) {
+            purchase.needsStrengthInfo = true;
+        } else {
+            purchase.strengthUnit = normalizeXanaxStrengthUnit(purchase.strengthUnit);
+            purchase.needsStrengthInfo = false;
+        }
+        if (purchase.remainingPills == null && purchase.pillQuantity != null) {
+            const rem = getPurchaseRemainingAmount(purchase);
+            purchase.remainingAmount = rem;
+            purchase.remainingPills = rem;
+        }
+        syncXanaxPurchaseFields(purchase);
+    });
+    if (!data.migrations) data.migrations = {};
+    data.migrations.xanaxInventoryV1 = true;
 }
 
 function isLegacyNicotineSubstanceId(substanceId) {
@@ -992,6 +1457,13 @@ function getSubstancePrimaryUnit(substanceId, data = appData) {
         || getSubstanceTrackingDefaults(substanceId).primaryUnit
         || sub?.defaultUnit
         || 'units';
+}
+
+function getSubstanceBuyDisplayUnit(substanceId, data = appData) {
+    if (isVapeNicotineSubstanceId(substanceId, data)) return 'puffs';
+    if (isXanaxSubstanceId(substanceId, data)) return 'pills';
+    if (isLsdSubstanceId(substanceId, data)) return 'tabs';
+    return getSubstance(substanceId, data)?.defaultUnit || 'units';
 }
 
 function getSubstanceSecondaryCountLabel(substanceId, data = appData) {
@@ -1737,6 +2209,9 @@ function recalculatePurchaseRemaining(purchaseId, data = appData) {
     if (isLsdPurchase(purchase, data)) {
         syncLsdPurchaseRemaining(purchase);
     }
+    if (isXanaxPurchase(purchase, data)) {
+        syncXanaxPurchaseRemaining(purchase);
+    }
     syncPurchaseInventoryStatus(purchase);
     purchase.updatedAt = new Date().toISOString();
     return {
@@ -1849,6 +2324,18 @@ function duplicatePurchaseNow(id) {
         record.remainingAmount = record.totalUg ?? qty;
         record.unit = 'ug';
         syncLsdPurchaseFields(record, record.totalCost);
+    }
+    if (isXanaxPurchase(purchase)) {
+        record.pillQuantity = getXanaxPillQuantity(purchase);
+        record.strengthPerPill = getXanaxStrengthPerPill(purchase);
+        record.strengthUnit = getXanaxStrengthUnit(purchase);
+        record.totalMg = getXanaxTotalMg(purchase);
+        record.remainingPills = record.pillQuantity ?? qty;
+        record.remainingMg = record.totalMg;
+        record.remainingAmount = record.remainingPills ?? qty;
+        record.unit = 'pills';
+        record.needsStrengthInfo = xanaxPurchaseNeedsStrengthInfo(purchase);
+        syncXanaxPurchaseFields(record, record.totalCost);
     }
     stripIrrelevantPurchaseFields(record);
     appData.purchases.push(record);
@@ -1981,10 +2468,30 @@ function formatInventoryTotalRemainingValue(summary, selectedSubstanceId, data =
             .filter(([, amt]) => amt > INVENTORY_EPS)
             .map(([sid, amt]) => {
                 const sub = getSubstance(sid, data);
+                if (isXanaxSubstanceId(sid, data)) {
+                    const sum = getXanaxTotalRemainingSummary(sid, data);
+                    return `${sub?.name || sid}: ${formatAmount(sum.pills)} pills · ${formatAmount(sum.mg)} mg`;
+                }
+                if (isLsdSubstanceId(sid, data)) {
+                    const sum = getLsdTotalRemainingSummary(sid, data);
+                    return `${sub?.name || sid}: ${formatAmount(sum.tabs)} tabs / ${formatAmount(sum.ug)} ug`;
+                }
                 const unit = sub?.defaultUnit || 'units';
                 return `${sub?.name || sid}: ${formatAmountWithUnit(amt, unit)}`;
             });
         return lines.length ? lines.join(' · ') : '—';
+    }
+    if (isXanaxSubstanceId(selectedSubstanceId, data)) {
+        const sum = getXanaxTotalRemainingSummary(selectedSubstanceId, data);
+        return sum.pills > INVENTORY_EPS || sum.mg > INVENTORY_EPS
+            ? `${formatAmount(sum.pills)} pills · ${formatAmount(sum.mg)} mg`
+            : '—';
+    }
+    if (isLsdSubstanceId(selectedSubstanceId, data)) {
+        const sum = getLsdTotalRemainingSummary(selectedSubstanceId, data);
+        return sum.tabs > INVENTORY_EPS || sum.ug > INVENTORY_EPS
+            ? `${formatAmount(sum.tabs)} tabs / ${formatAmount(sum.ug)} ug`
+            : '—';
     }
     const sub = getSubstance(selectedSubstanceId, data);
     const unit = sub?.defaultUnit || summary.totalRemainingUnit || 'units';
@@ -2727,6 +3234,11 @@ function stripIrrelevantPurchaseFields(purchase) {
         ['quantityTabs', 'ugPerTab', 'totalUg', 'remainingTabs', 'remainingUg', 'costPerTab', 'costPerUg']
             .forEach(key => delete purchase[key]);
     }
+    if (!isXanaxPurchase(purchase)) {
+        ['pillQuantity', 'strengthPerPill', 'strengthUnit', 'totalMg', 'remainingPills', 'remainingMg',
+            'costPerPill', 'costPerMg', 'needsStrengthInfo']
+            .forEach(key => delete purchase[key]);
+    }
 }
 
 function migrateInventorySubstanceFields(data) {
@@ -3235,6 +3747,8 @@ function getPurchaseRemainingDisplayUnit(purchase) {
 }
 
 function formatPurchaseRemainingWithUnit(purchase) {
+    if (isLsdPurchase(purchase)) return formatLsdRemainingDisplay(purchase);
+    if (isXanaxPurchase(purchase)) return formatXanaxRemainingDisplay(purchase);
     return formatAmountWithUnit(
         getPurchaseRemainingDisplayAmount(purchase),
         getPurchaseRemainingDisplayUnit(purchase)
@@ -3703,6 +4217,7 @@ function normalizeAppData(data) {
     migrateVapeDataV1(data);
     repairVapeInventoryLinks(data);
     migrateLsdInventoryV1(data);
+    migrateXanaxInventoryV1(data);
     migrateNicotineUnifyV1(data);
     migrateNicotineSubstanceRecordsV2(data);
     repairNicotineUnifiedData(data);
@@ -5016,6 +5531,8 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
             let amountHtml;
             if (isLsdDateOnlyUseLog(entry)) {
                 amountHtml = formatLsdUseSummary(entry);
+            } else if (isXanaxDateOnlyUseLog(entry)) {
+                amountHtml = formatXanaxUseSummary(entry);
             } else if (isNicotineSubstanceId(getUseSubstanceId(entry)) && !isVapeUseLog(entry)) {
                 amountHtml = formatNicotineUseLogLabel(entry);
             } else {
@@ -5114,6 +5631,10 @@ function renderPurchaseBoughtMetaInner(purchase) {
         return `<div class="purchase-vape-meta">${formatLsdPurchaseDisplayLine(purchase)}</div>
             <div class="purchase-vape-meta">${formatLsdPurchaseCostLine(purchase)}</div>`;
     }
+    if (isXanaxPurchase(purchase)) {
+        return `<div class="purchase-vape-meta">${formatXanaxPurchaseDisplayLine(purchase)}</div>
+            <div class="purchase-vape-meta">${formatXanaxPurchaseCostLine(purchase)}</div>`;
+    }
     if (isCigarettesPurchase(purchase)) {
         return `<div class="purchase-vape-meta">${formatNicotinePurchaseDisplayLine(purchase)}</div>`;
     }
@@ -5130,6 +5651,11 @@ function renderPurchaseWeedBoughtCell(purchase) {
 function renderPurchaseLsdBoughtCell(purchase) {
     return phTd('bought', `<div>${formatLsdPurchaseDisplayLine(purchase)}</div>
         <div class="purchase-vape-meta">${formatLsdPurchaseCostLine(purchase)}</div>`, 'purchase-lsd-bought-cell');
+}
+
+function renderPurchaseXanaxBoughtCell(purchase) {
+    return phTd('bought', `<div>${formatXanaxPurchaseDisplayLine(purchase)}</div>
+        <div class="purchase-vape-meta">${formatXanaxPurchaseCostLine(purchase)}</div>`, 'purchase-xanax-bought-cell');
 }
 
 function renderPurchaseVapeBoughtCell(purchase) {
@@ -5189,6 +5715,9 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
             }
             if (isLsdPurchase(purchase)) {
                 return renderPurchaseLsdBoughtCell(purchase);
+            }
+            if (isXanaxPurchase(purchase)) {
+                return renderPurchaseXanaxBoughtCell(purchase);
             }
             {
                 const meta = renderPurchaseBoughtMetaInner(purchase);
@@ -7784,14 +8313,17 @@ function formatLogHistoryLabel(entry, sub) {
     const unit = entry.unit || sub?.defaultUnit || 'units';
     const amount = entry.amount ?? '—';
     if (tx === 'gift_given') {
+        if (isLsdDateOnlyUseLog(entry)) return `🎁 ${formatLsdUseSummary(entry)}`;
         const who = entry.giftPartyName ? ` — ${entry.giftPartyName}` : '';
         return `🎁 Gift Given${who} — ${amount}${unit}`;
     }
     if (tx === 'gift_received') {
+        if (isLsdDateOnlyUseLog(entry)) return `🎁 ${formatLsdUseSummary(entry)}`;
         const who = entry.giftPartyName ? ` — ${entry.giftPartyName}` : '';
         return `🎁 Gift Received${who} — ${amount}${unit}`;
     }
     if (tx === 'inventory_adjustment') {
+        if (isLsdDateOnlyUseLog(entry)) return `📦 ${formatLsdUseSummary(entry)}`;
         const dir = getAdjustmentDirection(entry) === 'remove' ? '−' : '+';
         return `📦 Inventory ${dir}${amount}${unit}`;
     }
@@ -7800,6 +8332,9 @@ function formatLogHistoryLabel(entry, sub) {
     }
     if (isLsdDateOnlyUseLog(entry)) {
         return formatLsdUseSummary(entry);
+    }
+    if (isXanaxDateOnlyUseLog(entry)) {
+        return formatXanaxUseSummary(entry);
     }
     if (isWeedDateOnlyUseLog(entry)) {
         return `${sub?.icon || ''} ${amount} ${unit}`;
@@ -7821,7 +8356,7 @@ function setUseTransactionType(tx) {
     const isAdjustment = tx === 'inventory_adjustment';
     const isNonUse = isGift || isAdjustment;
 
-    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isNonUse || isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm());
+    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isNonUse || isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm() || isLsdDateOnlyUseForm());
     document.getElementById('use-adjustment-direction-group')?.classList.toggle('hidden', !isAdjustment);
     document.getElementById('use-gift-party-group')?.classList.toggle('hidden', !isGift);
 
@@ -7869,6 +8404,7 @@ function setUseAdjustmentDirection(dir) {
         btn.classList.toggle('active', btn.dataset.dir === dir);
     });
     updateUsePurchaseLinkUI();
+    updateLsdUsePreview();
 }
 
 function setUseFormSubmitLabel(text) {
@@ -7893,7 +8429,7 @@ function getUseCreatedAt(entry) {
     return entry.createdAt || entry.timestamp || new Date().toISOString();
 }
 
-function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = null) {
+function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = null, xanaxCalc = null) {
     const rawSubstanceId = document.getElementById('use-substance')?.value;
     const substanceId = isNicotineTrackingMode(rawSubstanceId) ? NICOTINE_ID : rawSubstanceId;
     const isNicotine = isNicotineTrackingMode(substanceId);
@@ -7902,14 +8438,15 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
     const isNicotineSimple = isNicotine && nicotineProductType !== 'vape' && nicotineProductType !== 'other';
     const isWeedSimple = isWeedTrackingMode(substanceId);
     const isLsdSimple = isLsdSubstanceId(substanceId);
+    const isXanaxSimple = isXanaxSubstanceId(substanceId);
     const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
     const isGift = transactionType === 'gift_given' || transactionType === 'gift_received';
     const isAdjustment = transactionType === 'inventory_adjustment';
-    let type = (isGift || isAdjustment || isWeedSimple || isVapeDateOnly || isLsdSimple || isNicotineSimple) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
+    let type = (isGift || isAdjustment || isWeedSimple || isVapeDateOnly || isLsdSimple || isXanaxSimple || isNicotineSimple) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
     const date = document.getElementById('use-date')?.value;
-    const startTime = (isWeedSimple || isVapeDateOnly || isLsdSimple || isNicotineSimple) ? '' : (document.getElementById('use-start-time')?.value || '12:00');
-    const endDate = (isWeedSimple || isVapeDateOnly || isLsdSimple || isNicotineSimple) ? null : (document.getElementById('use-end-date')?.value || date);
-    const endTime = (isWeedSimple || isVapeDateOnly || isLsdSimple || isNicotineSimple) ? '' : (document.getElementById('use-end-time')?.value || '');
+    const startTime = (isWeedSimple || isVapeDateOnly || isLsdSimple || isXanaxSimple || isNicotineSimple) ? '' : (document.getElementById('use-start-time')?.value || '12:00');
+    const endDate = (isWeedSimple || isVapeDateOnly || isLsdSimple || isXanaxSimple || isNicotineSimple) ? null : (document.getElementById('use-end-date')?.value || date);
+    const endTime = (isWeedSimple || isVapeDateOnly || isLsdSimple || isXanaxSimple || isNicotineSimple) ? '' : (document.getElementById('use-end-time')?.value || '');
     const isVapeUse = isVapeDateOnly;
     const isCokeSession = isCokeSubstanceId(substanceId) && type === 'session';
 
@@ -7941,6 +8478,12 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         linkedPurchaseId = lsdCalc.purchaseId;
         inventoryAffects = getUsePurchaseLinkMode() !== 'none' && !!linkedPurchaseId;
         logMode = 'lsd_dose';
+    } else if (isXanaxSimple && xanaxCalc && !xanaxCalc.error) {
+        amount = xanaxCalc.pillsUsed;
+        unit = 'pills';
+        linkedPurchaseId = xanaxCalc.purchaseId;
+        inventoryAffects = getUsePurchaseLinkMode() !== 'none' && !!linkedPurchaseId;
+        logMode = 'xanax_dose';
     } else {
         amount = parseFloat(document.getElementById('use-amount')?.value);
         unit = document.getElementById('use-unit')?.value;
@@ -7959,11 +8502,11 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         percentRemaining: percentRemaining != null ? percentRemaining : undefined,
         previousRemainingBeforeLog: previousRemainingBeforeLog != null ? previousRemainingBeforeLog : undefined,
         date,
-        endDate: (isWeedSimple || isVapeDateOnly || isLsdSimple) ? undefined : ((isGift || isAdjustment || type === 'session') ? (endDate || date) : undefined),
+        endDate: (isWeedSimple || isVapeDateOnly || isLsdSimple || isXanaxSimple) ? undefined : ((isGift || isAdjustment || type === 'session') ? (endDate || date) : undefined),
         startTime,
         time: startTime,
-        endTime: (isWeedSimple || isVapeDateOnly || isLsdSimple) ? '' : ((isGift || isAdjustment || type === 'session') ? (endTime || '') : ''),
-        count: (isGift || isAdjustment || isWeedSimple || isLsdSimple) ? 0 : (parseFloat(document.getElementById('use-count')?.value) || 0),
+        endTime: (isWeedSimple || isVapeDateOnly || isLsdSimple || isXanaxSimple) ? '' : ((isGift || isAdjustment || type === 'session') ? (endTime || '') : ''),
+        count: (isGift || isAdjustment || isWeedSimple || isLsdSimple || isXanaxSimple) ? 0 : (parseFloat(document.getElementById('use-count')?.value) || 0),
         giftPartyName: isGift ? (document.getElementById('use-gift-party')?.value?.trim() || '') : '',
         adjustmentDirection: isAdjustment ? getUseAdjustmentDirection() : undefined,
         notes: document.getElementById('use-notes')?.value || '',
@@ -8009,6 +8552,14 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         base.tabsUsed = lsdCalc.tabsUsed;
         base.ugUsed = lsdCalc.ugUsed;
         base.ugPerTabAtTimeOfUse = lsdCalc.ugPerTabAtTimeOfUse;
+    }
+
+    if (isXanaxSimple && xanaxCalc && !xanaxCalc.error) {
+        base.pillsUsed = xanaxCalc.pillsUsed;
+        base.mgUsed = xanaxCalc.mgUsed;
+        base.strengthPerPillAtTimeOfUse = xanaxCalc.strengthPerPillAtTimeOfUse;
+        base.strengthUnitAtTimeOfUse = xanaxCalc.strengthUnitAtTimeOfUse;
+        base.mgPerPillAtTimeOfUse = xanaxCalc.mgPerPillAtTimeOfUse;
     }
 
     if (isCokeSession && endTime) {
@@ -8137,6 +8688,8 @@ function addPurchaseRemainingInData(purchase, amount) {
     const remaining = getPurchaseRemainingAmount(purchase);
     purchase.remainingAmount = Math.min(cap, remaining + amt);
     finalizePurchaseRemainingState(purchase);
+    if (isLsdPurchase(purchase)) syncLsdPurchaseRemaining(purchase);
+    if (isXanaxPurchase(purchase)) syncXanaxPurchaseRemaining(purchase);
     return purchase.remainingAmount - remaining;
 }
 
@@ -8145,6 +8698,8 @@ function subtractPurchaseRemainingInData(purchase, amount) {
     if (amt <= 0) return 0;
     purchase.remainingAmount = Math.max(0, getPurchaseRemainingAmount(purchase) - amt);
     finalizePurchaseRemainingState(purchase);
+    if (isLsdPurchase(purchase)) syncLsdPurchaseRemaining(purchase);
+    if (isXanaxPurchase(purchase)) syncXanaxPurchaseRemaining(purchase);
     return amt;
 }
 
@@ -9641,6 +10196,7 @@ function updateVapeUseFormUI() {
     const isNicotineSimple = isNicotine && nicotineProductType !== 'vape' && nicotineProductType !== 'other';
     const isWeed = isWeedTrackingMode(substanceId);
     const isLsd = isLsdSubstanceId(substanceId);
+    const isXanax = isXanaxSubstanceId(substanceId);
     const isVapeUse = isVape;
     const vapeGroup = document.getElementById('use-vape-fields-group');
     const amountGroup = document.getElementById('use-amount-mode-group');
@@ -9654,14 +10210,15 @@ function updateVapeUseFormUI() {
     document.getElementById('use-log-form')?.classList.toggle('is-weed-simple', isWeed);
     document.getElementById('use-log-form')?.classList.toggle('is-vape-simple', isVape || isNicotineSimple);
     document.getElementById('use-log-form')?.classList.toggle('is-lsd-simple', isLsd);
-    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isVape || isWeed || isLsd || isNicotineSimple || isNonUse);
-    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', isVape || isLsd || isNicotineSimple);
-    document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape || isLsd || isNicotineSimple);
+    document.getElementById('use-log-form')?.classList.toggle('is-xanax-simple', isXanax);
+    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isVape || isWeed || isLsd || isXanax || isNicotineSimple || isNonUse);
+    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', isVape || isXanax || isNicotineSimple);
+    document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape || isLsd || isXanax || isNicotineSimple);
 
     const dateLabel = document.getElementById('use-date-label');
     if (dateLabel) dateLabel.textContent = 'Date';
     const startTimeInput = document.getElementById('use-start-time');
-    if (startTimeInput) startTimeInput.required = !isWeed && !isVape && !isLsd && !isNicotineSimple;
+    if (startTimeInput) startTimeInput.required = !isWeed && !isVape && !isLsd && !isXanax && !isNicotineSimple;
 
     if (isNicotine) {
         document.getElementById('use-nicotine-product-type-group')?.classList.remove('hidden');
@@ -9680,6 +10237,12 @@ function updateVapeUseFormUI() {
         positionUseInventoryFields(true);
         document.getElementById('use-duration-preview')?.classList.add('hidden');
         document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
+    } else if (isXanax) {
+        ensureXanaxUseFormDefaults();
+        updateXanaxUseFormUI();
+        positionUseInventoryFields(true);
+        document.getElementById('use-duration-preview')?.classList.add('hidden');
+        document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
     } else if (isVape) {
         ensureVapeUseFormDefaults();
         positionUseInventoryFields(false);
@@ -9693,6 +10256,7 @@ function updateVapeUseFormUI() {
         document.getElementById('use-patches-fields-group')?.classList.add('hidden');
         document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
         document.getElementById('use-lsd-fields-group')?.classList.add('hidden');
+        document.getElementById('use-xanax-fields-group')?.classList.add('hidden');
         positionUseInventoryFields(false);
     }
 
@@ -9702,13 +10266,13 @@ function updateVapeUseFormUI() {
         setVapeLogInputMode(getVapeLogInputMode());
     }
 
-    amountGroup?.classList.toggle('hidden', isVapeUse || isLsd || isNicotineSimple);
+    amountGroup?.classList.toggle('hidden', isVapeUse || isLsd || isXanax || isNicotineSimple);
     if (!isNicotine) {
         vapeGroup?.classList.toggle('hidden', !isVapeUse);
     }
     document.getElementById('use-vape-purchase-block')?.classList.toggle('hidden', !isVapeUse);
     if (amountInput) {
-        amountInput.required = !isVapeUse && !isLsd && !isNicotineSimple;
+        amountInput.required = !isVapeUse && !isLsd && !isXanax && !isNicotineSimple;
     }
     if (percentInput) {
         if (isVapeUse) {
@@ -9721,8 +10285,8 @@ function updateVapeUseFormUI() {
         }
     }
     if (unitSelect) {
-        unitSelect.disabled = isVapeUse || isLsd;
-        unitSelect.required = !isVapeUse && !isLsd;
+        unitSelect.disabled = isVapeUse || isLsd || isXanax;
+        unitSelect.required = !isVapeUse && !isLsd && !isXanax;
     }
     countGroup?.classList.toggle('hidden', !shouldShowUseCountForSubstance(substanceId) || isVapeUse || isWeed || isLsd || isNicotineSimple);
     if (isVapeUse) {
@@ -9746,10 +10310,25 @@ function formatVapeUseSummary(log, sub) {
     return formatVapeRecentUseDetailLines(log).join(' · ') || `${sub?.name || 'Vape'} use`;
 }
 
+function formatLsdTabCountLabel(tabs) {
+    const n = parseFloat(tabs);
+    if (!Number.isFinite(n)) return '— tabs';
+    const rounded = Math.abs(n - 1) < 0.001;
+    return `${formatAmount(n)} tab${rounded ? '' : 's'}`;
+}
+
 function formatLsdUseSummary(log) {
     const tabs = getLsdLogTabsAmount(log);
     const ug = getLsdLogUgAmount(log);
-    return `${formatAmount(tabs)} tabs · ${formatAmount(ug)} ug`;
+    const detail = `${formatLsdTabCountLabel(tabs)} · ${formatAmount(ug)} ug`;
+    const tx = getLogTransactionType(log);
+    if (tx === 'gift_given') return `Gift Given · ${detail}`;
+    if (tx === 'gift_received') return `Gift Received · ${detail}`;
+    if (tx === 'inventory_adjustment') {
+        const dir = getAdjustmentDirection(log) === 'remove' ? '−' : '+';
+        return `Adjustment · ${dir}${detail}`;
+    }
+    return `${formatLsdTabCountLabel(tabs)} · ${formatAmount(ug)} ug`;
 }
 
 function formatVapeRecentUseDetailLines(log) {
@@ -9944,6 +10523,9 @@ function formatPurchaseRemainingDisplay(purchase) {
     if (isLsdPurchase(purchase)) {
         return formatLsdRemainingDisplay(purchase);
     }
+    if (isXanaxPurchase(purchase)) {
+        return formatXanaxRemainingDisplay(purchase);
+    }
     const remaining = getPurchaseRemainingDisplayAmount(purchase);
     const unit = getPurchaseRemainingDisplayUnit(purchase);
     const base = formatAmountWithUnit(remaining, unit);
@@ -9968,6 +10550,9 @@ function formatPurchaseOptionLabel(purchase) {
     }
     if (isLsdPurchase(purchase)) {
         return `${formatDate(purchase.date)} — ${formatLsdPurchaseDisplayLine(purchase)} — ${formatLsdRemainingDisplay(purchase)} left${storePart}`;
+    }
+    if (isXanaxPurchase(purchase)) {
+        return `${formatDate(purchase.date)} — ${formatXanaxPurchaseDisplayLine(purchase)} — ${formatXanaxRemainingDisplay(purchase)}${storePart}`;
     }
     const bought = getPurchaseQuantityBought(purchase);
     const unit = getPurchaseRemainingDisplayUnit(purchase);
@@ -10334,6 +10919,8 @@ function deductPurchaseAmount(purchaseId, amount) {
     }
     purchase.remainingAmount = Math.max(0, remaining - amt);
     finalizePurchaseRemainingState(purchase);
+    if (isLsdPurchase(purchase)) syncLsdPurchaseRemaining(purchase);
+    if (isXanaxPurchase(purchase)) syncXanaxPurchaseRemaining(purchase);
     purchase.updatedAt = new Date().toISOString();
     return { ok: true };
 }
@@ -10646,11 +11233,12 @@ function editUseEntry(id) {
     const isVape = isVapeUseLog(entry);
     const isWeed = isWeedTrackingMode(getUseSubstanceId(entry));
     const isLsd = isLsdSubstanceId(getUseSubstanceId(entry));
+    const isXanax = isXanaxSubstanceId(getUseSubstanceId(entry));
     const isNicotineNonVape = isNicotineSubstanceId(getUseSubstanceId(entry)) && !isVape;
     if (isVape) {
         setUseTransactionType('use');
         setUseLogType('quick');
-    } else if (isWeed || isLsd) {
+    } else if (isWeed || isLsd || isXanax) {
         setUseTransactionType(getLogTransactionType(entry));
         setUseLogType('quick');
         if (isInventoryAdjustmentLog(entry)) {
@@ -10698,7 +11286,7 @@ function editUseEntry(id) {
         setInputValue('use-end-date', '');
         setInputValue('use-end-time', '');
         updateUseNicotineProductTypeUI();
-    } else if (isWeed || isVape || isLsd) {
+    } else if (isWeed || isVape || isLsd || isXanax) {
         if (isWeed) {
             setInputValue('use-weed-product-type', entry.weedProductType || 'bud');
         }
@@ -10763,6 +11351,23 @@ function editUseEntry(id) {
             setInputValue('use-lsd-ug-used', entry.amount ?? '');
         }
         updateLsdUsePreview();
+    } else if (isXanax) {
+        const mgPerPill = entry.mgPerPillAtTimeOfUse ?? getXanaxMgPerPill(findPurchase(getLogPurchaseId(entry)));
+        if (entry.pillsUsed != null && entry.mgUsed != null && mgPerPill > 0
+            && Math.abs(entry.pillsUsed * mgPerPill - entry.mgUsed) < 0.001) {
+            setXanaxLogInputMode('pills');
+            setInputValue('use-xanax-pills-used', entry.pillsUsed);
+        } else if (entry.mgUsed != null) {
+            setXanaxLogInputMode('mg');
+            setInputValue('use-xanax-mg-used', entry.mgUsed);
+        } else if (entry.pillsUsed != null) {
+            setXanaxLogInputMode('pills');
+            setInputValue('use-xanax-pills-used', entry.pillsUsed);
+        } else {
+            setXanaxLogInputMode('pills');
+            setInputValue('use-xanax-pills-used', entry.amount ?? '');
+        }
+        updateXanaxUsePreview();
     } else {
         setInputValue('use-amount', entry.amount != null ? entry.amount : '');
         setInputValue('use-percent-after', '');
@@ -11065,10 +11670,17 @@ function setupUseLogForm() {
         updateUsePurchaseLinkUI();
         updateVapeUsePreview();
         updateLsdUsePreview();
+        updateXanaxUsePreview();
     });
     ['use-lsd-tabs-used', 'use-lsd-ug-used'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', () => {
             updateLsdUsePreview();
+            updateUsePurchaseLinkUI();
+        });
+    });
+    ['use-xanax-pills-used', 'use-xanax-mg-used'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', () => {
+            updateXanaxUsePreview();
             updateUsePurchaseLinkUI();
         });
     });
@@ -11251,9 +11863,11 @@ function handleUseLogSubmit(e) {
     const isVapeUse = isNicotine ? nicotineProductType === 'vape' : isVapeTrackingMode(substanceIdPreview);
     const isNicotineSimple = isNicotine && nicotineProductType !== 'vape' && nicotineProductType !== 'other';
     const isLsdUse = isLsdSubstanceId(substanceIdPreview);
+    const isXanaxUse = isXanaxSubstanceId(substanceIdPreview);
     let vapeCalc = null;
     let lsdCalc = null;
     let nicotineCalc = null;
+    let xanaxCalc = null;
 
     if (isVapeUse) {
         vapeCalc = computeVapeUseFromForm({ editingId: editingUseId || null });
@@ -11278,13 +11892,19 @@ function handleUseLogSubmit(e) {
         if (lsdCalc?.error) return alert(lsdCalc.error);
     }
 
-    const payload = buildUseEntryFromForm(vapeCalc, lsdCalc, nicotineCalc);
+    if (isXanaxUse) {
+        xanaxCalc = computeXanaxUseFromForm({ editingId: editingUseId || null });
+        if (xanaxCalc?.error) return alert(xanaxCalc.error);
+    }
+
+    const payload = buildUseEntryFromForm(vapeCalc, lsdCalc, nicotineCalc, xanaxCalc);
     const { substanceId, amount, type, transactionType } = payload;
     const isPersonalUse = isPersonalUseLog({ transactionType });
     const eventTimestamp = getUseEventTimestamp(payload.date, payload.startTime);
     const now = new Date().toISOString();
     const useVapeInventory = isVapeUse && vapeCalc?.purchase && payload.inventoryAffects;
-    const useLsdInventory = isLsdUse && lsdCalc?.purchase && payload.inventoryAffects;
+    const useLsdInventory = isLsdUse && lsdCalc?.purchaseId && payload.inventoryAffects;
+    const useXanaxInventory = isXanaxUse && xanaxCalc?.purchase && payload.inventoryAffects;
     const useNicotineInventory = isNicotineSimple && nicotineCalc?.purchaseId && payload.inventoryAffects;
 
     if (isCokeSubstanceId(substanceId) && type === 'session') {
@@ -11384,6 +12004,17 @@ function handleUseLogSubmit(e) {
             delete updated.endedAt;
             delete updated.durationMs;
         }
+        if (isXanaxSubstanceId(substanceId)) {
+            updated.type = 'quick';
+            updated.logMode = 'xanax_dose';
+            updated.startTime = '';
+            updated.time = '';
+            updated.endTime = '';
+            delete updated.endDate;
+            delete updated.startedAt;
+            delete updated.endedAt;
+            delete updated.durationMs;
+        }
 
         if (isVapeEdit || useVapeInventory) {
             setLogPurchaseId(updated, getLogPurchaseId(updated));
@@ -11465,6 +12096,17 @@ function handleUseLogSubmit(e) {
         delete log.endedAt;
         delete log.durationMs;
     }
+    if (isXanaxSubstanceId(substanceId)) {
+        log.type = 'quick';
+        log.logMode = 'xanax_dose';
+        log.startTime = '';
+        log.time = '';
+        log.endTime = '';
+        delete log.endDate;
+        delete log.startedAt;
+        delete log.endedAt;
+        delete log.durationMs;
+    }
 
     if (!Array.isArray(appData.logs)) appData.logs = [];
     appData.logs.push(log);
@@ -11475,6 +12117,9 @@ function handleUseLogSubmit(e) {
     } else if (useLsdInventory && lsdCalc.purchaseId) {
         setLogPurchaseId(log, lsdCalc.purchaseId);
         recalculatePurchaseRemaining(lsdCalc.purchaseId);
+    } else if (useXanaxInventory && xanaxCalc.purchaseId) {
+        setLogPurchaseId(log, xanaxCalc.purchaseId);
+        recalculatePurchaseRemaining(xanaxCalc.purchaseId);
     } else if (useNicotineInventory && nicotineCalc.purchaseId) {
         setLogPurchaseId(log, nicotineCalc.purchaseId);
         const purchase = findPurchase(nicotineCalc.purchaseId);
@@ -11483,7 +12128,7 @@ function handleUseLogSubmit(e) {
         } else {
             recalculatePurchaseRemaining(nicotineCalc.purchaseId);
         }
-    } else if (!useVapeInventory && !useLsdInventory && !useNicotineInventory) {
+    } else if (!useVapeInventory && !useLsdInventory && !useXanaxInventory && !useNicotineInventory) {
         const inv = applyLogInventoryEffect(log);
         if (!inv.ok) {
             appData.logs.pop();
@@ -11953,17 +12598,21 @@ function renderUseHistoryCard(entry, sub, avgRate) {
     const isWeedSimple = isWeedDateOnlyUseLog(entry);
     const isVapeDateOnly = isVapeDateOnlyUseLog(entry);
     const isLsdDateOnly = isLsdDateOnlyUseLog(entry);
-    const hideTimeStats = isWeedSimple || isVapeDateOnly || isLsdDateOnly;
+    const isXanaxDateOnly = isXanaxDateOnlyUseLog(entry);
+    const hideTimeStats = isWeedSimple || isVapeDateOnly || isLsdDateOnly || isXanaxDateOnly;
     const rateStr = (!hideTimeStats && entry.useRate != null) ? `${entry.useRate.toFixed(2)}/${sub.defaultUnit}/hr` : '—';
     const checked = useHistorySelectionHas(entry.id) ? 'checked' : '';
     const timeRange = hideTimeStats ? '' : formatUseSessionTimeRange(entry);
     const isVape = isVapeUseLog(entry);
     const isLsd = isLsdDateOnlyUseLog(entry);
+    const isXanax = isXanaxDateOnlyUseLog(entry);
     const isNicotineNonVape = isNicotineSubstanceId(getUseSubstanceId(entry)) && !isVape;
-    const countStr = (isVape || isLsd) ? '—' : (entry.count || '—');
+    const countStr = (isVape || isLsd || isXanax) ? '—' : (entry.count || '—');
     let amountDisplay = isVape
         ? formatVapeUseSummary(entry, sub)
-        : (isLsd ? formatLsdUseSummary(entry) : (isNicotineNonVape ? formatNicotineUseLogLabel(entry) : `${entry.amount} ${entry.unit}`));
+        : (isLsd ? formatLsdUseSummary(entry)
+            : (isXanax ? formatXanaxUseSummary(entry)
+                : (isNicotineNonVape ? formatNicotineUseLogLabel(entry) : `${entry.amount} ${entry.unit}`)));
     if (isPercentLeftDistributedChildLog(entry)) {
         amountDisplay = `~${formatAmount(entry.amount)} puffs · Estimated daily use from percent-left log`;
     } else if (isPercentLeftCheckpointLog(entry) && getSpreadPercentLeftUsage()) {
@@ -12027,13 +12676,16 @@ function renderRecentUseList() {
         const distChildren = isCheckpoint ? getDistributedChildrenForPercentLog(log.id) : [];
         const countStr = getUseCount(log);
         const isWeedSimple = isWeedDateOnlyUseLog(log);
-        const isSessionLog = !isVape && !isWeedSimple && !isNicotineNonVape && log.endTime;
+        const isLsdSimple = isLsdDateOnlyUseLog(log);
+        const isSessionLog = !isVape && !isWeedSimple && !isLsdSimple && !isNicotineNonVape && log.endTime;
         const timeRange = formatUseSessionTimeRange(log);
         const amountDisplay = isVape
             ? ''
-            : (isNicotineNonVape
-                ? formatNicotineUseLogLabel(log)
-                : `${log.amount != null ? formatAmount(log.amount) : '—'} ${log.unit || ''}`);
+            : (isLsdSimple
+                ? formatLsdUseSummary(log)
+                : (isNicotineNonVape
+                    ? formatNicotineUseLogLabel(log)
+                    : `${log.amount != null ? formatAmount(log.amount) : '—'} ${log.unit || ''}`));
         const vapeDetailHtml = isVape
             ? formatVapeRecentUseDetailLines(log).map(line => `<div class="use-recent-detail">${line}</div>`).join('')
             : '';
@@ -12590,6 +13242,7 @@ function updateBuyVapeFieldsVisibility() {
     const isWeed = isWeedTrackingMode(substanceId);
     const isCigarettes = isNicotine ? getBuyFormNicotineProductType() === 'cigarettes' : isCigarettesTrackingMode(substanceId);
     const isLsd = isLsdSubstanceId(substanceId);
+    const isXanax = isXanaxSubstanceId(substanceId);
     document.getElementById('buy-nicotine-fields-group')?.classList.toggle('hidden', !isNicotine);
     document.getElementById('buy-vape-percent-group')?.classList.toggle('hidden', !isVape);
     document.getElementById('buy-vape-liquid-group')?.classList.toggle('hidden', !isVape);
@@ -12600,7 +13253,8 @@ function updateBuyVapeFieldsVisibility() {
     document.getElementById('buy-gum-fields-group')?.classList.toggle('hidden', !isNicotine || getBuyFormNicotineProductType() !== 'gum');
     document.getElementById('buy-patches-fields-group')?.classList.toggle('hidden', !isNicotine || getBuyFormNicotineProductType() !== 'patches');
     document.getElementById('buy-lsd-fields-group')?.classList.toggle('hidden', !isLsd);
-    document.getElementById('buy-unit-group')?.classList.toggle('hidden', isLsd || isNicotine);
+    document.getElementById('buy-xanax-fields-group')?.classList.toggle('hidden', !isXanax);
+    document.getElementById('buy-unit-group')?.classList.toggle('hidden', isLsd || isXanax || isNicotine);
     document.getElementById('buy-time-group')?.classList.toggle('hidden', isVape);
     if (!isWeed && !isNicotine) {
         document.getElementById('buy-quantity-group')?.classList.remove('hidden');
@@ -12614,15 +13268,18 @@ function updateBuyVapeFieldsVisibility() {
             ? 'Puff count at 100%'
             : (isLsd
                 ? 'Quantity (tabs)'
-                : (primaryUnit && primaryUnit !== 'units'
-                    ? `Quantity (${primaryUnit})`
-                    : 'Quantity Bought'));
+                : (isXanax
+                    ? 'Quantity of pills'
+                    : (primaryUnit && primaryUnit !== 'units'
+                        ? `Quantity (${primaryUnit})`
+                        : 'Quantity Bought')));
     }
     if (isNicotine) updateBuyNicotineProductTypeUI();
     else if (isVape) updateBuyVapeFieldsPreview();
     if (isAlcohol) updateBuyAlcoholPreview();
     if (isWeed) updateBuyWeedProductTypeUI();
     if (isLsd) updateBuyLsdPreview();
+    if (isXanax) updateBuyXanaxPreview();
 }
 
 function setBuyFormSubmitLabel(text) {
@@ -12673,6 +13330,16 @@ function setupBuyTrackerForm() {
             updateBuyLsdPreview();
             updateBuyCostPerUnitPreview();
         });
+    });
+    ['buy-quantity', 'buy-strength-per-pill', 'buy-strength-unit', 'buy-total-cost'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', () => {
+            updateBuyXanaxPreview();
+            updateBuyCostPerUnitPreview();
+        });
+    });
+    document.getElementById('buy-strength-unit')?.addEventListener('change', () => {
+        updateBuyXanaxPreview();
+        updateBuyCostPerUnitPreview();
     });
     document.getElementById('buy-substance')?.addEventListener('change', updateBuyUnitDropdown);
     document.getElementById('buy-store-select')?.addEventListener('change', onBuyStoreSelectChange);
@@ -12769,6 +13436,10 @@ function buildPurchaseFromForm() {
         const lsdFields = parseLsdFieldsFromForm();
         applyLsdFieldsToPayload(payload, lsdFields, payload.totalCost);
     }
+    if (isXanaxSubstanceId(substanceId)) {
+        const xanaxFields = parseXanaxFieldsFromForm();
+        applyXanaxFieldsToPayload(payload, xanaxFields, payload.totalCost);
+    }
     if (isVape) {
         payload.nicotineProductType = 'vape';
     }
@@ -12803,6 +13474,9 @@ function finalizeNewPurchaseRecord(payload) {
     }
     if (isLsdPurchase(record)) {
         syncLsdPurchaseFields(record, parseFloat(getPurchaseTotalCost(record)) || 0);
+    }
+    if (isXanaxPurchase(record)) {
+        syncXanaxPurchaseFields(record, parseFloat(getPurchaseTotalCost(record)) || 0);
     }
     record.inventoryStatus = 'active';
     record.inventoryHidden = false;
@@ -12852,6 +13526,22 @@ function applyPurchaseQuantityEdit(existing, newQty, options = {}) {
         existing.updatedAt = new Date().toISOString();
         return;
     }
+    if (isXanaxPurchase(existing)) {
+        const usedPills = Math.max(0, getXanaxPillQuantity(existing) - getXanaxRemainingPills(existing));
+        const newPillQty = newQty;
+        existing.pillQuantity = newPillQty;
+        existing.quantityBought = newPillQty;
+        existing.quantity = newPillQty;
+        existing.unit = 'pills';
+        existing.remainingAmount = Math.max(0, newPillQty - usedPills);
+        if (options.strengthPerPill != null) existing.strengthPerPill = options.strengthPerPill;
+        if (options.strengthUnit != null) existing.strengthUnit = options.strengthUnit;
+        existing.needsStrengthInfo = !(existing.strengthPerPill > 0);
+        syncXanaxPurchaseFields(existing);
+        existing.isDepleted = existing.remainingAmount <= INVENTORY_EPS;
+        existing.updatedAt = new Date().toISOString();
+        return;
+    }
     const used = getPurchaseQuantityBought(existing) - getPurchaseRemainingAmount(existing);
     const remaining = Math.max(0, newQty - used);
     existing.quantityBought = newQty;
@@ -12892,6 +13582,9 @@ function resetBuyFormAfterSave() {
     setInputValue('buy-patch-count', '');
     setInputValue('buy-patch-mg-per', '');
     setInputValue('buy-patch-duration-hours', '24');
+    setInputValue('buy-ug-per-tab', '');
+    setInputValue('buy-strength-per-pill', '');
+    setInputValue('buy-strength-unit', 'mg');
     setBuyFormSubmitLabel('Save Purchase');
     document.getElementById('cancel-buy-edit-btn')?.classList.add('hidden');
     clearBuyFormFeedback();
@@ -12969,6 +13662,8 @@ function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
         setInputValue('buy-quantity', '');
     } else if (isLsdPurchase(purchase)) {
         setInputValue('buy-quantity', getLsdQuantityTabs(purchase) ?? getPurchaseQuantity(purchase));
+    } else if (isXanaxPurchase(purchase)) {
+        setInputValue('buy-quantity', getXanaxPillQuantity(purchase) ?? getPurchaseQuantity(purchase));
     } else {
         setInputValue('buy-quantity', isVape ? getVapeFullPuffCount(purchase) : getPurchaseQuantity(purchase));
     }
@@ -12997,6 +13692,8 @@ function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
     setInputValue('buy-grams-per-preroll', purchase.gramsPerPreRoll ?? '');
     setInputValue('buy-cigarette-nicotine-mg', purchase.nicotineMg ?? '');
     setInputValue('buy-ug-per-tab', purchase.ugPerTab ?? '');
+    setInputValue('buy-strength-per-pill', purchase.strengthPerPill ?? '');
+    setInputValue('buy-strength-unit', purchase.strengthUnit || 'mg');
     setInputValue('buy-total-cost', getPurchaseTotalCost(purchase));
     setBuyStoreFieldValue(purchase.store || purchase.location || '');
     setInputValue('buy-payment', purchase.paymentMethod || '');
@@ -13008,6 +13705,7 @@ function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
     updateBuyWeedProductTypeUI();
     updateBuyNicotineProductTypeUI();
     updateBuyLsdPreview();
+    updateBuyXanaxPreview();
     return true;
 }
 
@@ -13070,6 +13768,10 @@ function updateBuyCostPerUnitPreview() {
         el.textContent = 'See LSD preview below for cost per tab and cost per ug.';
         return;
     }
+    if (isXanaxSubstanceId(substanceId)) {
+        el.textContent = 'See Xanax preview below for cost per pill and cost per mg.';
+        return;
+    }
     let qty = parseFloat(document.getElementById('buy-quantity')?.value);
     if (isWeedTrackingMode(substanceId)) {
         const productType = document.getElementById('buy-weed-product-type')?.value || 'bud';
@@ -13104,6 +13806,11 @@ function handleBuySubmit(e) {
         alert(lsdErr);
         return;
     }
+    const xanaxErr = validateXanaxBuyForm(substanceId);
+    if (xanaxErr) {
+        alert(xanaxErr);
+        return;
+    }
 
     const payload = buildPurchaseFromForm();
 
@@ -13134,7 +13841,9 @@ function handleBuySubmit(e) {
             eLiquidCapacityMl: payload.eLiquidCapacityMl ?? null,
             nicotineMgPerMl: payload.nicotineMgPerMl ?? null,
             quantityTabs: payload.quantityTabs ?? null,
-            ugPerTab: payload.ugPerTab ?? null
+            ugPerTab: payload.ugPerTab ?? null,
+            strengthPerPill: payload.strengthPerPill ?? null,
+            strengthUnit: payload.strengthUnit ?? null
         });
         migratePurchaseInventory(appData.purchases[idx], appData.logs || [], appData);
         if (isVapePuffPurchase(appData.purchases[idx])) {
@@ -13566,9 +14275,12 @@ function renderPurchaseLinkedLogsPanel(purchase) {
     const store = purchase.store || purchase.location || '';
     const metrics = getPurchaseSupplyMetrics(purchase);
     const isVape = isVapePuffPurchase(purchase);
+    const isXanax = isXanaxPurchase(purchase);
     const header = isVape
         ? `${formatDate(purchase.date)} purchase${store ? ` · ${store}` : ''} · ${formatAmountWithUnit(getVapeFullPuffCount(purchase), 'puffs')} @100%`
-        : `${formatDate(purchase.date)} purchase${store ? ` · ${store}` : ''} · ${formatAmountWithUnit(metrics.quantityBought, displayUnit)}`;
+        : isXanax
+            ? `${formatDate(purchase.date)} purchase${store ? ` · ${store}` : ''} · ${formatXanaxPurchaseDisplayLine(purchase)}`
+            : `${formatDate(purchase.date)} purchase${store ? ` · ${store}` : ''} · ${formatAmountWithUnit(metrics.quantityBought, displayUnit)}`;
 
     const totalsHtml = isVape
         ? renderVapePurchaseLifecycleHtml(purchase)
@@ -16306,7 +17018,7 @@ function renderStatsBuyAnalyticsCards(substanceId) {
     const supplyBadge = remaining != null ? getSupplyRemainingBadge(0.25) : { level: 'none', label: '—' };
     const storeSummaries = getStoreBuySummaries(substanceId);
     const topStore = storeSummaries[0];
-    const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
+    const displayUnit = getSubstanceBuyDisplayUnit(substanceId);
     const remainingLabel = isVapeNicotineSubstanceId(substanceId)
         ? (remaining != null ? `${formatStatsPuffs(remaining)} puffs` : '—')
         : (isLsdSubstanceId(substanceId)
@@ -16316,7 +17028,14 @@ function renderStatsBuyAnalyticsCards(substanceId) {
                     ? `${formatAmount(sum.tabs)} tabs / ${formatAmount(sum.ug)} ug`
                     : '—';
             })()
-            : (remaining != null ? fmtSheetAmount(remaining, unit) : '—'));
+            : (isXanaxSubstanceId(substanceId)
+                ? (() => {
+                    const sum = getXanaxTotalRemainingSummary(substanceId);
+                    return sum.pills > INVENTORY_EPS || sum.mg > INVENTORY_EPS
+                        ? `${formatAmount(sum.pills)} pills · ${formatAmount(sum.mg)} mg`
+                        : '—';
+                })()
+                : (remaining != null ? fmtSheetAmount(remaining, unit) : '—')));
 
     container.innerHTML = [
         renderSheetMetricCard('Total Cost', fmtSheetMoney(totalCost, cur), null),
@@ -16343,7 +17062,7 @@ function renderStatsBuyWeekSummary(substanceId) {
         return;
     }
     const sub = getSubstance(substanceId);
-    const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : (sub?.defaultUnit || 'units');
+    const displayUnit = getSubstanceBuyDisplayUnit(substanceId);
     container.innerHTML = renderSheetTable(
         ['Week', 'Purchased', 'Cost', 'Avg Cost/g', 'Purchases', 'Break Between Buys'],
         summaries.map(s => [
@@ -16370,7 +17089,7 @@ function renderStatsBuyMonthSummary(substanceId) {
         return;
     }
     const sub = getSubstance(substanceId);
-    const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : (sub?.defaultUnit || 'units');
+    const displayUnit = getSubstanceBuyDisplayUnit(substanceId);
     container.innerHTML = renderSheetTable(
         ['Month', 'Purchased', 'Cost', 'Avg Cost/unit', 'Running Cost Total'],
         summaries.map(s => [
@@ -16399,7 +17118,7 @@ function exportStatsBuyMonthSummaryCsv() {
         alert('No purchase data to export.');
         return;
     }
-    const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : (sub.defaultUnit || 'units');
+    const displayUnit = getSubstanceBuyDisplayUnit(substanceId);
     const substanceName = getSubstanceDisplayName(sub);
     const headers = ['Month', 'Purchased', 'Unit', 'Cost', 'Avg Cost/unit', 'Running Cost Total'];
     const csvRows = [headers.map(csvEscape).join(',')];
@@ -21706,7 +22425,7 @@ function csvEscape(value) {
 
 function exportDataCsv() {
     const rows = [];
-    rows.push(['Record Type', 'Substance', 'Date', 'Start', 'End', 'Amount', 'Unit', 'Count', 'Notes'].map(csvEscape).join(','));
+    rows.push(['Record Type', 'Substance', 'Date', 'Start', 'End', 'Amount', 'Unit', 'Transaction Type', 'Tabs Used', 'Ug Used', 'Pills Used', 'Mg Used', 'Count', 'Notes'].map(csvEscape).join(','));
     appData.logs.forEach(log => {
         rows.push([
             log.type === 'session' ? 'Use Session' : 'Use Quick',
@@ -21716,12 +22435,17 @@ function exportDataCsv() {
             log.endTime || '',
             log.amount,
             log.unit,
+            getLogTransactionType(log),
+            log.tabsUsed ?? '',
+            log.ugUsed ?? '',
+            log.pillsUsed ?? '',
+            log.mgUsed ?? '',
             log.count ?? '',
             log.notes || ''
         ].map(csvEscape).join(','));
     });
     rows.push('');
-    rows.push(['Record Type', 'Substance', 'Date', 'Time', 'Quantity', 'Unit', 'Total Cost', 'Store', 'Notes'].map(csvEscape).join(','));
+    rows.push(['Record Type', 'Substance', 'Date', 'Time', 'Quantity', 'Unit', 'Pill Qty', 'Strength/Pill', 'Strength Unit', 'Total Mg', 'Total Cost', 'Store', 'Notes'].map(csvEscape).join(','));
     (appData.purchases || []).forEach(p => {
         rows.push([
             'Purchase',
@@ -21730,6 +22454,10 @@ function exportDataCsv() {
             p.time || '',
             p.quantity,
             p.unit,
+            p.pillQuantity ?? '',
+            p.strengthPerPill ?? '',
+            p.strengthUnit ?? '',
+            p.totalMg ?? '',
             p.totalCost ?? '',
             p.store || '',
             p.notes || ''
@@ -21999,6 +22727,7 @@ if (typeof window !== 'undefined') {
         runInventoryBulkAction,
         setVapeLogInputMode,
         setLsdLogInputMode,
+        setXanaxLogInputMode,
         setVapeTaperCountMode,
         setSpreadPercentLeftUsage,
         togglePercentDistDays,
@@ -22030,7 +22759,36 @@ function __getRecoveryTrackerTestExports() {
         sumPersonalUseAmountThroughDate,
         getDefaultAppData,
         getDefaultSubstances,
-        formatAmount
+        formatAmount,
+        computeXanaxTotalMg,
+        strengthPerPillToMg,
+        applyXanaxFieldsToPayload,
+        syncXanaxPurchaseFields,
+        syncXanaxPurchaseRemaining,
+        migrateXanaxInventoryV1,
+        recalculatePurchaseRemaining,
+        getXanaxPillQuantity,
+        getXanaxTotalMg,
+        getXanaxRemainingPills,
+        getXanaxRemainingMg,
+        formatXanaxPurchaseDisplayLine,
+        formatXanaxRemainingDisplay,
+        formatXanaxUseSummary,
+        getXanaxLogPillsAmount,
+        getXanaxLogMgAmount,
+        xanaxPurchaseNeedsStrengthInfo,
+        isXanaxPurchase,
+        computeLsdUseFromForm,
+        formatLsdUseSummary,
+        formatLsdTabCountLabel,
+        getLsdLogTabsAmount,
+        getLsdLogUgAmount,
+        isPersonalUseLog,
+        isGiftGivenLog,
+        isGiftReceivedLog,
+        applyLogInventoryEffect,
+        getLsdRemainingUg,
+        getLsdRemainingTabs
     };
 }
 

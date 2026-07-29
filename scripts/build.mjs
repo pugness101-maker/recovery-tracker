@@ -14,7 +14,7 @@ function run(command, args) {
 }
 
 run('node', ['--check', 'app.js']);
-run('node', ['--test', 'tests/monthly-running-total.test.mjs']);
+run('node', ['--test', 'tests/**/*.test.mjs']);
 
 mkdirSync(dist, { recursive: true });
 for (const file of ['index.html', 'app.js', 'styles.css']) {
