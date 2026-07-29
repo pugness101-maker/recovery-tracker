@@ -1,15 +1,15 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="dark" data-view-mode="auto" data-view-layout="phone">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Recovery Tracker</title>
     <script>
         (function () {
-            var key = 'recoveryTracker.themePreference';
+            var themeKey = 'recoveryTracker.themePreference';
             var pref = 'dark';
             try {
-                var saved = localStorage.getItem(key);
+                var saved = localStorage.getItem(themeKey);
                 if (saved === 'dark' || saved === 'light' || saved === 'system') pref = saved;
             } catch (e) { /* ignore */ }
             var resolved = 'dark';
@@ -19,6 +19,21 @@
                 resolved = window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
             }
             document.documentElement.dataset.theme = resolved;
+
+            var viewMode = 'auto';
+            try {
+                var raw = localStorage.getItem('recovery-tracker-v2');
+                if (raw) {
+                    var parsed = JSON.parse(raw);
+                    var mode = parsed && parsed.settings && parsed.settings.appearanceViewMode;
+                    if (mode === 'auto' || mode === 'phone' || mode === 'laptop') viewMode = mode;
+                }
+            } catch (e) { /* ignore */ }
+            var layout = 'phone';
+            if (viewMode === 'laptop') layout = 'laptop';
+            else if (viewMode === 'auto' && window.matchMedia('(min-width: 768px)').matches) layout = 'laptop';
+            document.documentElement.dataset.viewMode = viewMode;
+            document.documentElement.dataset.viewLayout = layout;
         })();
     </script>
     <link rel="stylesheet" href="styles.css">
@@ -1851,6 +1866,20 @@
                     </div>
                     <p id="theme-preview-text" class="settings-hint theme-preview-text">Current theme: Dark</p>
                     <p id="theme-system-note" class="settings-hint theme-system-note hidden"></p>
+                    <div class="form-group appearance-view-mode-group">
+                        <label id="appearance-view-mode-label" for="appearance-view-mode">View Mode</label>
+                        <div class="appearance-view-mode-control" role="group" aria-labelledby="appearance-view-mode-label">
+                            <button type="button" class="appearance-view-mode-btn active" data-appearance-view-mode="auto" aria-pressed="true" onclick="setAppearanceViewMode('auto')">Auto</button>
+                            <button type="button" class="appearance-view-mode-btn" data-appearance-view-mode="phone" aria-pressed="false" onclick="setAppearanceViewMode('phone')">Phone</button>
+                            <button type="button" class="appearance-view-mode-btn" data-appearance-view-mode="laptop" aria-pressed="false" onclick="setAppearanceViewMode('laptop')">Laptop</button>
+                        </div>
+                        <select id="appearance-view-mode" class="appearance-view-mode-select" aria-label="View Mode" onchange="setAppearanceViewMode(this.value)">
+                            <option value="auto">Auto</option>
+                            <option value="phone">Phone View</option>
+                            <option value="laptop">Laptop View</option>
+                        </select>
+                    </div>
+                    <p class="settings-hint">Auto: follows screen size. Phone: always uses compact mobile layout. Laptop: always uses wide desktop layout.</p>
                 </div>
                     </div>
                 </div>

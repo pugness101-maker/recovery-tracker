@@ -129,7 +129,8 @@ export function makeTestData(logs, substances = null) {
             currency: '$',
             substanceSettings: {},
             vapeTaperCountMode: 'log-date',
-            spreadPercentLeftUsage: true
+            spreadPercentLeftUsage: true,
+            appearanceViewMode: 'auto'
         },
         taperPlans: {},
         taperPlansV2: [],

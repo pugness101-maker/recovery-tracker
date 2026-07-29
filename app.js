@@ -5,10 +5,13 @@ const LAST_SAVED_KEY = 'recovery-tracker-v2-last-saved';
 const AUTO_BACKUP_KEY = 'recovery-tracker-v2-auto-backup';
 const DASHBOARD_ALL = 'all';
 const THEME_PREFERENCE_KEY = 'recoveryTracker.themePreference';
+const APPEARANCE_VIEW_MODES = Object.freeze(['auto', 'phone', 'laptop']);
+const APPEARANCE_VIEW_MODE_LAPTOP_MQ = '(min-width: 768px)';
 
 let themePreference = 'dark';
 let resolvedTheme = 'dark';
 let themeMediaQuery = null;
+let appearanceViewModeMediaQuery = null;
 
 function getSystemTheme() {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
@@ -91,6 +94,92 @@ function initTheme() {
     loadThemePreference();
     setupThemeSystemListener();
     updateThemePreviewUI();
+}
+
+function normalizeAppearanceViewMode(value) {
+    return APPEARANCE_VIEW_MODES.includes(value) ? value : 'auto';
+}
+
+function getAppearanceViewMode(data = appData) {
+    return normalizeAppearanceViewMode(data?.settings?.appearanceViewMode);
+}
+
+function resolveAppearanceViewLayout(mode = getAppearanceViewMode()) {
+    const preference = normalizeAppearanceViewMode(mode);
+    if (preference === 'phone') return 'phone';
+    if (preference === 'laptop') return 'laptop';
+    try {
+        if (typeof window !== 'undefined' && window.matchMedia?.(APPEARANCE_VIEW_MODE_LAPTOP_MQ)?.matches) {
+            return 'laptop';
+        }
+    } catch (_) { /* ignore */ }
+    return 'phone';
+}
+
+function isAppearancePhoneLayout() {
+    return document.documentElement?.dataset?.viewLayout !== 'laptop';
+}
+
+function isAppearanceLaptopLayout() {
+    return document.documentElement?.dataset?.viewLayout === 'laptop';
+}
+
+function syncAppearanceViewModeUI(mode = getAppearanceViewMode()) {
+    const preference = normalizeAppearanceViewMode(mode);
+    const select = document.getElementById('appearance-view-mode');
+    if (select && select.value !== preference) select.value = preference;
+    document.querySelectorAll('[data-appearance-view-mode]').forEach((btn) => {
+        const active = btn.getAttribute('data-appearance-view-mode') === preference;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+}
+
+function applyAppearanceViewMode(mode = getAppearanceViewMode()) {
+    const preference = normalizeAppearanceViewMode(mode);
+    const layout = resolveAppearanceViewLayout(preference);
+    const root = document.documentElement;
+    if (root) {
+        root.dataset.viewMode = preference;
+        root.dataset.viewLayout = layout;
+    }
+    syncAppearanceViewModeUI(preference);
+    return layout;
+}
+
+function setupAppearanceViewModeListener() {
+    if (appearanceViewModeMediaQuery) {
+        appearanceViewModeMediaQuery.removeEventListener('change', onAppearanceViewModeViewportChange);
+        appearanceViewModeMediaQuery = null;
+    }
+    if (getAppearanceViewMode() !== 'auto') return;
+    if (typeof window === 'undefined' || !window.matchMedia) return;
+    appearanceViewModeMediaQuery = window.matchMedia(APPEARANCE_VIEW_MODE_LAPTOP_MQ);
+    appearanceViewModeMediaQuery.addEventListener('change', onAppearanceViewModeViewportChange);
+}
+
+function onAppearanceViewModeViewportChange() {
+    if (getAppearanceViewMode() !== 'auto') return;
+    applyAppearanceViewMode('auto');
+}
+
+function setAppearanceViewMode(mode) {
+    const preference = normalizeAppearanceViewMode(mode);
+    if (!appData.settings) appData.settings = {};
+    appData.settings.appearanceViewMode = preference;
+    saveData(appData);
+    applyAppearanceViewMode(preference);
+    setupAppearanceViewModeListener();
+    if (typeof updateStatsCalendarLayoutForViewMode === 'function') {
+        updateStatsCalendarLayoutForViewMode();
+    }
+}
+
+function initAppearanceViewMode() {
+    if (!appData.settings) appData.settings = {};
+    appData.settings.appearanceViewMode = getAppearanceViewMode();
+    applyAppearanceViewMode(appData.settings.appearanceViewMode);
+    setupAppearanceViewModeListener();
 }
 
 const SUBSTANCE_ICONS = ['🚬', '💨', '🍺', '🌿', '💊', '🍬', '💉', '🎯', '⚡', '🧪', '📦', '🔥', '❄️', '💧', '🌸', '🌀'];
@@ -4786,7 +4875,8 @@ const defaultData = {
         substanceSettings: getDefaultSubstanceSettings(),
         vapeTaperCountMode: 'log-date',
         spreadPercentLeftUsage: true,
-        buyMonthRunningMode: 'within-year'
+        buyMonthRunningMode: 'within-year',
+        appearanceViewMode: 'auto'
     },
     taperPlans: {},
     taperPlansV2: [],
@@ -5211,6 +5301,7 @@ function ensureAppDataSettings(data) {
     if (data.settings.spreadPercentLeftUsage === undefined) {
         data.settings.spreadPercentLeftUsage = true;
     }
+    data.settings.appearanceViewMode = normalizeAppearanceViewMode(data.settings.appearanceViewMode);
     ensureInsightPrefs(data);
     ensureTableColumnSettings(data);
     ensureUseStatsConfig(data);
@@ -7218,7 +7309,10 @@ const STATS_CALENDAR_STORAGE_KEY = 'recoveryTracker.statsCalendar.v1';
 let statsCalendarViewMode = 'month';
 let statsCalendarAnchorDate = getLocalDateString();
 let statsCalendarYearViewType = 'mini';
-let statsCalendarCompact = typeof window !== 'undefined' && window.matchMedia?.('(max-width: 768px)')?.matches;
+let statsCalendarCompact = typeof window !== 'undefined'
+    && (document.documentElement?.dataset?.viewLayout === 'phone'
+        || (document.documentElement?.dataset?.viewLayout !== 'laptop'
+            && window.matchMedia?.('(max-width: 768px)')?.matches));
 let statsCalendarShow = {
     amount: true,
     duration: true,
@@ -7238,6 +7332,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 function initializeApp() {
     initTheme();
+    initAppearanceViewMode();
     setupEventListeners();
     ensureAppDataSubstancesReady(appData);
     ensureDashboardSubstanceDropdownReady();
@@ -7299,6 +7394,7 @@ function refreshAppAfterDataChange() {
     renderDashboardRecoveryInsights();
     updateLastSavedDisplay();
     applyCollapsedSections();
+    initAppearanceViewMode();
 }
 
 // ——— Substance helpers ———
@@ -21109,13 +21205,37 @@ function exportStatsCalendarCsv() {
     downloadBlob(new Blob([csv], { type: 'text/csv' }), `${filename}.csv`);
 }
 
+function updateStatsCalendarLayoutForViewMode() {
+    if (isAppearancePhoneLayout()) {
+        statsCalendarCompact = true;
+    } else if (isAppearanceLaptopLayout()) {
+        statsCalendarCompact = false;
+    } else if (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 768px)')?.matches) {
+        statsCalendarCompact = true;
+    }
+    const compactEl = document.getElementById('stats-cal-compact');
+    if (compactEl) compactEl.checked = statsCalendarCompact;
+    const container = document.getElementById('stats-calendar-grid');
+    if (container) container.classList.toggle('compact', statsCalendarCompact);
+    if (document.getElementById('stats-calendar-view')) {
+        try { renderStatsCalendarView(); } catch (_) { /* ignore during early init */ }
+    }
+}
+
 function setupStatsCalendarControls() {
-    if (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 768px)')?.matches) {
+    if (isAppearancePhoneLayout()
+        || (typeof window !== 'undefined' && window.matchMedia?.('(max-width: 768px)')?.matches
+            && !isAppearanceLaptopLayout())) {
         if (!localStorage.getItem(STATS_CALENDAR_STORAGE_KEY)) {
             statsCalendarCompact = true;
         }
     }
+    if (isAppearanceLaptopLayout()) {
+        statsCalendarCompact = false;
+    }
     loadStatsCalendarPrefs();
+    if (isAppearancePhoneLayout()) statsCalendarCompact = true;
+    if (isAppearanceLaptopLayout()) statsCalendarCompact = false;
 
     document.querySelectorAll('.stats-cal-mode-btn').forEach(btn => {
         btn.addEventListener('click', () => {
@@ -26963,6 +27083,10 @@ if (typeof window !== 'undefined') {
         setSpreadPercentLeftUsage,
         togglePercentDistDays,
         setThemePreference,
+        setAppearanceViewMode,
+        getAppearanceViewMode,
+        resolveAppearanceViewLayout,
+        applyAppearanceViewMode,
         repairAppData,
         updateVapePurchaseSelectDetails,
         switchTab,
@@ -27174,6 +27298,15 @@ function __getRecoveryTrackerTestExports() {
         setBuyMonthRunningMode,
         applyBuyMonthRunningTotals,
         aggregateBuyMonthPurchaseMetrics,
+        getAppearanceViewMode,
+        setAppearanceViewMode,
+        resolveAppearanceViewLayout,
+        applyAppearanceViewMode,
+        normalizeAppearanceViewMode,
+        APPEARANCE_VIEW_MODES,
+        APPEARANCE_VIEW_MODE_LAPTOP_MQ,
+        isAppearancePhoneLayout,
+        isAppearanceLaptopLayout,
         filterPurchasesByStatsBounds,
         getPurchasesForInsightMetrics,
         getStatsDateRange,
@@ -27193,7 +27326,10 @@ function __getRecoveryTrackerTestExports() {
         setTestReferenceDate,
         invalidateInsightsDatasetCache,
         enrichMonthlySummaryWithBuyData,
-        fmtAvgCostPerGram
+        fmtAvgCostPerGram,
+        get document() { return document; },
+        get matchMedia() { return window.matchMedia; },
+        set matchMedia(fn) { window.matchMedia = fn; }
     };
 }
 
