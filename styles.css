@@ -2259,6 +2259,44 @@ input[type="range"]::-webkit-slider-thumb {
     grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
 }
 
+.taper-current-week-summary.disposable-puff-mode .disposable-puff-summary-stats {
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+}
+
+.taper-disposable-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 12px 0 4px;
+}
+
+.taper-status-badge.taper-status-under {
+    background: color-mix(in srgb, var(--accent, #2e7d32) 18%, transparent);
+    color: var(--accent, #2e7d32);
+}
+
+.taper-status-badge.taper-status-close {
+    background: color-mix(in srgb, var(--warning, #ed6c02) 18%, transparent);
+    color: var(--warning, #ed6c02);
+}
+
+.taper-status-badge.taper-status-over {
+    background: color-mix(in srgb, var(--danger, #c62828) 18%, transparent);
+    color: var(--danger, #c62828);
+}
+
+.progress-bar.dns-bar.taper-status-under {
+    background: var(--accent, #2e7d32);
+}
+
+.progress-bar.dns-bar.taper-status-close {
+    background: var(--warning, #ed6c02);
+}
+
+.progress-bar.dns-bar.taper-status-over {
+    background: var(--danger, #c62828);
+}
+
 .taper-alert {
     display: flex;
     align-items: center;
