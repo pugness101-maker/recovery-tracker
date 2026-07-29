@@ -786,24 +786,73 @@ function updateLsdUseFormUI() {
     document.getElementById('use-amount-mode-group')?.classList.toggle('hidden', isLsd || isVapeTrackingMode(substanceId) || isWeedTrackingMode(substanceId) || isXanaxSubstanceId(substanceId));
     if (isLsd) {
         setUseLogType('quick');
-        ensureLsdUseFormDefaults();
+        syncLsdUseDatetimeUI();
         updateLsdUsePreview();
         updateUsePurchaseLinkUI();
     }
 }
 
-function ensureLsdUseFormDefaults() {
-    if (!isLsdDateOnlyUseForm()) return;
+function syncLsdUseDatetimeUI() {
+    const startLabel = document.getElementById('use-start-time-label');
+    if (startLabel) startLabel.textContent = 'Start time';
+    document.getElementById('use-start-time-group')?.classList.remove('hidden');
+    document.getElementById('use-end-time-group')?.classList.add('hidden');
+    document.getElementById('use-end-date-group')?.classList.add('hidden');
     const startEl = document.getElementById('use-start-time');
-    if (startEl) {
-        startEl.value = '';
-        startEl.required = false;
-    }
+    if (startEl) startEl.required = true;
     const endTimeEl = document.getElementById('use-end-time');
     if (endTimeEl) endTimeEl.value = '';
     const endDateEl = document.getElementById('use-end-date');
     if (endDateEl) endDateEl.value = '';
     document.getElementById('use-duration-preview')?.classList.add('hidden');
+}
+
+function ensureLsdUseFormDefaults() {
+    if (!isLsdDateOnlyUseForm()) return;
+    const now = new Date();
+    const dateEl = document.getElementById('use-date');
+    const startEl = document.getElementById('use-start-time');
+    if (dateEl && !dateEl.value) dateEl.value = getLocalDateString(now);
+    if (startEl && !startEl.value) startEl.value = getLocalTimeString(now);
+    syncLsdUseDatetimeUI();
+}
+
+function validateLsdUseSubmit(lsdCalc, transactionType) {
+    if (lsdCalc?.error) return lsdCalc.error;
+    if (!lsdCalc || !Number.isFinite(lsdCalc.ugUsed) || lsdCalc.ugUsed <= 0) {
+        return 'Enter a valid LSD amount greater than 0.';
+    }
+    const linkMode = getUsePurchaseLinkMode();
+    const needsPurchaseStrength = transactionType === 'use'
+        || transactionType === 'gift_given'
+        || (transactionType === 'inventory_adjustment' && getUseAdjustmentDirection() === 'remove');
+    if (needsPurchaseStrength && linkMode !== 'none' && !lsdCalc.purchaseId) {
+        return 'Link to an LSD purchase with ug per tab set, or add inventory with ug per tab first.';
+    }
+    if (needsPurchaseStrength && linkMode !== 'none' && !lsdCalc.ugPerTabAtTimeOfUse) {
+        return 'Link to an LSD purchase with ug per tab set, or add inventory with ug per tab first.';
+    }
+    return null;
+}
+
+function reportUseFormValidationErrors() {
+    const form = document.getElementById('use-log-form');
+    if (!form) return true;
+    if (form.checkValidity()) return true;
+    form.reportValidity();
+    return false;
+}
+
+function persistUseLogEntry(log, data = appData) {
+    if (!Array.isArray(data.logs)) data.logs = [];
+    data.logs.push(log);
+    if (!logInventoryAffects(log)) return { ok: true };
+    const inv = applyLogInventoryEffect(log);
+    if (!inv.ok) {
+        data.logs.pop();
+        return inv;
+    }
+    return { ok: true };
 }
 
 function getLsdLogUgAmount(log) {
@@ -8437,16 +8486,18 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
     const isVapeDateOnly = isNicotine ? nicotineProductType === 'vape' : isVapeTrackingMode(substanceId);
     const isNicotineSimple = isNicotine && nicotineProductType !== 'vape' && nicotineProductType !== 'other';
     const isWeedSimple = isWeedTrackingMode(substanceId);
-    const isLsdSimple = isLsdSubstanceId(substanceId);
+    const isLsdQuick = isLsdSubstanceId(substanceId);
     const isXanaxSimple = isXanaxSubstanceId(substanceId);
     const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
     const isGift = transactionType === 'gift_given' || transactionType === 'gift_received';
     const isAdjustment = transactionType === 'inventory_adjustment';
-    let type = (isGift || isAdjustment || isWeedSimple || isVapeDateOnly || isLsdSimple || isXanaxSimple || isNicotineSimple) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
+    let type = (isGift || isAdjustment || isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple || isNicotineSimple) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
     const date = document.getElementById('use-date')?.value;
-    const startTime = (isWeedSimple || isVapeDateOnly || isLsdSimple || isXanaxSimple || isNicotineSimple) ? '' : (document.getElementById('use-start-time')?.value || '12:00');
-    const endDate = (isWeedSimple || isVapeDateOnly || isLsdSimple || isXanaxSimple || isNicotineSimple) ? null : (document.getElementById('use-end-date')?.value || date);
-    const endTime = (isWeedSimple || isVapeDateOnly || isLsdSimple || isXanaxSimple || isNicotineSimple) ? '' : (document.getElementById('use-end-time')?.value || '');
+    const startTime = (isWeedSimple || isVapeDateOnly || isXanaxSimple || isNicotineSimple)
+        ? ''
+        : (document.getElementById('use-start-time')?.value || '12:00');
+    const endDate = (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple || isNicotineSimple) ? null : (document.getElementById('use-end-date')?.value || date);
+    const endTime = (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple || isNicotineSimple) ? '' : (document.getElementById('use-end-time')?.value || '');
     const isVapeUse = isVapeDateOnly;
     const isCokeSession = isCokeSubstanceId(substanceId) && type === 'session';
 
@@ -8472,7 +8523,7 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         linkedPurchaseId = nicotineCalc.purchaseId;
         inventoryAffects = nicotineCalc.inventoryAffects;
         logMode = nicotineCalc.logMode || 'amount';
-    } else if (isLsdSimple && lsdCalc && !lsdCalc.error) {
+    } else if (isLsdQuick && lsdCalc && !lsdCalc.error) {
         amount = lsdCalc.ugUsed;
         unit = 'ug';
         linkedPurchaseId = lsdCalc.purchaseId;
@@ -8502,11 +8553,11 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         percentRemaining: percentRemaining != null ? percentRemaining : undefined,
         previousRemainingBeforeLog: previousRemainingBeforeLog != null ? previousRemainingBeforeLog : undefined,
         date,
-        endDate: (isWeedSimple || isVapeDateOnly || isLsdSimple || isXanaxSimple) ? undefined : ((isGift || isAdjustment || type === 'session') ? (endDate || date) : undefined),
+        endDate: (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple) ? undefined : ((isGift || isAdjustment || type === 'session') ? (endDate || date) : undefined),
         startTime,
         time: startTime,
-        endTime: (isWeedSimple || isVapeDateOnly || isLsdSimple || isXanaxSimple) ? '' : ((isGift || isAdjustment || type === 'session') ? (endTime || '') : ''),
-        count: (isGift || isAdjustment || isWeedSimple || isLsdSimple || isXanaxSimple) ? 0 : (parseFloat(document.getElementById('use-count')?.value) || 0),
+        endTime: (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple) ? '' : ((isGift || isAdjustment || type === 'session') ? (endTime || '') : ''),
+        count: (isGift || isAdjustment || isWeedSimple || isLsdQuick || isXanaxSimple) ? 0 : (parseFloat(document.getElementById('use-count')?.value) || 0),
         giftPartyName: isGift ? (document.getElementById('use-gift-party')?.value?.trim() || '') : '',
         adjustmentDirection: isAdjustment ? getUseAdjustmentDirection() : undefined,
         notes: document.getElementById('use-notes')?.value || '',
@@ -8548,7 +8599,7 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         base.estimatedPuffsUsed = vapeCalc.estimatedPuffsUsed ?? vapeCalc.puffsUsed;
     }
 
-    if (isLsdSimple && lsdCalc && !lsdCalc.error) {
+    if (isLsdQuick && lsdCalc && !lsdCalc.error) {
         base.tabsUsed = lsdCalc.tabsUsed;
         base.ugUsed = lsdCalc.ugUsed;
         base.ugPerTabAtTimeOfUse = lsdCalc.ugPerTabAtTimeOfUse;
@@ -10213,12 +10264,17 @@ function updateVapeUseFormUI() {
     document.getElementById('use-log-form')?.classList.toggle('is-xanax-simple', isXanax);
     document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isVape || isWeed || isLsd || isXanax || isNicotineSimple || isNonUse);
     document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', isVape || isXanax || isNicotineSimple);
-    document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape || isLsd || isXanax || isNicotineSimple);
+    document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape || isXanax || isNicotineSimple);
 
     const dateLabel = document.getElementById('use-date-label');
     if (dateLabel) dateLabel.textContent = 'Date';
     const startTimeInput = document.getElementById('use-start-time');
-    if (startTimeInput) startTimeInput.required = !isWeed && !isVape && !isLsd && !isXanax && !isNicotineSimple;
+    if (startTimeInput) {
+        startTimeInput.required = !isWeed && !isVape && !isXanax && !isNicotineSimple;
+    }
+    if (isLsd) {
+        syncLsdUseDatetimeUI();
+    }
 
     if (isNicotine) {
         document.getElementById('use-nicotine-product-type-group')?.classList.remove('hidden');
@@ -10232,7 +10288,6 @@ function updateVapeUseFormUI() {
         positionUseInventoryFields(true);
         document.getElementById('use-duration-preview')?.classList.add('hidden');
     } else if (isLsd) {
-        ensureLsdUseFormDefaults();
         updateLsdUseFormUI();
         positionUseInventoryFields(true);
         document.getElementById('use-duration-preview')?.classList.add('hidden');
@@ -11290,7 +11345,11 @@ function editUseEntry(id) {
         if (isWeed) {
             setInputValue('use-weed-product-type', entry.weedProductType || 'bud');
         }
-        setInputValue('use-start-time', '');
+        if (isLsd) {
+            setInputValue('use-start-time', entry.startTime || entry.time || getLocalTimeString(new Date()));
+        } else {
+            setInputValue('use-start-time', '');
+        }
         setInputValue('use-end-date', '');
         setInputValue('use-end-time', '');
         updateVapeUseFormUI();
@@ -11561,7 +11620,7 @@ function isNonUseTransactionType(tx) {
 }
 
 function updateUseEndTimeVisibility() {
-    if (isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm()) {
+    if (isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm() || isLsdDateOnlyUseForm()) {
         document.getElementById('use-end-date-group')?.classList.add('hidden');
         document.getElementById('use-end-time-group')?.classList.add('hidden');
         return;
@@ -11627,6 +11686,9 @@ function setupUseLogForm() {
     document.getElementById('use-substance')?.addEventListener('change', () => {
         updateUseUnitDropdown();
         updateUsePurchaseLinkUI();
+        if (isLsdSubstanceId(document.getElementById('use-substance')?.value)) {
+            ensureLsdUseFormDefaults();
+        }
         updateVapeUseFormUI();
     });
     document.getElementById('use-unit')?.addEventListener('change', () => {
@@ -11856,6 +11918,7 @@ function getUseUpdateSuccessMessage(entry) {
 
 function handleUseLogSubmit(e) {
     e.preventDefault();
+    if (!reportUseFormValidationErrors()) return;
 
     const substanceIdPreview = document.getElementById('use-substance')?.value;
     const isNicotine = isNicotineTrackingMode(substanceIdPreview);
@@ -11889,7 +11952,9 @@ function handleUseLogSubmit(e) {
 
     if (isLsdUse) {
         lsdCalc = computeLsdUseFromForm({ editingId: editingUseId || null });
-        if (lsdCalc?.error) return alert(lsdCalc.error);
+        const lsdTx = document.getElementById('use-transaction-type')?.value || 'use';
+        const lsdErr = validateLsdUseSubmit(lsdCalc, lsdTx);
+        if (lsdErr) return alert(lsdErr);
     }
 
     if (isXanaxUse) {
@@ -11903,7 +11968,7 @@ function handleUseLogSubmit(e) {
     const eventTimestamp = getUseEventTimestamp(payload.date, payload.startTime);
     const now = new Date().toISOString();
     const useVapeInventory = isVapeUse && vapeCalc?.purchase && payload.inventoryAffects;
-    const useLsdInventory = isLsdUse && lsdCalc?.purchaseId && payload.inventoryAffects;
+    const useLsdInventory = isLsdUse && payload.inventoryAffects;
     const useXanaxInventory = isXanaxUse && xanaxCalc?.purchase && payload.inventoryAffects;
     const useNicotineInventory = isNicotineSimple && nicotineCalc?.purchaseId && payload.inventoryAffects;
 
@@ -11996,8 +12061,8 @@ function handleUseLogSubmit(e) {
         if (isLsdSubstanceId(substanceId)) {
             updated.type = 'quick';
             updated.logMode = 'lsd_dose';
-            updated.startTime = '';
-            updated.time = '';
+            updated.startTime = payload.startTime || '';
+            updated.time = payload.time || payload.startTime || '';
             updated.endTime = '';
             delete updated.endDate;
             delete updated.startedAt;
@@ -12088,8 +12153,8 @@ function handleUseLogSubmit(e) {
     if (isLsdSubstanceId(substanceId)) {
         log.type = 'quick';
         log.logMode = 'lsd_dose';
-        log.startTime = '';
-        log.time = '';
+        log.startTime = payload.startTime || '';
+        log.time = payload.time || payload.startTime || '';
         log.endTime = '';
         delete log.endDate;
         delete log.startedAt;
@@ -12114,9 +12179,13 @@ function handleUseLogSubmit(e) {
     if (useVapeInventory && vapeCalc.purchaseId) {
         setLogPurchaseId(log, vapeCalc.purchaseId);
         recalculateVapePurchaseInventory(vapeCalc.purchaseId);
-    } else if (useLsdInventory && lsdCalc.purchaseId) {
-        setLogPurchaseId(log, lsdCalc.purchaseId);
-        recalculatePurchaseRemaining(lsdCalc.purchaseId);
+    } else if (useLsdInventory) {
+        if (lsdCalc?.purchaseId) setLogPurchaseId(log, lsdCalc.purchaseId);
+        const inv = applyLogInventoryEffect(log);
+        if (!inv.ok) {
+            appData.logs.pop();
+            return alert(inv.error);
+        }
     } else if (useXanaxInventory && xanaxCalc.purchaseId) {
         setLogPurchaseId(log, xanaxCalc.purchaseId);
         recalculatePurchaseRemaining(xanaxCalc.purchaseId);
@@ -22787,6 +22856,9 @@ function __getRecoveryTrackerTestExports() {
         isGiftGivenLog,
         isGiftReceivedLog,
         applyLogInventoryEffect,
+        persistUseLogEntry,
+        validateLsdUseSubmit,
+        getGiftMetricsFromLogs,
         getLsdRemainingUg,
         getLsdRemainingTabs
     };

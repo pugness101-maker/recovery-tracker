@@ -159,6 +159,103 @@ test('gift received adds LSD inventory in ug with tab sync', () => {
     assert.equal(rt.getLsdRemainingTabs(purchase), 7);
 });
 
+test('LSD gift given submit persists, deducts inventory, and counts in gift analytics', () => {
+    const purchase = makeLsdPurchase();
+    const data = makeLsdData({ purchases: [purchase] });
+    const rt = setup(data);
+    const log = {
+        id: 'gift-submit-1',
+        type: 'quick',
+        transactionType: 'gift_given',
+        substanceId: LSD_ID,
+        date: '2026-07-05',
+        startTime: '14:30',
+        time: '14:30',
+        amount: 100,
+        unit: 'ug',
+        tabsUsed: 1,
+        ugUsed: 100,
+        ugPerTabAtTimeOfUse: 100,
+        logMode: 'lsd_dose',
+        purchaseId: 'lsd-purchase-1',
+        linkedPurchaseId: 'lsd-purchase-1',
+        inventoryId: 'lsd-purchase-1',
+        inventoryAffects: true,
+        supplyUnlinked: false,
+        count: 0,
+        giftPartyName: 'Alex'
+    };
+    const result = rt.persistUseLogEntry(log, data);
+    assert.equal(result.ok, true);
+    assert.equal(data.logs.length, 1);
+    assert.equal(data.logs[0].transactionType, 'gift_given');
+    assert.equal(data.logs[0].startTime, '14:30');
+    assert.equal(data.logs[0].tabsUsed, 1);
+    assert.equal(data.logs[0].ugUsed, 100);
+    assert.equal(rt.getLsdRemainingUg(purchase), 900);
+    assert.equal(rt.getLsdRemainingTabs(purchase), 9);
+    assert.equal(rt.isPersonalUseLog(data.logs[0]), false);
+    const gifts = rt.getGiftMetricsFromLogs(data.logs);
+    assert.equal(gifts.given, 100);
+    assert.match(rt.formatLsdUseSummary(data.logs[0]), /Gift Given · 1 tab · 100 ug/);
+});
+
+test('LSD gift given logged by ug converts tabs using ug per tab', () => {
+    const purchase = makeLsdPurchase();
+    const data = makeLsdData({ purchases: [purchase] });
+    const rt = setup(data);
+    const log = {
+        id: 'gift-submit-ug',
+        type: 'quick',
+        transactionType: 'gift_given',
+        substanceId: LSD_ID,
+        date: '2026-07-06',
+        startTime: '09:15',
+        time: '09:15',
+        amount: 50,
+        unit: 'ug',
+        tabsUsed: 0.5,
+        ugUsed: 50,
+        ugPerTabAtTimeOfUse: 100,
+        logMode: 'lsd_dose',
+        purchaseId: 'lsd-purchase-1',
+        linkedPurchaseId: 'lsd-purchase-1',
+        inventoryId: 'lsd-purchase-1',
+        inventoryAffects: true,
+        supplyUnlinked: false
+    };
+    const result = rt.persistUseLogEntry(log, data);
+    assert.equal(result.ok, true);
+    assert.equal(rt.getLsdRemainingUg(purchase), 950);
+    assert.equal(data.logs[0].tabsUsed, 0.5);
+});
+
+test('LSD gift given submit fails when inventory is insufficient', () => {
+    const purchase = makeLsdPurchase({ remainingAmount: 50, remainingUg: 50, remainingTabs: 0.5 });
+    const data = makeLsdData({ purchases: [purchase] });
+    const rt = setup(data);
+    const log = {
+        id: 'gift-over',
+        type: 'quick',
+        transactionType: 'gift_given',
+        substanceId: LSD_ID,
+        date: '2026-07-07',
+        amount: 100,
+        unit: 'ug',
+        tabsUsed: 1,
+        ugUsed: 100,
+        ugPerTabAtTimeOfUse: 100,
+        logMode: 'lsd_dose',
+        purchaseId: 'lsd-purchase-1',
+        inventoryId: 'lsd-purchase-1',
+        inventoryAffects: true
+    };
+    const result = rt.persistUseLogEntry(log, data);
+    assert.equal(result.ok, false);
+    assert.equal(data.logs.length, 0);
+    assert.match(result.error || '', /Only .* left/i);
+});
+
 test('getLsdLogTabsAmount converts ug using ug per tab at time of use', () => {
     const rt = setup(makeLsdData());
     assert.equal(
