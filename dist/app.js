@@ -2990,29 +2990,58 @@ function renderChangeHistoryPanel() {
 
 // ——— Column presets (Phase 3) ———
 
-function getColumnPresetDefinition(presetId, tableKey = 'useHistory') {
+function getColumnPresetDefinition(presetId, tableKey = 'useHistory', substanceId = null) {
     const all = TABLE_COLUMN_DEFAULTS[tableKey]?.order || [];
     const required = new Set(TABLE_COLUMNS_REQUIRED[tableKey] || ['select', 'actions']);
+    const resolvedSubstanceId = substanceId
+        || (tableKey === 'useHistory' ? getUseLogViewSubstanceId() : null);
+    const useFamily = tableKey === 'useHistory'
+        ? getUseHistoryColumnFamily(resolvedSubstanceId)
+        : null;
+    const cokeUseHistoryPresets = {
+        basic: ['select', 'date', 'start', 'end', 'amount', 'gPerHour', 'actions'],
+        cost: ['select', 'date', 'start', 'end', 'amount', 'gPerHour', 'transactionType', 'actions'],
+        inventory: ['select', 'date', 'start', 'end', 'amount', 'inventory', 'transactionType', 'gPerHour', 'actions'],
+        detailed: [
+            'select', 'date', 'start', 'end', 'duration', 'transactionType',
+            'amount', 'unit', 'gPerHour', 'inventory', 'notes', 'actions'
+        ]
+    };
     const presets = {
         basic: {
-            useHistory: ['select', 'date', 'substance', 'amount', 'unit', 'notes', 'actions'],
+            useHistory: useFamily === 'cocaine'
+                ? cokeUseHistoryPresets.basic
+                : ['select', 'date', 'substance', 'amount', 'unit', 'notes', 'actions'],
             purchaseHistory: ['select', 'date', 'substance', 'bought', 'remaining', 'cost', 'actions']
         },
         cost: {
-            useHistory: ['select', 'date', 'substance', 'amount', 'unit', 'cost', 'transactionType', 'actions'],
+            useHistory: useFamily === 'cocaine'
+                ? cokeUseHistoryPresets.cost
+                : ['select', 'date', 'substance', 'amount', 'unit', 'cost', 'transactionType', 'actions'],
             purchaseHistory: ['select', 'date', 'substance', 'bought', 'cost', 'store', 'payment', 'actions']
         },
         inventory: {
-            useHistory: ['select', 'date', 'substance', 'amount', 'inventory', 'transactionType', 'actions'],
+            useHistory: useFamily === 'cocaine'
+                ? cokeUseHistoryPresets.inventory
+                : ['select', 'date', 'substance', 'amount', 'inventory', 'transactionType', 'actions'],
             purchaseHistory: ['select', 'date', 'substance', 'bought', 'remaining', 'usedPct', 'supply', 'actions']
         },
         detailed: {
-            useHistory: all,
+            useHistory: useFamily === 'cocaine'
+                ? cokeUseHistoryPresets.detailed
+                : all,
             purchaseHistory: TABLE_COLUMN_DEFAULTS.purchaseHistory?.order || all
         }
     };
-    const order = (presets[presetId]?.[tableKey] || presets.basic[tableKey] || all)
+    let order = (presets[presetId]?.[tableKey] || presets.basic[tableKey] || all)
         .filter(id => all.includes(id) || required.has(id));
+    if (tableKey === 'useHistory' && useFamily === 'cocaine') {
+        order = order.filter(id => id !== 'cost');
+    }
+    if (tableKey === 'useHistory') {
+        const catalog = new Set(getUseHistoryColumnCatalog(resolvedSubstanceId));
+        order = order.filter(id => catalog.has(id) || required.has(id));
+    }
     required.forEach(id => {
         if (!order.includes(id) && all.includes(id)) {
             if (id === 'select') order.unshift(id);
@@ -3021,18 +3050,23 @@ function getColumnPresetDefinition(presetId, tableKey = 'useHistory') {
     });
     const visible = {};
     all.forEach(id => { visible[id] = order.includes(id); });
+    if (useFamily === 'cocaine') visible.cost = false;
     return { order, visible };
 }
 
 function applyColumnPreset(tableKey, presetId) {
     if (!COLUMN_PRESET_IDS.includes(presetId)) return;
-    const def = getColumnPresetDefinition(presetId, tableKey);
-    const current = getTableColumnConfig(tableKey);
+    const variantKey = tableKey === 'useHistory'
+        ? getUseHistoryColumnVariantKey()
+        : (tableKey === 'taperByWeek' ? columnSettingsVariantKey : null);
+    const substanceId = tableKey === 'useHistory' ? getUseLogViewSubstanceId() : null;
+    const def = getColumnPresetDefinition(presetId, tableKey, substanceId);
+    const current = getTableColumnConfig(tableKey, variantKey);
     saveTableColumnConfig(tableKey, {
         order: def.order,
         visible: def.visible,
         widths: current.widths || TABLE_COLUMN_DEFAULTS[tableKey]?.widths || {}
-    });
+    }, variantKey);
     refreshTableAfterColumnChange(tableKey);
 }
 
@@ -6596,7 +6630,7 @@ const TABLE_COLUMN_DEFAULTS = {
         order: [
             'select', 'date', 'start', 'end', 'duration', 'substance', 'productType',
             'transactionType', 'amount', 'unit', 'tabs', 'ug', 'pills', 'mg', 'strength',
-            'cost', 'sharedAmount', 'multiDayRange', 'dailyBreakdown',
+            'cost', 'gPerHour', 'sharedAmount', 'multiDayRange', 'dailyBreakdown',
             'count', 'rate', 'inventory', 'notes', 'actions'
         ],
         // Family-specific columns are gated by getUseHistoryColumnCatalog / getUseHistoryVisibleColumns.
@@ -6619,6 +6653,7 @@ const TABLE_COLUMN_DEFAULTS = {
             mg: 80,
             strength: 120,
             cost: 90,
+            gPerHour: 80,
             sharedAmount: 140,
             multiDayRange: 150,
             dailyBreakdown: 180,
@@ -6829,6 +6864,7 @@ const TABLE_COLUMN_LABELS = {
         mg: 'mg',
         strength: 'Strength per Pill',
         cost: 'Cost',
+        gPerHour: 'g/hr',
         sharedAmount: 'Shared Amount',
         multiDayRange: 'Multi-Day Range',
         dailyBreakdown: 'Daily Breakdown',
@@ -7526,6 +7562,15 @@ function getTableColumnConfig(tableKey, variantKey = null) {
                 getSelectedTaperPlan()
             );
         }
+        if (tableKey === 'useHistory' && variantKey) {
+            const substanceId = getUseLogViewSubstanceId();
+            const family = getUseHistoryColumnFamily(substanceId);
+            const sid = family === variantKey
+                ? substanceId
+                : ((appData.substances || []).find(s => getUseHistoryColumnFamily(s.id) === variantKey)?.id
+                    || substanceId);
+            return filterUseHistoryColumnSettingsToCatalog(normalized, sid);
+        }
         return normalized;
     }
     if (tableKey === 'taperByWeek' && variantKey) {
@@ -7542,6 +7587,26 @@ function getTableColumnConfig(tableKey, variantKey = null) {
             substanceId,
             reductionType: 'reduce-amount'
         });
+    }
+    if (tableKey === 'useHistory' && variantKey) {
+        // Fall back to unscoped useHistory settings once, then filter to family catalog.
+        if (store.useHistory) {
+            const substanceId = getUseLogViewSubstanceId();
+            const sid = getUseHistoryColumnFamily(substanceId) === variantKey
+                ? substanceId
+                : ((appData.substances || []).find(s => getUseHistoryColumnFamily(s.id) === variantKey)?.id
+                    || substanceId);
+            return filterUseHistoryColumnSettingsToCatalog(
+                normalizeStoredColumnSettings(tableKey, store.useHistory),
+                sid
+            );
+        }
+        const substanceId = getUseLogViewSubstanceId();
+        const sid = getUseHistoryColumnFamily(substanceId) === variantKey
+            ? substanceId
+            : ((appData.substances || []).find(s => getUseHistoryColumnFamily(s.id) === variantKey)?.id
+                || substanceId);
+        return getDefaultUseHistoryColumnSettings(sid);
     }
     return store[tableKey] || getDefaultColumnSettings(tableKey);
 }
@@ -7883,15 +7948,20 @@ function setupUseStatsSettingsModal() {
 }
 
 function resetTableColumnConfig(tableKey, variantKey = null) {
-    const config = tableKey === 'taperByWeek' && variantKey
-        ? getDefaultTaperByWeekColumnSettings(
+    let config;
+    if (tableKey === 'taperByWeek' && variantKey) {
+        config = getDefaultTaperByWeekColumnSettings(
             getTaperSubstanceIdForColumnFamily(variantKey),
             getSelectedTaperPlan() || {
                 substanceId: getTaperSubstanceIdForColumnFamily(variantKey),
                 reductionType: 'reduce-amount'
             }
-        )
-        : getDefaultColumnSettings(tableKey);
+        );
+    } else if (tableKey === 'useHistory' && variantKey) {
+        config = getDefaultUseHistoryColumnSettings(getUseLogViewSubstanceId());
+    } else {
+        config = getDefaultColumnSettings(tableKey);
+    }
     saveTableColumnConfig(tableKey, config, variantKey);
 }
 
@@ -7901,6 +7971,15 @@ function updateColumnSettingsSubtitle(tableKey, variantKey = null) {
     if (tableKey === 'taperByWeek' && variantKey) {
         const label = getTaperByWeekColumnFamilyLabel(variantKey);
         subtitle.innerHTML = `Showing columns for <strong>${escapeHtml(label)}</strong>`;
+        subtitle.classList.remove('hidden');
+        return;
+    }
+    if (tableKey === 'useHistory' && variantKey) {
+        const substanceId = getUseLogViewSubstanceId();
+        const name = substanceId && substanceId !== DASHBOARD_ALL
+            ? (getSubstance(substanceId)?.name || variantKey)
+            : (variantKey === 'cocaine' ? 'Coke' : variantKey);
+        subtitle.innerHTML = `Showing columns for <strong>${escapeHtml(name)}</strong>`;
         subtitle.classList.remove('hidden');
         return;
     }
@@ -7938,7 +8017,9 @@ function closeColumnSettingsModal() {
 function renderColumnSettingsList(tableKey) {
     const list = document.getElementById('column-settings-list');
     if (!list) return;
-    const variantKey = tableKey === 'taperByWeek' ? columnSettingsVariantKey : null;
+    const variantKey = tableKey === 'taperByWeek' || tableKey === 'useHistory'
+        ? columnSettingsVariantKey
+        : null;
     const config = getTableColumnConfig(tableKey, variantKey);
     const required = new Set(TABLE_COLUMNS_REQUIRED[tableKey] || []);
     const visible = config.visible || {};
@@ -8033,7 +8114,9 @@ function buildPurchaseHistoryColgroup(columnIds) {
 
 function readColumnSettingsFromModal(tableKey) {
     const list = document.getElementById('column-settings-list');
-    const variantKey = tableKey === 'taperByWeek' ? columnSettingsVariantKey : null;
+    const variantKey = tableKey === 'taperByWeek' || tableKey === 'useHistory'
+        ? columnSettingsVariantKey
+        : null;
     if (!list) return getTableColumnConfig(tableKey, variantKey);
     const required = new Set(TABLE_COLUMNS_REQUIRED[tableKey] || []);
     const previous = getTableColumnConfig(tableKey, variantKey);
@@ -8068,6 +8151,12 @@ function readColumnSettingsFromModal(tableKey) {
             { order, visible, widths },
             getTaperSubstanceId(),
             getSelectedTaperPlan()
+        );
+    }
+    if (tableKey === 'useHistory') {
+        return filterUseHistoryColumnSettingsToCatalog(
+            { order, visible, widths },
+            getUseLogViewSubstanceId()
         );
     }
     return { order, visible, widths };
@@ -8190,7 +8279,7 @@ function resetColumnSettingsFromModal() {
 
 function setupColumnSettingsModal() {
     document.getElementById('use-history-customize-columns')?.addEventListener('click', () => {
-        openColumnSettingsModal('useHistory');
+        openColumnSettingsModal('useHistory', getUseHistoryColumnVariantKey());
     });
     document.getElementById('purchase-history-customize-columns')?.addEventListener('click', () => {
         openColumnSettingsModal('purchaseHistory');
@@ -8389,6 +8478,8 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
             const cost = entry.estimatedCost;
             return `<td data-col="${colId}"${dataLabel}>${cost != null && Number.isFinite(parseFloat(cost)) ? fmtSheetMoney(parseFloat(cost), getCurrencySymbol()) : '—'}</td>`;
         }
+        case 'gPerHour':
+            return `<td data-col="${colId}"${dataLabel}>${formatUseHistoryGramsPerHour(entry)}</td>`;
         case 'sharedAmount': {
             if (!isSharedUseLog(entry)) return `<td data-col="${colId}"${dataLabel}>—</td>`;
             return `<td data-col="${colId}"${dataLabel}>Me ${formatAmount(getLogPersonalAmount(entry))} · ${escapeHtml(entry.sharedWithName || 'Other')} ${formatAmount(getLogSharedAmount(entry))}</td>`;
@@ -12255,7 +12346,7 @@ const USE_HISTORY_FAMILY_COLUMNS = {
     ],
     cocaine: [
         'select', 'date', 'start', 'end', 'duration', 'transactionType',
-        'amount', 'unit', 'cost', 'inventory', 'notes', 'actions'
+        'amount', 'unit', 'gPerHour', 'inventory', 'notes', 'actions'
     ],
     cannabis: [
         'select', 'date', 'start', 'end', 'duration', 'transactionType',
@@ -12288,10 +12379,14 @@ function getUseHistoryColumnFamily(substanceId, data = appData) {
     if (isWeedTrackingMode(substanceId, data)) return 'cannabis';
     if (isLsdSubstanceId(substanceId, data)) return 'lsd';
     if (isXanaxSubstanceId(substanceId, data)) return 'xanax';
-    if (isCokeSubstanceId(substanceId) || isPowderTrackingMode(substanceId, data)) return 'cocaine';
     const id = normalizeSubstanceRef(substanceId, data);
     if (id === 'ketamine') return 'ketamine';
+    if (isCokeSubstanceId(substanceId) || isPowderTrackingMode(substanceId, data)) return 'cocaine';
     return 'generic';
+}
+
+function getUseHistoryColumnVariantKey(substanceId = getUseLogViewSubstanceId(), data = appData) {
+    return getUseHistoryColumnFamily(substanceId, data);
 }
 
 function getUseHistoryColumnCatalog(substanceId = getUseLogViewSubstanceId(), data = appData) {
@@ -12300,14 +12395,85 @@ function getUseHistoryColumnCatalog(substanceId = getUseLogViewSubstanceId(), da
     return TABLE_COLUMN_DEFAULTS.useHistory.order.filter(id => allowed.has(id));
 }
 
+function getDefaultUseHistoryColumnSettings(substanceId = getUseLogViewSubstanceId()) {
+    const catalog = getUseHistoryColumnCatalog(substanceId);
+    const family = getUseHistoryColumnFamily(substanceId);
+    const base = getDefaultColumnSettings('useHistory');
+    const visible = {};
+    const required = new Set(TABLE_COLUMNS_REQUIRED.useHistory || []);
+    let defaultVisible;
+    if (family === 'cocaine') {
+        defaultVisible = new Set(['select', 'date', 'start', 'end', 'amount', 'gPerHour', 'actions']);
+    } else {
+        defaultVisible = null;
+    }
+    catalog.forEach(id => {
+        if (required.has(id)) {
+            visible[id] = true;
+            return;
+        }
+        if (defaultVisible) {
+            visible[id] = defaultVisible.has(id);
+            return;
+        }
+        visible[id] = base.visible[id] !== false;
+    });
+    if (family === 'cocaine') visible.cost = false;
+    const order = [];
+    (base.order || []).forEach(id => {
+        if (catalog.includes(id) && !order.includes(id)) order.push(id);
+    });
+    catalog.forEach(id => {
+        if (!order.includes(id)) order.push(id);
+    });
+    const widths = {};
+    order.forEach(id => {
+        widths[id] = base.widths?.[id] ?? TABLE_COLUMN_DEFAULTS.useHistory.widths?.[id];
+    });
+    return { order, visible, widths };
+}
+
+function filterUseHistoryColumnSettingsToCatalog(settings, substanceId = getUseLogViewSubstanceId()) {
+    const catalog = getUseHistoryColumnCatalog(substanceId);
+    const catalogSet = new Set(catalog);
+    const order = [];
+    (settings?.order || []).forEach(id => {
+        if (catalogSet.has(id) && !order.includes(id)) order.push(id);
+    });
+    catalog.forEach(id => {
+        if (!order.includes(id)) order.push(id);
+    });
+    const visible = {};
+    order.forEach(id => {
+        visible[id] = settings?.visible?.[id] !== false;
+    });
+    (TABLE_COLUMNS_REQUIRED.useHistory || []).forEach(id => {
+        if (catalogSet.has(id)) visible[id] = true;
+    });
+    if (getUseHistoryColumnFamily(substanceId) === 'cocaine') {
+        visible.cost = false;
+    }
+    const widths = {};
+    order.forEach(id => {
+        if (settings?.widths?.[id] != null) widths[id] = settings.widths[id];
+        else if (TABLE_COLUMN_DEFAULTS.useHistory.widths?.[id] != null) {
+            widths[id] = TABLE_COLUMN_DEFAULTS.useHistory.widths[id];
+        }
+    });
+    return { order, visible, widths };
+}
+
 function getUseHistoryVisibleColumns(substanceId = getUseLogViewSubstanceId()) {
     const catalog = getUseHistoryColumnCatalog(substanceId);
-    const config = getTableColumnConfig('useHistory');
+    const variantKey = getUseHistoryColumnVariantKey(substanceId);
+    const config = getTableColumnConfig('useHistory', variantKey);
     const required = new Set(TABLE_COLUMNS_REQUIRED.useHistory || []);
     const userVisible = config.visible || {};
-    // Show catalog columns unless the user explicitly hid them.
-    // Family-specific columns (e.g. Product Type) are included even if globally default-hidden.
-    return catalog.filter(id => required.has(id) || userVisible[id] !== false);
+    const family = getUseHistoryColumnFamily(substanceId);
+    return catalog.filter(id => {
+        if (family === 'cocaine' && id === 'cost') return false;
+        return required.has(id) || userVisible[id] !== false;
+    });
 }
 
 function getUseHistoryColumnLabel(colId, substanceId = getUseLogViewSubstanceId()) {
@@ -12324,7 +12490,71 @@ function getUseHistoryColumnLabel(colId, substanceId = getUseLogViewSubstanceId(
         return labels.amount || colId;
     }
     if (colId === 'unit' && family === 'alcohol') return 'Unit';
+    if (colId === 'gPerHour') return 'g/hr';
     return labels[colId] || colId;
+}
+
+function getUseHistorySessionDurationHours(entry) {
+    if (!entry) return null;
+    const durationMs = parseFloat(entry.durationMs);
+    if (Number.isFinite(durationMs) && durationMs > 0) return durationMs / 3600000;
+    const durationHours = parseFloat(entry.durationHours);
+    if (Number.isFinite(durationHours) && durationHours > 0) return durationHours;
+    const start = getUseLogStartedAt(entry);
+    const end = getUseLogEndedAt(entry);
+    if (start && end) {
+        const hours = (end.getTime() - start.getTime()) / 3600000;
+        if (Number.isFinite(hours) && hours > 0) return hours;
+    }
+    return null;
+}
+
+function getUseLogAmountInGramsForRate(entry) {
+    if (!entry) return null;
+    if (isGiftGivenLog(entry) || isGiftReceivedLog(entry) || isInventoryAdjustmentLog(entry)) {
+        return null;
+    }
+    let amount;
+    if (isSharedUseLog(entry)) {
+        amount = getLogPersonalAmount(entry);
+    } else if (isPersonalUseLog(entry) || logCountsTowardPersonalUseStats(entry)) {
+        amount = getLogPersonalAmount(entry);
+        if (!(amount > 0) && amount !== 0) amount = parseFloat(entry.amount);
+    } else {
+        return null;
+    }
+    if (!Number.isFinite(amount) || amount < 0) return null;
+    const unit = String(entry.unit || 'g').trim().toLowerCase();
+    if (unit === 'mg' || unit === 'milligram' || unit === 'milligrams') {
+        return amount / 1000;
+    }
+    if (unit === 'g' || unit === 'gram' || unit === 'grams' || unit === '') {
+        return amount;
+    }
+    // Powder tracking defaults to grams when unit is unrecognized but numeric.
+    return amount;
+}
+
+/**
+ * Coke Use History g/hr = personal grams ÷ exact session hours.
+ * Returns null when duration/amount is missing or the transaction is excluded.
+ */
+function computeUseHistoryGramsPerHour(entry) {
+    if (!entry) return null;
+    if (isGiftGivenLog(entry) || isGiftReceivedLog(entry) || isInventoryAdjustmentLog(entry)) {
+        return null;
+    }
+    const hours = getUseHistorySessionDurationHours(entry);
+    if (hours == null || !(hours > 0)) return null;
+    const grams = getUseLogAmountInGramsForRate(entry);
+    if (grams == null || !Number.isFinite(grams)) return null;
+    return grams / hours;
+}
+
+function formatUseHistoryGramsPerHour(entry) {
+    const rate = computeUseHistoryGramsPerHour(entry);
+    if (rate == null || !Number.isFinite(rate)) return '—';
+    return rate.toFixed(2);
 }
 
 function getVapePurchaseProductName(purchase) {
@@ -16899,10 +17129,11 @@ function renderUseHistoryTable(options = {}) {
     }
 
     const useColumns = getUseHistoryVisibleColumns(filterId);
-    const tableMinWidth = getTableMinWidth('useHistory', useColumns);
-    const colgroup = buildTableColgroup('useHistory', useColumns);
+    const variantKey = getUseHistoryColumnVariantKey(filterId);
+    const tableMinWidth = getTableMinWidth('useHistory', useColumns, variantKey);
+    const colgroup = buildTableColgroup('useHistory', useColumns, variantKey);
     const familyClass = `use-history-family-${getUseHistoryColumnFamily(filterId)}`;
-    let tableHtml = `<div class="use-history-table-view table-scroll"><table class="session-table history-table use-history-table customizable-table ${familyClass}" style="min-width:${tableMinWidth}px;table-layout:fixed">${colgroup}<thead><tr>`;
+    let tableHtml = `<div class="use-history-table-view table-scroll"><table class="session-table history-table use-history-table customizable-table ${familyClass}" data-table-key="useHistory" data-table-variant="${escapeAttr(variantKey)}" style="min-width:${tableMinWidth}px;table-layout:fixed">${colgroup}<thead><tr>`;
     useColumns.forEach(colId => {
         tableHtml += renderUseHistoryHeaderCell(colId, filterId);
     });
@@ -30288,6 +30519,7 @@ function buildUseHistoryCsvRows(options = {}) {
                 return strength != null ? `${strength} ${entry.strengthUnitAtTimeOfUse || 'mg'}` : '';
             }
             case 'cost': return entry.estimatedCost ?? '';
+            case 'gPerHour': return formatUseHistoryGramsPerHour(entry);
             case 'sharedAmount':
                 return isSharedUseLog(entry)
                     ? `Me ${getLogPersonalAmount(entry)} · ${entry.sharedWithName || 'Other'} ${getLogSharedAmount(entry)}`
@@ -30758,7 +30990,14 @@ function __getRecoveryTrackerTestExports() {
         getUseHistoryVisibleColumns,
         getUseHistoryColumnCatalog,
         getUseHistoryColumnFamily,
+        getUseHistoryColumnVariantKey,
         getUseHistoryColumnLabel,
+        getDefaultUseHistoryColumnSettings,
+        filterUseHistoryColumnSettingsToCatalog,
+        computeUseHistoryGramsPerHour,
+        formatUseHistoryGramsPerHour,
+        getUseHistorySessionDurationHours,
+        getUseLogAmountInGramsForRate,
         getUseLogTotalsForView,
         formatMixedUseTotalsLabel,
         formatNicotineUseTotalsLabel,

@@ -206,8 +206,13 @@ test('Phase 3: column presets expose basic/cost/inventory/detailed', () => {
     assert.ok(basic.order.includes('actions'));
     assert.equal(basic.visible.cost, false);
 
-    const cost = rt.getColumnPresetDefinition('cost', 'useHistory');
+    // Cost remains available for substances that still use it (not Coke).
+    const cost = rt.getColumnPresetDefinition('cost', 'useHistory', 'ketamine');
     assert.equal(cost.visible.cost, true);
+    const cokeCost = rt.getColumnPresetDefinition('cost', 'useHistory', COKE_ID);
+    assert.equal(cokeCost.visible.cost, false);
+    assert.ok(!cokeCost.order.includes('cost'));
+    assert.ok(cokeCost.order.includes('gPerHour'));
 
     const detailed = rt.getColumnPresetDefinition('detailed', 'useHistory');
     assert.ok(detailed.order.length >= basic.order.length);

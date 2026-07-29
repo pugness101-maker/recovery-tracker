@@ -250,7 +250,8 @@ test('5. Nicotine product-type organization', () => {
 
     const cokeCatalog = rt.getUseHistoryColumnCatalog(COKE_ID);
     assert.ok(cokeCatalog.includes('amount'));
-    assert.ok(cokeCatalog.includes('cost'));
+    assert.ok(cokeCatalog.includes('gPerHour'));
+    assert.ok(!cokeCatalog.includes('cost'));
     assert.ok(!cokeCatalog.includes('productType'));
     assert.ok(!cokeCatalog.includes('sharedAmount'));
 });
