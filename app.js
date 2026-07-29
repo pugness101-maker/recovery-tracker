@@ -3,10 +3,17 @@ const STORAGE_KEY = 'recovery-tracker-v2';
 const STORAGE_KEY_V1 = 'use-tracker-v1';
 const LAST_SAVED_KEY = 'recovery-tracker-v2-last-saved';
 const AUTO_BACKUP_KEY = 'recovery-tracker-v2-auto-backup';
+const CHANGE_HISTORY_KEY = 'recovery-tracker-v2-change-history';
+const DASHBOARD_LAYOUT_KEY = 'recovery-tracker-v2-dashboard-layout';
+const MAX_CHANGE_HISTORY = 40;
 const DASHBOARD_ALL = 'all';
 const THEME_PREFERENCE_KEY = 'recoveryTracker.themePreference';
 const APPEARANCE_VIEW_MODES = Object.freeze(['auto', 'phone', 'laptop']);
 const APPEARANCE_VIEW_MODE_LAPTOP_MQ = '(min-width: 768px)';
+const COLUMN_PRESET_IDS = Object.freeze(['basic', 'cost', 'inventory', 'detailed']);
+const DEFAULT_DASHBOARD_WIDGETS = Object.freeze([
+    'todayUsed', 'weekUsed', 'monthUsed', 'spentMonth', 'monthCap', 'streak', 'quickActions'
+]);
 
 let themePreference = 'dark';
 let resolvedTheme = 'dark';
@@ -2239,6 +2246,759 @@ function formatRepairSummary(stats) {
     }
     if (!lines.length) lines.push('No changes needed — data is already consistent.');
     return lines.join('\n');
+}
+
+// ——— Shared normalized calculation engine (Phase 1) ———
+
+/**
+ * Canonical usage for a single day — same path for Dashboard, Log, Insights, Plan.
+ * Vape/nicotine uses stats distribution; other substances use segment sums.
+ */
+function getCanonicalUsageOnDate(substanceId, dateStr, data = appData) {
+    if (!substanceId || !dateStr) return 0;
+    if (isVapeNicotineSubstanceId(substanceId, data) || isNicotineTrackingMode(substanceId, data)) {
+        return getStatsUsageOnDate(substanceId, dateStr, data);
+    }
+    return sumUsageForDate(null, dateStr, substanceId, { data }).amount;
+}
+
+function getCanonicalUsageInRange(substanceId, startDate, endDate, data = appData) {
+    if (!substanceId) return 0;
+    if (isVapeNicotineSubstanceId(substanceId, data) || isNicotineTrackingMode(substanceId, data)) {
+        return getStatsUsageInRange(substanceId, startDate, endDate, data);
+    }
+    return sumUsageForRange(null, startDate, endDate, substanceId, { data }).amount;
+}
+
+function getCanonicalCostInRange(substanceId, startDate, endDate, data = appData) {
+    return sumUseCostForRange(substanceId, startDate, endDate, data);
+}
+
+function getCanonicalSpendInMonth(substanceId, dateStr = getLocalDateString(), data = appData) {
+    return getMonthSpent(substanceId, dateStr);
+}
+
+function buildNormalizedSubstanceMetrics(substanceId, options = {}, data = appData) {
+    const today = options.today || getLocalDateString();
+    const weekStart = options.weekStart || getWeekStartDateStr(today);
+    const monthStart = options.monthStart || getMonthStartDateStr(today);
+    const sub = getSubstance(substanceId, data);
+    const unit = getSubstanceDisplayUnit(substanceId, data);
+    const usageToday = getCanonicalUsageOnDate(substanceId, today, data);
+    const usageWeek = getCanonicalUsageInRange(substanceId, weekStart, today, data);
+    const usageMonth = getCanonicalUsageInRange(substanceId, monthStart, today, data);
+    const costMonth = getCanonicalCostInRange(substanceId, monthStart, today, data);
+    const spendMonth = getCanonicalSpendInMonth(substanceId, today, data);
+    const inventory = typeof getInventorySummary === 'function'
+        ? getInventorySummary(substanceId, data)
+        : null;
+    const monthLimit = getMonthlyLimit(substanceId, today, null);
+    return {
+        substanceId,
+        name: sub?.name || substanceId,
+        unit,
+        usage: { today: usageToday, week: usageWeek, month: usageMonth },
+        cost: { month: costMonth },
+        spend: { month: spendMonth },
+        inventory,
+        monthLimit,
+        monthRemaining: monthLimit != null ? Math.max(0, monthLimit - usageMonth) : null,
+        streakDays: computeRecoveryStreakDays(substanceId).days
+    };
+}
+
+/**
+ * Single snapshot consumed by Log, Inventory, Insights, Plan, exports, and dashboard.
+ */
+function buildNormalizedCalcEngine(options = {}, data = appData) {
+    const today = options.today || getLocalDateString();
+    const substanceId = options.substanceId !== undefined
+        ? options.substanceId
+        : getUseLogViewSubstanceId();
+    const dateFilter = options.dateFilter !== undefined ? options.dateFilter : useLogDateFilter;
+    const logs = getFilteredUseLogsForView({
+        substanceId: substanceId === DASHBOARD_ALL ? null : substanceId,
+        dateFilter,
+        data,
+        transactionTypes: options.transactionTypes,
+        productTypes: options.productTypes
+    });
+    const substances = (options.substanceIds
+        || getActiveSubstances(data).map(s => s.id)
+    ).map(id => buildNormalizedSubstanceMetrics(id, { today }, data));
+
+    const purchases = (data.purchases || []).filter(p => {
+        if (!substanceId || substanceId === DASHBOARD_ALL) return true;
+        return logMatchesSubstance
+            ? getPurchaseSubstanceId(p) === substanceId || normalizeSubstanceRef(getPurchaseSubstanceId(p), data) === normalizeSubstanceRef(substanceId, data)
+            : getPurchaseSubstanceId(p) === substanceId;
+    });
+
+    const groupedUsage = substanceId
+        ? null
+        : buildAllSubstancesUsageEntries(
+            getUseLogFilterBounds(dateFilter).startDate || '1970-01-01',
+            getUseLogFilterBounds(dateFilter).endDate || today,
+            data
+        );
+
+    return {
+        version: 1,
+        today,
+        substanceId: substanceId || null,
+        dateFilter,
+        logs,
+        purchases,
+        substances,
+        metrics: substanceId
+            ? substances.find(s => s.substanceId === substanceId) || null
+            : null,
+        groupedUsage,
+        entryCount: logs.length,
+        totals: substanceId
+            ? getUseLogTotalsForView(substanceId)
+            : {
+                entryCount: logs.length,
+                totalGrams: null,
+                totalCost: substances.reduce((s, m) => s + (m.cost.month || 0), 0),
+                logs,
+                amountLabel: formatMixedUseTotalsLabel(logs, data)
+            }
+    };
+}
+
+function getNormalizedUsageLabel(metricsOrEngine, data = appData) {
+    if (!metricsOrEngine) return '—';
+    if (metricsOrEngine.groupedUsage) {
+        return formatGroupedUsageCompact(metricsOrEngine.groupedUsage, 4) || '—';
+    }
+    const m = metricsOrEngine.metrics || metricsOrEngine;
+    if (!m?.usage) return '—';
+    return `${formatAmount(m.usage.today)} ${m.unit || ''}`.trim();
+}
+
+// ——— Data Health (Phase 1) ———
+
+function scanDataHealth(data = appData) {
+    const issues = [];
+    const seenLogIds = new Map();
+    const seenPurchaseIds = new Map();
+    const purchaseIds = new Set((data.purchases || []).map(p => String(p.id)));
+    const substanceIds = new Set((data.substances || []).map(s => String(s.id)));
+
+    (data.logs || []).forEach((log, index) => {
+        if (!log) return;
+        const id = String(log.id ?? `idx-${index}`);
+        if (seenLogIds.has(id)) {
+            issues.push({
+                id: `dup-log-${id}-${index}`,
+                type: 'duplicate',
+                severity: 'warn',
+                label: `Duplicate use log id “${id}”`,
+                fix: 'dedupe-log',
+                payload: { logId: log.id, index }
+            });
+        } else {
+            seenLogIds.set(id, index);
+        }
+        const sid = getUseSubstanceId(log);
+        if (sid && !substanceIds.has(String(sid)) && !substanceIds.has(String(normalizeSubstanceRef(sid, data)))) {
+            issues.push({
+                id: `orphan-log-${id}`,
+                type: 'orphanedLog',
+                severity: 'warn',
+                label: `Log ${id} references missing substance “${sid}”`,
+                fix: 'clear-orphan-substance',
+                payload: { logId: log.id, substanceId: sid }
+            });
+        }
+        const purchaseId = getLogPurchaseId(log);
+        if (purchaseId && !purchaseIds.has(String(purchaseId))) {
+            issues.push({
+                id: `broken-link-${id}`,
+                type: 'brokenInventoryLink',
+                severity: 'warn',
+                label: `Log ${id} links to missing purchase “${purchaseId}”`,
+                fix: 'clear-broken-link',
+                payload: { logId: log.id, purchaseId }
+            });
+        }
+        if (log.transactionType === 'session' || log.legacyTransactionType || log._legacy) {
+            issues.push({
+                id: `legacy-log-${id}`,
+                type: 'legacyRecord',
+                severity: 'info',
+                label: `Legacy fields on log ${id}`,
+                fix: 'normalize-legacy-log',
+                payload: { logId: log.id }
+            });
+        }
+    });
+
+    (data.purchases || []).forEach((purchase, index) => {
+        if (!purchase) return;
+        const id = String(purchase.id ?? `pidx-${index}`);
+        if (seenPurchaseIds.has(id)) {
+            issues.push({
+                id: `dup-purchase-${id}-${index}`,
+                type: 'duplicate',
+                severity: 'warn',
+                label: `Duplicate purchase id “${id}”`,
+                fix: 'dedupe-purchase',
+                payload: { purchaseId: purchase.id, index }
+            });
+        } else {
+            seenPurchaseIds.set(id, index);
+        }
+        const remainingStored = parseFloat(purchase.remainingAmount ?? purchase.remainingPuffs);
+        const remaining = Number.isFinite(remainingStored)
+            ? remainingStored
+            : getPurchaseRemainingAmount(purchase);
+        if (remaining != null && remaining < -INVENTORY_EPS) {
+            issues.push({
+                id: `neg-remain-${id}`,
+                type: 'negativeRemaining',
+                severity: 'error',
+                label: `Purchase ${id} has negative remaining (${formatAmount(remaining)})`,
+                fix: 'clamp-negative-remaining',
+                payload: { purchaseId: purchase.id }
+            });
+        }
+        const sid = getPurchaseSubstanceId(purchase);
+        if (sid && !substanceIds.has(String(sid))) {
+            issues.push({
+                id: `orphan-purchase-${id}`,
+                type: 'orphanedLog',
+                severity: 'warn',
+                label: `Purchase ${id} references missing substance “${sid}”`,
+                fix: 'noop',
+                payload: { purchaseId: purchase.id }
+            });
+        }
+    });
+
+    // Mismatched inventory totals: remaining vs recalculated
+    (data.purchases || []).forEach(purchase => {
+        if (!purchase?.id) return;
+        const before = getPurchaseRemainingAmount(purchase);
+        const clone = JSON.parse(JSON.stringify(purchase));
+        const tempData = {
+            ...data,
+            purchases: (data.purchases || []).map(p => (String(p.id) === String(purchase.id) ? clone : p)),
+            logs: data.logs
+        };
+        try {
+            recalculatePurchaseRemaining(purchase.id, tempData);
+            const after = getPurchaseRemainingAmount(
+                (tempData.purchases || []).find(p => String(p.id) === String(purchase.id))
+            );
+            if (before != null && after != null && Math.abs(before - after) > Math.max(0.05, Math.abs(before) * 0.01)) {
+                issues.push({
+                    id: `mismatch-${purchase.id}`,
+                    type: 'mismatchedTotals',
+                    severity: 'warn',
+                    label: `Purchase ${purchase.id}: stored remaining ${formatAmount(before)} ≠ recalculated ${formatAmount(after)}`,
+                    fix: 'recalc-purchase',
+                    payload: { purchaseId: purchase.id, before, after }
+                });
+            }
+        } catch (_) { /* ignore recalc errors in scan */ }
+    });
+
+    const counts = {
+        duplicate: 0,
+        orphanedLog: 0,
+        brokenInventoryLink: 0,
+        negativeRemaining: 0,
+        legacyRecord: 0,
+        mismatchedTotals: 0
+    };
+    issues.forEach(i => { counts[i.type] = (counts[i.type] || 0) + 1; });
+
+    return { scannedAt: new Date().toISOString(), counts, issues, total: issues.length };
+}
+
+function previewDataHealthRepairs(report = scanDataHealth()) {
+    const fixable = (report.issues || []).filter(i => i.fix && i.fix !== 'noop');
+    return {
+        report,
+        fixableCount: fixable.length,
+        preview: fixable.map(i => ({ id: i.id, type: i.type, label: i.label, fix: i.fix }))
+    };
+}
+
+function applyDataHealthRepairs(report = null, options = {}) {
+    createAutoBackup(options.reason || 'before-data-health-repair');
+    const scan = report || scanDataHealth(appData);
+    const preview = previewDataHealthRepairs(scan);
+    const selected = options.fixIds
+        ? new Set(options.fixIds)
+        : new Set(preview.preview.map(p => p.id));
+    let applied = 0;
+
+    scan.issues.forEach(issue => {
+        if (!selected.has(issue.id)) return;
+        const log = (appData.logs || []).find(l => String(l.id) === String(issue.payload?.logId));
+        const purchase = (appData.purchases || []).find(p => String(p.id) === String(issue.payload?.purchaseId));
+        switch (issue.fix) {
+            case 'clear-broken-link':
+                if (log) {
+                    delete log.purchaseId;
+                    delete log.linkedPurchaseId;
+                    delete log.inventoryPurchaseId;
+                    applied++;
+                }
+                break;
+            case 'clamp-negative-remaining':
+                if (purchase) {
+                    purchase.remainingAmount = 0;
+                    if (purchase.remainingPuffs != null) purchase.remainingPuffs = 0;
+                    syncPurchaseInventoryStatus(purchase);
+                    applied++;
+                }
+                break;
+            case 'recalc-purchase':
+                if (purchase) {
+                    recalculatePurchaseRemaining(purchase.id, appData);
+                    applied++;
+                }
+                break;
+            case 'normalize-legacy-log':
+                if (log) {
+                    if (log.transactionType === 'session') {
+                        log.transactionType = 'use';
+                        if (!log.type || log.type === 'quick') log.type = 'session';
+                    }
+                    delete log._legacy;
+                    delete log.legacyTransactionType;
+                    applied++;
+                }
+                break;
+            case 'dedupe-log': {
+                const id = String(issue.payload?.logId);
+                const matches = (appData.logs || []).filter(l => String(l.id) === id);
+                if (matches.length > 1) {
+                    let kept = false;
+                    appData.logs = appData.logs.filter(l => {
+                        if (String(l.id) !== id) return true;
+                        if (!kept) { kept = true; return true; }
+                        return false;
+                    });
+                    applied++;
+                }
+                break;
+            }
+            case 'dedupe-purchase': {
+                const id = String(issue.payload?.purchaseId);
+                const matches = (appData.purchases || []).filter(p => String(p.id) === id);
+                if (matches.length > 1) {
+                    let kept = false;
+                    appData.purchases = appData.purchases.filter(p => {
+                        if (String(p.id) !== id) return true;
+                        if (!kept) { kept = true; return true; }
+                        return false;
+                    });
+                    applied++;
+                }
+                break;
+            }
+            default:
+                break;
+        }
+    });
+
+    repairDataConsistency(appData);
+    saveData(appData);
+    refreshAppAfterDataChange();
+    return { applied, totalFixable: preview.fixableCount, scan };
+}
+
+function renderDataHealthPanel() {
+    const container = document.getElementById('data-health-results');
+    if (!container) return;
+    const report = scanDataHealth(appData);
+    const preview = previewDataHealthRepairs(report);
+    if (!report.total) {
+        container.innerHTML = '<p class="data-health-ok">No data health issues found.</p>';
+        return;
+    }
+    const countBits = Object.entries(report.counts)
+        .filter(([, n]) => n > 0)
+        .map(([k, n]) => `<span class="data-health-count">${escapeHtml(k)}: ${n}</span>`)
+        .join('');
+    container.innerHTML = `
+        <div class="data-health-summary">${countBits}</div>
+        <ul class="data-health-issue-list">
+            ${report.issues.slice(0, 40).map(issue => `
+                <li class="data-health-issue data-health-${escapeAttr(issue.severity)}">
+                    <label>
+                        <input type="checkbox" class="data-health-fix-cb" data-issue-id="${escapeAttr(issue.id)}"
+                            ${issue.fix && issue.fix !== 'noop' ? 'checked' : 'disabled'}>
+                        <span>${escapeHtml(issue.label)}</span>
+                    </label>
+                </li>`).join('')}
+        </ul>
+        <p class="field-hint">${preview.fixableCount} fixable issue(s). Preview repairs before applying.</p>
+        <div class="data-health-actions">
+            <button type="button" class="secondary-btn" onclick="previewDataHealthRepairsUI()">Preview repairs</button>
+            <button type="button" class="secondary-btn" onclick="applySelectedDataHealthRepairs()">Apply selected repairs</button>
+        </div>`;
+}
+
+function previewDataHealthRepairsUI() {
+    const preview = previewDataHealthRepairs();
+    if (!preview.fixableCount) {
+        alert('No automatic repairs available.');
+        return;
+    }
+    const lines = preview.preview.slice(0, 20).map(p => `• ${p.label}`).join('\n');
+    alert(`Repair preview (${preview.fixableCount}):\n\n${lines}${preview.fixableCount > 20 ? '\n…' : ''}`);
+}
+
+function applySelectedDataHealthRepairs() {
+    const checked = [...document.querySelectorAll('.data-health-fix-cb:checked')]
+        .map(el => el.dataset.issueId)
+        .filter(Boolean);
+    if (!checked.length) {
+        alert('Select at least one repair.');
+        return;
+    }
+    if (!confirm(`Apply ${checked.length} repair(s)? An automatic backup will be created first.`)) return;
+    const result = applyDataHealthRepairs(null, { fixIds: checked });
+    alert(`Applied ${result.applied} repair(s).`);
+    renderDataHealthPanel();
+    renderChangeHistoryPanel();
+}
+
+// ——— Change History & Undo (Phase 2) ———
+
+function loadChangeHistory() {
+    try {
+        const raw = localStorage.getItem(CHANGE_HISTORY_KEY);
+        if (!raw) return [];
+        const parsed = JSON.parse(raw);
+        return Array.isArray(parsed) ? parsed : [];
+    } catch {
+        return [];
+    }
+}
+
+function saveChangeHistory(entries) {
+    try {
+        localStorage.setItem(CHANGE_HISTORY_KEY, JSON.stringify(entries.slice(0, MAX_CHANGE_HISTORY)));
+    } catch (err) {
+        console.error('Failed to save change history', err);
+    }
+}
+
+function pushChangeHistory(action, detail = {}) {
+    const entries = loadChangeHistory();
+    const entry = {
+        id: `chg-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+        action,
+        detail,
+        savedAt: new Date().toISOString(),
+        snapshot: JSON.parse(JSON.stringify(appData))
+    };
+    entries.unshift(entry);
+    saveChangeHistory(entries);
+    updateUndoButtonState();
+    return entry.id;
+}
+
+function restoreChangeHistoryEntry(entryId, { confirmRestore = true } = {}) {
+    const entries = loadChangeHistory();
+    const entry = entries.find(e => e.id === entryId);
+    if (!entry?.snapshot) {
+        alert('Change history entry not found.');
+        return false;
+    }
+    if (confirmRestore && !confirm(`Restore data to “${entry.action}” from ${formatLastSaved(entry.savedAt)}?`)) {
+        return false;
+    }
+    createAutoBackup('before-history-restore');
+    pushChangeHistory('before-restore', { restoredId: entryId });
+    appData = normalizeAppDataSafe(entry.snapshot);
+    normalizeAppData(appData);
+    saveData(appData);
+    refreshAppAfterDataChange();
+    renderChangeHistoryPanel();
+    return true;
+}
+
+function undoLastChange() {
+    const entries = loadChangeHistory();
+    const entry = entries.find(e => e.snapshot && e.action !== 'before-restore');
+    if (!entry) {
+        alert('Nothing to undo yet.');
+        return;
+    }
+    restoreChangeHistoryEntry(entry.id, { confirmRestore: true });
+}
+
+function updateUndoButtonState() {
+    const btn = document.getElementById('quick-undo-btn');
+    if (!btn) return;
+    const hasHistory = loadChangeHistory().some(e => e.snapshot);
+    btn.title = hasHistory ? 'Undo last change' : 'Undo last use entry';
+}
+
+function renderChangeHistoryPanel() {
+    const container = document.getElementById('change-history-list');
+    if (!container) return;
+    const entries = loadChangeHistory().slice(0, 20);
+    if (!entries.length) {
+        container.innerHTML = '<p class="empty-hint">No change history yet.</p>';
+        return;
+    }
+    container.innerHTML = entries.map(entry => `
+        <div class="change-history-item">
+            <div>
+                <strong>${escapeHtml(entry.action)}</strong>
+                <span class="change-history-time">${escapeHtml(formatLastSaved(entry.savedAt))}</span>
+                ${entry.detail?.summary ? `<div class="field-hint">${escapeHtml(entry.detail.summary)}</div>` : ''}
+            </div>
+            <button type="button" class="taper-chip-btn" onclick="restoreChangeHistoryEntry('${entry.id}')">Restore</button>
+        </div>`).join('');
+}
+
+// ——— Column presets (Phase 3) ———
+
+function getColumnPresetDefinition(presetId, tableKey = 'useHistory') {
+    const all = TABLE_COLUMN_DEFAULTS[tableKey]?.order || [];
+    const required = new Set(TABLE_COLUMNS_REQUIRED[tableKey] || ['select', 'actions']);
+    const presets = {
+        basic: {
+            useHistory: ['select', 'date', 'substance', 'amount', 'unit', 'notes', 'actions'],
+            purchaseHistory: ['select', 'date', 'substance', 'bought', 'remaining', 'cost', 'actions']
+        },
+        cost: {
+            useHistory: ['select', 'date', 'substance', 'amount', 'unit', 'cost', 'transactionType', 'actions'],
+            purchaseHistory: ['select', 'date', 'substance', 'bought', 'cost', 'store', 'payment', 'actions']
+        },
+        inventory: {
+            useHistory: ['select', 'date', 'substance', 'amount', 'inventory', 'transactionType', 'actions'],
+            purchaseHistory: ['select', 'date', 'substance', 'bought', 'remaining', 'usedPct', 'supply', 'actions']
+        },
+        detailed: {
+            useHistory: all,
+            purchaseHistory: TABLE_COLUMN_DEFAULTS.purchaseHistory?.order || all
+        }
+    };
+    const order = (presets[presetId]?.[tableKey] || presets.basic[tableKey] || all)
+        .filter(id => all.includes(id) || required.has(id));
+    required.forEach(id => {
+        if (!order.includes(id) && all.includes(id)) {
+            if (id === 'select') order.unshift(id);
+            else order.push(id);
+        }
+    });
+    const visible = {};
+    all.forEach(id => { visible[id] = order.includes(id); });
+    return { order, visible };
+}
+
+function applyColumnPreset(tableKey, presetId) {
+    if (!COLUMN_PRESET_IDS.includes(presetId)) return;
+    const def = getColumnPresetDefinition(presetId, tableKey);
+    const current = getTableColumnConfig(tableKey);
+    saveTableColumnConfig(tableKey, {
+        order: def.order,
+        visible: def.visible,
+        widths: current.widths || TABLE_COLUMN_DEFAULTS[tableKey]?.widths || {}
+    });
+    refreshTableAfterColumnChange(tableKey);
+}
+
+function applyColumnPresetFromModal(presetId) {
+    if (!columnSettingsTableKey) return;
+    applyColumnPreset(columnSettingsTableKey, presetId);
+    renderColumnSettingsList(columnSettingsTableKey);
+}
+
+// ——— Customizable daily dashboard (Phase 3) ———
+
+function loadDashboardLayout() {
+    try {
+        const raw = localStorage.getItem(DASHBOARD_LAYOUT_KEY);
+        if (!raw) return { widgets: [...DEFAULT_DASHBOARD_WIDGETS] };
+        const parsed = JSON.parse(raw);
+        const widgets = Array.isArray(parsed?.widgets)
+            ? parsed.widgets.filter(w => DEFAULT_DASHBOARD_WIDGETS.includes(w) || w === 'streak')
+            : [...DEFAULT_DASHBOARD_WIDGETS];
+        return { widgets: widgets.length ? widgets : [...DEFAULT_DASHBOARD_WIDGETS] };
+    } catch {
+        return { widgets: [...DEFAULT_DASHBOARD_WIDGETS] };
+    }
+}
+
+function saveDashboardLayout(layout) {
+    try {
+        localStorage.setItem(DASHBOARD_LAYOUT_KEY, JSON.stringify(layout));
+    } catch (err) {
+        console.error('Failed to save dashboard layout', err);
+    }
+}
+
+function applyDashboardLayout() {
+    const layout = loadDashboardLayout();
+    const widgetMap = {
+        todayUsed: 'dash-card-today',
+        weekUsed: 'dash-card-week',
+        monthUsed: 'dash-card-month',
+        spentMonth: 'dash-card-spent',
+        monthCap: 'dash-card-month-cap',
+        streak: 'dash-card-streak'
+    };
+    Object.entries(widgetMap).forEach(([key, id]) => {
+        const el = document.getElementById(id)?.closest('.dash-metric-card');
+        if (el) el.classList.toggle('hidden', !layout.widgets.includes(key));
+    });
+    document.getElementById('dashboard-main-stats')?.classList.toggle(
+        'hidden',
+        !['todayUsed', 'weekUsed', 'monthUsed', 'spentMonth', 'monthCap'].some(w => layout.widgets.includes(w))
+    );
+    document.querySelector('.dash-quick-actions')?.classList.toggle('hidden', !layout.widgets.includes('quickActions'));
+}
+
+function renderDashboardLayoutEditor() {
+    const container = document.getElementById('dashboard-layout-editor');
+    if (!container) return;
+    const layout = loadDashboardLayout();
+    const labels = {
+        todayUsed: 'Today Used',
+        weekUsed: 'This Week Used',
+        monthUsed: 'This Month Used',
+        spentMonth: 'Spent This Month',
+        monthCap: 'Remaining Monthly Cap',
+        streak: 'Recovery streak',
+        quickActions: 'Quick Actions'
+    };
+    container.innerHTML = DEFAULT_DASHBOARD_WIDGETS.map(id => `
+        <label class="checkbox-label">
+            <input type="checkbox" class="dash-layout-cb" data-widget="${id}" ${layout.widgets.includes(id) ? 'checked' : ''}>
+            ${labels[id] || id}
+        </label>`).join('');
+}
+
+function saveDashboardLayoutFromEditor() {
+    const widgets = [...document.querySelectorAll('.dash-layout-cb:checked')].map(el => el.dataset.widget);
+    saveDashboardLayout({ widgets: widgets.length ? widgets : [...DEFAULT_DASHBOARD_WIDGETS] });
+    applyDashboardLayout();
+    alert('Dashboard layout saved.');
+}
+
+// ——— Adaptive taper intelligence (Phase 4) ———
+
+function getTaperStatusExplanation(plan, substanceId, data = appData) {
+    if (!plan) return { status: 'none', title: 'No plan', detail: 'Create a taper plan to see status.' };
+    if (isTaperPlanPaused(plan)) {
+        return { status: 'paused', title: 'Paused', detail: 'Limits are not enforced while the plan is paused.' };
+    }
+    const today = getLocalDateString();
+    const week = getWeekRowForDate(plan, today);
+    if (!week) {
+        return { status: 'none', title: 'Outside plan dates', detail: 'Today is outside the plan start/quit range.' };
+    }
+    const status = week.status || 'under';
+    if (isReducePuffsPlan(plan)) {
+        const used = week.actualUsed || 0;
+        const limit = week.weeklyMax || 0;
+        if (status === 'under') {
+            return { status, title: 'On track', detail: `Used ${formatAmount(used)} of ${formatAmount(limit)} weekly puffs.` };
+        }
+        if (status === 'close') {
+            return { status, title: 'Slightly over', detail: 'Up to 10% over the weekly puff target. Consider repeating this week instead of tightening next week.' };
+        }
+        return { status, title: 'Over target', detail: 'More than 10% over the weekly puff target. Historical goals stay unchanged — use Repeat week or Recalculate remaining weeks.' };
+    }
+    if (isNicotineVapePurchasePlan(plan)) {
+        const live = plan.nicotineVapeLiveMetrics || {};
+        const buyBreak = live.daysSinceLastPurchase;
+        const useBreak = live.daysSinceLastUse;
+        return {
+            status,
+            title: shortTaperStatus(status),
+            detail: `Purchase break: ${buyBreak != null ? `${formatAmount(buyBreak, 1)} days` : '—'} · Use break: ${useBreak != null ? `${formatAmount(useBreak, 1)} days` : '—'} (tracked separately).`
+        };
+    }
+    return { status, title: shortTaperStatus(status), detail: 'Compare used vs planned for the current week.' };
+}
+
+/**
+ * Adaptive remaining-week targets from recent pace.
+ * Does not rewrite historical week goals (weeks before today).
+ */
+function buildAdaptiveRemainingWeekTargets(plan, substanceId, data = appData) {
+    if (!plan?.weeklyTargets?.length) return [];
+    const today = getLocalDateString();
+    const avg7 = typeof getRecentPuffAveragePerDay === 'function'
+        ? getRecentPuffAveragePerDay(substanceId, 7, data)
+        : getCanonicalUsageInRange(substanceId, addDaysToDateStr(today, -6), today, data) / 7;
+    const idx = plan.weeklyTargets.findIndex(w => today >= w.weekStart && today <= w.weekEnd);
+    const startIdx = idx >= 0 ? idx : plan.weeklyTargets.findIndex(w => w.weekStart >= today);
+    if (startIdx < 0) return [];
+    const remaining = plan.weeklyTargets.length - startIdx;
+    const goal = roundPuffTarget(plan.goalDailyAverage ?? 0);
+    const baseline = roundPuffTarget(avg7 || plan.startingDailyAverage || 0);
+    const schedule = getDisposablePuffPercentSchedule(remaining);
+    return plan.weeklyTargets.slice(startIdx).map((w, i) => {
+        const daily = Math.max(goal, roundPuffTarget(baseline * ((schedule[i] ?? 0) / 100)));
+        return {
+            week: w.week,
+            weekStart: w.weekStart,
+            weekEnd: w.weekEnd,
+            previousDailyTarget: w.dailyTarget,
+            adaptiveDailyTarget: daily,
+            adaptiveWeeklyMax: daily * 7,
+            historicalLocked: false
+        };
+    });
+}
+
+function applyAdaptiveRemainingWeekTargets(plan, substanceId, data = appData) {
+    if (!plan || !isReducePuffsPlan(plan)) return false;
+    const adaptive = buildAdaptiveRemainingWeekTargets(plan, substanceId, data);
+    if (!adaptive.length) return false;
+    const today = getLocalDateString();
+    const byWeekStart = new Map(adaptive.map(a => [a.weekStart, a]));
+    plan.weeklyTargets.forEach(w => {
+        if (w.weekEnd < today) return; // keep historical goals
+        const next = byWeekStart.get(w.weekStart);
+        if (!next) return;
+        w.dailyTarget = next.adaptiveDailyTarget;
+        w.targetPuffsPerDay = next.adaptiveDailyTarget;
+        w.weeklyMax = next.adaptiveWeeklyMax;
+        w.monthlyProjectedPuffLimit = roundPuffTarget(next.adaptiveDailyTarget * 30);
+        w.adaptive = true;
+    });
+    plan.updatedAt = new Date().toISOString();
+    expandDailyTargetsFromWeekly(plan);
+    return true;
+}
+
+function getWeightedCostPerUnitSpendingGoal(substanceId, data = appData) {
+    const purchases = getVapePurchasesForSubstance(substanceId, data)
+        .filter(p => parseFloat(getPurchaseTotalCost(p)) > 0 && getVapeStartingPuffsLeft(p) > 0);
+    if (!purchases.length) {
+        const all = getPurchasesForSubstance(substanceId, data)
+            .filter(p => parseFloat(getPurchaseTotalCost(p)) > 0 && parseFloat(getPurchaseQuantityBought(p)) > 0);
+        if (!all.length) return null;
+        let costSum = 0;
+        let qtySum = 0;
+        all.forEach(p => {
+            costSum += parseFloat(getPurchaseTotalCost(p)) || 0;
+            qtySum += parseFloat(getPurchaseQuantityBought(p)) || 0;
+        });
+        return qtySum > 0 ? costSum / qtySum : null;
+    }
+    let costSum = 0;
+    let puffSum = 0;
+    purchases.forEach(p => {
+        costSum += parseFloat(getPurchaseTotalCost(p)) || 0;
+        puffSum += getVapeStartingPuffsLeft(p) || 0;
+    });
+    return puffSum > 0 ? costSum / puffSum : null;
 }
 
 function getVapeTaperCountMode(data = appData) {
@@ -7640,12 +8400,14 @@ function restoreLastAutoBackup() {
 
 function repairAppData() {
     if (!confirm('Repair data consistency issues?\n\nAn automatic backup will be saved first.')) return;
+    pushChangeHistory('before-repair', { summary: 'Before data repair' });
     createAutoBackup('before-repair');
     repairVapeInventoryLinks(appData);
     const stats = repairDataConsistency(appData);
     saveData(appData);
     refreshAppAfterDataChange();
     alert(`Data repair complete.\n\n${formatRepairSummary(stats)}`);
+    renderDataHealthPanel();
 }
 
 function setText(id, text) {
@@ -7819,6 +8581,9 @@ function refreshAppAfterDataChange() {
     updateLastSavedDisplay();
     applyCollapsedSections();
     initAppearanceViewMode();
+    applyDashboardLayout();
+    updateUndoButtonState();
+    renderDashboardLayoutEditor();
 }
 
 // ——— Substance helpers ———
@@ -14632,9 +15397,15 @@ function openUseLogSession() {
 }
 
 function undoLastUse() {
+    const history = loadChangeHistory();
+    if (history.some(e => e.snapshot && e.action !== 'before-restore')) {
+        undoLastChange();
+        return;
+    }
     const entries = getUseEntries();
     if (!entries.length) return alert('No use entries to undo');
     if (confirm('Undo last use entry?')) {
+        pushChangeHistory('undo-last-use', { summary: 'Before removing last use entry' });
         const last = entries[entries.length - 1];
         if (last) restoreLogSupplyLinks(last);
         if (!Array.isArray(appData.logs)) appData.logs = [];
@@ -17964,7 +18735,8 @@ function pickSubstanceForQuickAction(actionLabel) {
 function renderDashboardSummaryCards(substanceId) {
     const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
     if (isAllSubstancesView()) {
-        const today = getLocalDateString();
+        const engine = buildNormalizedCalcEngine({ substanceId: null });
+        const today = engine.today;
         const weekStart = getWeekStartDateStr(today);
         const monthStart = getMonthStartDateStr(today);
         const todayEntries = buildAllSubstancesUsageEntries(today, today);
@@ -17981,13 +18753,17 @@ function renderDashboardSummaryCards(substanceId) {
         set('dash-card-month', monthEntries.length
             ? formatGroupedUsageCompact(monthEntries, 3)
             : '0');
-        set('dash-card-spent', fmtSheetMoney(getAllSubstancesMonthSpent(today), cur));
+        set('dash-card-spent', fmtSheetMoney(
+            (engine.substances || []).reduce((s, m) => s + (m.spend?.month || 0), 0),
+            cur
+        ));
         const best = getAllSubstancesBestStreak();
         set('dash-card-streak', best.days
             ? `${best.days} day${best.days === 1 ? '' : 's'} (${best.name})`
             : '0 days');
         set('dash-card-month-cap', '—');
         setDashboardMetricLabel('dash-card-month-cap', 'Select one substance for cap');
+        applyDashboardLayout();
         return;
     }
 
@@ -17995,32 +18771,20 @@ function renderDashboardSummaryCards(substanceId) {
     if (!substanceId) {
         ['dash-card-today', 'dash-card-week', 'dash-card-month', 'dash-card-spent', 'dash-card-streak', 'dash-card-month-cap']
             .forEach(id => set(id, '—'));
+        applyDashboardLayout();
         return;
     }
-    const sub = getSubstance(substanceId);
-    const unit = sub?.defaultUnit || 'units';
-    const today = getLocalDateString();
-    const todayUsed = isVapeNicotineSubstanceId(substanceId)
-        ? getStatsUsageOnDate(substanceId, today)
-        : sumUsageForDate(null, today, substanceId).amount;
-    const weekUsed = isVapeNicotineSubstanceId(substanceId)
-        ? getStatsUsageInRange(substanceId, getWeekStartDateStr(today), today)
-        : sumUsageForRange(null, getWeekStartDateStr(today), today, substanceId).amount;
-    const monthUsed = isVapeNicotineSubstanceId(substanceId)
-        ? getStatsUsageInRange(substanceId, getMonthStartDateStr(today), today)
-        : sumUsageForRange(null, getMonthStartDateStr(today), today, substanceId).amount;
-    const monthLimit = getMonthlyLimit(substanceId, today);
-    const monthRemaining = monthLimit != null ? Math.max(0, monthLimit - monthUsed) : null;
-    const streakDays = computeRecoveryStreakDays(substanceId).days;
-    const spent = getMonthSpent(substanceId, today);
+    const metrics = buildNormalizedSubstanceMetrics(substanceId);
+    const unit = metrics.unit || 'units';
     const cur = getCurrencySymbol();
 
-    set('dash-card-today', `${formatAmount(todayUsed)} ${unit}`);
-    set('dash-card-week', `${formatAmount(weekUsed)} ${unit}`);
-    set('dash-card-month', `${formatAmount(monthUsed)} ${unit}`);
-    set('dash-card-spent', fmtSheetMoney(spent, cur));
-    set('dash-card-streak', streakDays ? `${streakDays} day${streakDays === 1 ? '' : 's'}` : '0 days');
-    set('dash-card-month-cap', monthRemaining != null ? `${formatAmount(monthRemaining)} ${unit}` : '—');
+    set('dash-card-today', `${formatAmount(metrics.usage.today)} ${unit}`);
+    set('dash-card-week', `${formatAmount(metrics.usage.week)} ${unit}`);
+    set('dash-card-month', `${formatAmount(metrics.usage.month)} ${unit}`);
+    set('dash-card-spent', fmtSheetMoney(metrics.spend.month, cur));
+    set('dash-card-streak', metrics.streakDays ? `${metrics.streakDays} day${metrics.streakDays === 1 ? '' : 's'}` : '0 days');
+    set('dash-card-month-cap', metrics.monthRemaining != null ? `${formatAmount(metrics.monthRemaining)} ${unit}` : '—');
+    applyDashboardLayout();
 }
 
 function renderMiniUsageChart(containerId, buckets, emptyHint = 'No data yet') {
@@ -26711,10 +27475,12 @@ function renderDisposablePuffTaperSummary(substanceId) {
     ];
 
     container.classList.add('disposable-puff-mode');
+    const explanation = getTaperStatusExplanation(plan, substanceId);
     container.innerHTML = `
         <div class="taper-progress-panel-head">
             <span class="taper-status-badge taper-status-${s.status}">${escapeHtml(s.statusLabel)}</span>
         </div>
+        <p class="taper-status-explanation">${escapeHtml(explanation.detail)}</p>
         <div class="taper-mini-stats disposable-puff-summary-stats">
             ${primaryStats.map(([label, value]) =>
                 `<div class="taper-mini-stat"><span>${escapeHtml(label)}</span><strong>${value}</strong></div>`
@@ -28147,54 +28913,10 @@ function recalculateTaperFromRecentAverage() {
         alert('Not enough recent use data to recalculate.');
         return;
     }
-    const today = getLocalDateString();
-    const weeks = [...(plan.weeklyTargets || [])];
-    const idx = weeks.findIndex(w => today >= w.weekStart && today <= w.weekEnd);
-    const startIdx = idx >= 0 ? idx : 0;
-    const remainingCount = Math.max(1, weeks.length - startIdx);
-    const goal = roundPuffTarget(plan.goalDailyAverage ?? 0);
-    const baseline = roundPuffTarget(avg7);
-    plan.startingDailyAverage = baseline;
-    plan.currentAvg = baseline;
-
-    const mode = plan.puffReductionMode === 'amount' ? 'amount' : 'percent';
-    if (mode === 'percent') {
-        const schedule = getDisposablePuffPercentSchedule(remainingCount);
-        for (let i = 0; i < remainingCount; i++) {
-            const w = weeks[startIdx + i];
-            if (!w) break;
-            let daily = roundPuffTarget(baseline * (schedule[i] / 100));
-            if (i === schedule.length - 1 && goal === 0) daily = roundPuffTarget(baseline * (schedule[i] / 100));
-            else daily = Math.max(goal, daily);
-            w.dailyTarget = daily;
-            w.targetPuffsPerDay = daily;
-            w.weeklyMax = roundPuffTarget(daily * 7);
-            w.monthlyProjectedPuffLimit = roundPuffTarget(daily * 30);
-            w.percentOfBaseline = baseline > 0 ? Math.round((daily / baseline) * 100) : null;
-            w.percentReductionFromBaseline = baseline > 0 ? Math.round((1 - (daily / baseline)) * 100) : 0;
-            w.repeated = false;
-        }
-    } else {
-        const step = parseFloat(plan.reductionAmount) || 0;
-        let current = baseline;
-        for (let i = 0; i < remainingCount; i++) {
-            const w = weeks[startIdx + i];
-            if (!w) break;
-            const daily = roundPuffTarget(Math.max(goal, current));
-            w.dailyTarget = daily;
-            w.targetPuffsPerDay = daily;
-            w.weeklyMax = roundPuffTarget(daily * 7);
-            w.monthlyProjectedPuffLimit = roundPuffTarget(daily * 30);
-            w.percentOfBaseline = baseline > 0 ? Math.round((daily / baseline) * 100) : null;
-            w.percentReductionFromBaseline = baseline > 0 ? Math.round((1 - (daily / baseline)) * 100) : 0;
-            w.repeated = false;
-            current = Math.max(goal, current - step);
-        }
-    }
-
-    plan.weeklyTargets = weeks;
-    plan.updatedAt = new Date().toISOString();
-    expandDailyTargetsFromWeekly(plan);
+    pushChangeHistory('before-recalculate-taper', { summary: 'Before adaptive remaining-week recalculation' });
+    plan.startingDailyAverage = roundPuffTarget(avg7);
+    plan.currentAvg = plan.startingDailyAverage;
+    applyAdaptiveRemainingWeekTargets(plan, substanceId);
     syncTaperPlanDataForPlan(plan);
     saveData(appData);
     refreshTaperDashboard();
@@ -28746,6 +29468,84 @@ function mergeImportedData(current, imported) {
     return merged;
 }
 
+function buildImportPreview(imported, current = appData) {
+    const incomingLogs = imported.logs || [];
+    const incomingPurchases = imported.purchases || [];
+    const incomingSubs = imported.substances || [];
+    const currentLogIds = new Set((current.logs || []).map(l => String(l.id)));
+    const currentPurchaseIds = new Set((current.purchases || []).map(p => String(p.id)));
+    const currentSubIds = new Set((current.substances || []).map(s => String(s.id)));
+
+    const newLogs = incomingLogs.filter(l => !currentLogIds.has(String(l.id)));
+    const updatedLogs = incomingLogs.filter(l => currentLogIds.has(String(l.id)));
+    const newPurchases = incomingPurchases.filter(p => !currentPurchaseIds.has(String(p.id)));
+    const updatedPurchases = incomingPurchases.filter(p => currentPurchaseIds.has(String(p.id)));
+    const newSubs = incomingSubs.filter(s => !currentSubIds.has(String(s.id)));
+    const updatedSubs = incomingSubs.filter(s => currentSubIds.has(String(s.id)));
+
+    return {
+        summary: {
+            substances: incomingSubs.length,
+            logs: incomingLogs.length,
+            purchases: incomingPurchases.length,
+            newLogs: newLogs.length,
+            updatedLogs: updatedLogs.length,
+            newPurchases: newPurchases.length,
+            updatedPurchases: updatedPurchases.length,
+            newSubstances: newSubs.length,
+            updatedSubstances: updatedSubs.length
+        },
+        conflicts: [
+            ...updatedLogs.slice(0, 8).map(l => ({ type: 'log', id: l.id, label: `Log ${l.id} will be updated on merge` })),
+            ...updatedPurchases.slice(0, 8).map(p => ({ type: 'purchase', id: p.id, label: `Purchase ${p.id} will be updated on merge` })),
+            ...updatedSubs.slice(0, 5).map(s => ({ type: 'substance', id: s.id, label: `Substance ${s.name || s.id} already exists` }))
+        ]
+    };
+}
+
+let pendingImportData = null;
+
+function openImportPreviewModal(imported) {
+    pendingImportData = imported;
+    const preview = buildImportPreview(imported);
+    const summaryEl = document.getElementById('import-preview-summary');
+    const conflictsEl = document.getElementById('import-preview-conflicts');
+    if (summaryEl) {
+        const s = preview.summary;
+        summaryEl.innerHTML = `
+            <div class="taper-mini-stats">
+                <div class="taper-mini-stat"><span>Substances</span><strong>${s.substances}</strong></div>
+                <div class="taper-mini-stat"><span>Use logs</span><strong>${s.logs}</strong></div>
+                <div class="taper-mini-stat"><span>Purchases</span><strong>${s.purchases}</strong></div>
+                <div class="taper-mini-stat"><span>New logs</span><strong>${s.newLogs}</strong></div>
+                <div class="taper-mini-stat"><span>Updated logs (merge)</span><strong>${s.updatedLogs}</strong></div>
+                <div class="taper-mini-stat"><span>New purchases</span><strong>${s.newPurchases}</strong></div>
+                <div class="taper-mini-stat"><span>Updated purchases (merge)</span><strong>${s.updatedPurchases}</strong></div>
+            </div>`;
+    }
+    if (conflictsEl) {
+        conflictsEl.innerHTML = preview.conflicts.length
+            ? `<h4>Conflicts / updates</h4><ul>${preview.conflicts.map(c => `<li>${escapeHtml(c.label)}</li>`).join('')}</ul>`
+            : '<p class="field-hint">No ID conflicts with current data.</p>';
+    }
+    document.getElementById('import-preview-modal')?.classList.remove('hidden');
+}
+
+function closeImportPreviewModal() {
+    pendingImportData = null;
+    document.getElementById('import-preview-modal')?.classList.add('hidden');
+}
+
+function confirmImportPreview(mode) {
+    if (!pendingImportData) return;
+    const imported = pendingImportData;
+    closeImportPreviewModal();
+    pushChangeHistory(`before-import-${mode}`, { summary: `Before ${mode} import` });
+    applyImportedBackup(imported, mode);
+    alert(mode === 'merge' ? 'Backup merged successfully.' : 'Backup replaced current data.');
+    renderChangeHistoryPanel();
+}
+
 function applyImportedBackup(imported, mode) {
     createAutoBackup(mode === 'replace' ? 'before-import-replace' : 'before-import-merge');
     const normalized = normalizeImportedAppData(imported);
@@ -28758,10 +29558,6 @@ function applyImportedBackup(imported, mode) {
     repairAppDataAfterImport(appData);
     saveData(appData);
     refreshAppAfterDataChange();
-}
-
-function triggerImportJsonBackup() {
-    document.getElementById('import-json-input')?.click();
 }
 
 async function handleImportJsonFile(event) {
@@ -28802,36 +29598,23 @@ async function handleImportJsonFile(event) {
             return;
         }
 
-        const imported = validation.data;
-        const logCount = imported.logs.length;
-        const purchaseCount = imported.purchases.length;
-        const substanceCount = imported.substances.length;
-        const summary = `${substanceCount} substance(s), ${logCount} use log(s), ${purchaseCount} purchase(s).`;
-
-        if (!confirm(`Import this backup?\n\n${summary}`)) return;
-
-        const merge = confirm(
-            'How should this backup be applied?\n\nOK = Merge with current data (matching IDs are updated)\nCancel = Replace all current data'
-        );
-        if (merge) {
-            applyImportedBackup(imported, 'merge');
-            alert('Backup merged successfully.');
-        } else {
-            if (!confirm('Replace ALL current data with this backup? This cannot be undone except by importing another backup.')) return;
-            applyImportedBackup(imported, 'replace');
-            alert('Backup imported. Your data was replaced.');
-        }
+        openImportPreviewModal(validation.data);
     } catch (err) {
         console.error('Import failed:', err);
-        alert('Could not import backup file. Export a fresh JSON backup from Recovery Tracker and try again.');
+        alert('Import failed. Check the console for details.');
     } finally {
         input.value = '';
     }
 }
 
+function triggerImportJsonBackup() {
+    document.getElementById('import-json-input')?.click();
+}
+
 function clearAllData() {
     if (!confirm('Clear ALL data? This cannot be undone.')) return;
     if (!confirm('Delete all logs, substances, and settings?')) return;
+    pushChangeHistory('before-clear', { summary: 'Before clearing all data' });
     createAutoBackup('before-clear');
     appData = getDefaultAppData();
     appData.substances = getDefaultSubstances();
@@ -29102,6 +29885,26 @@ function __getRecoveryTrackerTestExports() {
         repeatCurrentTaperWeek,
         recalculateTaperFromRecentAverage,
         markTaperQuit,
+        buildNormalizedCalcEngine,
+        buildNormalizedSubstanceMetrics,
+        getCanonicalUsageOnDate,
+        getCanonicalUsageInRange,
+        scanDataHealth,
+        previewDataHealthRepairs,
+        applyDataHealthRepairs,
+        pushChangeHistory,
+        loadChangeHistory,
+        restoreChangeHistoryEntry,
+        buildImportPreview,
+        getColumnPresetDefinition,
+        applyColumnPreset,
+        COLUMN_PRESET_IDS,
+        loadDashboardLayout,
+        saveDashboardLayout,
+        getTaperStatusExplanation,
+        buildAdaptiveRemainingWeekTargets,
+        applyAdaptiveRemainingWeekTargets,
+        getWeightedCostPerUnitSpendingGoal,
         getDefaultBuyingReductionSettings,
         getBuyingReductionSettings,
         migrateBuyingReductionSettings,

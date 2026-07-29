@@ -8172,3 +8172,104 @@ body > .app-container {
 :root[data-view-layout="phone"] .data-management-buttons .danger-btn {
     width: 100%;
 }
+.taper-status-explanation {
+    margin: 0 0 10px;
+    font-size: 0.9rem;
+    color: var(--text-secondary);
+    line-height: 1.4;
+}
+
+.data-health-results { margin-top: 12px; }
+
+.data-health-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 10px;
+}
+
+.data-health-count {
+    font-size: 0.8rem;
+    padding: 4px 8px;
+    border-radius: 8px;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border);
+}
+
+.data-health-issue-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 12px;
+    max-height: 280px;
+    overflow: auto;
+}
+
+.data-health-issue {
+    padding: 6px 0;
+    border-bottom: 1px solid var(--border);
+    font-size: 0.9rem;
+}
+
+.data-health-ok { color: var(--accent, #2e7d32); }
+
+.change-history-list {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.change-history-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+    padding: 8px 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-secondary);
+}
+
+.change-history-time {
+    display: block;
+    font-size: 0.8rem;
+    color: var(--text-secondary);
+}
+
+.column-preset-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 12px;
+}
+
+.dashboard-layout-editor {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 12px;
+}
+
+.import-preview-summary { margin-bottom: 12px; }
+
+.import-preview-conflicts {
+    max-height: 200px;
+    overflow: auto;
+    margin-bottom: 12px;
+}
+
+.settings-subhead {
+    margin: 16px 0 8px;
+    font-size: 1rem;
+}
+
+.use-history-table td.use-history-actions-cell,
+.history-table td.actions-cell {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background: var(--bg-card, var(--bg-secondary));
+    width: 150px;
+    min-width: 150px;
+    max-width: 160px;
+}

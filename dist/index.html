@@ -209,7 +209,7 @@
                         <span>🛒</span>
                         <span>Buy</span>
                     </button>
-                    <button class="quick-btn danger" onclick="undoLastUse()">
+                    <button class="quick-btn danger" id="quick-undo-btn" onclick="undoLastUse()">
                         <span>↩️</span>
                         <span>Undo</span>
                     </button>
@@ -1986,6 +1986,39 @@
                     </div>
                 </div>
 
+                <div class="collapsible-section" data-section="settingsDataHealth">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsDataHealth')">
+                        <span>Data Health</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="settings-section">
+                            <p class="settings-hint">Scan for duplicates, orphaned logs, broken inventory links, negative remaining values, legacy records, and mismatched totals. Repairs are previewable and create an automatic backup first.</p>
+                            <div class="data-management-buttons">
+                                <button type="button" class="secondary-btn" onclick="renderDataHealthPanel()">Scan Data Health</button>
+                                <button type="button" class="secondary-btn" onclick="renderChangeHistoryPanel()">Refresh Change History</button>
+                            </div>
+                            <div id="data-health-results" class="data-health-results"></div>
+                            <h4 class="settings-subhead">Change History</h4>
+                            <div id="change-history-list" class="change-history-list"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="settingsDashboardLayout">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsDashboardLayout')">
+                        <span>Daily Dashboard</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="settings-section">
+                            <p class="settings-hint">Choose which Home widgets to show. Grouped substance summaries are used for All Substances (no fake mixed-unit totals).</p>
+                            <div id="dashboard-layout-editor" class="dashboard-layout-editor"></div>
+                            <button type="button" class="secondary-btn" onclick="saveDashboardLayoutFromEditor()">Save Dashboard Layout</button>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="collapsible-section" data-section="settingsBackup">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsBackup')">
                         <span>Data Backup</span>
@@ -1995,7 +2028,7 @@
                 <div class="settings-section">
                     <p id="settings-last-saved" class="last-saved-status">Last Saved: Never</p>
                     <p class="last-saved-status">Last auto-backup: <span id="settings-auto-backup-date">Never</span></p>
-                    <p class="data-storage-note">Data is stored only in this browser (localStorage). A local backup is created automatically before import, reset, or migration.</p>
+                    <p class="data-storage-note">Data is stored only in this browser (localStorage). A local backup is created automatically before import, reset, migration, or bulk repair.</p>
                     <input type="file" id="import-json-input" accept=".json,application/json" class="hidden" onchange="handleImportJsonFile(event)">
                     <div class="data-management-buttons">
                         <button type="button" class="secondary-btn" onclick="exportJsonBackup()">Export JSON Backup</button>
@@ -2149,6 +2182,12 @@
             <h2 id="column-settings-title">Customize Columns</h2>
             <p id="column-settings-subtitle" class="settings-hint column-settings-subtitle hidden"></p>
             <p class="settings-hint">Drag rows to reorder columns. Uncheck to hide optional columns; required columns stay visible.</p>
+            <div class="column-preset-row" role="group" aria-label="Column presets">
+                <button type="button" class="taper-chip-btn" onclick="applyColumnPresetFromModal('basic')">Basic</button>
+                <button type="button" class="taper-chip-btn" onclick="applyColumnPresetFromModal('cost')">Cost</button>
+                <button type="button" class="taper-chip-btn" onclick="applyColumnPresetFromModal('inventory')">Inventory</button>
+                <button type="button" class="taper-chip-btn" onclick="applyColumnPresetFromModal('detailed')">Detailed</button>
+            </div>
             <div class="column-settings-bulk-actions">
                 <button type="button" class="secondary-btn btn-sm" id="column-settings-show-all">Show all</button>
                 <button type="button" class="secondary-btn btn-sm" id="column-settings-hide-optional">Hide all optional</button>
@@ -2211,6 +2250,20 @@
             <div class="modal-actions">
                 <button type="button" class="primary-btn" id="stats-calendar-day-add-log-btn">Add log for this date</button>
                 <button type="button" class="secondary-btn" onclick="closeStatsCalendarDayModal()">Close</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="import-preview-modal" class="modal hidden">
+        <div class="modal-content modal-wide">
+            <h2>Import Preview</h2>
+            <p class="settings-hint">Review conflicts before applying. An automatic backup is created when you confirm.</p>
+            <div id="import-preview-summary" class="import-preview-summary"></div>
+            <div id="import-preview-conflicts" class="import-preview-conflicts"></div>
+            <div class="modal-actions">
+                <button type="button" class="secondary-btn" onclick="closeImportPreviewModal()">Cancel</button>
+                <button type="button" class="secondary-btn" id="import-preview-merge-btn" onclick="confirmImportPreview('merge')">Merge</button>
+                <button type="button" class="submit-btn" id="import-preview-replace-btn" onclick="confirmImportPreview('replace')">Replace all</button>
             </div>
         </div>
     </div>
