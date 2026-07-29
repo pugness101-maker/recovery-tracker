@@ -4785,7 +4785,8 @@ const defaultData = {
         currency: '$',
         substanceSettings: getDefaultSubstanceSettings(),
         vapeTaperCountMode: 'log-date',
-        spreadPercentLeftUsage: true
+        spreadPercentLeftUsage: true,
+        buyMonthRunningMode: 'within-year'
     },
     taperPlans: {},
     taperPlansV2: [],
@@ -5234,6 +5235,7 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     statsMonthlySummary: false,
     statsWeeklySummary: true,
     statsBuyAnalytics: true,
+    statsBuyPurchaseDetails: true,
     statsBuyStoreBreakdown: true,
     statsBuyAdvanced: true,
     taperPlanHeader: false,
@@ -5452,17 +5454,29 @@ const TABLE_COLUMN_DEFAULTS = {
         }
     },
     buyMonthly: {
-        order: ['startMonth', 'endMonth', 'purchased', 'cost', 'costPerUnit', 'runningCostTotal', 'gPerDay', 'supplyDuration'],
-        hidden: [],
+        order: ['month', 'purchased', 'cost', 'costPerUnit', 'purchaseCount', 'runningPurchased', 'runningSpent'],
+        hidden: ['costPerUnit', 'purchaseCount'],
         widths: {
-            startMonth: 110,
-            endMonth: 110,
-            purchased: 110,
+            month: 130,
+            purchased: 120,
+            cost: 100,
+            costPerUnit: 110,
+            purchaseCount: 100,
+            runningPurchased: 150,
+            runningSpent: 130
+        }
+    },
+    buyPurchaseDetails: {
+        order: ['date', 'amount', 'cost', 'costPerUnit', 'store', 'payment', 'runningMonthCost'],
+        hidden: ['store', 'payment'],
+        widths: {
+            date: 120,
+            amount: 110,
             cost: 90,
-            costPerUnit: 100,
-            runningCostTotal: 130,
-            gPerDay: 90,
-            supplyDuration: 120
+            costPerUnit: 110,
+            store: 120,
+            payment: 110,
+            runningMonthCost: 140
         }
     },
     taperByWeek: {
@@ -5603,14 +5617,22 @@ const TABLE_COLUMN_LABELS = {
         supplyDuration: 'Supply Duration'
     },
     buyMonthly: {
-        startMonth: 'Start Month',
-        endMonth: 'End Month',
-        purchased: 'Purchased',
+        month: 'Month',
+        purchased: 'Amount Purchased',
+        cost: 'Total Spent',
+        costPerUnit: 'Avg Cost per Unit',
+        purchaseCount: 'Purchase Count',
+        runningPurchased: 'Running Amount Purchased',
+        runningSpent: 'Running Amount Spent'
+    },
+    buyPurchaseDetails: {
+        date: 'Purchase date',
+        amount: 'Amount',
         cost: 'Cost',
-        costPerUnit: 'Cost/g',
-        runningCostTotal: 'Running Cost Total',
-        gPerDay: 'g/day',
-        supplyDuration: 'Supply Duration'
+        costPerUnit: 'Cost per unit',
+        store: 'Store',
+        payment: 'Payment method',
+        runningMonthCost: 'Running monthly cost'
     },
     taperByWeek: {
         week: 'Week',
@@ -5663,7 +5685,8 @@ const COLUMN_MODAL_TITLES = {
     statsWeekly: 'Customize Weekly Summary Columns',
     statsMonthly: 'Customize Monthly Summary Columns',
     buyWeekly: 'Customize Weekly Buy Summary Columns',
-    buyMonthly: 'Customize Monthly Buy Summary Columns',
+    buyMonthly: 'Customize Month Summary Columns',
+    buyPurchaseDetails: 'Customize Purchase Details Columns',
     taperByWeek: 'Customize Weekly Table Columns',
     statsCalendarYearSummary: 'Customize Year Summary Columns'
 };
@@ -5671,7 +5694,9 @@ const COLUMN_MODAL_TITLES = {
 const TABLE_COLUMNS_REQUIRED = {
     useHistory: ['select', 'actions'],
     purchaseHistory: ['select', 'actions'],
-    taperByWeek: ['week', 'dates', 'planned', 'used', 'difference', 'status']
+    taperByWeek: ['week', 'dates', 'planned', 'used', 'difference', 'status'],
+    buyMonthly: ['month', 'purchased', 'cost'],
+    buyPurchaseDetails: ['date', 'amount', 'cost']
 };
 
 const COLUMN_SETTINGS_STORAGE_KEY = 'recoveryTracker.columnSettings.v1';
@@ -6331,6 +6356,14 @@ function openColumnSettingsModal(tableKey, variantKey = null) {
     if (title) {
         title.textContent = COLUMN_MODAL_TITLES[tableKey] || 'Customize Columns';
     }
+    const runningWrap = document.getElementById('column-settings-buy-month-running-wrap');
+    const runningSelect = document.getElementById('column-settings-buy-month-running-mode');
+    if (runningWrap) {
+        runningWrap.classList.toggle('hidden', tableKey !== 'buyMonthly');
+    }
+    if (runningSelect && tableKey === 'buyMonthly') {
+        runningSelect.value = getBuyMonthRunningMode();
+    }
     renderColumnSettingsList(tableKey);
     modal?.classList.remove('hidden');
 }
@@ -6459,6 +6492,16 @@ function refreshTableAfterColumnChange(tableKey) {
         case 'statsCalendarYearSummary':
             renderStatsCalendarView();
             break;
+        case 'buyMonthly': {
+            const { bounds } = getStatsLogsForSubstance(currentSubstanceId);
+            renderStatsBuyMonthSummary(currentSubstanceId, bounds);
+            break;
+        }
+        case 'buyPurchaseDetails': {
+            const { bounds } = getStatsLogsForSubstance(currentSubstanceId);
+            renderStatsBuyPurchaseDetails(currentSubstanceId, bounds);
+            break;
+        }
         default:
             break;
     }
@@ -6519,6 +6562,15 @@ function applyColumnSettingsFromModal() {
         alert('Keep at least one visible data column.');
         return;
     }
+    if (tableKey === 'buyMonthly') {
+        const runningMode = document.getElementById('column-settings-buy-month-running-mode')?.value
+            || 'within-year';
+        setBuyMonthRunningMode(runningMode);
+        if (runningMode === 'hide') {
+            config.visible.runningPurchased = false;
+            config.visible.runningSpent = false;
+        }
+    }
     saveTableColumnConfig(tableKey, config, variantKey);
     closeColumnSettingsModal();
     refreshTableAfterColumnChange(tableKey);
@@ -6545,6 +6597,12 @@ function setupColumnSettingsModal() {
     });
     document.getElementById('stats-monthly-customize-columns')?.addEventListener('click', () => {
         openColumnSettingsModal('statsMonthly');
+    });
+    document.getElementById('stats-buy-month-customize-columns')?.addEventListener('click', () => {
+        openColumnSettingsModal('buyMonthly');
+    });
+    document.getElementById('stats-buy-purchase-details-customize-columns')?.addEventListener('click', () => {
+        openColumnSettingsModal('buyPurchaseDetails');
     });
     document.getElementById('taper-weekly-customize-columns')?.addEventListener('click', () => {
         openColumnSettingsModal('taperByWeek', getTaperByWeekColumnVariantKey(getTaperSubstanceId(), getSelectedTaperPlan()));
@@ -6952,6 +7010,7 @@ function saveData(data) {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         const savedAt = new Date().toISOString();
         localStorage.setItem(LAST_SAVED_KEY, savedAt);
+        invalidateInsightsDatasetCache();
         updateLastSavedDisplay(savedAt);
         console.log('Saved recovery data');
         return true;
@@ -7151,6 +7210,9 @@ let selectedSubstanceId = resolveDefaultSelectedSubstanceId() || DASHBOARD_ALL;
 let statsDateRangePreset = 'last-7';
 let statsCustomStartDate = '';
 let statsCustomEndDate = '';
+let insightsDatasetCache = null;
+let insightsDatasetCacheKey = null;
+let testReferenceDateStr = null;
 
 const STATS_CALENDAR_STORAGE_KEY = 'recoveryTracker.statsCalendar.v1';
 let statsCalendarViewMode = 'month';
@@ -8135,7 +8197,7 @@ function getTableColumnLabelForSubstance(tableKey, colId, substanceId = currentS
         gPerUseDay: 'Puffs/use day',
         gPerCalDay: 'Puffs/cal day'
     };
-    if (tableKey === 'buyWeekly' || tableKey === 'buyMonthly') {
+    if (tableKey === 'buyWeekly' || tableKey === 'buyMonthly' || tableKey === 'buyPurchaseDetails') {
         return vapeBuyLabels[colId] || labels[colId] || colId;
     }
     if (tableKey === 'statsWeekly' || tableKey === 'statsMonthly') {
@@ -8478,8 +8540,14 @@ function formatBuyBreakFromHours(hours) {
     return formatBreakText(Math.floor(hours * 60));
 }
 
-function getBuyBreakMetrics(substanceId) {
-    const purchases = getPurchasesForSubstance(substanceId, appData, { sortAsc: true });
+function getBuyBreakMetrics(substanceId, bounds = null, data = appData) {
+    const purchases = bounds
+        ? filterPurchasesByStatsBounds(getPurchasesForInsightMetrics(substanceId, data), bounds)
+        : getPurchasesForSubstance(substanceId, data, { sortAsc: true });
+    if (bounds) {
+        return getBuyBreakMetricsFromPurchases(substanceId, purchases, data);
+    }
+
     const breakHoursList = purchases
         .filter(p => p.buyBreakHours != null && !isNaN(p.buyBreakHours))
         .map(p => p.buyBreakHours);
@@ -15111,7 +15179,7 @@ function getPurchasesForBuyMetrics(substanceId, data = appData) {
     if (substanceId) {
         list = list.filter(p => purchaseMatchesSubstance(p, substanceId, data));
     }
-    return list;
+    return list.filter(p => !p.archivedAt);
 }
 
 function getPurchasesForInsightMetrics(substanceId, data = appData) {
@@ -17887,15 +17955,34 @@ function toDateStr(date) {
     return getLocalDateString(date);
 }
 
+function getStatsReferenceDate() {
+    return testReferenceDateStr ? (parseLocalDate(testReferenceDateStr) || new Date()) : new Date();
+}
+
+function setTestReferenceDate(dateStr) {
+    testReferenceDateStr = dateStr || null;
+    invalidateInsightsDatasetCache();
+}
+
+function setStatsDateRangeForTest(preset, customStart = '', customEnd = '') {
+    statsDateRangePreset = preset || 'last-7';
+    if (customStart) statsCustomStartDate = customStart;
+    if (customEnd) statsCustomEndDate = customEnd;
+    invalidateInsightsDatasetCache();
+}
+
 function getStatsDateRange() {
-    const today = new Date();
+    const today = getStatsReferenceDate();
     const todayStr = toDateStr(today);
 
     switch (statsDateRangePreset) {
-        case 'last-14': {
-            const start = new Date(today);
-            start.setDate(start.getDate() - 13);
-            return { startDate: toDateStr(start), endDate: todayStr, preset: 'last-14' };
+        case 'today':
+            return { startDate: todayStr, endDate: todayStr, preset: 'today' };
+        case 'yesterday': {
+            const y = new Date(today);
+            y.setDate(y.getDate() - 1);
+            const yStr = toDateStr(y);
+            return { startDate: yStr, endDate: yStr, preset: 'yesterday' };
         }
         case 'last-30': {
             const start = new Date(today);
@@ -17907,6 +17994,19 @@ function getStatsDateRange() {
             start.setDate(start.getDate() - start.getDay());
             return { startDate: toDateStr(start), endDate: todayStr, preset: 'this-week' };
         }
+        case 'last-week': {
+            const thisWeekStart = new Date(today);
+            thisWeekStart.setDate(thisWeekStart.getDate() - thisWeekStart.getDay());
+            const lastWeekEnd = new Date(thisWeekStart);
+            lastWeekEnd.setDate(lastWeekEnd.getDate() - 1);
+            const lastWeekStart = new Date(lastWeekEnd);
+            lastWeekStart.setDate(lastWeekStart.getDate() - 6);
+            return {
+                startDate: toDateStr(lastWeekStart),
+                endDate: toDateStr(lastWeekEnd),
+                preset: 'last-week'
+            };
+        }
         case 'this-month': {
             const start = new Date(today.getFullYear(), today.getMonth(), 1);
             return { startDate: toDateStr(start), endDate: todayStr, preset: 'this-month' };
@@ -17915,6 +18015,18 @@ function getStatsDateRange() {
             const start = new Date(today.getFullYear(), today.getMonth() - 1, 1);
             const end = new Date(today.getFullYear(), today.getMonth(), 0);
             return { startDate: toDateStr(start), endDate: toDateStr(end), preset: 'last-month' };
+        }
+        case 'this-year': {
+            const start = new Date(today.getFullYear(), 0, 1);
+            return { startDate: toDateStr(start), endDate: todayStr, preset: 'this-year' };
+        }
+        case 'last-year': {
+            const year = today.getFullYear() - 1;
+            return {
+                startDate: `${year}-01-01`,
+                endDate: `${year}-12-31`,
+                preset: 'last-year'
+            };
         }
         case 'custom': {
             const start = statsCustomStartDate || todayStr;
@@ -17941,7 +18053,7 @@ function filterLogsByDateRange(logs, startDate, endDate) {
 }
 
 function resolveStatsRangeBounds(startDate, endDate, logs) {
-    const todayStr = toDateStr(new Date());
+    const todayStr = toDateStr(getStatsReferenceDate());
     let end = endDate || todayStr;
     let start = startDate;
     if (!start) {
@@ -17954,6 +18066,282 @@ function resolveStatsRangeBounds(startDate, endDate, logs) {
         end = swap;
     }
     return { startDate: start, endDate: end };
+}
+
+function invalidateInsightsDatasetCache() {
+    insightsDatasetCache = null;
+    insightsDatasetCacheKey = null;
+}
+
+function getInsightsDataFingerprint(data = appData) {
+    return [
+        (data.logs || []).length,
+        (data.purchases || []).length,
+        data.settings?.buyMonthRunningMode || '',
+        JSON.stringify(data.settings?.inventoryFilters || null)
+    ].join(':');
+}
+
+function resolveInsightsRangeBounds(range, substanceId, data = appData) {
+    const allLogs = getUseLogsForSubstance(substanceId, { personalUseOnly: true, data });
+    const bounds = resolveStatsRangeBounds(range.startDate, range.endDate, allLogs);
+    if (range.startDate != null) return bounds;
+
+    const dates = [];
+    allLogs.forEach(l => { if (l.date) dates.push(l.date); });
+    getPurchasesForInsightMetrics(substanceId, data).forEach(p => {
+        const d = getPurchaseDateStr(p);
+        if (d) dates.push(d);
+    });
+    if (isVapeNicotineSubstanceId(substanceId, data)) {
+        getVapeDistributedUsageMap(substanceId, data).forEach((_, date) => dates.push(date));
+    }
+    dates.sort();
+    const startDate = dates[0] || bounds.endDate;
+    return resolveStatsRangeBounds(startDate, bounds.endDate, allLogs);
+}
+
+function dateInInsightsRange(dateStr, bounds) {
+    if (!bounds || !dateStr) return true;
+    if (bounds.startDate && dateStr < bounds.startDate) return false;
+    if (bounds.endDate && dateStr > bounds.endDate) return false;
+    return true;
+}
+
+function weekRangeIntersectsBounds(weekStart, weekEnd, bounds) {
+    if (!bounds) return true;
+    return weekStart <= bounds.endDate && weekEnd >= bounds.startDate;
+}
+
+function clampWeekRangeToBounds(weekStart, weekEnd, bounds) {
+    if (!bounds) return { weekStart, weekEnd };
+    return {
+        weekStart: weekStart < bounds.startDate ? bounds.startDate : weekStart,
+        weekEnd: weekEnd > bounds.endDate ? bounds.endDate : weekEnd
+    };
+}
+
+function filterEntriesToInsightsBounds(entries, dateGetter, bounds) {
+    if (!bounds) return entries || [];
+    return (entries || []).filter(entry => dateInInsightsRange(dateGetter(entry), bounds));
+}
+
+function getInsightsMonthKeys(substanceId, bounds, data = appData) {
+    if (!bounds) return getTaperMonthKeysFromLogs(substanceId);
+    const keys = new Set();
+    filterLogsByDateRange(
+        getUseLogsForSubstance(substanceId, { personalUseOnly: true, data }),
+        bounds.startDate,
+        bounds.endDate
+    ).forEach(log => {
+        if (log.date) keys.add(log.date.slice(0, 7));
+    });
+    if (isVapeNicotineSubstanceId(substanceId, data)) {
+        getVapeDistributedUsageMap(substanceId, data).forEach((amount, date) => {
+            if (amount > INVENTORY_EPS && dateInInsightsRange(date, bounds)) {
+                keys.add(date.slice(0, 7));
+            }
+        });
+    }
+    filterPurchasesByStatsBounds(getPurchasesForInsightMetrics(substanceId, data), bounds)
+        .forEach(purchase => {
+            const dateStr = getPurchaseDateStr(purchase);
+            if (dateStr) keys.add(dateStr.slice(0, 7));
+        });
+    return [...keys].sort((a, b) => b.localeCompare(a));
+}
+
+function sumPersonalUseAmountInRange(substanceId, startDate, endDate, data = appData) {
+    if (!substanceId || !startDate || !endDate) return 0;
+    if (isVapeNicotineSubstanceId(substanceId, data)) {
+        return normalizeUsageTotal(getStatsUsageInRange(substanceId, startDate, endDate, data));
+    }
+    return normalizeUsageTotal(sumUseAmountForRange(substanceId, startDate, endDate, null, data));
+}
+
+function getSubstanceSupplyDurationStatsFromPurchases(purchases, isVape = false) {
+    const durationMsList = [];
+    (purchases || []).forEach(purchase => {
+        if (isVape && isVapePuffPurchase(purchase)) {
+            const depleted = purchase.isDepleted || getPurchaseRemainingAmount(purchase) <= INVENTORY_EPS;
+            if (!depleted) return;
+            const ms = getVapePurchaseSupplyDurationMs(purchase);
+            if (ms != null) durationMsList.push(ms);
+            return;
+        }
+        const metrics = getPurchaseSupplyMetrics(purchase);
+        if (metrics.logs.length >= 2 && metrics.supplyDurationMs != null) {
+            durationMsList.push(metrics.supplyDurationMs);
+        }
+    });
+
+    const sortedPurchases = [...(purchases || [])].sort((a, b) => getPurchaseDatetimeMs(a) - getPurchaseDatetimeMs(b));
+    const buyGapMs = [];
+    for (let i = 1; i < sortedPurchases.length; i++) {
+        const prevMs = getPurchaseDatetimeMs(sortedPurchases[i - 1]);
+        const curMs = getPurchaseDatetimeMs(sortedPurchases[i]);
+        if (prevMs && curMs) {
+            const gap = curMs - prevMs;
+            if (gap >= 0) buyGapMs.push(gap);
+        }
+    }
+
+    return {
+        longestMs: durationMsList.length ? Math.max(...durationMsList) : null,
+        averageMs: durationMsList.length
+            ? durationMsList.reduce((sum, ms) => sum + ms, 0) / durationMsList.length
+            : null,
+        shortestMs: durationMsList.length ? Math.min(...durationMsList) : null,
+        avgDaysBetweenPurchases: buyGapMs.length
+            ? (buyGapMs.reduce((sum, ms) => sum + ms, 0) / buyGapMs.length) / 86400000
+            : null,
+        qualifyingCount: durationMsList.length
+    };
+}
+
+function getBuyBreakMetricsFromPurchases(substanceId, purchases, data = appData) {
+    const sorted = [...(purchases || [])].sort((a, b) => getPurchaseDatetimeMs(a) - getPurchaseDatetimeMs(b));
+    const breakHoursList = sorted
+        .filter(p => p.buyBreakHours != null && !isNaN(p.buyBreakHours))
+        .map(p => p.buyBreakHours);
+
+    const lastPurchase = sorted.length ? sorted[sorted.length - 1] : null;
+    let timeSinceLastBuy = null;
+    if (lastPurchase) {
+        const lastMs = getPurchaseDatetimeMs(lastPurchase);
+        if (lastMs) {
+            const refMs = testReferenceDateStr
+                ? parseLocalDate(testReferenceDateStr)?.getTime() ?? Date.now()
+                : Date.now();
+            const ms = refMs - lastMs;
+            if (ms >= 0) {
+                const minutes = Math.floor(ms / 60000);
+                timeSinceLastBuy = {
+                    minutes,
+                    hours: minutes / 60,
+                    text: formatBreakText(minutes)
+                };
+            }
+        }
+    }
+
+    const currentBuyBreak = lastPurchase?.buyBreakHours != null
+        ? {
+            hours: lastPurchase.buyBreakHours,
+            text: lastPurchase.buyBreakText || formatBreakText(lastPurchase.buyBreakMinutes)
+        }
+        : null;
+
+    const average = breakHoursList.length
+        ? breakHoursList.reduce((sum, h) => sum + h, 0) / breakHoursList.length
+        : null;
+
+    let estimatedNextBuy = null;
+    if (lastPurchase && average != null) {
+        const lastMs = getPurchaseDatetimeMs(lastPurchase);
+        if (lastMs) {
+            const nextMs = lastMs + average * 60 * 60 * 1000;
+            const nextDate = new Date(nextMs);
+            estimatedNextBuy = {
+                date: nextDate,
+                label: formatDate(getLocalDateString(nextDate))
+            };
+        }
+    }
+
+    const trend = sorted
+        .filter(p => p.buyBreakHours != null)
+        .slice(-10)
+        .map(p => ({
+            date: p.date,
+            hours: p.buyBreakHours,
+            text: p.buyBreakText,
+            label: formatDate(p.date)
+        }));
+
+    return {
+        count: breakHoursList.length,
+        purchases: sorted.length,
+        lastPurchase,
+        current: currentBuyBreak,
+        timeSinceLastBuy,
+        longest: breakHoursList.length ? Math.max(...breakHoursList) : null,
+        average,
+        shortest: breakHoursList.length ? Math.min(...breakHoursList) : null,
+        avg30Days: null,
+        estimatedNextBuy,
+        trend
+    };
+}
+
+function buildInsightsDataset(substanceId, data = appData) {
+    const range = getStatsDateRange();
+    const bounds = resolveInsightsRangeBounds(range, substanceId, data);
+    const cacheKey = [
+        substanceId,
+        bounds.startDate,
+        bounds.endDate,
+        range.preset,
+        getInsightsDataFingerprint(data)
+    ].join('|');
+    if (insightsDatasetCache && insightsDatasetCacheKey === cacheKey) {
+        return insightsDatasetCache;
+    }
+
+    const sub = getSubstance(substanceId, data);
+    const unit = sub?.defaultUnit || 'units';
+    const displayUnit = getStatsDisplayUnit(substanceId, unit);
+    const cur = getCurrencySymbol();
+    const daysInRange = countDaysInRange(bounds.startDate, bounds.endDate);
+
+    const logs = filterLogsByDateRange(
+        getUseLogsForSubstance(substanceId, { personalUseOnly: true, data }),
+        bounds.startDate,
+        bounds.endDate
+    );
+    const purchases = filterPurchasesByStatsBounds(
+        getPurchasesForInsightMetrics(substanceId, data),
+        bounds
+    );
+
+    const useStats = buildUseStatsMetrics(logs, daysInRange, substanceId, bounds);
+    const buyTotals = {
+        purchased: purchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0),
+        cost: purchases.reduce((s, p) => s + getPurchaseSpendAmount(p), 0),
+        count: purchases.length,
+        avgCostPerUnit: null
+    };
+    if (buyTotals.purchased > 0) {
+        buyTotals.avgCostPerUnit = buyTotals.cost / buyTotals.purchased;
+    }
+
+    const isVape = isVapeNicotineSubstanceId(substanceId, data);
+    const dataset = {
+        substanceId,
+        preset: range.preset,
+        bounds,
+        daysInRange,
+        logs,
+        purchases,
+        useStats,
+        unit,
+        displayUnit,
+        cur,
+        buyTotals,
+        weeklySummaries: getWeeklyTrackingSummaries(substanceId, bounds, data),
+        monthlySummaries: getMonthlyTrackingSummaries(substanceId, bounds, data),
+        buyMonthRows: getBuyMonthSummaryRows(substanceId, bounds, data),
+        buyPurchaseDetails: getBuyPurchaseDetailRows(substanceId, bounds, data),
+        buyWeeklySummaries: getBuyWeeklySummaries(substanceId, bounds, data),
+        storeSummaries: getStoreBuySummaries(substanceId, bounds, data),
+        buyBreakMetrics: getBuyBreakMetricsFromPurchases(substanceId, purchases, data),
+        supplyDurationDays: avgPurchaseSupplyDurationDays(purchases),
+        supplyStats: getSubstanceSupplyDurationStatsFromPurchases(purchases, isVape)
+    };
+
+    insightsDatasetCache = dataset;
+    insightsDatasetCacheKey = cacheKey;
+    return dataset;
 }
 
 function countDaysInRange(startDate, endDate) {
@@ -18328,12 +18716,16 @@ function renderUseStatsCards(metrics, unit) {
 
 function getStatsRangeLabel(preset, startDate, endDate) {
     const labels = {
+        today: 'Today',
+        yesterday: 'Yesterday',
         'last-7': 'Last 7 Days',
-        'last-14': 'Last 14 Days',
         'last-30': 'Last 30 Days',
         'this-week': 'This Week',
+        'last-week': 'Last Week',
         'this-month': 'This Month',
         'last-month': 'Last Month',
+        'this-year': 'This Year',
+        'last-year': 'Last Year',
         'all-time': 'All Time',
         custom: 'Custom Range'
     };
@@ -18362,6 +18754,7 @@ function onStatsDateRangeChange() {
     const select = document.getElementById('stats-date-range');
     statsDateRangePreset = select?.value || 'last-7';
     document.getElementById('stats-custom-range-wrap')?.classList.toggle('hidden', statsDateRangePreset !== 'custom');
+    invalidateInsightsDatasetCache();
     if (statsDateRangePreset !== 'custom') updateStats();
 }
 
@@ -18376,17 +18769,16 @@ function applyStatsCustomRange() {
     const select = document.getElementById('stats-date-range');
     if (select) select.value = 'custom';
     document.getElementById('stats-custom-range-wrap')?.classList.remove('hidden');
+    invalidateInsightsDatasetCache();
     updateStats();
 }
 
 function getStatsLogsForSubstance(substanceId) {
-    const range = getStatsDateRange();
-    const allLogs = getUseEntries().filter(l => logMatchesSubstance(l, substanceId) && isPersonalUseLog(l));
-    const bounds = resolveStatsRangeBounds(range.startDate, range.endDate, allLogs);
+    const dataset = buildInsightsDataset(substanceId);
     return {
-        logs: filterLogsByDateRange(allLogs, bounds.startDate, bounds.endDate),
-        bounds,
-        preset: range.preset
+        logs: dataset.logs,
+        bounds: dataset.bounds,
+        preset: dataset.preset
     };
 }
 
@@ -18550,14 +18942,19 @@ function fmtSheetRate(value, unit, suffix) {
     return `${formatAmount(value)} ${unit}${suffix || ''}`;
 }
 
-function enrichMonthlySummaryWithBuyData(summary, substanceId) {
-    const purchases = (appData.purchases || []).filter(p =>
-        getPurchaseSubstanceId(p) === substanceId
-        && p.date >= summary.monthStart
-        && p.date <= summary.monthEnd
-    );
+function enrichMonthlySummaryWithBuyData(summary, substanceId, bounds = null) {
+    const effectiveStart = bounds?.startDate && bounds.startDate > summary.monthStart
+        ? bounds.startDate
+        : summary.monthStart;
+    const effectiveEnd = bounds?.endDate && bounds.endDate < summary.monthEnd
+        ? bounds.endDate
+        : summary.monthEnd;
+    const purchases = getPurchasesForInsightMetrics(substanceId).filter(p => {
+        const d = getPurchaseDateStr(p);
+        return d >= effectiveStart && d <= effectiveEnd;
+    });
     const purchasedAmount = purchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
-    const cost = purchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+    const cost = purchases.reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
     return { ...summary, purchasedAmount, cost };
 }
 
@@ -18688,29 +19085,57 @@ function buildMonthSplitWeeklyRows(entries, amountGetter, dateGetter, limit = nu
     });
 }
 
-function getWeeklyTrackingSummaries(substanceId, limit = 12, data = appData) {
+function getWeeklyTrackingSummaries(substanceId, boundsOrLimit = null, data = appData) {
+    let bounds = null;
+    let limit = null;
+    if (typeof boundsOrLimit === 'number') {
+        limit = boundsOrLimit;
+    } else if (boundsOrLimit && typeof boundsOrLimit === 'object') {
+        bounds = boundsOrLimit;
+    }
+
     const logs = getUseLogsForSubstance(substanceId, { sortAsc: true, personalUseOnly: true, data });
-    const isVape = isVapeNicotineSubstanceId(substanceId);
+    const isVape = isVapeNicotineSubstanceId(substanceId, data);
     let baseRows = [];
     if (isVape) {
         const distributedEntries = [];
-        getVapeDistributedUsageMap(substanceId).forEach((amount, date) => {
+        getVapeDistributedUsageMap(substanceId, data).forEach((amount, date) => {
             if (amount > INVENTORY_EPS) distributedEntries.push({ date, amount });
         });
-        const rangeSource = distributedEntries.length ? distributedEntries : logs;
+        const rangeSource = filterEntriesToInsightsBounds(
+            distributedEntries.length ? distributedEntries : logs,
+            e => e.date,
+            bounds
+        );
         if (!rangeSource.length) return [];
         baseRows = buildMonthSplitWeeklyRows(rangeSource, e => e.amount || 0, e => e.date, limit);
     } else {
-        if (!logs.length) return [];
-        const segmentEntries = getUsageSegments(logs, { substanceId })
-            .filter(seg => seg.amount > INVENTORY_EPS)
-            .map(seg => ({ date: seg.date, amount: seg.amount }));
+        const segmentEntries = filterEntriesToInsightsBounds(
+            getUsageSegments(logs, { substanceId })
+                .filter(seg => seg.amount > INVENTORY_EPS)
+                .map(seg => ({ date: seg.date, amount: seg.amount })),
+            e => e.date,
+            bounds
+        );
+        if (!segmentEntries.length) return [];
         baseRows = buildMonthSplitWeeklyRows(segmentEntries, e => e.amount, e => e.date, limit);
     }
-    return baseRows.slice().reverse().map(row => ({
-        ...calculateWeeklyTrackingSummary(substanceId, row.weekStart, row.weekEnd),
-        runningTotal: sumPersonalUseAmountThroughDate(substanceId, row.weekEnd, data)
-    }));
+
+    if (bounds) {
+        baseRows = baseRows.filter(row => weekRangeIntersectsBounds(row.weekStart, row.weekEnd, bounds));
+    }
+
+    return baseRows.slice().reverse().map(row => {
+        const { weekStart, weekEnd } = bounds
+            ? clampWeekRangeToBounds(row.weekStart, row.weekEnd, bounds)
+            : row;
+        return {
+            ...calculateWeeklyTrackingSummary(substanceId, weekStart, weekEnd),
+            runningTotal: bounds
+                ? sumPersonalUseAmountInRange(substanceId, bounds.startDate, weekEnd, data)
+                : sumPersonalUseAmountThroughDate(substanceId, row.weekEnd, data)
+        };
+    });
 }
 
 function getPurchaseSupplyDurationFromBuyMs(purchase) {
@@ -18766,25 +19191,37 @@ function formatBuyInsightsWeekLabel(weekStart, weekEnd) {
 function formatBuyInsightsMonthLabel(monthStart) {
     const d = parseLocalDate(monthStart);
     if (!d) return monthStart || '—';
-    return d.toLocaleDateString('en-US', { month: 'short', year: 'numeric' });
+    return d.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
 }
 
-function getBuyWeeklySummaries(substanceId, limit = 8) {
-    const purchases = getPurchasesForInsightMetrics(substanceId);
+function getBuyWeeklySummaries(substanceId, bounds = null, limit = 8) {
+    const purchases = filterPurchasesByStatsBounds(
+        getPurchasesForInsightMetrics(substanceId),
+        bounds
+    );
     if (!purchases.length) return [];
-    const baseRows = buildMonthSplitWeeklyRows(
+    let baseRows = buildMonthSplitWeeklyRows(
         purchases,
         p => getPurchaseQuantity(p),
-        p => p.date,
+        p => getPurchaseDateStr(p),
         limit
     );
+    if (bounds) {
+        baseRows = baseRows.filter(row => weekRangeIntersectsBounds(row.weekStart, row.weekEnd, bounds));
+    }
     const sub = getSubstance(substanceId);
     const unit = sub?.defaultUnit || 'units';
     const cur = getCurrencySymbol();
     return baseRows.slice().reverse().map(row => {
-        const { weekStart, weekEnd, amount: purchased } = row;
-        const weekPurchases = purchases.filter(p => p.date >= weekStart && p.date <= weekEnd);
-        const cost = weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+        const { weekStart, weekEnd } = bounds
+            ? clampWeekRangeToBounds(row.weekStart, row.weekEnd, bounds)
+            : row;
+        const weekPurchases = purchases.filter(p => {
+            const d = getPurchaseDateStr(p);
+            return d >= weekStart && d <= weekEnd;
+        });
+        const purchased = weekPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
+        const cost = weekPurchases.reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
         const costPerUnit = purchased > 0 ? cost / purchased : null;
         return {
             weekStart,
@@ -18801,64 +19238,188 @@ function getBuyWeeklySummaries(substanceId, limit = 8) {
     });
 }
 
-function getBuyMonthSummaryCutoffDate(limitMonths = 12) {
-    const today = getLocalDateString();
-    const [year, month] = today.split('-').map(Number);
-    let targetMonth = month - limitMonths;
-    let targetYear = year;
-    while (targetMonth <= 0) {
-        targetMonth += 12;
-        targetYear -= 1;
-    }
-    return `${targetYear}-${String(targetMonth).padStart(2, '0')}-01`;
+function getBuyMonthRunningMode(data = appData) {
+    const mode = data.settings?.buyMonthRunningMode;
+    return mode === 'earliest' || mode === 'hide' ? mode : 'within-year';
 }
 
-function getBuyMonthSummaryRows(substanceId, limitMonths = 12, data = appData) {
-    const purchases = getPurchasesForInsightMetrics(substanceId, data);
-    if (!purchases.length) return [];
+function setBuyMonthRunningMode(mode) {
+    ensureAppDataSubstancesReady(appData);
+    if (!appData.settings) appData.settings = {};
+    appData.settings.buyMonthRunningMode = mode === 'earliest' || mode === 'hide'
+        ? mode
+        : 'within-year';
+    saveData(appData);
+}
+
+function filterPurchasesByStatsBounds(purchases, bounds) {
+    if (!bounds) return purchases;
+    const startDate = bounds.startDate;
+    const endDate = bounds.endDate;
+    return purchases.filter(p => {
+        const dateStr = getPurchaseDateStr(p);
+        if (!dateStr) return false;
+        if (startDate && dateStr < startDate) return false;
+        if (endDate && dateStr > endDate) return false;
+        return true;
+    });
+}
+
+function getCalendarMonthKeysInRange(startDate, endDate) {
+    if (!startDate || !endDate || startDate > endDate) return [];
+    const keys = [];
+    let cursor = getMonthStartDateStr(startDate);
+    const endMonthStart = getMonthStartDateStr(endDate);
+    while (cursor <= endMonthStart) {
+        keys.push(cursor.slice(0, 7));
+        const next = new Date(parseLocalDate(cursor));
+        next.setMonth(next.getMonth() + 1);
+        cursor = getLocalDateString(next);
+        cursor = getMonthStartDateStr(cursor);
+    }
+    return keys;
+}
+
+function getBuyInsightsMonthKeys(purchases, bounds) {
+    const endDate = bounds?.endDate || getLocalDateString();
+    let startDate = bounds?.startDate;
+    if (!startDate) {
+        const dated = purchases.map(p => getPurchaseDateStr(p)).filter(Boolean).sort();
+        startDate = dated.length ? getMonthStartDateStr(dated[0]) : getMonthStartDateStr(endDate);
+    } else {
+        startDate = getMonthStartDateStr(startDate);
+    }
+    return getCalendarMonthKeysInRange(startDate, endDate);
+}
+
+function getEffectiveMonthPurchaseRange(monthKey, bounds) {
+    const monthStart = `${monthKey}-01`;
+    const monthEnd = getMonthEndDateStr(monthStart);
+    const startDate = bounds?.startDate && bounds.startDate > monthStart ? bounds.startDate : monthStart;
+    const endDate = bounds?.endDate && bounds.endDate < monthEnd ? bounds.endDate : monthEnd;
+    return { monthStart, monthEnd, startDate, endDate };
+}
+
+function aggregateBuyMonthPurchaseMetrics(purchases, monthKey, bounds) {
+    const { monthStart, monthEnd, startDate, endDate } = getEffectiveMonthPurchaseRange(monthKey, bounds);
+    const monthPurchases = purchases.filter(p => {
+        const dateStr = getPurchaseDateStr(p);
+        return dateStr >= startDate && dateStr <= endDate;
+    });
+    const purchased = monthPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
+    const cost = monthPurchases.reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
+    return {
+        monthKey,
+        monthStart,
+        monthEnd,
+        monthLabel: formatBuyInsightsMonthLabel(monthStart),
+        purchased,
+        cost,
+        costPerUnit: purchased > 0 ? cost / purchased : null,
+        purchaseCount: monthPurchases.length,
+        monthPurchases
+    };
+}
+
+function applyBuyMonthRunningTotals(rows, mode = getBuyMonthRunningMode()) {
+    if (mode === 'hide') {
+        rows.forEach(row => {
+            row.runningPurchased = null;
+            row.runningSpent = null;
+        });
+        return rows;
+    }
+    let runningPurchased = 0;
+    let runningSpent = 0;
+    let currentYear = null;
+    const chronological = [...rows].sort((a, b) => a.monthKey.localeCompare(b.monthKey));
+    chronological.forEach(row => {
+        const year = row.monthKey.slice(0, 4);
+        if (mode === 'within-year' && currentYear != null && year !== currentYear) {
+            runningPurchased = 0;
+            runningSpent = 0;
+        }
+        currentYear = year;
+        runningPurchased += row.purchased;
+        runningSpent += row.cost;
+        row.runningPurchased = runningPurchased;
+        row.runningSpent = runningSpent;
+    });
+    return rows;
+}
+
+function getBuyMonthSummaryRows(substanceId, bounds = null, data = appData) {
+    const purchases = filterPurchasesByStatsBounds(
+        getPurchasesForInsightMetrics(substanceId, data),
+        bounds
+    );
+    const monthKeys = getBuyInsightsMonthKeys(purchases, bounds);
+    if (!monthKeys.length) return [];
 
     const sub = getSubstance(substanceId, data);
     const unit = sub?.defaultUnit || 'units';
     const cur = getCurrencySymbol();
-    const cutoffDate = getBuyMonthSummaryCutoffDate(limitMonths);
+    const runningMode = getBuyMonthRunningMode(data);
 
-    const dateSet = new Set();
-    purchases.forEach(purchase => {
-        const dateStr = getPurchaseDateStr(purchase);
-        if (dateStr && dateStr >= cutoffDate) dateSet.add(dateStr);
-    });
-
-    const dates = [...dateSet].sort();
-    let monthRunningCost = 0;
-    let currentMonthKey = null;
-
-    return dates.map(dateStr => {
-        const monthKey = dateStr.slice(0, 7);
-        if (monthKey !== currentMonthKey) {
-            currentMonthKey = monthKey;
-            monthRunningCost = 0;
-        }
-        const dayPurchases = purchases.filter(p => getPurchaseDateStr(p) === dateStr);
-        const purchased = dayPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
-        const cost = dayPurchases.reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
-        monthRunningCost += cost;
+    const rows = monthKeys.map(monthKey => {
+        const metrics = aggregateBuyMonthPurchaseMetrics(purchases, monthKey, bounds);
         return {
-            monthLabel: formatBuyInsightsMonthLabel(dateStr),
-            rowLabel: formatDate(dateStr),
-            dateStr,
-            purchased,
-            cost,
-            costPerUnit: purchased > 0 ? cost / purchased : null,
-            runningCostTotal: monthRunningCost,
-            purchaseCount: dayPurchases.length,
+            ...metrics,
+            rowLabel: metrics.monthLabel,
             unit,
             cur
         };
-    }).slice().reverse();
+    }).filter(row => row.purchased > 0 || row.cost > 0 || row.purchaseCount > 0);
+
+    applyBuyMonthRunningTotals(rows, runningMode);
+    return rows.slice().reverse();
 }
 
-function getBuyMonthlySummaries(substanceId, limit = 12) {
-    return getBuyMonthSummaryRows(substanceId, limit);
+function getBuyPurchaseDetailRows(substanceId, bounds = null, data = appData) {
+    const purchases = filterPurchasesByStatsBounds(
+        getPurchasesForInsightMetrics(substanceId, data),
+        bounds
+    ).slice().sort((a, b) => getPurchaseDatetimeMs(a) - getPurchaseDatetimeMs(b));
+
+    const sub = getSubstance(substanceId, data);
+    const unit = sub?.defaultUnit || 'units';
+    const cur = getCurrencySymbol();
+    const monthRunning = new Map();
+    let currentMonthKey = null;
+    let monthCostRunning = 0;
+
+    const rows = purchases.map(purchase => {
+        const dateStr = getPurchaseDateStr(purchase);
+        const monthKey = dateStr.slice(0, 7);
+        if (monthKey !== currentMonthKey) {
+            currentMonthKey = monthKey;
+            monthCostRunning = 0;
+        }
+        const amount = parseFloat(getPurchaseQuantity(purchase)) || 0;
+        const cost = getPurchaseSpendAmount(purchase);
+        monthCostRunning += cost;
+        const totalNum = parseFloat(getPurchaseTotalCost(purchase)) || cost;
+        return {
+            dateStr,
+            dateLabel: formatDate(dateStr),
+            amount,
+            cost,
+            costPerUnit: amount > 0 ? totalNum / amount : null,
+            store: normalizeStoreName(purchase.store || purchase.location || '') || '—',
+            payment: purchase.paymentMethod || '—',
+            runningMonthCost: monthCostRunning,
+            unit,
+            cur,
+            purchase
+        };
+    });
+
+    return rows.slice().reverse();
+}
+
+function getBuyMonthlySummaries(substanceId, bounds = null, limit = 12) {
+    const rows = getBuyMonthSummaryRows(substanceId, bounds);
+    return limit ? rows.slice(0, limit) : rows;
 }
 
 function renderStatsSummaryDashboard(substanceId, useStats, bounds, unit, cur) {
@@ -18914,7 +19475,7 @@ function renderStatsSummaryDashboard(substanceId, useStats, bounds, unit, cur) {
     ].join('');
 }
 
-function renderStatsMonthlySummary(substanceId) {
+function renderStatsMonthlySummary(substanceId, insights = null) {
     const container = document.getElementById('stats-monthly-summary');
     if (!container) return;
     const sub = getSubstance(substanceId);
@@ -18922,11 +19483,12 @@ function renderStatsMonthlySummary(substanceId) {
         container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
         return;
     }
+    const dataset = insights || buildInsightsDataset(substanceId);
     const unit = sub.defaultUnit || 'units';
     const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
     const cur = getCurrencySymbol();
-    const summaries = getMonthlyTrackingSummaries(substanceId).map(s =>
-        enrichMonthlySummaryWithBuyData(s, substanceId)
+    const summaries = dataset.monthlySummaries.map(s =>
+        enrichMonthlySummaryWithBuyData(s, substanceId, dataset.bounds)
     );
     if (!summaries.length) {
         container.innerHTML = '<p class="empty-hint">No monthly data yet.</p>';
@@ -18966,7 +19528,7 @@ function renderStatsMonthlySummary(substanceId) {
     });
 }
 
-function renderStatsWeeklySummary(substanceId) {
+function renderStatsWeeklySummary(substanceId, insights = null) {
     const container = document.getElementById('stats-weekly-summary');
     if (!container) return;
     const sub = getSubstance(substanceId);
@@ -18974,9 +19536,10 @@ function renderStatsWeeklySummary(substanceId) {
         container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
         return;
     }
+    const dataset = insights || buildInsightsDataset(substanceId);
     const unit = sub.defaultUnit || 'units';
     const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
-    const summaries = getWeeklyTrackingSummaries(substanceId);
+    const summaries = dataset.weeklySummaries;
     if (!summaries.length) {
         container.innerHTML = '<p class="empty-hint">No weekly data yet.</p>';
         return;
@@ -19005,18 +19568,24 @@ function renderStatsWeeklySummary(substanceId) {
     });
 }
 
-function getStoreBuySummaries(substanceId, bounds = null) {
+function getStoreBuySummaries(substanceId, bounds = null, data = appData) {
     const inRange = bounds
-        ? p => p.date >= bounds.startDate && p.date <= bounds.endDate
+        ? p => {
+            const d = getPurchaseDateStr(p);
+            if (!d) return false;
+            if (bounds.startDate && d < bounds.startDate) return false;
+            if (bounds.endDate && d > bounds.endDate) return false;
+            return true;
+        }
         : () => true;
     const byStore = new Map();
-    (appData.purchases || []).forEach(p => {
-        if (getPurchaseSubstanceId(p) !== substanceId || !inRange(p)) return;
+    getPurchasesForInsightMetrics(substanceId, data).forEach(p => {
+        if (!inRange(p)) return;
         const store = normalizeStoreName(p.store || p.location || '') || 'Unknown';
         const key = getStoreDedupeKey(store);
         const row = byStore.get(key) || { store, purchased: 0, cost: 0, count: 0 };
         row.purchased += parseFloat(getPurchaseQuantity(p)) || 0;
-        row.cost += parseFloat(getPurchaseTotalCost(p)) || 0;
+        row.cost += getPurchaseSpendAmount(p);
         row.count += 1;
         byStore.set(key, row);
     });
@@ -19266,43 +19835,33 @@ function formatNicotineCalendarDayLines(logsForDay, data = appData) {
         });
 }
 
-function renderBuyInsights(substanceId, bounds) {
-    renderStatsBuyAnalyticsCards(substanceId);
-    renderStatsBuyWeekSummary(substanceId);
-    renderStatsBuyMonthSummary(substanceId);
-    renderStatsBuyStoreBreakdown(substanceId);
-    renderStatsBuyAdvancedMetrics(substanceId);
+function renderBuyInsights(substanceId, insights) {
+    const dataset = insights || buildInsightsDataset(substanceId);
+    renderStatsBuyAnalyticsCards(dataset);
+    renderStatsBuyWeekSummary(dataset);
+    renderStatsBuyMonthSummary(dataset);
+    renderStatsBuyPurchaseDetails(dataset);
+    renderStatsBuyStoreBreakdown(dataset);
+    renderStatsBuyAdvancedMetrics(dataset);
 }
 
-function renderStatsBuyAnalyticsCards(substanceId) {
+function renderStatsBuyAnalyticsCards(insights) {
     const container = document.getElementById('stats-buy-analytics-cards');
     if (!container) return;
+    const substanceId = insights.substanceId;
     const sub = getSubstance(substanceId);
     if (!sub) {
         container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
         return;
     }
-    const unit = sub?.defaultUnit || 'units';
-    const cur = getCurrencySymbol();
-    const allPurchases = (appData.purchases || []).filter(p => getPurchaseSubstanceId(p) === substanceId);
-    const totalCost = allPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
-    const totalPurchased = allPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
-    const today = getLocalDateString();
-    const monthStart = getMonthStartDateStr(today);
-    const monthPurchases = allPurchases.filter(p => p.date >= monthStart);
-    const monthCost = monthPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
-    const monthPurchased = monthPurchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
-    const avgCostPerUnit = totalPurchased > 0 ? totalCost / totalPurchased : null;
-    const supplyDurationDays = getAverageSupplyDurationDays(substanceId);
-    const buyMetrics = getBuyBreakMetrics(substanceId);
-    const breakBetweenBuying = buyMetrics.average != null
-        ? formatBuyBreakFromHours(buyMetrics.average)
+    const { bounds, buyTotals, storeSummaries, buyBreakMetrics, supplyDurationDays, cur } = insights;
+    const displayUnit = getSubstanceBuyDisplayUnit(substanceId);
+    const breakBetweenBuying = buyBreakMetrics.average != null
+        ? formatBuyBreakFromHours(buyBreakMetrics.average)
         : '—';
     const remaining = getTotalRemainingSupply(substanceId);
     const supplyBadge = remaining != null ? getSupplyRemainingBadge(0.25) : { level: 'none', label: '—' };
-    const storeSummaries = getStoreBuySummaries(substanceId);
     const topStore = storeSummaries[0];
-    const displayUnit = getSubstanceBuyDisplayUnit(substanceId);
     const remainingLabel = isVapeNicotineSubstanceId(substanceId)
         ? (remaining != null ? `${formatStatsPuffs(remaining)} puffs` : '—')
         : (isLsdSubstanceId(substanceId)
@@ -19319,28 +19878,29 @@ function renderStatsBuyAnalyticsCards(substanceId) {
                         ? `${formatAmount(sum.pills)} pills · ${formatAmount(sum.mg)} mg`
                         : '—';
                 })()
-                : (remaining != null ? fmtSheetAmount(remaining, unit) : '—')));
+                : (remaining != null ? fmtSheetAmount(remaining, insights.unit) : '—')));
 
     container.innerHTML = [
-        renderSheetMetricCard('Total Cost', fmtSheetMoney(totalCost, cur), null),
-        renderSheetMetricCard('Monthly Cost', fmtSheetMoney(monthCost, cur), null),
-        renderSheetMetricCard('Monthly Purchased', monthPurchased > 0 ? fmtSheetAmount(monthPurchased, displayUnit) : '—', null),
-        renderSheetMetricCard('Avg Cost/g', avgCostPerUnit != null ? fmtAvgCostPerGram(totalCost, totalPurchased, displayUnit, cur) : '—', null),
+        renderSheetMetricCard('Total Cost', fmtSheetMoney(buyTotals.cost, cur), null),
+        renderSheetMetricCard('Total Purchased', buyTotals.purchased > 0 ? fmtSheetAmount(buyTotals.purchased, displayUnit) : '—', null),
+        renderSheetMetricCard('Avg Cost/g', buyTotals.avgCostPerUnit != null ? fmtAvgCostPerGram(buyTotals.cost, buyTotals.purchased, displayUnit, cur) : '—', null),
         renderSheetMetricCard('Supply Duration', formatSupplyDurationDays(supplyDurationDays), null),
         renderSheetMetricCard('Break Between Buying', breakBetweenBuying, null),
         renderSheetMetricCard('Remaining Supply', remainingLabel, supplyBadge),
-        renderSheetMetricCard('Top Store', topStore ? `${topStore.store} (${fmtSheetMoney(topStore.cost, cur)})` : '—', null)
+        renderSheetMetricCard('Top Store', topStore ? `${topStore.store} (${fmtSheetMoney(topStore.cost, cur)})` : '—', null),
+        renderSheetMetricCard('Range', `${formatDate(bounds.startDate)} – ${formatDate(bounds.endDate)}`, null)
     ].join('');
 }
 
-function renderStatsBuyWeekSummary(substanceId) {
+function renderStatsBuyWeekSummary(insights) {
     const container = document.getElementById('stats-buy-week-summary');
     if (!container) return;
+    const substanceId = insights.substanceId;
     if (!substanceId) {
         container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
         return;
     }
-    const summaries = getBuyWeeklySummaries(substanceId);
+    const summaries = insights.buyWeeklySummaries;
     if (!summaries.length) {
         container.innerHTML = '<p class="empty-hint">No purchases yet.</p>';
         return;
@@ -19360,30 +19920,77 @@ function renderStatsBuyWeekSummary(substanceId) {
     );
 }
 
-function renderStatsBuyMonthSummary(substanceId) {
+function renderStatsBuyMonthSummary(insights) {
     const container = document.getElementById('stats-buy-month-summary');
     if (!container) return;
+    const substanceId = insights.substanceId;
     if (!substanceId) {
         container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
         return;
     }
-    const summaries = getBuyMonthSummaryRows(substanceId);
+    const summaries = insights.buyMonthRows;
     if (!summaries.length) {
-        container.innerHTML = '<p class="empty-hint">No purchases yet.</p>';
+        container.innerHTML = '<p class="empty-hint">No purchases in this range.</p>';
         return;
     }
-    const sub = getSubstance(substanceId);
     const displayUnit = getSubstanceBuyDisplayUnit(substanceId);
-    container.innerHTML = renderSheetTable(
-        ['Month', 'Purchased', 'Cost', 'Avg Cost/unit', 'Running Cost Total'],
-        summaries.map(s => [
-            s.rowLabel,
-            s.purchased > 0 ? fmtSheetAmount(s.purchased, displayUnit) : '—',
-            fmtSheetMoney(s.cost, s.cur),
-            s.costPerUnit != null ? fmtAvgCostPerGram(s.cost, s.purchased, displayUnit, s.cur) : '—',
-            fmtSheetMoney(s.runningCostTotal, s.cur)
-        ])
-    );
+    const runningMode = getBuyMonthRunningMode();
+    const showRunning = runningMode !== 'hide';
+    container.innerHTML = renderConfigurableSheetTable('buyMonthly', summaries, (colId, s) => {
+        switch (colId) {
+            case 'month': return s.monthLabel || s.rowLabel;
+            case 'purchased': return s.purchased > 0 ? fmtSheetAmount(s.purchased, displayUnit) : '—';
+            case 'cost': return fmtSheetMoney(s.cost, s.cur);
+            case 'costPerUnit':
+                return s.costPerUnit != null
+                    ? fmtAvgCostPerGram(s.cost, s.purchased, displayUnit, s.cur)
+                    : '—';
+            case 'purchaseCount': return s.purchaseCount > 0 ? String(s.purchaseCount) : '—';
+            case 'runningPurchased':
+                return showRunning && s.runningPurchased != null
+                    ? fmtSheetAmount(s.runningPurchased, displayUnit)
+                    : '—';
+            case 'runningSpent':
+                return showRunning && s.runningSpent != null
+                    ? fmtSheetMoney(s.runningSpent, s.cur)
+                    : '—';
+            default: return '—';
+        }
+    }, substanceId);
+}
+
+function renderStatsBuyPurchaseDetails(insights) {
+    const section = document.getElementById('stats-buy-purchase-details-section');
+    const container = document.getElementById('stats-buy-purchase-details');
+    if (!section || !container) return;
+    const substanceId = insights.substanceId;
+    if (!substanceId) {
+        section.classList.add('hidden');
+        container.innerHTML = '';
+        return;
+    }
+    const rows = insights.buyPurchaseDetails;
+    section.classList.toggle('hidden', !rows.length);
+    if (!rows.length) {
+        container.innerHTML = '';
+        return;
+    }
+    const displayUnit = getSubstanceBuyDisplayUnit(substanceId);
+    container.innerHTML = renderConfigurableSheetTable('buyPurchaseDetails', rows, (colId, row) => {
+        switch (colId) {
+            case 'date': return row.dateLabel;
+            case 'amount': return row.amount > 0 ? fmtSheetAmount(row.amount, displayUnit) : '—';
+            case 'cost': return fmtSheetMoney(row.cost, row.cur);
+            case 'costPerUnit':
+                return row.costPerUnit != null
+                    ? fmtAvgCostPerGram(row.cost, row.amount, displayUnit, row.cur)
+                    : '—';
+            case 'store': return row.store || '—';
+            case 'payment': return row.payment || '—';
+            case 'runningMonthCost': return fmtSheetMoney(row.runningMonthCost, row.cur);
+            default: return '—';
+        }
+    }, substanceId);
 }
 
 function exportStatsBuyMonthSummaryCsv() {
@@ -19397,24 +20004,36 @@ function exportStatsBuyMonthSummaryCsv() {
         alert('Select a substance to export.');
         return;
     }
-    const rows = getBuyMonthSummaryRows(substanceId);
+    const insights = buildInsightsDataset(substanceId);
+    const rows = insights.buyMonthRows;
     if (!rows.length) {
         alert('No purchase data to export.');
         return;
     }
     const displayUnit = getSubstanceBuyDisplayUnit(substanceId);
     const substanceName = getSubstanceDisplayName(sub);
-    const headers = ['Month', 'Purchased', 'Unit', 'Cost', 'Avg Cost/unit', 'Running Cost Total'];
+    const runningMode = getBuyMonthRunningMode();
+    const headers = ['Month', 'Amount Purchased', 'Unit', 'Total Spent', 'Avg Cost per Unit', 'Purchase Count'];
+    if (runningMode !== 'hide') {
+        headers.push('Running Amount Purchased', 'Running Amount Spent');
+    }
     const csvRows = [headers.map(csvEscape).join(',')];
     rows.slice().reverse().forEach(row => {
-        csvRows.push([
-            row.rowLabel,
+        const line = [
+            row.monthLabel || row.rowLabel,
             row.purchased > 0 ? row.purchased : '',
             displayUnit,
             Number.isFinite(row.cost) ? row.cost.toFixed(2) : '0.00',
             row.costPerUnit != null && Number.isFinite(row.costPerUnit) ? row.costPerUnit.toFixed(4) : '',
-            Number.isFinite(row.runningCostTotal) ? row.runningCostTotal.toFixed(2) : '0.00'
-        ].map(csvEscape).join(','));
+            row.purchaseCount > 0 ? row.purchaseCount : ''
+        ];
+        if (runningMode !== 'hide') {
+            line.push(
+                row.runningPurchased != null ? row.runningPurchased : '',
+                row.runningSpent != null ? row.runningSpent.toFixed(2) : ''
+            );
+        }
+        csvRows.push(line.map(csvEscape).join(','));
     });
     const safeName = substanceName.replace(/[^\w.-]+/g, '_');
     downloadBlob(
@@ -19423,9 +20042,10 @@ function exportStatsBuyMonthSummaryCsv() {
     );
 }
 
-function renderStatsBuyStoreBreakdown(substanceId) {
+function renderStatsBuyStoreBreakdown(insights) {
     const container = document.getElementById('stats-buy-store-summary');
     if (!container) return;
+    const substanceId = insights.substanceId;
     const sub = getSubstance(substanceId);
     if (!sub) {
         container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
@@ -19433,7 +20053,7 @@ function renderStatsBuyStoreBreakdown(substanceId) {
     }
     const unit = sub.defaultUnit || 'units';
     const cur = getCurrencySymbol();
-    const storeSummaries = getStoreBuySummaries(substanceId);
+    const storeSummaries = insights.storeSummaries;
     if (!storeSummaries.length) {
         container.innerHTML = '<p class="empty-hint">No store data yet.</p>';
         return;
@@ -19449,29 +20069,31 @@ function renderStatsBuyStoreBreakdown(substanceId) {
     );
 }
 
-function renderStatsBuyAdvancedMetrics(substanceId) {
+function renderStatsBuyAdvancedMetrics(insights) {
     const container = document.getElementById('stats-buy-advanced-metrics');
     if (!container) return;
+    const substanceId = insights.substanceId;
     const sub = getSubstance(substanceId);
     if (!sub) {
         container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
         return;
     }
     const cur = getCurrencySymbol();
-    const allPurchases = (appData.purchases || []).filter(p => getPurchaseSubstanceId(p) === substanceId);
+    const rangePurchases = insights.purchases;
+    const rangeLogs = insights.logs;
+    const buyMetrics = insights.buyBreakMetrics;
+    const supplyStats = insights.supplyStats;
     const cards = [];
 
     if (isNicotineSubstanceId(substanceId)) {
-        const invStats = getNicotineInventoryAnalytics(allPurchases);
-        const useLogs = getUseLogsForSubstance(substanceId, { personalUseOnly: true });
-        const useStats = getNicotineUseAnalytics(useLogs);
-        const vapePurchases = allPurchases.filter(isVapePuffPurchase);
+        const invStats = getNicotineInventoryAnalytics(rangePurchases);
+        const useStats = getNicotineUseAnalytics(rangeLogs);
+        const vapePurchases = rangePurchases.filter(isVapePuffPurchase);
         const vapeCount = vapePurchases.length;
-        const totalCost = allPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+        const totalCost = rangePurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
         const avgCostPerVape = vapeCount > 0
             ? vapePurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0) / vapeCount
             : null;
-        const buyMetrics = getBuyBreakMetrics(substanceId);
         cards.push(
             renderSheetMetricCard('Total nicotine entries', useStats.totalEntries > 0 ? String(useStats.totalEntries) : '—', null),
             renderSheetMetricCard('Total estimated cost', fmtSheetMoney(totalCost, cur), null),
@@ -19504,16 +20126,16 @@ function renderStatsBuyAdvancedMetrics(substanceId) {
         );
         cards.push(renderSheetMetricCard('Inventory summary', formatNicotineInventorySummary(substanceId), null));
     } else if (isAlcoholTrackingMode(substanceId)) {
-        const alcoholStats = getAlcoholInventoryAnalytics(allPurchases);
+        const alcoholStats = getAlcoholInventoryAnalytics(rangePurchases);
         if (alcoholStats.totalPureAlcoholMl > 0) {
             cards.push(renderSheetMetricCard(
-                'Pure alcohol (all time)',
+                'Pure alcohol (range)',
                 fmtSheetAmount(alcoholStats.totalPureAlcoholMl, 'mL'),
                 null
             ));
         }
     } else if (isWeedTrackingMode(substanceId)) {
-        const weedStats = getWeedInventoryAnalytics(allPurchases);
+        const weedStats = getWeedInventoryAnalytics(rangePurchases);
         if (weedStats.budGrams > 0) {
             cards.push(renderSheetMetricCard('Bud purchased', fmtSheetAmount(weedStats.budGrams, 'g'), null));
         }
@@ -19527,7 +20149,7 @@ function renderStatsBuyAdvancedMetrics(substanceId) {
             cards.push(renderSheetMetricCard('Pre-rolls purchased', fmtSheetAmount(weedStats.preRollGrams, 'g'), null));
         }
     } else if (isCigarettesTrackingMode(substanceId)) {
-        const cigStats = getCigarettesInventoryAnalytics(allPurchases);
+        const cigStats = getCigarettesInventoryAnalytics(rangePurchases);
         if (cigStats.totalNicotineMg > 0) {
             cards.push(renderSheetMetricCard(
                 'Nicotine purchased',
@@ -19537,7 +20159,6 @@ function renderStatsBuyAdvancedMetrics(substanceId) {
         }
     }
 
-    const supplyStats = getSubstanceSupplyDurationStats(substanceId);
     if (supplyStats.longestMs != null) {
         cards.push(renderSheetMetricCard(
             'Longest supply duration',
@@ -19749,6 +20370,11 @@ function formatCalendarNextUse(day) {
 
 function getCalendarDayStatusClass(day) {
     const classes = ['stats-cal-day'];
+    if (day.inRange === false) {
+        classes.push('cal-outside-range');
+        classes.push('cal-no-use');
+        return classes.join(' ');
+    }
     if (day.isToday) classes.push('cal-today');
     if (day.isFuture) classes.push('cal-future');
     if (day.inMonth === false) classes.push('cal-outside-month');
@@ -19766,6 +20392,11 @@ function getCalendarDayStatusClass(day) {
 
 function getMiniCalendarDayClass(day) {
     const classes = ['stats-cal-mini-day'];
+    if (day.inRange === false) {
+        classes.push('cal-outside-range');
+        classes.push('cal-no-use');
+        return classes.join(' ');
+    }
     if (day.isToday) classes.push('cal-today');
     if (day.inMonth === false) classes.push('cal-outside-month');
     if (!day.hasUse) {
@@ -19930,11 +20561,26 @@ function getMonthGridDates(year, monthIndex) {
     return { monthStart, monthEnd, gridDates: dates };
 }
 
+function applyInsightsRangeToCalendarDay(day, bounds) {
+    day.inRange = dateInInsightsRange(day.date, bounds);
+    if (!day.inRange) {
+        day.hasUse = false;
+        day.taperStatus = 'none';
+    }
+}
+
 function buildCalendarDayCellHtml(day, substanceId, opts) {
     const { showAmount, showDuration, showBreak, showNext, showCost, showTaper, compact } = opts;
     const lines = [];
     const d = parseLocalDate(day.date);
     const dayNum = d ? d.getDate() : day.date;
+
+    if (day.inRange === false) {
+        return `
+        <div class="${getCalendarDayStatusClass(day)}" aria-hidden="true">
+            <span class="stats-cal-day-num">${dayNum}</span>
+        </div>`;
+    }
 
     if (!compact && day.inMonth !== false) {
         lines.push(`<div class="cal-line cal-line-detailed cal-date-label">${formatCalendarDayLabel(day.date)}</div>`);
@@ -19986,11 +20632,11 @@ function buildCalendarDayCellHtml(day, substanceId, opts) {
         </button>`;
 }
 
-function renderStatsCalendarMonth(substanceId, anchorDate) {
+function renderStatsCalendarMonth(substanceId, anchorDate, bounds = null) {
     const d = parseLocalDate(anchorDate) || new Date();
     const year = d.getFullYear();
     const monthIndex = d.getMonth();
-    const { monthStart, monthEnd, gridDates } = getMonthGridDates(year, monthIndex);
+    const { gridDates } = getMonthGridDates(year, monthIndex);
     const metricsMap = getDailyUseMetrics({
         logs: appData.logs,
         purchases: appData.purchases,
@@ -20015,13 +20661,14 @@ function renderStatsCalendarMonth(substanceId, anchorDate) {
             };
         }
         day.inMonth = cell.inMonth;
+        applyInsightsRangeToCalendarDay(day, bounds);
         html += buildCalendarDayCellHtml(day, substanceId, opts);
     });
     html += '</div>';
     return html;
 }
 
-function renderStatsCalendarWeek(substanceId, anchorDate) {
+function renderStatsCalendarWeek(substanceId, anchorDate, bounds = null) {
     const weekStart = getWeekStartDateStr(anchorDate);
     const weekEnd = addDaysToDateStr(weekStart, 6);
     const metricsMap = getDailyUseMetrics({
@@ -20047,22 +20694,26 @@ function renderStatsCalendarWeek(substanceId, anchorDate) {
             taperStatus: 'none',
             unit: getStatsDisplayUnit(substanceId, getSubstance(substanceId)?.defaultUnit || 'units')
         };
+        applyInsightsRangeToCalendarDay(day, bounds);
         weekDays.push(day);
         html += buildCalendarDayCellHtml(day, substanceId, opts);
     }
     html += '</div>';
 
-    const useDays = weekDays.filter(d => d.hasUse).length;
-    const totalUse = weekDays.reduce((s, d) => s + (d.totalAmount || 0), 0);
-    const totalCost = weekDays.reduce((s, d) => s + (d.cost || 0), 0);
+    const inRangeDays = weekDays.filter(d => d.inRange !== false);
+    const useDays = inRangeDays.filter(d => d.hasUse).length;
+    const totalUse = inRangeDays.reduce((s, d) => s + (d.totalAmount || 0), 0);
+    const totalCost = inRangeDays.reduce((s, d) => s + (d.cost || 0), 0);
     const displayUnit = getStatsDisplayUnit(substanceId, getSubstance(substanceId)?.defaultUnit || 'units');
     const cur = getCurrencySymbol();
-    const breakHours = weekDays.map(d => d.breakHours).filter(h => h != null && h >= 0);
+    const breakHours = inRangeDays.map(d => d.breakHours).filter(h => h != null && h >= 0);
     const longestBreak = breakHours.length ? Math.max(...breakHours) : null;
+    const effectiveStart = bounds && weekStart < bounds.startDate ? bounds.startDate : weekStart;
+    const effectiveEnd = bounds && weekEnd > bounds.endDate ? bounds.endDate : weekEnd;
     const weeklyLimit = getWeeklyLimit(substanceId, anchorDate);
     const weeklyUsed = isVapeNicotineSubstanceId(substanceId)
-        ? getStatsUsageInRange(substanceId, weekStart, weekEnd)
-        : sumUsageForRange(null, weekStart, weekEnd, substanceId).amount;
+        ? getStatsUsageInRange(substanceId, effectiveStart, effectiveEnd)
+        : sumUsageForRange(null, effectiveStart, effectiveEnd, substanceId).amount;
     const taperRemaining = weeklyLimit != null ? Math.max(0, weeklyLimit - weeklyUsed) : null;
 
     html += `<div class="stats-cal-week-summary">
@@ -20076,7 +20727,7 @@ function renderStatsCalendarWeek(substanceId, anchorDate) {
     return html;
 }
 
-function renderStatsCalendarYearMini(substanceId, year) {
+function renderStatsCalendarYearMini(substanceId, year, bounds = null) {
     const months = [];
     for (let m = 0; m < 12; m++) {
         const { gridDates } = getMonthGridDates(year, m);
@@ -20099,11 +20750,16 @@ function renderStatsCalendarYearMini(substanceId, year) {
                 isToday: cell.date === getLocalDateString()
             };
             day.inMonth = cell.inMonth;
+            applyInsightsRangeToCalendarDay(day, bounds);
             const d = parseLocalDate(cell.date);
             const num = d ? d.getDate() : '';
-            grid += `<button type="button" class="${getMiniCalendarDayClass(day)}"
-                title="${formatCalendarDayLabel(cell.date)}"
-                onclick="openStatsCalendarDayModal('${escapeAttr(cell.date)}', '${escapeAttr(substanceId)}')">${cell.inMonth ? num : ''}</button>`;
+            if (day.inRange === false) {
+                grid += `<div class="${getMiniCalendarDayClass(day)}">${cell.inMonth ? num : ''}</div>`;
+            } else {
+                grid += `<button type="button" class="${getMiniCalendarDayClass(day)}"
+                    title="${formatCalendarDayLabel(cell.date)}"
+                    onclick="openStatsCalendarDayModal('${escapeAttr(cell.date)}', '${escapeAttr(substanceId)}')">${cell.inMonth ? num : ''}</button>`;
+            }
         });
         grid += '</div>';
         months.push(`<div class="stats-cal-mini-month"><h4>${label}</h4>${grid}</div>`);
@@ -20111,13 +20767,20 @@ function renderStatsCalendarYearMini(substanceId, year) {
     return `<div class="stats-cal-year-grid">${months.join('')}</div>`;
 }
 
-function renderStatsCalendarYearSummary(substanceId, year) {
-    const summaries = [];
-    for (let m = 0; m < 12; m++) {
-        const summary = calculateMonthlyTrackingSummary(substanceId, year, m);
-        const enriched = enrichMonthlySummaryWithBuyData(summary, substanceId);
-        summaries.push(enriched);
-    }
+function renderStatsCalendarYearSummary(substanceId, year, bounds = null) {
+    const monthKeys = bounds
+        ? getInsightsMonthKeys(substanceId, bounds).filter(key => key.startsWith(String(year)))
+        : Array.from({ length: 12 }, (_, m) => `${year}-${String(m + 1).padStart(2, '0')}`);
+    const summaries = monthKeys.map(key => {
+        const [yearStr, monthStr] = key.split('-');
+        const summary = calculateMonthlyTrackingSummary(
+            substanceId,
+            parseInt(yearStr, 10),
+            parseInt(monthStr, 10) - 1,
+            bounds
+        );
+        return summary ? enrichMonthlySummaryWithBuyData(summary, substanceId, bounds) : null;
+    }).filter(Boolean);
     const displayUnit = getStatsDisplayUnit(substanceId, getSubstance(substanceId)?.defaultUnit || 'units');
     const cur = getCurrencySymbol();
     return renderConfigurableSheetTable('statsCalendarYearSummary', summaries, (colId, s) => {
@@ -20192,7 +20855,28 @@ function syncStatsCalendarControlsFromState() {
     populateSelect('stats-calendar-substance', getActiveSubstances(), { currentValue: currentSubstanceId });
 }
 
-function renderStatsCalendarView() {
+function syncStatsCalendarAnchorToRange(bounds, preset) {
+    if (!bounds?.startDate) return;
+    const today = getLocalDateString();
+    let anchor = bounds.endDate <= today ? bounds.endDate : today;
+    if (anchor < bounds.startDate) anchor = bounds.startDate;
+
+    if (preset === 'this-month' || preset === 'last-month') {
+        statsCalendarViewMode = 'month';
+        statsCalendarAnchorDate = bounds.startDate;
+    } else if (preset === 'this-year' || preset === 'last-year') {
+        statsCalendarViewMode = 'year';
+        statsCalendarAnchorDate = bounds.startDate;
+    } else if (preset === 'this-week' || preset === 'last-week') {
+        statsCalendarViewMode = 'week';
+        statsCalendarAnchorDate = bounds.startDate;
+    } else if (statsCalendarAnchorDate < bounds.startDate || statsCalendarAnchorDate > bounds.endDate) {
+        statsCalendarAnchorDate = anchor;
+    }
+    syncStatsCalendarPeriodInput();
+}
+
+function renderStatsCalendarView(bounds = null) {
     const container = document.getElementById('stats-calendar-container');
     if (!container) return;
     if (isAllSubstancesView()) {
@@ -20205,20 +20889,21 @@ function renderStatsCalendarView() {
         container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
         return;
     }
+    const insightsBounds = bounds || buildInsightsDataset(substanceId).bounds;
     syncStatsCalendarControlsFromState();
     container.classList.toggle('compact', statsCalendarCompact);
 
     const d = parseLocalDate(statsCalendarAnchorDate) || new Date();
     let html = '';
     if (statsCalendarViewMode === 'week') {
-        html = renderStatsCalendarWeek(substanceId, statsCalendarAnchorDate);
+        html = renderStatsCalendarWeek(substanceId, statsCalendarAnchorDate, insightsBounds);
     } else if (statsCalendarViewMode === 'year') {
         const year = d.getFullYear();
         html = statsCalendarYearViewType === 'summary'
-            ? `<div class="sheet-table-wrap">${renderStatsCalendarYearSummary(substanceId, year)}</div>`
-            : renderStatsCalendarYearMini(substanceId, year);
+            ? `<div class="sheet-table-wrap">${renderStatsCalendarYearSummary(substanceId, year, insightsBounds)}</div>`
+            : renderStatsCalendarYearMini(substanceId, year, insightsBounds);
     } else {
-        html = renderStatsCalendarMonth(substanceId, statsCalendarAnchorDate);
+        html = renderStatsCalendarMonth(substanceId, statsCalendarAnchorDate, insightsBounds);
     }
     container.innerHTML = html;
 }
@@ -20345,6 +21030,7 @@ function exportStatsCalendarCsv() {
     const substanceId = currentSubstanceId;
     const sub = getSubstance(substanceId);
     if (!sub) return;
+    const { bounds } = buildInsightsDataset(substanceId);
     const d = parseLocalDate(statsCalendarAnchorDate) || new Date();
     let rows = [];
     let filename = 'calendar';
@@ -20358,7 +21044,7 @@ function exportStatsCalendarCsv() {
             dateRange: { startDate: gridDates[0].date, endDate: gridDates[gridDates.length - 1].date }
         });
         rows = [['Date', 'Use', 'Duration', 'Break', 'Next', 'Cost', 'Taper Status']];
-        gridDates.filter(c => c.inMonth).forEach(cell => {
+        gridDates.filter(c => c.inMonth && dateInInsightsRange(c.date, bounds)).forEach(cell => {
             const day = metricsMap.get(cell.date);
             rows.push([
                 cell.date,
@@ -20382,6 +21068,7 @@ function exportStatsCalendarCsv() {
         });
         rows = [['Date', 'Use', 'Duration', 'Break', 'Next', 'Cost', 'Taper Status']];
         iterateDatesInRange(weekStart, weekEnd).forEach(dateStr => {
+            if (!dateInInsightsRange(dateStr, bounds)) return;
             const day = metricsMap.get(dateStr);
             rows.push([
                 dateStr,
@@ -20397,11 +21084,15 @@ function exportStatsCalendarCsv() {
     } else {
         const year = d.getFullYear();
         rows = [['Month', 'Total Use', 'Cost', 'Use Days', 'Avg/Day', 'Sessions']];
-        for (let m = 0; m < 12; m++) {
+        const monthKeys = getInsightsMonthKeys(substanceId, bounds).filter(key => key.startsWith(String(year)));
+        monthKeys.forEach(key => {
+            const [yearStr, monthStr] = key.split('-');
             const summary = enrichMonthlySummaryWithBuyData(
-                calculateMonthlyTrackingSummary(substanceId, year, m),
-                substanceId
+                calculateMonthlyTrackingSummary(substanceId, parseInt(yearStr, 10), parseInt(monthStr, 10) - 1, bounds),
+                substanceId,
+                bounds
             );
+            if (!summary) return;
             rows.push([
                 summary.monthLabel,
                 summary.totalUsage,
@@ -20410,7 +21101,7 @@ function exportStatsCalendarCsv() {
                 summary.daysInMonth > 0 ? summary.totalUsage / summary.daysInMonth : '',
                 summary.sessions
             ]);
-        }
+        });
         filename = `calendar-year-${sub.name}-${year}`;
     }
 
@@ -20516,23 +21207,20 @@ function updateStats() {
     document.getElementById('stats-single-view')?.classList.remove('hidden');
     document.getElementById('stats-all-view')?.classList.add('hidden');
 
-    const { logs: rangeLogs, bounds, preset } = getStatsLogsForSubstance(currentSubstanceId);
+    const insights = buildInsightsDataset(currentSubstanceId);
+    syncStatsCalendarAnchorToRange(insights.bounds, insights.preset);
     const sub = getSubstance(currentSubstanceId);
-    const unit = sub?.defaultUnit || 'units';
-    const displayUnit = getStatsDisplayUnit(currentSubstanceId, unit);
-    const cur = getCurrencySymbol();
-    const daysInRange = countDaysInRange(bounds.startDate, bounds.endDate);
-    const useStats = buildUseStatsMetrics(rangeLogs, daysInRange, currentSubstanceId, bounds);
+    const displayUnit = insights.displayUnit;
 
     const summaryEl = document.getElementById('stats-range-summary');
-    if (summaryEl) summaryEl.textContent = getStatsRangeLabel(preset, bounds.startDate, bounds.endDate);
+    if (summaryEl) summaryEl.textContent = getStatsRangeLabel(insights.preset, insights.bounds.startDate, insights.bounds.endDate);
 
-    renderStatsSummaryDashboard(currentSubstanceId, useStats, bounds, displayUnit, cur);
-    renderStatsCalendarView();
-    renderStatsMonthlySummary(currentSubstanceId);
-    renderStatsWeeklySummary(currentSubstanceId);
+    renderStatsSummaryDashboard(currentSubstanceId, insights.useStats, insights.bounds, displayUnit, insights.cur);
+    renderStatsCalendarView(insights.bounds);
+    renderStatsMonthlySummary(currentSubstanceId, insights);
+    renderStatsWeeklySummary(currentSubstanceId, insights);
 
-    renderBuyInsights(currentSubstanceId, bounds);
+    renderBuyInsights(currentSubstanceId, insights);
     updateRecoveryStreakDisplay(currentSubstanceId);
     applyCollapsedSections();
 }
@@ -24878,8 +25566,14 @@ function getTaperCalendarMonthBounds(year, monthIndex) {
     return { monthStart, monthEnd, daysInMonth };
 }
 
-function calculateMonthlyTrackingSummary(substanceId, year, monthIndex) {
-    const { monthStart, monthEnd, daysInMonth } = getTaperCalendarMonthBounds(year, monthIndex);
+function calculateMonthlyTrackingSummary(substanceId, year, monthIndex, clipBounds = null) {
+    let { monthStart, monthEnd, daysInMonth } = getTaperCalendarMonthBounds(year, monthIndex);
+    if (clipBounds) {
+        if (monthEnd < clipBounds.startDate || monthStart > clipBounds.endDate) return null;
+        if (monthStart < clipBounds.startDate) monthStart = clipBounds.startDate;
+        if (monthEnd > clipBounds.endDate) monthEnd = clipBounds.endDate;
+        daysInMonth = countDaysInRange(monthStart, monthEnd);
+    }
     const enriched = buildEnrichedUseEntries(substanceId);
     const monthEntries = enriched.filter(e =>
         isPersonalUseLog(e) && logOverlapsDateRange(e, monthStart, monthEnd)
@@ -24957,16 +25651,17 @@ function calculateMonthlyTrackingSummary(substanceId, year, monthIndex) {
     };
 }
 
-function getMonthlyTrackingSummaries(substanceId) {
-    const keys = getTaperMonthKeysFromLogs(substanceId);
+function getMonthlyTrackingSummaries(substanceId, bounds = null, data = appData) {
+    const keys = bounds ? getInsightsMonthKeys(substanceId, bounds, data) : getTaperMonthKeysFromLogs(substanceId);
     const summaries = keys.map(key => {
         const [yearStr, monthStr] = key.split('-');
         return calculateMonthlyTrackingSummary(
             substanceId,
             parseInt(yearStr, 10),
-            parseInt(monthStr, 10) - 1
+            parseInt(monthStr, 10) - 1,
+            bounds
         );
-    });
+    }).filter(Boolean);
 
     return summaries.map((summary, index) => {
         const previous = summaries[index + 1];
@@ -26285,6 +26980,7 @@ if (typeof window !== 'undefined') {
 function __setTestAppData(data) {
     appData = data;
     appDataLoadedFromStorage = true;
+    invalidateInsightsDatasetCache();
     ensureAppDataSubstancesReady(appData);
 }
 
@@ -26470,7 +27166,34 @@ function __getRecoveryTrackerTestExports() {
         saveTableColumnConfig,
         resolveColumnStorageKey,
         COLUMN_SETTINGS_STORAGE_KEY,
-        loadColumnSettingsStore
+        loadColumnSettingsStore,
+        getBuyMonthSummaryRows,
+        getBuyPurchaseDetailRows,
+        getStoreBuySummaries,
+        getBuyMonthRunningMode,
+        setBuyMonthRunningMode,
+        applyBuyMonthRunningTotals,
+        aggregateBuyMonthPurchaseMetrics,
+        filterPurchasesByStatsBounds,
+        getPurchasesForInsightMetrics,
+        getStatsDateRange,
+        buildInsightsDataset,
+        resolveInsightsRangeBounds,
+        getInsightsMonthKeys,
+        dateInInsightsRange,
+        weekRangeIntersectsBounds,
+        sumPersonalUseAmountInRange,
+        getBuyBreakMetricsFromPurchases,
+        getBuyBreakMetrics,
+        getBuyWeeklySummaries,
+        getWeeklyTrackingSummaries,
+        getMonthlyTrackingSummaries,
+        calculateMonthlyTrackingSummary,
+        setStatsDateRangeForTest,
+        setTestReferenceDate,
+        invalidateInsightsDatasetCache,
+        enrichMonthlySummaryWithBuyData,
+        fmtAvgCostPerGram
     };
 }
 

@@ -761,12 +761,16 @@
                     <div class="form-group">
                         <label for="stats-date-range">Date Range</label>
                         <select id="stats-date-range" onchange="onStatsDateRangeChange()">
+                            <option value="today">Today</option>
+                            <option value="yesterday">Yesterday</option>
                             <option value="last-7">Last 7 Days</option>
-                            <option value="last-14">Last 14 Days</option>
                             <option value="last-30">Last 30 Days</option>
                             <option value="this-week">This Week</option>
+                            <option value="last-week">Last Week</option>
                             <option value="this-month">This Month</option>
                             <option value="last-month">Last Month</option>
+                            <option value="this-year">This Year</option>
+                            <option value="last-year">Last Year</option>
                             <option value="all-time">All Time</option>
                             <option value="custom">Custom Range</option>
                         </select>
@@ -906,9 +910,25 @@
                         <div class="stats-section">
                             <div class="stats-section-heading-row">
                                 <h4 class="stats-inline-heading">Month Summary</h4>
-                                <button type="button" class="secondary-btn btn-sm" id="stats-buy-month-export-btn">Export CSV</button>
+                                <div class="stats-section-heading-actions">
+                                    <button type="button" class="secondary-btn btn-sm table-columns-btn" id="stats-buy-month-customize-columns">Customize Columns</button>
+                                    <button type="button" class="secondary-btn btn-sm" id="stats-buy-month-export-btn">Export CSV</button>
+                                </div>
                             </div>
                             <div id="stats-buy-month-summary" class="sheet-table-wrap stats-buy-month-summary-wrap"></div>
+                        </div>
+
+                        <div class="collapsible-section stats-buy-nested" data-section="statsBuyPurchaseDetails" id="stats-buy-purchase-details-section">
+                            <button type="button" class="section-toggle" onclick="toggleSection('statsBuyPurchaseDetails')">
+                                <span>Purchase Details</span>
+                                <span class="chevron">⌄</span>
+                            </button>
+                            <div class="section-content">
+                                <div class="sheet-table-toolbar">
+                                    <button type="button" class="secondary-btn table-columns-btn btn-sm" id="stats-buy-purchase-details-customize-columns">Customize Columns</button>
+                                </div>
+                                <div id="stats-buy-purchase-details" class="sheet-table-wrap"></div>
+                            </div>
                         </div>
 
                         <div class="collapsible-section stats-buy-nested" data-section="statsBuyStoreBreakdown">
@@ -2044,6 +2064,14 @@
             <div class="column-settings-bulk-actions">
                 <button type="button" class="secondary-btn btn-sm" id="column-settings-show-all">Show all</button>
                 <button type="button" class="secondary-btn btn-sm" id="column-settings-hide-optional">Hide all optional</button>
+            </div>
+            <div id="column-settings-buy-month-running-wrap" class="column-settings-extra hidden form-group">
+                <label for="column-settings-buy-month-running-mode">Running totals</label>
+                <select id="column-settings-buy-month-running-mode">
+                    <option value="within-year">Running within selected year</option>
+                    <option value="earliest">Running from earliest available month</option>
+                    <option value="hide">Hide running columns</option>
+                </select>
             </div>
             <ul id="column-settings-list" class="column-settings-list"></ul>
             <div class="modal-actions column-settings-actions">

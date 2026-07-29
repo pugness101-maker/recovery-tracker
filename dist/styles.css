@@ -609,6 +609,22 @@ h3 {
     margin-bottom: 8px;
 }
 
+.stats-section-heading-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+}
+
+.column-settings-extra {
+    margin: 0 0 12px;
+}
+
+.column-settings-extra select {
+    width: 100%;
+    max-width: 360px;
+}
+
 .stats-buy-month-summary-wrap .table-scroll {
     overflow-x: auto;
     -webkit-overflow-scrolling: touch;
@@ -7140,6 +7156,20 @@ body.purchase-history-col-resizing {
 
 .stats-cal-day.cal-outside-month {
     opacity: 0.45;
+}
+
+.stats-cal-day.cal-outside-range,
+.stats-cal-mini-day.cal-outside-range {
+    opacity: 0.3;
+    pointer-events: none;
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+}
+
+.stats-cal-day.cal-outside-range.cal-today,
+.stats-cal-mini-day.cal-outside-range.cal-today {
+    box-shadow: none;
+    border-color: transparent;
 }
 
 .stats-cal-day.cal-future {
