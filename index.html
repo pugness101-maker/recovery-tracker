@@ -34,6 +34,26 @@
             else if (viewMode === 'auto' && window.matchMedia('(min-width: 768px)').matches) layout = 'laptop';
             document.documentElement.dataset.viewMode = viewMode;
             document.documentElement.dataset.viewLayout = layout;
+
+            var zoom = 100;
+            try {
+                var zoomRaw = localStorage.getItem('recovery-tracker-v2');
+                if (zoomRaw) {
+                    var zoomParsed = JSON.parse(zoomRaw);
+                    var settings = zoomParsed && zoomParsed.settings;
+                    if (settings) {
+                        var zoomKey = layout === 'laptop' ? 'laptopViewZoom' : 'phoneViewZoom';
+                        var candidate = settings[zoomKey] != null ? settings[zoomKey] : settings.appearanceZoom;
+                        var zoomNum = parseFloat(candidate);
+                        if (isFinite(zoomNum)) {
+                            zoom = Math.min(200, Math.max(75, Math.round(zoomNum)));
+                        }
+                    }
+                }
+            } catch (e) { /* ignore */ }
+            document.documentElement.style.setProperty('--app-zoom', String(zoom / 100));
+            document.documentElement.style.setProperty('--app-zoom-percent', String(zoom));
+            document.documentElement.dataset.appZoom = String(zoom);
         })();
     </script>
     <link rel="stylesheet" href="styles.css">
@@ -1995,6 +2015,56 @@
                         </select>
                     </div>
                     <p class="settings-hint">Auto: follows screen size. Phone: always uses compact mobile layout. Laptop: always uses wide desktop layout.</p>
+                    <div class="form-group appearance-zoom-group">
+                        <label id="appearance-zoom-label" for="appearance-zoom-preset">Zoom</label>
+                        <div class="appearance-zoom-presets" role="group" aria-labelledby="appearance-zoom-label">
+                            <button type="button" class="appearance-zoom-preset-btn" data-appearance-zoom="90" aria-pressed="false" onclick="onAppearanceZoomPresetChange('90')">90%</button>
+                            <button type="button" class="appearance-zoom-preset-btn active" data-appearance-zoom="100" aria-pressed="true" onclick="onAppearanceZoomPresetChange('100')">100%</button>
+                            <button type="button" class="appearance-zoom-preset-btn" data-appearance-zoom="110" aria-pressed="false" onclick="onAppearanceZoomPresetChange('110')">110%</button>
+                            <button type="button" class="appearance-zoom-preset-btn" data-appearance-zoom="125" aria-pressed="false" onclick="onAppearanceZoomPresetChange('125')">125%</button>
+                            <button type="button" class="appearance-zoom-preset-btn" data-appearance-zoom="150" aria-pressed="false" onclick="onAppearanceZoomPresetChange('150')">150%</button>
+                            <button type="button" class="appearance-zoom-preset-btn" data-appearance-zoom="custom" aria-pressed="false" onclick="onAppearanceZoomPresetChange('custom')">Custom</button>
+                        </div>
+                        <select id="appearance-zoom-preset" class="appearance-zoom-preset-select" aria-label="Zoom preset" onchange="onAppearanceZoomPresetChange(this.value)">
+                            <option value="90">90%</option>
+                            <option value="100" selected>100%</option>
+                            <option value="110">110%</option>
+                            <option value="125">125%</option>
+                            <option value="150">150%</option>
+                            <option value="custom">Custom</option>
+                        </select>
+                        <div class="appearance-zoom-stepper" role="group" aria-labelledby="appearance-zoom-label">
+                            <button type="button" id="appearance-zoom-minus" class="appearance-zoom-step-btn" aria-label="Decrease zoom by 5 percent" onclick="stepAppearanceZoom(-1)">−</button>
+                            <span id="appearance-zoom-value" class="appearance-zoom-value" aria-live="polite">100%</span>
+                            <button type="button" id="appearance-zoom-plus" class="appearance-zoom-step-btn" aria-label="Increase zoom by 5 percent" onclick="stepAppearanceZoom(1)">+</button>
+                        </div>
+                        <label class="appearance-zoom-slider-label" for="appearance-zoom-slider">Zoom slider</label>
+                        <input type="range" id="appearance-zoom-slider" class="appearance-zoom-slider" min="75" max="200" step="5" value="100" aria-valuemin="75" aria-valuemax="200" aria-valuenow="100" aria-label="App zoom" oninput="setAppearanceZoom(this.value)">
+                        <div class="appearance-zoom-actions">
+                            <button type="button" class="secondary-btn" id="appearance-zoom-reset" onclick="resetAppearanceZoom()">Reset to 100%</button>
+                        </div>
+                        <div id="appearance-zoom-custom-row" class="form-row appearance-zoom-custom-row hidden">
+                            <div class="form-group">
+                                <label for="appearance-zoom-custom">Custom zoom (75%–200%)</label>
+                                <input type="number" id="appearance-zoom-custom" min="75" max="200" step="1" value="100" inputmode="numeric" aria-describedby="appearance-zoom-custom-hint" onchange="onAppearanceZoomCustomInput(this.value)">
+                                <p id="appearance-zoom-custom-hint" class="field-hint">Enter a value from 75 to 200.</p>
+                            </div>
+                        </div>
+                        <p id="appearance-zoom-live" class="visually-hidden" aria-live="polite">App zoom 100 percent</p>
+                    </div>
+                    <p class="settings-hint">Zoom scales the whole interface (navigation, forms, tables, modals, and text), not just font size. Phone and Laptop views remember their own zoom when you change it while that view is active.</p>
+                    <div class="form-group">
+                        <label for="appearance-spacing">Spacing</label>
+                        <select id="appearance-spacing" onchange="setAppearanceSpacing(this.value)">
+                            <option value="default" selected>Default</option>
+                            <option value="compact">Compact</option>
+                            <option value="comfortable">Comfortable</option>
+                        </select>
+                    </div>
+                    <div class="appearance-reset-row">
+                        <button type="button" class="secondary-btn" id="appearance-reset-all" onclick="resetAppearanceSettings()">Reset Appearance</button>
+                        <p class="settings-hint">Restores Auto View, 100% zoom, and default spacing.</p>
+                    </div>
                 </div>
                     </div>
                 </div>

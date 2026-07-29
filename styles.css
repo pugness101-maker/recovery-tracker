@@ -35,6 +35,10 @@
     --bg-card: var(--card);
     --text-primary: var(--text);
     --text-secondary: var(--text-muted);
+    --app-zoom: 1;
+    --app-zoom-percent: 100;
+    --app-spacing-scale: 1;
+    --tap-target-min: 44px;
     --bottom-nav-clearance: calc(110px + env(safe-area-inset-bottom, 0px));
 }
 
@@ -67,6 +71,10 @@
     --bg-card: var(--card);
     --text-primary: var(--text);
     --text-secondary: var(--text-muted);
+    --app-zoom: 1;
+    --app-zoom-percent: 100;
+    --app-spacing-scale: 1;
+    --tap-target-min: 44px;
     --bottom-nav-clearance: calc(110px + env(safe-area-inset-bottom, 0px));
 }
 
@@ -76,6 +84,18 @@ body {
     color: var(--text);
     line-height: 1.6;
     min-height: 100vh;
+    zoom: var(--app-zoom);
+}
+
+@supports not (zoom: 1) {
+    body {
+        zoom: normal;
+        transform: scale(var(--app-zoom));
+        transform-origin: top center;
+        width: calc(100% / var(--app-zoom));
+        max-width: none;
+        margin-inline: auto;
+    }
 }
 
 .app-container {
@@ -7948,6 +7968,142 @@ body.purchase-history-col-resizing {
     clip: rect(0, 0, 0, 0);
     white-space: nowrap;
     border: 0;
+}
+
+/* ——— Appearance Zoom ——— */
+.appearance-zoom-group {
+    margin-top: 1.25rem;
+}
+
+.appearance-zoom-presets {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 6px;
+}
+
+.appearance-zoom-preset-btn,
+.appearance-zoom-step-btn {
+    min-height: max(44px, var(--tap-target-min));
+    min-width: max(44px, var(--tap-target-min));
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--input-bg);
+    color: var(--text-secondary);
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    touch-action: manipulation;
+}
+
+.appearance-zoom-preset-btn {
+    flex: 1 1 calc(33.33% - 6px);
+}
+
+.appearance-zoom-preset-btn.active,
+.appearance-zoom-step-btn:focus-visible {
+    background: var(--accent-soft);
+    border-color: var(--accent);
+    color: var(--accent-light);
+}
+
+.appearance-zoom-preset-select {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border: 0;
+}
+
+.appearance-zoom-stepper {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 12px;
+    margin-top: 12px;
+}
+
+.appearance-zoom-value {
+    min-width: 4.5rem;
+    text-align: center;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text);
+}
+
+.appearance-zoom-slider-label {
+    display: block;
+    margin-top: 12px;
+    font-size: 0.85rem;
+    color: var(--text-muted);
+}
+
+.appearance-zoom-slider {
+    width: 100%;
+    margin-top: 6px;
+    min-height: max(44px, var(--tap-target-min));
+}
+
+.appearance-zoom-actions,
+.appearance-reset-row {
+    margin-top: 10px;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.appearance-zoom-custom-row {
+    margin-top: 8px;
+}
+
+.appearance-reset-row .settings-hint {
+    margin: 0;
+    flex: 1 1 12rem;
+}
+
+/* Keep wide tables scrollable at any zoom */
+.table-scroll,
+.purchase-history-scroll,
+.use-history-table-view,
+.taper-table-wrap {
+    overflow-x: auto;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+}
+
+/* Keep modal actions reachable when zoomed in */
+.modal {
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.modal-content {
+    max-height: min(90vh, 100%);
+    overflow: auto;
+}
+
+.modal-actions {
+    position: sticky;
+    bottom: 0;
+    background: var(--panel);
+    padding-top: 8px;
+    z-index: 1;
+}
+
+/* Low-zoom tap targets stay usable */
+.submit-btn,
+.secondary-btn,
+.danger-btn,
+.nav-btn,
+.appearance-view-mode-btn,
+.quick-btn {
+    min-height: max(44px, var(--tap-target-min));
 }
 
 body {

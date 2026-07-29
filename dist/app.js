@@ -177,6 +177,7 @@ function setAppearanceViewMode(mode) {
     saveData(appData);
     applyAppearanceViewMode(preference);
     setupAppearanceViewModeListener();
+    applyAppearanceZoom(getActiveAppearanceZoom());
     if (typeof updateStatsCalendarLayoutForViewMode === 'function') {
         updateStatsCalendarLayoutForViewMode();
     }
@@ -187,6 +188,231 @@ function initAppearanceViewMode() {
     appData.settings.appearanceViewMode = getAppearanceViewMode();
     applyAppearanceViewMode(appData.settings.appearanceViewMode);
     setupAppearanceViewModeListener();
+}
+
+const APPEARANCE_ZOOM_PRESETS = Object.freeze([90, 100, 110, 125, 150]);
+const APPEARANCE_ZOOM_MIN = 75;
+const APPEARANCE_ZOOM_MAX = 200;
+const APPEARANCE_ZOOM_STEP = 5;
+const APPEARANCE_ZOOM_DEFAULT = 100;
+
+function normalizeAppearanceZoom(value) {
+    const n = typeof value === 'string' && value.endsWith('%')
+        ? parseFloat(value)
+        : parseFloat(value);
+    if (!Number.isFinite(n)) return APPEARANCE_ZOOM_DEFAULT;
+    const rounded = Math.round(n);
+    return Math.min(APPEARANCE_ZOOM_MAX, Math.max(APPEARANCE_ZOOM_MIN, rounded));
+}
+
+function snapAppearanceZoom(value, step = APPEARANCE_ZOOM_STEP) {
+    const n = normalizeAppearanceZoom(value);
+    const snapped = Math.round(n / step) * step;
+    return normalizeAppearanceZoom(snapped);
+}
+
+function getAppearanceZoom(data = appData) {
+    return normalizeAppearanceZoom(data?.settings?.appearanceZoom);
+}
+
+function getPhoneViewZoom(data = appData) {
+    const raw = data?.settings?.phoneViewZoom;
+    return raw == null || raw === '' ? getAppearanceZoom(data) : normalizeAppearanceZoom(raw);
+}
+
+function getLaptopViewZoom(data = appData) {
+    const raw = data?.settings?.laptopViewZoom;
+    return raw == null || raw === '' ? getAppearanceZoom(data) : normalizeAppearanceZoom(raw);
+}
+
+function getActiveAppearanceZoom(data = appData) {
+    const layout = resolveAppearanceViewLayout(getAppearanceViewMode(data));
+    if (layout === 'laptop') return getLaptopViewZoom(data);
+    return getPhoneViewZoom(data);
+}
+
+function isAppearanceZoomPreset(percent) {
+    return APPEARANCE_ZOOM_PRESETS.includes(normalizeAppearanceZoom(percent));
+}
+
+function applyAppearanceZoom(percent = getActiveAppearanceZoom()) {
+    const zoom = normalizeAppearanceZoom(percent);
+    const scale = zoom / 100;
+    const root = document.documentElement;
+    if (root) {
+        if (root.style?.setProperty) {
+            root.style.setProperty('--app-zoom', String(scale));
+            root.style.setProperty('--app-zoom-percent', `${zoom}`);
+        }
+        if (root.dataset) root.dataset.appZoom = String(zoom);
+    }
+    syncAppearanceZoomUI(zoom);
+    updateAppearanceZoomLayoutMetrics();
+    return zoom;
+}
+
+function updateAppearanceZoomLayoutMetrics() {
+    const root = document.documentElement;
+    const nav = document.querySelector('.bottom-nav');
+    if (!root?.style?.setProperty) return;
+    const zoom = normalizeAppearanceZoom(root.dataset?.appZoom || getActiveAppearanceZoom());
+    const scale = zoom / 100;
+    let navHeight = 110;
+    if (nav) {
+        const layoutHeight = nav.offsetHeight || 0;
+        const visualHeight = nav.getBoundingClientRect?.().height || 0;
+        if (layoutHeight > 0) navHeight = layoutHeight;
+        else if (visualHeight > 0 && scale > 0) navHeight = visualHeight / scale;
+    }
+    root.style.setProperty(
+        '--bottom-nav-clearance',
+        `calc(${Math.ceil(navHeight)}px + env(safe-area-inset-bottom, 0px))`
+    );
+    root.style.setProperty('--tap-target-min', `calc(44px / var(--app-zoom))`);
+}
+
+function syncAppearanceZoomUI(percent = getActiveAppearanceZoom()) {
+    const zoom = normalizeAppearanceZoom(percent);
+    const isPreset = isAppearanceZoomPreset(zoom);
+    const select = document.getElementById('appearance-zoom-preset');
+    if (select) {
+        select.value = isPreset ? String(zoom) : 'custom';
+    }
+    document.querySelectorAll('[data-appearance-zoom]').forEach((btn) => {
+        const value = btn.getAttribute('data-appearance-zoom');
+        const active = value === 'custom' ? !isPreset : String(zoom) === value;
+        btn.classList.toggle('active', active);
+        btn.setAttribute('aria-pressed', active ? 'true' : 'false');
+    });
+    const label = document.getElementById('appearance-zoom-value');
+    if (label) label.textContent = `${zoom}%`;
+    const slider = document.getElementById('appearance-zoom-slider');
+    if (slider) {
+        if (String(slider.value) !== String(zoom)) slider.value = String(zoom);
+        slider.setAttribute('aria-valuenow', String(zoom));
+    }
+    const customInput = document.getElementById('appearance-zoom-custom');
+    const customRow = document.getElementById('appearance-zoom-custom-row');
+    if (customRow) customRow.classList.toggle('hidden', isPreset && select?.value !== 'custom');
+    if (customInput && document.activeElement !== customInput) {
+        customInput.value = String(zoom);
+    }
+    const live = document.getElementById('appearance-zoom-live');
+    if (live) live.textContent = `App zoom ${zoom} percent`;
+}
+
+function persistAppearanceZoomSettings(zoom, data = appData) {
+    if (!data.settings) data.settings = {};
+    const z = normalizeAppearanceZoom(zoom);
+    data.settings.appearanceZoom = z;
+    const layout = resolveAppearanceViewLayout(getAppearanceViewMode(data));
+    if (layout === 'laptop') data.settings.laptopViewZoom = z;
+    else data.settings.phoneViewZoom = z;
+    return z;
+}
+
+function setAppearanceZoom(percent, options = {}) {
+    const zoom = normalizeAppearanceZoom(percent);
+    persistAppearanceZoomSettings(zoom);
+    if (options.persist !== false) saveData(appData);
+    applyAppearanceZoom(zoom);
+    return zoom;
+}
+
+function adjustAppearanceZoom(delta) {
+    const current = getActiveAppearanceZoom();
+    const next = snapAppearanceZoom(current + (parseFloat(delta) || 0));
+    return setAppearanceZoom(next);
+}
+
+function stepAppearanceZoom(direction) {
+    const dir = direction < 0 ? -1 : 1;
+    return adjustAppearanceZoom(dir * APPEARANCE_ZOOM_STEP);
+}
+
+function onAppearanceZoomPresetChange(value) {
+    if (value === 'custom') {
+        document.getElementById('appearance-zoom-custom-row')?.classList.remove('hidden');
+        document.getElementById('appearance-zoom-custom')?.focus();
+        syncAppearanceZoomUI(getActiveAppearanceZoom());
+        return;
+    }
+    setAppearanceZoom(value);
+}
+
+function onAppearanceZoomCustomInput(value) {
+    const zoom = normalizeAppearanceZoom(value);
+    setAppearanceZoom(zoom);
+}
+
+function resetAppearanceZoom() {
+    return setAppearanceZoom(APPEARANCE_ZOOM_DEFAULT);
+}
+
+function normalizeAppearanceSpacing(value) {
+    return value === 'compact' || value === 'comfortable' ? value : 'default';
+}
+
+function getAppearanceSpacing(data = appData) {
+    return normalizeAppearanceSpacing(data?.settings?.appearanceSpacing);
+}
+
+function applyAppearanceSpacing(spacing = getAppearanceSpacing()) {
+    const value = normalizeAppearanceSpacing(spacing);
+    const scale = value === 'compact' ? 0.92 : (value === 'comfortable' ? 1.08 : 1);
+    const root = document.documentElement;
+    if (root) {
+        if (root.style?.setProperty) root.style.setProperty('--app-spacing-scale', String(scale));
+        if (root.dataset) root.dataset.appearanceSpacing = value;
+    }
+    const select = document.getElementById('appearance-spacing');
+    if (select && select.value !== value) select.value = value;
+    return value;
+}
+
+function setAppearanceSpacing(spacing) {
+    if (!appData.settings) appData.settings = {};
+    appData.settings.appearanceSpacing = normalizeAppearanceSpacing(spacing);
+    saveData(appData);
+    applyAppearanceSpacing(appData.settings.appearanceSpacing);
+}
+
+function resetAppearanceSettings() {
+    if (!appData.settings) appData.settings = {};
+    appData.settings.appearanceViewMode = 'auto';
+    appData.settings.appearanceZoom = APPEARANCE_ZOOM_DEFAULT;
+    appData.settings.phoneViewZoom = APPEARANCE_ZOOM_DEFAULT;
+    appData.settings.laptopViewZoom = APPEARANCE_ZOOM_DEFAULT;
+    appData.settings.appearanceSpacing = 'default';
+    saveData(appData);
+    applyAppearanceViewMode('auto');
+    setupAppearanceViewModeListener();
+    applyAppearanceZoom(APPEARANCE_ZOOM_DEFAULT);
+    applyAppearanceSpacing('default');
+    if (typeof updateStatsCalendarLayoutForViewMode === 'function') {
+        updateStatsCalendarLayoutForViewMode();
+    }
+}
+
+function initAppearanceZoom() {
+    if (!appData.settings) appData.settings = {};
+    appData.settings.appearanceZoom = getAppearanceZoom();
+    if (appData.settings.phoneViewZoom == null) {
+        appData.settings.phoneViewZoom = appData.settings.appearanceZoom;
+    } else {
+        appData.settings.phoneViewZoom = normalizeAppearanceZoom(appData.settings.phoneViewZoom);
+    }
+    if (appData.settings.laptopViewZoom == null) {
+        appData.settings.laptopViewZoom = appData.settings.appearanceZoom;
+    } else {
+        appData.settings.laptopViewZoom = normalizeAppearanceZoom(appData.settings.laptopViewZoom);
+    }
+    appData.settings.appearanceSpacing = getAppearanceSpacing();
+    applyAppearanceSpacing(appData.settings.appearanceSpacing);
+    applyAppearanceZoom(getActiveAppearanceZoom());
+    if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
+        window.addEventListener('resize', updateAppearanceZoomLayoutMetrics, { passive: true });
+    }
 }
 
 const SUBSTANCE_ICONS = ['🚬', '💨', '🍺', '🌿', '💊', '🍬', '💉', '🎯', '⚡', '🧪', '📦', '🔥', '❄️', '💧', '🌸', '🌀'];
@@ -5787,7 +6013,11 @@ const defaultData = {
         vapeTaperCountMode: 'log-date',
         spreadPercentLeftUsage: true,
         buyMonthRunningMode: 'within-year',
-        appearanceViewMode: 'auto'
+        appearanceViewMode: 'auto',
+        appearanceZoom: 100,
+        phoneViewZoom: 100,
+        laptopViewZoom: 100,
+        appearanceSpacing: 'default'
     },
     taperPlans: {},
     taperPlansV2: [],
@@ -6213,6 +6443,14 @@ function ensureAppDataSettings(data) {
         data.settings.spreadPercentLeftUsage = true;
     }
     data.settings.appearanceViewMode = normalizeAppearanceViewMode(data.settings.appearanceViewMode);
+    data.settings.appearanceZoom = normalizeAppearanceZoom(data.settings.appearanceZoom);
+    data.settings.phoneViewZoom = normalizeAppearanceZoom(
+        data.settings.phoneViewZoom ?? data.settings.appearanceZoom
+    );
+    data.settings.laptopViewZoom = normalizeAppearanceZoom(
+        data.settings.laptopViewZoom ?? data.settings.appearanceZoom
+    );
+    data.settings.appearanceSpacing = normalizeAppearanceSpacing(data.settings.appearanceSpacing);
     ensureInsightPrefs(data);
     ensureTableColumnSettings(data);
     ensureUseStatsConfig(data);
@@ -8673,6 +8911,7 @@ document.addEventListener('DOMContentLoaded', () => {
 function initializeApp() {
     initTheme();
     initAppearanceViewMode();
+    initAppearanceZoom();
     setupEventListeners();
     ensureAppDataSubstancesReady(appData);
     ensureDashboardSubstanceDropdownReady();
@@ -8735,6 +8974,7 @@ function refreshAppAfterDataChange() {
     updateLastSavedDisplay();
     applyCollapsedSections();
     initAppearanceViewMode();
+    initAppearanceZoom();
     applyDashboardLayout();
     updateUndoButtonState();
     renderDashboardLayoutEditor();
@@ -30459,6 +30699,14 @@ if (typeof window !== 'undefined') {
         getAppearanceViewMode,
         resolveAppearanceViewLayout,
         applyAppearanceViewMode,
+        setAppearanceZoom,
+        getAppearanceZoom,
+        getActiveAppearanceZoom,
+        adjustAppearanceZoom,
+        stepAppearanceZoom,
+        resetAppearanceZoom,
+        resetAppearanceSettings,
+        applyAppearanceZoom,
         repairAppData,
         updateVapePurchaseSelectDetails,
         switchTab,
@@ -30770,6 +31018,28 @@ function __getRecoveryTrackerTestExports() {
         APPEARANCE_VIEW_MODE_LAPTOP_MQ,
         isAppearancePhoneLayout,
         isAppearanceLaptopLayout,
+        normalizeAppearanceZoom,
+        snapAppearanceZoom,
+        getAppearanceZoom,
+        getPhoneViewZoom,
+        getLaptopViewZoom,
+        getActiveAppearanceZoom,
+        applyAppearanceZoom,
+        setAppearanceZoom,
+        adjustAppearanceZoom,
+        stepAppearanceZoom,
+        resetAppearanceZoom,
+        resetAppearanceSettings,
+        updateAppearanceZoomLayoutMetrics,
+        normalizeAppearanceSpacing,
+        getAppearanceSpacing,
+        applyAppearanceSpacing,
+        setAppearanceSpacing,
+        APPEARANCE_ZOOM_PRESETS,
+        APPEARANCE_ZOOM_MIN,
+        APPEARANCE_ZOOM_MAX,
+        APPEARANCE_ZOOM_STEP,
+        APPEARANCE_ZOOM_DEFAULT,
         filterPurchasesByStatsBounds,
         getPurchasesForInsightMetrics,
         getStatsDateRange,

@@ -45,6 +45,8 @@ export function loadRecoveryTrackerApp() {
             addEventListener: () => {},
             removeEventListener: () => {}
         }),
+        addEventListener: () => {},
+        removeEventListener: () => {},
         localStorage: {
             store: {},
             getItem(key) {
@@ -58,18 +60,56 @@ export function loadRecoveryTrackerApp() {
             }
         },
         document: {
-            documentElement: { dataset: {} },
+            documentElement: {
+                dataset: {},
+                style: {
+                    _props: {},
+                    setProperty(name, value) {
+                        this._props[name] = String(value);
+                    },
+                    getPropertyValue(name) {
+                        return this._props[name] ?? '';
+                    },
+                    removeProperty(name) {
+                        delete this._props[name];
+                    }
+                }
+            },
             getElementById: () => null,
             querySelector: () => null,
             querySelectorAll: () => [],
             addEventListener: () => {},
-            createElement: () => ({
-                style: {},
-                classList: { add() {}, remove() {}, toggle() {} },
+            createElement: () => {
+                const classes = new Set();
+                return {
+                    style: {},
+                    className: '',
+                    classList: {
+                        add(...names) { names.forEach(n => classes.add(n)); },
+                        remove(...names) { names.forEach(n => classes.delete(n)); },
+                        toggle(name, force) {
+                            if (force === true) classes.add(name);
+                            else if (force === false) classes.delete(name);
+                            else if (classes.has(name)) classes.delete(name);
+                            else classes.add(name);
+                            return classes.has(name);
+                        },
+                        contains(name) { return classes.has(name); }
+                    },
+                    appendChild() {},
+                    setAttribute() {},
+                    remove() {},
+                    get className() { return [...classes].join(' '); },
+                    set className(value) {
+                        classes.clear();
+                        String(value || '').split(/\s+/).filter(Boolean).forEach(n => classes.add(n));
+                    }
+                };
+            },
+            body: {
                 appendChild() {},
-                setAttribute() {}
-            }),
-            body: { appendChild() {} }
+                removeChild() {}
+            }
         }
     };
     sandbox.window = sandbox;
