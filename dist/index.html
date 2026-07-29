@@ -426,6 +426,19 @@
                         <input type="hidden" id="use-transaction-type" value="use">
                     </div>
 
+                    <div class="use-log-field-block hidden" id="use-alcohol-entry-mode-block">
+                        <span class="use-log-field-label">Entry Mode</span>
+                        <div class="use-log-entry-toggle" id="use-alcohol-entry-mode-group">
+                            <button type="button" class="use-entry-toggle-btn alcohol-mode-toggle active" data-mode="single_day" onclick="setAlcoholUseEntryMode('single_day')">
+                                <span class="use-entry-toggle-label">Single-day use</span>
+                            </button>
+                            <button type="button" class="use-entry-toggle-btn alcohol-mode-toggle" data-mode="multi_day" onclick="setAlcoholUseEntryMode('multi_day')">
+                                <span class="use-entry-toggle-label">Multi-day use</span>
+                            </button>
+                            <input type="hidden" id="use-alcohol-entry-mode" value="single_day">
+                        </div>
+                    </div>
+
                     <div class="use-log-field-block hidden" id="use-adjustment-direction-group">
                         <span class="use-log-field-label">Adjustment</span>
                         <div class="use-adj-pills" role="group" aria-label="Adjustment direction">
@@ -468,6 +481,23 @@
                             <div class="form-group use-log-compact" id="use-unit-group">
                                 <label for="use-unit">Unit</label>
                                 <select id="use-unit" required></select>
+                            </div>
+                        </div>
+
+                        <div class="form-group use-log-compact hidden" id="use-alcohol-custom-unit-group">
+                            <label for="use-alcohol-custom-unit">Custom unit name</label>
+                            <input type="text" id="use-alcohol-custom-unit" placeholder="e.g. seltzers">
+                        </div>
+
+                        <div id="use-alcohol-multiday-options" class="hidden">
+                            <label class="use-log-checkbox-label">
+                                <input type="checkbox" id="use-alcohol-split-evenly" checked onchange="updateAlcoholDailyBreakdownUI()">
+                                Split evenly across days
+                            </label>
+                            <div id="use-alcohol-daily-breakdown-block" class="use-log-field-block">
+                                <span class="use-log-field-label">Daily breakdown</span>
+                                <div id="use-alcohol-daily-breakdown" class="alcohol-daily-breakdown"></div>
+                                <p id="use-alcohol-daily-total-preview" class="use-supply-preview">—</p>
                             </div>
                         </div>
 

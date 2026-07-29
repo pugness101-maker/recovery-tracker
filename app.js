@@ -300,7 +300,7 @@ const DEFAULT_SUBSTANCE_CATALOG = [
         color: '#ffb74d',
         trackingMode: 'alcohol',
         primaryUnit: 'drinks',
-        units: ['drinks', 'beers', 'shots', 'ounces'],
+        units: ['drinks', 'shots', 'beers', 'glasses of wine', 'ounces', 'milliliters', 'custom'],
         defaultUnit: 'drinks',
         costTrackingEnabled: true,
         taperTrackingEnabled: true
@@ -2272,6 +2272,565 @@ function distributePuffsEvenlyAcrossDays(totalPuffs, startDateStr, endDateStr) {
         date,
         amount: base + (index === dates.length - 1 ? remainder : 0)
     }));
+}
+
+function distributeAmountEvenlyAcrossDays(totalAmount, startDateStr, endDateStr, decimals = 2) {
+    const total = parseFloat(totalAmount);
+    if (!Number.isFinite(total) || total <= 0) return [];
+    const dates = iterateDatesInRange(startDateStr, endDateStr);
+    if (!dates.length) return [];
+    const factor = Math.pow(10, decimals);
+    const roundedTotal = Math.round(total * factor);
+    const base = Math.floor(roundedTotal / dates.length);
+    const remainder = roundedTotal - base * dates.length;
+    return dates.map((date, index) => ({
+        date,
+        amount: (base + (index === dates.length - 1 ? remainder : 0)) / factor
+    }));
+}
+
+function isAlcoholMultiDayChildLog(log) {
+    return !!(log?.isDistributedChild && log?.parentLogId != null);
+}
+
+function isAlcoholMultiDayParentLog(log) {
+    return !!(log?.isMultiDay && !log?.isDistributedChild);
+}
+
+function getDistributedChildrenForMultiDayLog(parentLogId, data = appData) {
+    return getUseEntries(data)
+        .filter(l => isAlcoholMultiDayChildLog(l) && String(l.parentLogId) === String(parentLogId))
+        .sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+}
+
+function removeDistributedMultiDayEntries(parentLogId, data = appData) {
+    data.logs = getUseEntries(data).filter(l =>
+        !(isAlcoholMultiDayChildLog(l) && String(l.parentLogId) === String(parentLogId)));
+}
+
+function clearAlcoholMultiDayParentFlags(log) {
+    if (!log) return;
+    delete log.isMultiDay;
+    delete log.excludeFromStats;
+    delete log.dailyBreakdown;
+    delete log.splitEvenlyAcrossDays;
+    delete log.startDate;
+    delete log.endDate;
+}
+
+function splitPersonalSharedAcrossDays(dayAllocations, totalAmount, personalAmount, sharedAmount) {
+    const total = parseFloat(totalAmount) || 0;
+    const personal = parseFloat(personalAmount) || 0;
+    const shared = parseFloat(sharedAmount) || 0;
+    if (total <= INVENTORY_EPS) {
+        return dayAllocations.map(d => ({ ...d, personalAmount: 0, sharedAmount: 0 }));
+    }
+    return dayAllocations.map(d => ({
+        ...d,
+        personalAmount: personal * (d.amount / total),
+        sharedAmount: shared * (d.amount / total)
+    }));
+}
+
+function formatAlcoholUseSummary(log, sub = null) {
+    const substanceId = getUseSubstanceId(log);
+    const unit = log.unit || sub?.defaultUnit || getSubstance(substanceId)?.defaultUnit || 'drinks';
+    if (isAlcoholMultiDayParentLog(log)) {
+        const start = log.startDate || log.date;
+        const end = log.endDate || log.distributedEndDate || start;
+        const total = log.totalAmount ?? log.amount;
+        const rangeLabel = start === end ? formatDate(start) : `${formatDate(start)}–${formatDate(end)}`;
+        let summary = `${rangeLabel} · ${formatAmount(total)} ${unit} total`;
+        if (isSharedUseLog(log)) {
+            summary = `Shared Use · ${summary} · Me ${formatAmount(log.personalAmount)} · ${log.sharedWithName || 'Other'} ${formatAmount(log.sharedAmount)}`;
+        } else if (isGiftGivenLog(log)) {
+            summary = `Gift Given · ${summary}${log.recipientName ? ` · ${log.recipientName}` : ''}`;
+        } else if (isGiftReceivedLog(log)) {
+            summary = `Gift Received · ${summary}${log.giverName ? ` · from ${log.giverName}` : ''}`;
+        } else if (getLogTransactionType(log) === 'inventory_adjustment') {
+            summary = `Adjustment · ${summary}`;
+        }
+        return summary;
+    }
+    const amount = log.amount;
+    if (isSharedUseLog(log)) {
+        return `Shared Use · ${formatAmount(getLogTotalAmount(log))} ${unit} total · Me ${formatAmount(log.personalAmount)} · ${log.sharedWithName || 'Other'} ${formatAmount(log.sharedAmount)}`;
+    }
+    if (isGiftGivenLog(log)) {
+        return `Gift Given · ${formatAmount(amount)} ${unit}${log.recipientName ? ` · ${log.recipientName}` : ''}`;
+    }
+    if (isGiftReceivedLog(log)) {
+        return `Gift Received · ${formatAmount(amount)} ${unit}${log.giverName ? ` · from ${log.giverName}` : ''}`;
+    }
+    if (getLogTransactionType(log) === 'inventory_adjustment') {
+        return `Adjustment · ${formatAmount(amount)} ${unit}`;
+    }
+    return `${formatAmount(amount)} ${unit}`;
+}
+
+function formatAlcoholMultiDayBreakdownLines(parentLog, data = appData) {
+    const breakdown = parentLog.dailyBreakdown?.length
+        ? parentLog.dailyBreakdown
+        : getDistributedChildrenForMultiDayLog(parentLog.id, data).map(c => ({
+            date: c.date,
+            amount: c.amount
+        }));
+    const unit = parentLog.unit || 'drinks';
+    return breakdown.map(d => `${formatDate(d.date)}: ${formatAmount(d.amount)} ${unit}`);
+}
+
+function getAlcoholUseEntryMode() {
+    return document.getElementById('use-alcohol-entry-mode')?.value === 'multi_day' ? 'multi_day' : 'single_day';
+}
+
+function setAlcoholUseEntryMode(mode) {
+    const normalized = mode === 'multi_day' ? 'multi_day' : 'single_day';
+    const hidden = document.getElementById('use-alcohol-entry-mode');
+    if (hidden) hidden.value = normalized;
+    document.querySelectorAll('.alcohol-mode-toggle').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === normalized);
+    });
+    if (normalized === 'multi_day') {
+        setUseLogType('quick');
+        const startDate = document.getElementById('use-date')?.value;
+        const endDateEl = document.getElementById('use-end-date');
+        if (endDateEl && startDate && !endDateEl.value) {
+            endDateEl.value = startDate;
+            endDateEl.dataset.syncedStart = startDate;
+        }
+    }
+    updateAlcoholUseFormUI();
+}
+
+function getAlcoholFormUnit() {
+    const unitSelect = document.getElementById('use-unit')?.value;
+    if (unitSelect === 'custom') {
+        return document.getElementById('use-alcohol-custom-unit')?.value?.trim() || 'units';
+    }
+    return unitSelect || 'drinks';
+}
+
+function parseAlcoholDailyBreakdownFromForm() {
+    const splitEvenly = document.getElementById('use-alcohol-split-evenly')?.checked;
+    const startDate = document.getElementById('use-date')?.value;
+    const endDate = document.getElementById('use-end-date')?.value;
+    const total = parseFloat(document.getElementById('use-amount')?.value);
+    if (splitEvenly) {
+        return distributeAmountEvenlyAcrossDays(total, startDate, endDate);
+    }
+    return [...document.querySelectorAll('.use-alcohol-day-amount')].map(el => ({
+        date: el.dataset.date,
+        amount: parseFloat(el.value) || 0
+    }));
+}
+
+function validateAlcoholDailyBreakdown(totalAmount, breakdown, startDate, endDate) {
+    const dates = iterateDatesInRange(startDate, endDate);
+    if (!dates.length) return 'Select a valid start and end date.';
+    if (!breakdown.length) return 'Enter a daily breakdown.';
+    const byDate = new Map(breakdown.map(d => [d.date, d.amount]));
+    for (const date of dates) {
+        if (!byDate.has(date)) return `Missing amount for ${formatDate(date)}.`;
+        if ((byDate.get(date) || 0) < 0) return `Amount for ${formatDate(date)} cannot be negative.`;
+    }
+    const sum = breakdown.reduce((acc, d) => acc + (parseFloat(d.amount) || 0), 0);
+    if (Math.abs(sum - totalAmount) > 0.01) {
+        return `Daily amounts must add up to ${formatAmount(totalAmount)} (currently ${formatAmount(sum)}).`;
+    }
+    return null;
+}
+
+function computeAlcoholUseFromForm(options = {}) {
+    const substanceId = document.getElementById('use-substance')?.value;
+    if (!isAlcoholTrackingMode(substanceId)) return null;
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    const isMultiDay = getAlcoholUseEntryMode() === 'multi_day';
+    const unit = getAlcoholFormUnit();
+    const notes = document.getElementById('use-notes')?.value || '';
+    const startDate = document.getElementById('use-date')?.value;
+    const startTime = document.getElementById('use-start-time')?.value || '12:00';
+    const endDate = document.getElementById('use-end-date')?.value || startDate;
+    const endTime = document.getElementById('use-end-time')?.value || '23:59';
+    const totalAmount = parseFloat(document.getElementById('use-amount')?.value);
+    const splitEvenly = !!document.getElementById('use-alcohol-split-evenly')?.checked;
+
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+        return { error: 'Enter the total alcohol consumed.' };
+    }
+    if (!unit) return { error: 'Select a unit.' };
+    if (unitSelectRequiresCustomName() && !document.getElementById('use-alcohol-custom-unit')?.value?.trim()) {
+        return { error: 'Enter a custom unit name.' };
+    }
+
+    if (isMultiDay) {
+        if (!startDate || !endDate) return { error: 'Start and end dates are required.' };
+        if (endDate < startDate) return { error: 'End date must be on or after start date.' };
+        if (!startTime || !endTime) return { error: 'Start and end times are required.' };
+        const { start, end, invalid } = parseUseSessionEndDateTime(startDate, startTime, endDate, endTime, {
+            allowInferOvernight: false
+        });
+        if (invalid || !start || !end || end <= start) {
+            return { error: 'End date/time must be after start date/time.' };
+        }
+        let breakdown = parseAlcoholDailyBreakdownFromForm();
+        if (splitEvenly) {
+            breakdown = distributeAmountEvenlyAcrossDays(totalAmount, startDate, endDate);
+        } else {
+            const breakdownErr = validateAlcoholDailyBreakdown(totalAmount, breakdown, startDate, endDate);
+            if (breakdownErr) return { error: breakdownErr };
+        }
+        return {
+            isMultiDay: true,
+            startDate,
+            startTime,
+            endDate,
+            endTime,
+            totalAmount,
+            unit,
+            splitEvenlyAcrossDays: splitEvenly,
+            dailyBreakdown: breakdown,
+            startedAt: start.toISOString(),
+            endedAt: end.toISOString(),
+            durationMs: end - start,
+            date: startDate,
+            amount: totalAmount,
+            notes,
+            transactionType: tx
+        };
+    }
+
+    if (!startDate) return { error: 'Date is required.' };
+    return {
+        isMultiDay: false,
+        date: startDate,
+        startTime,
+        amount: totalAmount,
+        totalAmount,
+        unit,
+        notes,
+        transactionType: tx
+    };
+}
+
+function unitSelectRequiresCustomName() {
+    return document.getElementById('use-unit')?.value === 'custom';
+}
+
+function updateAlcoholDailyBreakdownUI(existingBreakdown = null) {
+    const container = document.getElementById('use-alcohol-daily-breakdown');
+    const preview = document.getElementById('use-alcohol-daily-total-preview');
+    if (!container) return;
+    const substanceId = document.getElementById('use-substance')?.value;
+    if (!isAlcoholTrackingMode(substanceId) || getAlcoholUseEntryMode() !== 'multi_day') {
+        container.innerHTML = '';
+        if (preview) preview.textContent = '—';
+        return;
+    }
+    const startDate = document.getElementById('use-date')?.value;
+    const endDate = document.getElementById('use-end-date')?.value;
+    const unit = getAlcoholFormUnit();
+    const splitEvenly = !!document.getElementById('use-alcohol-split-evenly')?.checked;
+    const total = parseFloat(document.getElementById('use-amount')?.value);
+
+    if (!startDate || !endDate || endDate < startDate) {
+        container.innerHTML = '<p class="use-supply-preview">Select a valid date range.</p>';
+        if (preview) preview.textContent = '—';
+        return;
+    }
+
+    const dates = iterateDatesInRange(startDate, endDate);
+    if (splitEvenly) {
+        const allocations = Number.isFinite(total) && total > 0
+            ? distributeAmountEvenlyAcrossDays(total, startDate, endDate)
+            : dates.map(date => ({ date, amount: 0 }));
+        container.innerHTML = allocations.map(a =>
+            `<div class="alcohol-daily-row">${formatDate(a.date)}: ${formatAmount(a.amount)} ${unit}</div>`
+        ).join('');
+        if (preview) {
+            const sum = allocations.reduce((acc, d) => acc + d.amount, 0);
+            preview.textContent = Number.isFinite(total)
+                ? `Total: ${formatAmount(sum)} ${unit}`
+                : '—';
+        }
+        return;
+    }
+
+    const breakdownMap = new Map((existingBreakdown || []).map(d => [d.date, d.amount]));
+    container.innerHTML = dates.map(date => {
+        const val = breakdownMap.has(date) ? breakdownMap.get(date) : '';
+        return `<div class="form-group use-log-compact alcohol-daily-row">
+            <label for="use-alcohol-day-${date}">${formatDate(date)}</label>
+            <input type="number" id="use-alcohol-day-${date}" class="use-alcohol-day-amount" data-date="${date}" min="0" step="0.01" value="${val === '' ? '' : val}" placeholder="0">
+        </div>`;
+    }).join('');
+    container.querySelectorAll('.use-alcohol-day-amount').forEach(el => {
+        el.addEventListener('input', updateAlcoholDailyBreakdownTotalPreview);
+    });
+    updateAlcoholDailyBreakdownTotalPreview();
+}
+
+function updateAlcoholDailyBreakdownTotalPreview() {
+    const preview = document.getElementById('use-alcohol-daily-total-preview');
+    if (!preview) return;
+    const totalTarget = parseFloat(document.getElementById('use-amount')?.value);
+    const unit = getAlcoholFormUnit();
+    const breakdown = parseAlcoholDailyBreakdownFromForm();
+    const sum = breakdown.reduce((acc, d) => acc + (parseFloat(d.amount) || 0), 0);
+    if (!Number.isFinite(totalTarget)) {
+        preview.textContent = `Daily sum: ${formatAmount(sum)} ${unit}`;
+        return;
+    }
+    const match = Math.abs(sum - totalTarget) <= 0.01;
+    preview.textContent = `Daily sum: ${formatAmount(sum)} / ${formatAmount(totalTarget)} ${unit}${match ? '' : ' (must match total)'}`;
+    preview.classList.toggle('use-duration-error', !match && breakdown.length > 0);
+}
+
+function updateAlcoholUseFormUI() {
+    const substanceId = document.getElementById('use-substance')?.value;
+    const isAlcohol = isAlcoholTrackingMode(substanceId);
+    const isMultiDay = isAlcohol && getAlcoholUseEntryMode() === 'multi_day';
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    const isNonUse = isNonUseTransactionType(tx);
+
+    document.getElementById('use-alcohol-entry-mode-block')?.classList.toggle('hidden', !isAlcohol || isNonUse);
+    document.getElementById('use-alcohol-multiday-options')?.classList.toggle('hidden', !isMultiDay);
+    document.getElementById('use-alcohol-custom-unit-group')?.classList.toggle('hidden', !isAlcohol || document.getElementById('use-unit')?.value !== 'custom');
+    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', !isAlcohol && !isNicotineTrackingMode(substanceId));
+
+    if (!isAlcohol) return;
+
+    document.getElementById('use-log-form')?.classList.toggle('is-alcohol-multiday', isMultiDay);
+    document.getElementById('use-entry-type-group')?.classList.add('hidden');
+
+    const dateLabel = document.getElementById('use-date-label');
+    if (dateLabel) dateLabel.textContent = isMultiDay ? 'Start date' : 'Date';
+
+    const startTimeLabel = document.getElementById('use-start-time-label');
+    if (startTimeLabel) startTimeLabel.textContent = isMultiDay ? 'Start time' : 'Start';
+
+    document.getElementById('use-end-date-group')?.classList.toggle('hidden', !isMultiDay);
+    document.getElementById('use-end-time-group')?.classList.toggle('hidden', !isMultiDay);
+
+    const amountLabel = document.getElementById('use-amount-label');
+    if (amountLabel && !isNonUse) {
+        amountLabel.textContent = isMultiDay ? 'Total alcohol consumed' : 'Amount';
+    }
+
+    const startTimeInput = document.getElementById('use-start-time');
+    if (startTimeInput) startTimeInput.required = true;
+    const endTimeInput = document.getElementById('use-end-time');
+    if (endTimeInput) endTimeInput.required = isMultiDay;
+
+    if (isMultiDay) {
+        updateAlcoholDailyBreakdownUI();
+        computeAlcoholMultiDayDurationPreview();
+    } else {
+        document.getElementById('use-duration-preview')?.classList.add('hidden');
+    }
+    updateAlcoholSharedPreview();
+}
+
+function computeAlcoholMultiDayDurationPreview() {
+    const preview = document.getElementById('use-duration-preview');
+    if (!preview || getAlcoholUseEntryMode() !== 'multi_day') return;
+    const startDate = document.getElementById('use-date')?.value;
+    const endDate = document.getElementById('use-end-date')?.value;
+    const startTime = document.getElementById('use-start-time')?.value;
+    const endTime = document.getElementById('use-end-time')?.value;
+    if (!startDate || !endDate || !startTime || !endTime) {
+        preview.classList.add('hidden');
+        return;
+    }
+    const { start, end, invalid } = parseUseSessionEndDateTime(startDate, startTime, endDate, endTime, {
+        allowInferOvernight: false
+    });
+    if (!start || !end || invalid || end <= start) {
+        preview.textContent = invalid || (end && start && end <= start)
+            ? 'End date/time is before start date/time.'
+            : 'Duration: —';
+        preview.classList.remove('hidden');
+        preview.classList.toggle('use-duration-error', !!(invalid || (end && start && end <= start)));
+        return;
+    }
+    preview.textContent = `Duration: ${formatUseSessionDurationPreview((end - start) / 3600000)}`;
+    preview.classList.remove('hidden', 'use-duration-error');
+}
+
+function updateAlcoholSharedPreview() {
+    const preview = document.getElementById('use-shared-preview');
+    if (!preview) return;
+    const substanceId = document.getElementById('use-substance')?.value;
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    if (!isAlcoholTrackingMode(substanceId) || tx !== 'shared_use') {
+        if (isAlcoholTrackingMode(substanceId)) preview.textContent = '—';
+        return;
+    }
+    const unit = getAlcoholFormUnit();
+    const split = parseNicotineSharedSplitFromForm(parseFloat(document.getElementById('use-amount')?.value));
+    if (split.personal == null || split.other == null || !Number.isFinite(split.total)) {
+        preview.textContent = '—';
+        return;
+    }
+    preview.textContent = `Shared Use · ${formatAmount(split.total)} ${unit} total · Me ${formatAmount(split.personal)} · ${split.sharedWithName || 'Other'} ${formatAmount(split.other)}`;
+}
+
+function applyAlcoholSharedFieldsToLog(log, sharedSplit) {
+    if (!sharedSplit || !isSharedUseLog(log)) return;
+    log.totalAmount = sharedSplit.total;
+    log.personalAmount = sharedSplit.personal;
+    log.sharedAmount = sharedSplit.other;
+    log.sharedWithName = sharedSplit.sharedWithName;
+    log.amount = sharedSplit.total;
+}
+
+function finalizeAlcoholUseLogForSave(log, alcoholCalc = null, sharedSplit = null, data = appData) {
+    if (!log || !isAlcoholTrackingMode(getUseSubstanceId(log), data)) return log;
+    log.trackingMode = 'alcohol';
+    if (alcoholCalc && !alcoholCalc.error) {
+        log.isMultiDay = !!alcoholCalc.isMultiDay;
+        log.unit = alcoholCalc.unit;
+        log.notes = alcoholCalc.notes ?? log.notes;
+        if (alcoholCalc.isMultiDay) {
+            log.startDate = alcoholCalc.startDate;
+            log.startTime = alcoholCalc.startTime;
+            log.endDate = alcoholCalc.endDate;
+            log.endTime = alcoholCalc.endTime;
+            log.totalAmount = alcoholCalc.totalAmount;
+            log.amount = alcoholCalc.totalAmount;
+            log.date = alcoholCalc.startDate;
+            log.splitEvenlyAcrossDays = alcoholCalc.splitEvenlyAcrossDays;
+            log.dailyBreakdown = alcoholCalc.dailyBreakdown;
+            log.startedAt = alcoholCalc.startedAt;
+            log.endedAt = alcoholCalc.endedAt;
+            log.durationMs = alcoholCalc.durationMs;
+            log.time = alcoholCalc.startTime;
+            log.endTime = alcoholCalc.endTime;
+            log.excludeFromStats = true;
+        } else {
+            log.date = alcoholCalc.date;
+            log.startTime = alcoholCalc.startTime;
+            log.time = alcoholCalc.startTime;
+            log.amount = alcoholCalc.amount;
+            log.totalAmount = alcoholCalc.totalAmount;
+            delete log.endDate;
+            log.endTime = '';
+            delete log.startedAt;
+            delete log.endedAt;
+            delete log.durationMs;
+            delete log.excludeFromStats;
+            delete log.dailyBreakdown;
+            delete log.splitEvenlyAcrossDays;
+        }
+    }
+    if (sharedSplit) applyAlcoholSharedFieldsToLog(log, sharedSplit);
+    syncGiftPartyFields(log);
+    syncLogPurchaseFields(log);
+    return log;
+}
+
+function syncDistributedAlcoholEntries(parentLog, data = appData) {
+    removeDistributedMultiDayEntries(parentLog.id, data);
+    if (!isAlcoholMultiDayParentLog(parentLog)) return;
+    const tx = getLogTransactionType(parentLog);
+    if (tx !== 'use' && tx !== 'shared_use') return;
+
+    const startDate = parentLog.startDate || parentLog.date;
+    const endDate = parentLog.endDate;
+    if (!startDate || !endDate || endDate < startDate) return;
+
+    const totalAmount = parseFloat(parentLog.totalAmount ?? parentLog.amount) || 0;
+    if (totalAmount <= INVENTORY_EPS) return;
+
+    let dayAllocations = parentLog.dailyBreakdown?.length
+        ? parentLog.dailyBreakdown.map(d => ({ date: d.date, amount: parseFloat(d.amount) || 0 }))
+        : distributeAmountEvenlyAcrossDays(totalAmount, startDate, endDate);
+    if (!dayAllocations.length) return;
+
+    const personalTotal = isSharedUseLog(parentLog) ? getLogPersonalAmount(parentLog) : totalAmount;
+    const sharedTotal = isSharedUseLog(parentLog) ? getLogSharedAmount(parentLog) : 0;
+    const withSplit = splitPersonalSharedAcrossDays(dayAllocations, totalAmount, personalTotal, sharedTotal);
+
+    parentLog.excludeFromStats = true;
+    parentLog.isMultiDay = true;
+    parentLog.dailyBreakdown = dayAllocations.map(d => ({ date: d.date, amount: d.amount }));
+
+    const now = new Date().toISOString();
+    let baseId = Date.now() + 1;
+    const substanceId = getUseSubstanceId(parentLog);
+
+    withSplit.forEach((alloc, index) => {
+        if (alloc.amount <= INVENTORY_EPS) return;
+        data.logs.push({
+            id: baseId + index,
+            type: 'quick',
+            transactionType: tx,
+            substanceId,
+            date: alloc.date,
+            amount: alloc.amount,
+            totalAmount: alloc.amount,
+            personalAmount: alloc.personalAmount,
+            sharedAmount: alloc.sharedAmount,
+            unit: parentLog.unit,
+            logMode: 'alcohol_daily',
+            isMultiDay: false,
+            isDistributedChild: true,
+            parentLogId: parentLog.id,
+            sharedWithName: parentLog.sharedWithName || '',
+            excludeFromInventory: true,
+            inventoryAffects: false,
+            purchaseId: null,
+            linkedPurchaseId: getLogPurchaseId(parentLog),
+            distributedStartDate: startDate,
+            distributedEndDate: endDate,
+            trackingMode: 'alcohol',
+            createdAt: now,
+            updatedAt: now,
+            timestamp: parentLog.timestamp || now
+        });
+    });
+}
+
+function toggleMultiDayDistDays(parentId) {
+    const el = document.getElementById(`multiday-dist-${parentId}`);
+    if (el) el.classList.toggle('hidden');
+}
+
+function populateUseFormFromAlcoholLog(entry) {
+    if (!entry) return;
+    setAlcoholUseEntryMode(entry.isMultiDay ? 'multi_day' : 'single_day');
+    setUseTransactionType(getLogTransactionType(entry));
+    setInputValue('use-date', entry.isMultiDay ? (entry.startDate || entry.date) : (entry.date || ''));
+    setInputValue('use-start-time', entry.startTime || entry.time || '12:00');
+    if (entry.isMultiDay) {
+        setInputValue('use-end-date', entry.endDate || entry.date || '');
+        setInputValue('use-end-time', entry.endTime || '23:59');
+        const splitEl = document.getElementById('use-alcohol-split-evenly');
+        if (splitEl) splitEl.checked = entry.splitEvenlyAcrossDays !== false;
+    }
+    setInputValue('use-amount', entry.totalAmount ?? entry.amount ?? '');
+    setInputValue('use-notes', entry.notes || '');
+    setInputValue('use-gift-party', entry.giftPartyName || entry.recipientName || entry.giverName || '');
+    if (isSharedUseLog(entry)) {
+        setInputValue('use-shared-total', entry.totalAmount ?? entry.amount ?? '');
+        setInputValue('use-shared-personal', entry.personalAmount ?? '');
+        setInputValue('use-shared-other', entry.sharedAmount ?? '');
+        setInputValue('use-shared-with', entry.sharedWithName || '');
+    }
+    const unitSelect = document.getElementById('use-unit');
+    const unit = entry.unit || 'drinks';
+    const knownUnits = [...(getSubstance('alcohol')?.units || []), 'units'];
+    if (unitSelect) {
+        if (unit && !knownUnits.includes(unit)) {
+            unitSelect.value = 'custom';
+            setInputValue('use-alcohol-custom-unit', unit);
+        } else {
+            unitSelect.value = knownUnits.includes(unit) ? unit : 'drinks';
+        }
+    }
+    updateAlcoholUseFormUI();
+    if (entry.isMultiDay && entry.splitEvenlyAcrossDays === false) {
+        updateAlcoholDailyBreakdownUI(entry.dailyBreakdown || []);
+    }
 }
 
 function formatPercentLeftCheckpointSummary(log) {
@@ -8409,6 +8968,26 @@ function getUsageSegments(logs, options = {}) {
             return true;
         })
         .flatMap(log => {
+            if (log.excludeFromStats && isAlcoholMultiDayParentLog(log)) {
+                return [];
+            }
+            if (isAlcoholMultiDayChildLog(log)) {
+                const statsLog = isSharedUseLog(log)
+                    ? { ...log, amount: getLogStatsAmount(log) }
+                    : log;
+                const logSubstanceId = getUseSubstanceId(log);
+                const segAmount = getLogStatsAmount(statsLog);
+                return [{
+                    date: log.date,
+                    amount: segAmount,
+                    count: 0,
+                    minutes: null,
+                    sourceLogId: log.id,
+                    log: statsLog,
+                    originalLog: log,
+                    cost: estimateSegmentCostFromLog(statsLog, segAmount, logSubstanceId, data)
+                }];
+            }
             const statsLog = isSharedUseLog(log)
                 ? { ...log, amount: getLogStatsAmount(log) }
                 : log;
@@ -8794,10 +9373,13 @@ function setUseTransactionType(tx) {
     const isAdjustment = tx === 'inventory_adjustment';
     const isNonUse = isGift || isAdjustment;
 
-    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isNonUse || isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm() || isLsdDateOnlyUseForm() || isXanaxDateOnlyUseForm());
+    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isNonUse || isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm() || isLsdDateOnlyUseForm() || isXanaxDateOnlyUseForm() || isAlcoholTrackingMode(document.getElementById('use-substance')?.value));
     document.getElementById('use-adjustment-direction-group')?.classList.toggle('hidden', !isAdjustment);
     document.getElementById('use-gift-party-group')?.classList.toggle('hidden', !isGift);
     document.getElementById('use-shared-fields-group')?.classList.toggle('hidden', !isSharedUse);
+
+    const substanceIdForTx = document.getElementById('use-substance')?.value;
+    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', !isNicotineTrackingMode(substanceIdForTx) && !isAlcoholTrackingMode(substanceIdForTx));
 
     const partyLabel = document.getElementById('use-gift-party-label');
     if (partyLabel) partyLabel.textContent = isGiftReceived ? 'From' : 'Recipient Name';
@@ -8832,6 +9414,7 @@ function setUseTransactionType(tx) {
     updateVapeUseFormUI();
     updateUsePurchaseLinkUI();
     updateNicotineSharedPreview();
+    updateAlcoholSharedPreview();
 }
 
 function getUseAdjustmentDirection() {
@@ -8870,10 +9453,12 @@ function getUseCreatedAt(entry) {
     return entry.createdAt || entry.timestamp || new Date().toISOString();
 }
 
-function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = null, xanaxCalc = null) {
+function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = null, xanaxCalc = null, alcoholCalc = null) {
     const rawSubstanceId = document.getElementById('use-substance')?.value;
     const substanceId = isNicotineTrackingMode(rawSubstanceId) ? NICOTINE_ID : rawSubstanceId;
     const isNicotine = isNicotineTrackingMode(substanceId);
+    const isAlcohol = isAlcoholTrackingMode(substanceId);
+    const isAlcoholMultiDay = isAlcohol && (alcoholCalc?.isMultiDay || getAlcoholUseEntryMode() === 'multi_day');
     const nicotineProductType = isNicotine ? getUseFormNicotineProductType() : null;
     const isVapeDateOnly = isNicotine ? nicotineProductType === 'vape' : isVapeTrackingMode(substanceId);
     const isNicotineSimple = isNicotine && nicotineProductType !== 'vape' && nicotineProductType !== 'other';
@@ -8886,14 +9471,20 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
     const isGiftReceived = transactionType === 'gift_received';
     const isGift = isGiftGiven || isGiftReceived;
     const isAdjustment = transactionType === 'inventory_adjustment';
-    let type = (isGift || isAdjustment || isSharedUse || isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple || isNicotineSimple) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
-    const date = document.getElementById('use-date')?.value;
+    let type = (isGift || isAdjustment || isSharedUse || isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple || isNicotineSimple || isAlcohol) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
+    const date = isAlcoholMultiDay && alcoholCalc?.startDate
+        ? alcoholCalc.startDate
+        : document.getElementById('use-date')?.value;
     const xanaxOmitsStartTime = isXanaxSimple && !isGift && !isAdjustment;
     const startTime = (isWeedSimple || isVapeDateOnly || isNicotineSimple || xanaxOmitsStartTime)
         ? ''
         : (document.getElementById('use-start-time')?.value || '12:00');
-    const endDate = (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple || isNicotineSimple) ? null : (document.getElementById('use-end-date')?.value || date);
-    const endTime = (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple || isNicotineSimple) ? '' : (document.getElementById('use-end-time')?.value || '');
+    const endDate = isAlcoholMultiDay
+        ? (alcoholCalc?.endDate || document.getElementById('use-end-date')?.value || date)
+        : ((isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple || isNicotineSimple) ? null : (document.getElementById('use-end-date')?.value || date));
+    const endTime = isAlcoholMultiDay
+        ? (alcoholCalc?.endTime || document.getElementById('use-end-time')?.value || '')
+        : ((isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple || isNicotineSimple) ? '' : (document.getElementById('use-end-time')?.value || ''));
     const isVapeUse = isVapeDateOnly;
     const isCokeSession = isCokeSubstanceId(substanceId) && type === 'session';
 
@@ -8931,9 +9522,15 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         linkedPurchaseId = xanaxCalc.purchaseId;
         inventoryAffects = getUsePurchaseLinkMode() !== 'none' && !!linkedPurchaseId;
         logMode = 'xanax_dose';
+    } else if (isAlcohol && alcoholCalc && !alcoholCalc.error) {
+        amount = alcoholCalc.totalAmount ?? alcoholCalc.amount;
+        unit = alcoholCalc.unit;
+        linkedPurchaseId = resolveLinkedPurchaseId(substanceId, transactionType);
+        inventoryAffects = getUsePurchaseLinkMode() !== 'none' && linkedPurchaseId != null;
+        logMode = alcoholCalc.isMultiDay ? 'alcohol_multiday' : 'alcohol_quick';
     } else {
         amount = parseFloat(document.getElementById('use-amount')?.value);
-        unit = document.getElementById('use-unit')?.value;
+        unit = isAlcohol ? getAlcoholFormUnit() : document.getElementById('use-unit')?.value;
         const linkMode = getUsePurchaseLinkMode();
         linkedPurchaseId = resolveLinkedPurchaseId(substanceId, transactionType);
         inventoryAffects = linkMode !== 'none' && linkedPurchaseId != null;
@@ -8953,10 +9550,10 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         percentRemaining: percentRemaining != null ? percentRemaining : undefined,
         previousRemainingBeforeLog: previousRemainingBeforeLog != null ? previousRemainingBeforeLog : undefined,
         date,
-        endDate: (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple) ? undefined : ((isGift || isAdjustment || isSharedUse || type === 'session') ? (endDate || date) : undefined),
+        endDate: (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple) ? undefined : ((isGift || isAdjustment || isSharedUse || type === 'session' || isAlcoholMultiDay) ? (endDate || date) : undefined),
         startTime,
         time: startTime,
-        endTime: (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple) ? '' : ((isGift || isAdjustment || isSharedUse || type === 'session') ? (endTime || '') : ''),
+        endTime: (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple) ? '' : ((isGift || isAdjustment || isSharedUse || type === 'session' || isAlcoholMultiDay) ? (endTime || '') : ''),
         count: (isGift || isAdjustment || isSharedUse || isWeedSimple || isLsdQuick || isXanaxSimple) ? 0 : (parseFloat(document.getElementById('use-count')?.value) || 0),
         giftPartyName: giftParty,
         recipientName: isGiftGiven ? giftParty : '',
@@ -8973,6 +9570,20 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
     };
 
     base.trackingMode = isNicotineTrackingMode(substanceId) ? 'nicotine' : getSubstanceTrackingMode(substanceId);
+
+    if (isAlcohol && alcoholCalc && !alcoholCalc.error) {
+        base.isMultiDay = !!alcoholCalc.isMultiDay;
+        if (alcoholCalc.isMultiDay) {
+            base.startDate = alcoholCalc.startDate;
+            base.endDate = alcoholCalc.endDate;
+            base.totalAmount = alcoholCalc.totalAmount;
+            base.splitEvenlyAcrossDays = alcoholCalc.splitEvenlyAcrossDays;
+            base.dailyBreakdown = alcoholCalc.dailyBreakdown;
+            base.startedAt = alcoholCalc.startedAt;
+            base.endedAt = alcoholCalc.endedAt;
+            base.durationMs = alcoholCalc.durationMs;
+        }
+    }
 
     if (isWeedSimple) {
         base.weedProductType = getWeedUseProductType();
@@ -9066,6 +9677,9 @@ function resetUseFormAfterSave() {
     setUsePurchaseLinkMode('auto');
     setUseTransactionType('use');
     setUseAdjustmentDirection('add');
+    setAlcoholUseEntryMode('single_day');
+    const alcoholSplitEl = document.getElementById('use-alcohol-split-evenly');
+    if (alcoholSplitEl) alcoholSplitEl.checked = true;
     updateVapeUseFormUI();
 }
 
@@ -11244,6 +11858,7 @@ function updateVapeUseFormUI() {
     const isWeed = isWeedTrackingMode(substanceId);
     const isLsd = isLsdSubstanceId(substanceId);
     const isXanax = isXanaxSubstanceId(substanceId);
+    const isAlcohol = isAlcoholTrackingMode(substanceId);
     const isVapeUse = isVape;
     const vapeGroup = document.getElementById('use-vape-fields-group');
     const amountGroup = document.getElementById('use-amount-mode-group');
@@ -11258,8 +11873,8 @@ function updateVapeUseFormUI() {
     document.getElementById('use-log-form')?.classList.toggle('is-vape-simple', isVape || isNicotineSimple);
     document.getElementById('use-log-form')?.classList.toggle('is-lsd-simple', isLsd);
     document.getElementById('use-log-form')?.classList.toggle('is-xanax-simple', isXanax);
-    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isVape || isWeed || isLsd || isXanax || isNicotineSimple || isNonUse);
-    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', !isNicotine);
+    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isVape || isWeed || isLsd || isXanax || isNicotineSimple || isNonUse || isAlcohol);
+    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', !isNicotine && !isAlcohol);
     document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape || isNicotineSimple || (isNicotine && !isNonUse));
 
     const dateLabel = document.getElementById('use-date-label');
@@ -11294,6 +11909,17 @@ function updateVapeUseFormUI() {
         positionUseInventoryFields(true);
         document.getElementById('use-duration-preview')?.classList.add('hidden');
         document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
+    } else if (isAlcohol) {
+        document.getElementById('use-nicotine-product-type-group')?.classList.add('hidden');
+        document.getElementById('use-cigarettes-fields-group')?.classList.add('hidden');
+        document.getElementById('use-pouches-fields-group')?.classList.add('hidden');
+        document.getElementById('use-gum-fields-group')?.classList.add('hidden');
+        document.getElementById('use-patches-fields-group')?.classList.add('hidden');
+        document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
+        document.getElementById('use-lsd-fields-group')?.classList.add('hidden');
+        document.getElementById('use-xanax-fields-group')?.classList.add('hidden');
+        positionUseInventoryFields(false);
+        updateAlcoholUseFormUI();
     } else if (isVape) {
         ensureVapeUseFormDefaults();
         positionUseInventoryFields(false);
@@ -11344,7 +11970,7 @@ function updateVapeUseFormUI() {
         updateVapeUsePreview();
     }
 
-    if (!isWeed && !isVape && !isLsd && !isNicotineSimple) {
+    if (!isWeed && !isVape && !isLsd && !isNicotineSimple && !isAlcohol) {
         updateUseEndTimeVisibility();
     }
 }
@@ -12299,6 +12925,10 @@ function editUseEntry(id) {
         editUseEntry(entry.parentPercentLogId);
         return;
     }
+    if (isAlcoholMultiDayChildLog(entry)) {
+        editUseEntry(entry.parentLogId);
+        return;
+    }
 
     editingUseId = id;
     const isVape = isVapeUseLog(entry);
@@ -12306,9 +12936,28 @@ function editUseEntry(id) {
     const isLsd = isLsdSubstanceId(getUseSubstanceId(entry));
     const isXanax = isXanaxSubstanceId(getUseSubstanceId(entry));
     const isNicotineNonVape = isNicotineSubstanceId(getUseSubstanceId(entry)) && !isVape;
+    const isAlcohol = isAlcoholTrackingMode(getUseSubstanceId(entry));
 
     if (isVape) {
         populateUseFormFromVapeLog(entry);
+        setInputValue('use-count', getUseCount(entry));
+        setUseFormSubmitLabel('Update Entry');
+        document.getElementById('cancel-use-edit-btn')?.classList.remove('hidden');
+        switchTab('use-log-tab');
+        document.getElementById('use-log-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        return;
+    }
+
+    if (isAlcohol) {
+        const substanceSelect = document.getElementById('use-substance');
+        if (substanceSelect && [...substanceSelect.options].some(o => o.value === 'alcohol')) {
+            substanceSelect.value = 'alcohol';
+        }
+        updateUseUnitDropdown();
+        if (isInventoryAdjustmentLog(entry)) {
+            setUseAdjustmentDirection(getAdjustmentDirection(entry));
+        }
+        populateUseFormFromAlcoholLog(entry);
         setInputValue('use-count', getUseCount(entry));
         setUseFormSubmitLabel('Update Entry');
         document.getElementById('cancel-use-edit-btn')?.classList.remove('hidden');
@@ -12712,6 +13361,7 @@ function setupUseLogForm() {
     });
     document.getElementById('use-unit')?.addEventListener('change', () => {
         updateVapeUseFormUI();
+        updateAlcoholUseFormUI();
     });
     ['use-amount', 'use-date', 'use-end-date', 'use-percent-after', 'use-vape-puffs-used'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', () => {
@@ -12719,6 +13369,26 @@ function setupUseLogForm() {
             updateUsePurchaseLinkUI();
             updateVapeUsePreview();
             computeUseFormDuration();
+            if (isAlcoholTrackingMode(document.getElementById('use-substance')?.value)) {
+                updateAlcoholDailyBreakdownUI();
+                computeAlcoholMultiDayDurationPreview();
+                updateAlcoholSharedPreview();
+            }
+        });
+    });
+    ['use-start-time', 'use-end-time'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', () => {
+            if (isAlcoholTrackingMode(document.getElementById('use-substance')?.value)
+                && getAlcoholUseEntryMode() === 'multi_day') {
+                computeAlcoholMultiDayDurationPreview();
+            }
+        });
+    });
+    document.getElementById('use-alcohol-custom-unit')?.addEventListener('input', updateAlcoholDailyBreakdownUI);
+    ['use-shared-total', 'use-shared-personal', 'use-shared-other', 'use-shared-with'].forEach(id => {
+        document.getElementById(id)?.addEventListener('input', () => {
+            updateNicotineSharedPreview();
+            updateAlcoholSharedPreview();
         });
     });
     document.getElementById('use-vape-purchase-select')?.addEventListener('change', () => {
@@ -12948,10 +13618,18 @@ function handleUseLogSubmit(e) {
     const isNicotineSimple = isNicotine && nicotineProductType !== 'vape' && nicotineProductType !== 'other';
     const isLsdUse = isLsdSubstanceId(substanceIdPreview);
     const isXanaxUse = isXanaxSubstanceId(substanceIdPreview);
+    const isAlcoholUse = isAlcoholTrackingMode(substanceIdPreview);
     let vapeCalc = null;
     let lsdCalc = null;
     let nicotineCalc = null;
     let xanaxCalc = null;
+    let alcoholCalc = null;
+    let alcoholSharedSplit = null;
+
+    if (isAlcoholUse) {
+        alcoholCalc = computeAlcoholUseFromForm({ editingId: editingUseId || null });
+        if (alcoholCalc?.error) return alert(alcoholCalc.error);
+    }
 
     if (isVapeUse) {
         vapeCalc = computeVapeUseFromForm({ editingId: editingUseId || null });
@@ -12976,6 +13654,20 @@ function handleUseLogSubmit(e) {
 
     const tx = document.getElementById('use-transaction-type')?.value || 'use';
     let sharedSplit = null;
+    if (isAlcoholUse) {
+        if (tx === 'gift_given' || tx === 'gift_received') {
+            const party = document.getElementById('use-gift-party')?.value?.trim();
+            if (!party) {
+                return alert(tx === 'gift_received' ? 'Enter who gave this to you.' : 'Enter recipient name.');
+            }
+        }
+        if (tx === 'shared_use') {
+            const totalAmount = alcoholCalc?.totalAmount ?? alcoholCalc?.amount;
+            alcoholSharedSplit = parseNicotineSharedSplitFromForm(totalAmount);
+            const sharedErr = validateNicotineSharedSplit(totalAmount, alcoholSharedSplit);
+            if (sharedErr) return alert(sharedErr);
+        }
+    }
     if (isNicotine) {
         if (tx === 'gift_given' || tx === 'gift_received') {
             const party = document.getElementById('use-gift-party')?.value?.trim();
@@ -13011,7 +13703,7 @@ function handleUseLogSubmit(e) {
         if (xanaxErr) return alert(xanaxErr);
     }
 
-    const payload = buildUseEntryFromForm(vapeCalc, lsdCalc, nicotineCalc, xanaxCalc);
+    const payload = buildUseEntryFromForm(vapeCalc, lsdCalc, nicotineCalc, xanaxCalc, alcoholCalc);
     const { substanceId, amount, type, transactionType } = payload;
     const isPersonalUse = isPersonalUseLog({ transactionType });
     const eventTimestamp = getUseEventTimestamp(payload.date, payload.startTime);
@@ -13132,6 +13824,18 @@ function handleUseLogSubmit(e) {
         if (isNicotineTrackingMode(substanceId)) {
             finalizeNicotineUseLogForSave(updated, { nicotineCalc, vapeCalc, sharedSplit });
         }
+        if (isAlcoholTrackingMode(substanceId)) {
+            if (isAlcoholMultiDayParentLog(existing)) {
+                removeDistributedMultiDayEntries(existing.id);
+            }
+            if (!alcoholCalc?.isMultiDay) {
+                clearAlcoholMultiDayParentFlags(updated);
+            }
+            finalizeAlcoholUseLogForSave(updated, alcoholCalc, alcoholSharedSplit);
+            if (updated.isMultiDay) {
+                syncDistributedAlcoholEntries(updated);
+            }
+        }
 
         const inv = applyLogInventoryEffect(updated);
         if (!inv.ok) {
@@ -13199,6 +13903,9 @@ function handleUseLogSubmit(e) {
     if (isNicotineTrackingMode(substanceId)) {
         finalizeNicotineUseLogForSave(log, { nicotineCalc, vapeCalc, sharedSplit });
     }
+    if (isAlcoholTrackingMode(substanceId)) {
+        finalizeAlcoholUseLogForSave(log, alcoholCalc, alcoholSharedSplit);
+    }
     if (isLsdSubstanceId(substanceId)) {
         log.type = 'quick';
         log.logMode = 'lsd_dose';
@@ -13240,6 +13947,10 @@ function handleUseLogSubmit(e) {
 
     appData.logs.push(log);
 
+    if (isAlcoholTrackingMode(substanceId) && log.isMultiDay) {
+        syncDistributedAlcoholEntries(log);
+    }
+
     if (useVapeInventory && vapeCalc.purchaseId) {
         setLogPurchaseId(log, vapeCalc.purchaseId);
         recalculateVapePurchaseInventory(vapeCalc.purchaseId);
@@ -13280,11 +13991,19 @@ function deleteUseEntry(id) {
         deleteUseEntry(entry.parentPercentLogId);
         return;
     }
+    if (isAlcoholMultiDayChildLog(entry)) {
+        if (!confirm('Delete the multi-day entry and all linked daily entries?')) return;
+        deleteUseEntry(entry.parentLogId);
+        return;
+    }
     if (!confirm('Delete this entry?')) return;
     if (editingUseId === id) cancelUseEdit();
     const vapePid = entry && isVapeUseLog(entry) ? getLogPurchaseId(entry) : null;
     if (isPercentLeftCheckpointLog(entry)) {
         removeDistributedPercentLeftEntries(entry.id);
+    }
+    if (isAlcoholMultiDayParentLog(entry)) {
+        removeDistributedMultiDayEntries(entry.id);
     }
     if (entry && !vapePid) restoreLogSupplyLinks(entry);
     appData.logs = getUseEntries().filter(l => l.id !== id && String(l.id) !== String(id));
@@ -13313,6 +14032,7 @@ function buildUseHistoryRows(substanceIdOverride = undefined) {
         : getUseLogViewSubstanceId();
     let entries = getUseEntries().filter(l => logMatchesUseLogFilter(l));
     entries = entries.filter(l => !isPercentLeftDistributedChildLog(l));
+    entries = entries.filter(l => !isAlcoholMultiDayChildLog(l));
     if (filterId) entries = entries.filter(l => logMatchesSubstance(l, filterId));
 
     const substanceIds = [...new Set(entries.map(l => getUseSubstanceId(l)).filter(Boolean))];
@@ -13714,6 +14434,8 @@ function getUseLogBadgeInfo(log) {
     if (tx === 'inventory_adjustment') return { label: 'Adjustment', className: 'badge-inventory' };
     if (isPercentLeftDistributedChildLog(log)) return { label: 'Est. daily', className: 'badge-estimated' };
     if (isPercentLeftCheckpointLog(log)) return { label: 'Percent-left', className: 'badge-estimated' };
+    if (isAlcoholMultiDayParentLog(log)) return { label: 'Multi-day', className: 'badge-session' };
+    if (isAlcoholMultiDayChildLog(log)) return { label: 'Daily', className: 'badge-estimated' };
     if (isWeedDateOnlyUseLog(log)) return { label: 'Use', className: 'badge-quick' };
     if (getUseLogType(log) === 'session') return { label: 'Session', className: 'badge-session' };
     return { label: 'Quick Use', className: 'badge-quick' };
@@ -13738,21 +14460,32 @@ function renderUseHistoryCard(entry, sub, avgRate) {
     const isLsd = isLsdDateOnlyUseLog(entry);
     const isXanax = isXanaxDateOnlyUseLog(entry);
     const isNicotineNonVape = isNicotineSubstanceId(getUseSubstanceId(entry)) && !isVape;
+    const isAlcohol = isAlcoholTrackingMode(getUseSubstanceId(entry));
     const countStr = (isVape || isLsd || isXanax) ? '—' : (entry.count || '—');
     let amountDisplay = isVape
         ? formatVapeUseSummary(entry, sub)
         : (isLsd ? formatLsdUseSummary(entry)
             : (isXanax ? formatXanaxUseSummary(entry)
-                : (isNicotineNonVape ? formatNicotineUseLogLabel(entry) : `${entry.amount} ${entry.unit}`)));
+                : (isNicotineNonVape ? formatNicotineUseLogLabel(entry)
+                    : (isAlcohol ? formatAlcoholUseSummary(entry, sub) : `${entry.amount} ${entry.unit}`))));
     if (isPercentLeftDistributedChildLog(entry)) {
         amountDisplay = `~${formatAmount(entry.amount)} puffs · Estimated daily use from percent-left log`;
     } else if (isPercentLeftCheckpointLog(entry) && getSpreadPercentLeftUsage()) {
         amountDisplay = formatPercentLeftCheckpointSummary(entry);
+    } else if (isAlcoholMultiDayParentLog(entry)) {
+        amountDisplay = formatAlcoholUseSummary(entry, sub);
     }
     const warningClass = warnings.length ? ` ${warnings.join(' ')}` : '';
 
     const splitNote = formatOvernightSplitNote(entry, sub.id);
     const splitHtml = splitNote ? `<div class="use-history-split-note cal-muted">${splitNote}</div>` : '';
+    const multiDayChildren = isAlcoholMultiDayParentLog(entry) ? getDistributedChildrenForMultiDayLog(entry.id) : [];
+    const multiDayHtml = multiDayChildren.length
+        ? `<button type="button" class="link-btn percent-dist-toggle" onclick="toggleMultiDayDistDays(${entry.id})">View daily breakdown (${multiDayChildren.length})</button>
+           <div id="multiday-dist-${entry.id}" class="percent-dist-days hidden">
+               ${formatAlcoholMultiDayBreakdownLines(entry).map(line => `<div class="use-recent-detail percent-dist-day">${line}</div>`).join('')}
+           </div>`
+        : '';
 
     return `<article class="use-history-card${warningClass}" data-log-id="${entry.id}">
         <div class="use-history-card-top">
@@ -13775,6 +14508,7 @@ function renderUseHistoryCard(entry, sub, avgRate) {
             <div class="use-history-card-supply"><dt>Supply</dt><dd>${isVape ? formatVapeLinkedPurchaseLine(entry) || formatInventoryLinkDisplay(entry) : formatInventoryLinkDisplay(entry)}</dd></div>
             ${entry.notes ? `<div class="use-history-card-notes"><dt>Notes</dt><dd>${entry.notes}</dd></div>` : ''}
             ${splitHtml}
+            ${multiDayHtml}
         </dl>
         <div class="use-history-card-actions">
             <button type="button" class="secondary-btn" onclick="editUseEntry(${entry.id})">Edit</button>
@@ -13790,6 +14524,7 @@ function renderRecentUseList() {
     const filterId = getUseLogViewSubstanceId();
     let list = [...getUseEntries()].filter(l => logMatchesUseLogFilter(l));
     list = list.filter(l => !isPercentLeftDistributedChildLog(l));
+    list = list.filter(l => !isAlcoholMultiDayChildLog(l));
     if (filterId) list = list.filter(l => logMatchesSubstance(l, filterId));
     const recent = list.sort((a, b) => getLogDatetimeMs(b) - getLogDatetimeMs(a)).slice(0, 12);
     if (!recent.length) {
@@ -13805,10 +14540,13 @@ function renderRecentUseList() {
         const isNicotineNonVape = isNicotineSubstanceId(getUseSubstanceId(log)) && !isVape;
         const isCheckpoint = isPercentLeftCheckpointLog(log) && getSpreadPercentLeftUsage();
         const distChildren = isCheckpoint ? getDistributedChildrenForPercentLog(log.id) : [];
+        const isMultiDayParent = isAlcoholMultiDayParentLog(log);
+        const multiDayChildren = isMultiDayParent ? getDistributedChildrenForMultiDayLog(log.id) : [];
         const countStr = getUseCount(log);
         const isWeedSimple = isWeedDateOnlyUseLog(log);
         const isLsdSimple = isLsdDateOnlyUseLog(log);
-        const isSessionLog = !isVape && !isWeedSimple && !isLsdSimple && !isNicotineNonVape && log.endTime;
+        const isAlcohol = isAlcoholTrackingMode(getUseSubstanceId(log));
+        const isSessionLog = !isVape && !isWeedSimple && !isLsdSimple && !isNicotineNonVape && !isAlcohol && log.endTime;
         const timeRange = formatUseSessionTimeRange(log);
         const amountDisplay = isVape
             ? ''
@@ -13816,7 +14554,9 @@ function renderRecentUseList() {
                 ? formatLsdUseSummary(log)
                 : (isNicotineNonVape
                     ? formatNicotineUseLogLabel(log)
-                    : `${log.amount != null ? formatAmount(log.amount) : '—'} ${log.unit || ''}`));
+                    : (isAlcohol
+                        ? formatAlcoholUseSummary(log)
+                        : `${log.amount != null ? formatAmount(log.amount) : '—'} ${log.unit || ''}`)));
         const vapeDetailHtml = isVape
             ? formatVapeRecentUseDetailLines(log).map(line => `<div class="use-recent-detail">${line}</div>`).join('')
             : '';
@@ -13824,6 +14564,12 @@ function renderRecentUseList() {
             ? `<button type="button" class="link-btn percent-dist-toggle" onclick="togglePercentDistDays(${log.id})">View distributed days (${distChildren.length})</button>
                <div id="percent-dist-${log.id}" class="percent-dist-days hidden">
                    ${distChildren.map(child => `<div class="use-recent-detail percent-dist-day">${formatDate(child.date)} · ~${formatAmount(child.amount)} puffs · Estimated daily use from percent-left log</div>`).join('')}
+               </div>`
+            : '';
+        const multiDayHtml = isMultiDayParent && multiDayChildren.length
+            ? `<button type="button" class="link-btn percent-dist-toggle" onclick="toggleMultiDayDistDays(${log.id})">View daily breakdown (${multiDayChildren.length})</button>
+               <div id="multiday-dist-${log.id}" class="percent-dist-days hidden">
+                   ${formatAlcoholMultiDayBreakdownLines(log).map(line => `<div class="use-recent-detail percent-dist-day">${line}</div>`).join('')}
                </div>`
             : '';
         const linkedLine = isVape ? formatVapeLinkedPurchaseLine(log) : formatInventoryLinkDisplay(log);
@@ -13836,7 +14582,7 @@ function renderRecentUseList() {
                 ${enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}`
             : `<div class="use-recent-sub">${sub?.icon || ''} ${sub?.name || 'Unknown'} · ${formatDate(log.date || '')}${timeRange && timeRange !== '—' ? ` · ${timeRange}` : ''}</div>`;
         const item = document.createElement('div');
-        item.className = `use-recent-card${isCheckpoint ? ' use-recent-checkpoint' : ''}`;
+        item.className = `use-recent-card${isCheckpoint || isMultiDayParent ? ' use-recent-checkpoint' : ''}`;
         item.innerHTML = `
             <div class="use-recent-main">
                 <div class="use-recent-top">
@@ -13846,6 +14592,7 @@ function renderRecentUseList() {
                 ${sessionBodyHtml}
                 ${vapeDetailHtml}
                 ${distDaysHtml}
+                ${multiDayHtml}
                 ${!isSessionLog && !isVape && enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}
                 ${!isVape && formatSecondaryCountDisplay(substanceId, countStr) ? `<div class="use-recent-detail">${formatSecondaryCountDisplay(substanceId, countStr)}</div>` : ''}
                 ${log.notes ? `<div class="use-recent-notes">${log.notes}</div>` : ''}
@@ -23516,6 +24263,14 @@ function cleanExportData(data) {
             isPercentLeftCheckpoint: !!l.isPercentLeftCheckpoint,
             excludeFromStats: !!l.excludeFromStats,
             parentPercentLogId: l.parentPercentLogId ?? null,
+            isMultiDay: !!l.isMultiDay,
+            isDistributedChild: !!l.isDistributedChild,
+            parentLogId: l.parentLogId ?? null,
+            startDate: l.startDate ?? null,
+            endDate: l.endDate ?? null,
+            splitEvenlyAcrossDays: l.splitEvenlyAcrossDays ?? null,
+            dailyBreakdown: l.dailyBreakdown ?? null,
+            giverName: l.giverName || '',
             distributedStartDate: l.distributedStartDate ?? null,
             distributedEndDate: l.distributedEndDate ?? null,
             percentBefore: l.percentBefore ?? null,
@@ -24096,7 +24851,18 @@ function __getRecoveryTrackerTestExports() {
         formatVapeSupplyDurationLabel,
         formatVapeSupplyDurationSpan,
         getVapePurchaseLifecycleMetrics,
-        getPurchaseSupplyMetrics
+        getPurchaseSupplyMetrics,
+        isAlcoholTrackingMode,
+        isAlcoholMultiDayParentLog,
+        isAlcoholMultiDayChildLog,
+        getDistributedChildrenForMultiDayLog,
+        removeDistributedMultiDayEntries,
+        syncDistributedAlcoholEntries,
+        finalizeAlcoholUseLogForSave,
+        formatAlcoholUseSummary,
+        distributeAmountEvenlyAcrossDays,
+        getStatsUsageInRange,
+        getUsageSegments
     };
 }
 
