@@ -418,6 +418,7 @@
                         <span class="use-log-field-label">Transaction Type</span>
                         <div class="use-tx-pills" role="group" aria-label="Transaction type">
                             <button type="button" class="use-tx-pill active" data-tx="use" onclick="setUseTransactionType('use')">Personal Use</button>
+                            <button type="button" class="use-tx-pill" data-tx="shared_use" onclick="setUseTransactionType('shared_use')">Shared Use</button>
                             <button type="button" class="use-tx-pill" data-tx="gift_given" onclick="setUseTransactionType('gift_given')">Gift Given</button>
                             <button type="button" class="use-tx-pill" data-tx="gift_received" onclick="setUseTransactionType('gift_received')">Gift Received</button>
                             <button type="button" class="use-tx-pill" data-tx="inventory_adjustment" onclick="setUseTransactionType('inventory_adjustment')">Adjustment</button>
@@ -591,6 +592,28 @@
                         <div class="form-group use-log-compact hidden" id="use-gift-party-group">
                             <label for="use-gift-party" id="use-gift-party-label">Recipient Name</label>
                             <input type="text" id="use-gift-party" placeholder="Name">
+                        </div>
+
+                        <div id="use-shared-fields-group" class="hidden">
+                            <div class="form-group use-log-compact">
+                                <label for="use-shared-total" id="use-shared-total-label">Total amount used</label>
+                                <input type="number" id="use-shared-total" min="0" step="0.01" placeholder="Total">
+                            </div>
+                            <div class="use-log-amount-grid">
+                                <div class="form-group use-log-compact">
+                                    <label for="use-shared-personal">My amount</label>
+                                    <input type="number" id="use-shared-personal" min="0" step="0.01" placeholder="My portion">
+                                </div>
+                                <div class="form-group use-log-compact">
+                                    <label for="use-shared-other">Other person's amount</label>
+                                    <input type="number" id="use-shared-other" min="0" step="0.01" placeholder="Their portion">
+                                </div>
+                            </div>
+                            <div class="form-group use-log-compact">
+                                <label for="use-shared-with">Shared with</label>
+                                <input type="text" id="use-shared-with" placeholder="Name">
+                            </div>
+                            <p id="use-shared-preview" class="use-supply-preview">—</p>
                         </div>
 
                         <div id="use-inventory-core-anchor"></div>

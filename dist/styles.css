@@ -4776,6 +4776,11 @@ body.table-col-resizing {
     color: #ce93d8;
 }
 
+.badge-shared-use {
+    background: rgba(3, 169, 244, 0.18);
+    color: #4fc3f7;
+}
+
 .badge-gift-given {
     background: rgba(255, 152, 0, 0.2);
     color: #ffb74d;
@@ -5438,6 +5443,11 @@ body.table-col-resizing {
 .badge-session {
     background: rgba(156, 39, 176, 0.2);
     color: #ce93d8;
+}
+
+.badge-shared-use {
+    background: rgba(3, 169, 244, 0.18);
+    color: #4fc3f7;
 }
 
 .badge-gift-given {

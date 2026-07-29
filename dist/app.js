@@ -845,6 +845,11 @@ function reportUseFormValidationErrors() {
 
 function syncGiftPartyFields(log) {
     if (!log) return;
+    if (isGiftReceivedLog(log)) {
+        if (log.giverName && !log.giftPartyName) log.giftPartyName = String(log.giverName).trim();
+        if (log.giftPartyName && !log.giverName) log.giverName = String(log.giftPartyName).trim();
+        return;
+    }
     if (log.recipientName && !log.giftPartyName) log.giftPartyName = String(log.recipientName).trim();
     if (log.giftPartyName && !log.recipientName) log.recipientName = String(log.giftPartyName).trim();
 }
@@ -2521,8 +2526,8 @@ function recalculatePurchaseRemaining(purchaseId, data = appData) {
             if (pid == null || String(pid) !== String(purchaseId)) return;
             if (!logInventoryAffects(log)) return;
             const tx = getLogTransactionType(log);
-            const amt = parseFloat(log.amount) || 0;
-            if (tx === 'use' || tx === 'gift_given') remaining -= amt;
+            const amt = getLogInventoryDeductionAmount(log);
+            if (tx === 'use' || tx === 'shared_use' || tx === 'gift_given') remaining -= amt;
             else if (tx === 'gift_received') remaining += amt;
             else if (tx === 'inventory_adjustment') {
                 if (inventoryAdjustmentAdds(log)) remaining += amt;
@@ -8017,7 +8022,7 @@ function getUseLogType(entry) {
 
 function getLogTransactionType(log) {
     const t = log?.transactionType;
-    if (t === 'gift_given' || t === 'gift_received' || t === 'inventory_adjustment') return t;
+    if (t === 'gift_given' || t === 'gift_received' || t === 'inventory_adjustment' || t === 'shared_use') return t;
     if (t === 'correction') return 'inventory_adjustment';
     if (t === 'session') return 'use';
     return 'use';
@@ -8025,6 +8030,55 @@ function getLogTransactionType(log) {
 
 function isPersonalUseLog(log) {
     return getLogTransactionType(log) === 'use';
+}
+
+function isSharedUseLog(log) {
+    return getLogTransactionType(log) === 'shared_use';
+}
+
+function getLogTotalAmount(log) {
+    if (isSharedUseLog(log)) {
+        const total = parseFloat(log.totalAmount);
+        if (Number.isFinite(total) && total >= 0) return total;
+    }
+    return parseFloat(log.amount) || 0;
+}
+
+function getLogPersonalAmount(log) {
+    if (isSharedUseLog(log)) {
+        const personal = parseFloat(log.personalAmount);
+        if (Number.isFinite(personal) && personal >= 0) return personal;
+    }
+    if (isPersonalUseLog(log)) return parseFloat(log.amount) || 0;
+    return 0;
+}
+
+function getLogSharedAmount(log) {
+    if (!isSharedUseLog(log)) return 0;
+    const shared = parseFloat(log.sharedAmount);
+    if (Number.isFinite(shared) && shared >= 0) return shared;
+    return Math.max(0, getLogTotalAmount(log) - getLogPersonalAmount(log));
+}
+
+function getLogInventoryDeductionAmount(log) {
+    return getLogTotalAmount(log);
+}
+
+function logAffectsInventoryDeduction(log) {
+    const tx = getLogTransactionType(log);
+    if (tx === 'use' || tx === 'shared_use' || tx === 'gift_given') return true;
+    if (tx === 'inventory_adjustment' && inventoryAdjustmentRemoves(log)) return true;
+    return false;
+}
+
+function logCountsTowardPersonalUseStats(log) {
+    return isPersonalUseLog(log) || isSharedUseLog(log);
+}
+
+function getLogStatsAmount(log) {
+    if (isSharedUseLog(log)) return getLogPersonalAmount(log);
+    if (isPersonalUseLog(log)) return parseFloat(log.amount) || 0;
+    return 0;
 }
 
 function isVapeDateOnlyUseForm() {
@@ -8338,7 +8392,7 @@ function splitLogAcrossDays(log) {
 function getUsageSegments(logs, options = {}) {
     const {
         substanceId = 'all',
-        transactionTypes = ['use'],
+        transactionTypes = ['use', 'shared_use'],
         startDate = null,
         endDate = null,
         excludeLogId = null,
@@ -8355,15 +8409,18 @@ function getUsageSegments(logs, options = {}) {
             return true;
         })
         .flatMap(log => {
+            const statsLog = isSharedUseLog(log)
+                ? { ...log, amount: getLogStatsAmount(log) }
+                : log;
             if (isVapeUseLog(log, data)) {
-                return splitTimedLogByDay(log, data);
+                return splitTimedLogByDay(statsLog, data);
             }
             const logSubstanceId = getUseSubstanceId(log);
-            return splitLogAcrossDays(log).map(seg => ({
+            return splitLogAcrossDays(statsLog).map(seg => ({
                 ...seg,
                 originalLog: seg.log || log,
                 isOvernightPart: !!seg.isSplitSegment,
-                cost: estimateSegmentCostFromLog(log, seg.amount, logSubstanceId, data)
+                cost: estimateSegmentCostFromLog(statsLog, seg.amount, logSubstanceId, data)
             }));
         })
         .filter(seg => {
@@ -8681,6 +8738,7 @@ function inventoryAdjustmentRemoves(log) {
 }
 
 function getTransactionTypeLabel(tx) {
+    if (tx === 'shared_use') return 'Shared Use';
     if (tx === 'gift_given') return 'Gift Given';
     if (tx === 'gift_received') return 'Gift Received';
     if (tx === 'inventory_adjustment') return 'Inventory Adjustment';
@@ -8729,6 +8787,7 @@ function setUseTransactionType(tx) {
         btn.classList.toggle('active', btn.dataset.tx === tx);
     });
 
+    const isSharedUse = tx === 'shared_use';
     const isGiftGiven = tx === 'gift_given';
     const isGiftReceived = tx === 'gift_received';
     const isGift = isGiftGiven || isGiftReceived;
@@ -8738,6 +8797,7 @@ function setUseTransactionType(tx) {
     document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isNonUse || isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm() || isLsdDateOnlyUseForm() || isXanaxDateOnlyUseForm());
     document.getElementById('use-adjustment-direction-group')?.classList.toggle('hidden', !isAdjustment);
     document.getElementById('use-gift-party-group')?.classList.toggle('hidden', !isGift);
+    document.getElementById('use-shared-fields-group')?.classList.toggle('hidden', !isSharedUse);
 
     const partyLabel = document.getElementById('use-gift-party-label');
     if (partyLabel) partyLabel.textContent = isGiftReceived ? 'From' : 'Recipient Name';
@@ -8771,6 +8831,7 @@ function setUseTransactionType(tx) {
     }
     updateVapeUseFormUI();
     updateUsePurchaseLinkUI();
+    updateNicotineSharedPreview();
 }
 
 function getUseAdjustmentDirection() {
@@ -8820,9 +8881,12 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
     const isLsdQuick = isLsdSubstanceId(substanceId);
     const isXanaxSimple = isXanaxSubstanceId(substanceId);
     const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
-    const isGift = transactionType === 'gift_given' || transactionType === 'gift_received';
+    const isSharedUse = transactionType === 'shared_use';
+    const isGiftGiven = transactionType === 'gift_given';
+    const isGiftReceived = transactionType === 'gift_received';
+    const isGift = isGiftGiven || isGiftReceived;
     const isAdjustment = transactionType === 'inventory_adjustment';
-    let type = (isGift || isAdjustment || isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple || isNicotineSimple) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
+    let type = (isGift || isAdjustment || isSharedUse || isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple || isNicotineSimple) ? 'quick' : (document.getElementById('use-type')?.value || 'quick');
     const date = document.getElementById('use-date')?.value;
     const xanaxOmitsStartTime = isXanaxSimple && !isGift && !isAdjustment;
     const startTime = (isWeedSimple || isVapeDateOnly || isNicotineSimple || xanaxOmitsStartTime)
@@ -8875,6 +8939,10 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         inventoryAffects = linkMode !== 'none' && linkedPurchaseId != null;
     }
 
+    const giftParty = (isGiftGiven || isGiftReceived)
+        ? (document.getElementById('use-gift-party')?.value?.trim() || '')
+        : '';
+
     const base = {
         type,
         transactionType,
@@ -8885,13 +8953,15 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         percentRemaining: percentRemaining != null ? percentRemaining : undefined,
         previousRemainingBeforeLog: previousRemainingBeforeLog != null ? previousRemainingBeforeLog : undefined,
         date,
-        endDate: (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple) ? undefined : ((isGift || isAdjustment || type === 'session') ? (endDate || date) : undefined),
+        endDate: (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple) ? undefined : ((isGift || isAdjustment || isSharedUse || type === 'session') ? (endDate || date) : undefined),
         startTime,
         time: startTime,
-        endTime: (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple) ? '' : ((isGift || isAdjustment || type === 'session') ? (endTime || '') : ''),
-        count: (isGift || isAdjustment || isWeedSimple || isLsdQuick || isXanaxSimple) ? 0 : (parseFloat(document.getElementById('use-count')?.value) || 0),
-        giftPartyName: isGift ? (document.getElementById('use-gift-party')?.value?.trim() || '') : '',
-        recipientName: isGift ? (document.getElementById('use-gift-party')?.value?.trim() || '') : '',
+        endTime: (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple) ? '' : ((isGift || isAdjustment || isSharedUse || type === 'session') ? (endTime || '') : ''),
+        count: (isGift || isAdjustment || isSharedUse || isWeedSimple || isLsdQuick || isXanaxSimple) ? 0 : (parseFloat(document.getElementById('use-count')?.value) || 0),
+        giftPartyName: giftParty,
+        recipientName: isGiftGiven ? giftParty : '',
+        giverName: isGiftReceived ? giftParty : '',
+        sharedWithName: isSharedUse ? (document.getElementById('use-shared-with')?.value?.trim() || '') : '',
         adjustmentDirection: isAdjustment ? getUseAdjustmentDirection() : undefined,
         notes: document.getElementById('use-notes')?.value || '',
         purchaseId: inventoryAffects ? linkedPurchaseId : null,
@@ -9115,7 +9185,7 @@ function addPurchaseAmount(purchaseId, amount, data = appData) {
 function applyLogInventoryEffect(log, data = appData) {
     if (!logInventoryAffects(log)) return { ok: true };
 
-    const amount = parseFloat(log.amount) || 0;
+    const amount = getLogInventoryDeductionAmount(log);
     if (amount <= INVENTORY_EPS) return { ok: true };
 
     if (isGiftReceivedLog(log) || inventoryAdjustmentAdds(log)) {
@@ -9165,7 +9235,7 @@ function applyExistingLogLinks(log, purchases) {
     const purchaseIds = [];
     if (!logInventoryAffects(log)) return purchaseIds;
 
-    const amount = parseFloat(log.amount) || 0;
+    const amount = getLogInventoryDeductionAmount(log);
     if (amount <= INVENTORY_EPS) return purchaseIds;
 
     const addsInventory = isGiftReceivedLog(log) || inventoryAdjustmentAdds(log);
@@ -9373,7 +9443,7 @@ function getLinkedUseAmountForPurchase(purchaseId, logs = []) {
             if (amount <= INVENTORY_EPS) return;
             const tx = getLogTransactionType(log);
             if (tx === 'gift_received' || inventoryAdjustmentAdds(log)) total -= amount;
-            else if (tx === 'use' || tx === 'gift_given' || inventoryAdjustmentRemoves(log)) total += amount;
+            else if (tx === 'use' || tx === 'shared_use' || tx === 'gift_given' || inventoryAdjustmentRemoves(log)) total += amount;
         };
         if (log.linkedPurchases?.length) {
             log.linkedPurchases.forEach(alloc => {
@@ -9385,7 +9455,7 @@ function getLinkedUseAmountForPurchase(purchaseId, logs = []) {
         }
         const pid = getLogPurchaseId(log);
         if (pid === purchaseId || String(pid) === String(purchaseId)) {
-            applyAmount(log.amount);
+            applyAmount(getLogInventoryDeductionAmount(log));
         }
     });
     return total;
@@ -9762,7 +9832,8 @@ function parseVapeNicotineFieldsFromForm() {
 }
 
 function isVapeUseLog(log, data = appData) {
-    if (!isPersonalUseLog(log)) return false;
+    const tx = getLogTransactionType(log);
+    if (tx !== 'use' && tx !== 'shared_use' && tx !== 'gift_given' && tx !== 'inventory_adjustment') return false;
     const substanceId = getUseSubstanceId(log);
     if (isNicotineTrackingMode(substanceId, data) && getNicotineProductType(log, data) !== 'vape') return false;
     if (!isVapeTrackingMode(substanceId, data, log)) return false;
@@ -10032,6 +10103,7 @@ function distributeAmountOverTimeInterval(amount, startDt, endDt) {
 }
 
 function getVapeLogPuffAmount(log) {
+    if (isSharedUseLog(log)) return getLogPersonalAmount(log);
     return parseFloat(log.estimatedPuffsUsed ?? log.amount) || 0;
 }
 
@@ -10084,8 +10156,9 @@ function getVapeLogStatsAllocations(log, data = appData) {
 
 function getVapeDistributedUsageMap(substanceId, data = appData) {
     const map = new Map();
-    getUseLogsForSubstance(substanceId, { personalUseOnly: true, data }).forEach(log => {
+    getUseLogsForSubstance(substanceId, { data }).forEach(log => {
         if (!isVapeUseLog(log)) return;
+        if (!logCountsTowardPersonalUseStats(log)) return;
         getVapeLogStatsAllocations(log, data).forEach(({ date, amount }) => {
             map.set(date, (map.get(date) || 0) + amount);
         });
@@ -10103,14 +10176,28 @@ function getStatsUsageInRange(substanceId, startDate, endDate, data = appData) {
         if (endDate && date > endDate) return;
         total += amount;
     });
+    getUseLogsForSubstance(substanceId, { data }).forEach(log => {
+        if (!logCountsTowardPersonalUseStats(log)) return;
+        if (isVapeUseLog(log, data)) return;
+        const logDate = log.date || '';
+        if (startDate && logDate < startDate) return;
+        if (endDate && logDate > endDate) return;
+        total += getLogStatsAmount(log);
+    });
     return total;
 }
 
 function getStatsUsageOnDate(substanceId, dateStr, data = appData) {
-    if (!isVapeNicotineSubstanceId(substanceId)) {
+    if (!isVapeNicotineSubstanceId(substanceId, data)) {
         return getUsedAmount(substanceId, dateStr, null, data);
     }
-    return getVapeDistributedUsageMap(substanceId, data).get(dateStr) || 0;
+    let total = getVapeDistributedUsageMap(substanceId, data).get(dateStr) || 0;
+    getUseLogsForSubstance(substanceId, { data }).forEach(log => {
+        if (!logCountsTowardPersonalUseStats(log)) return;
+        if (isVapeUseLog(log, data)) return;
+        if ((log.date || '') === dateStr) total += getLogStatsAmount(log);
+    });
+    return total;
 }
 
 function getStatsMonthUsageTotal(substanceId, dateStr = getLocalDateString(), data = appData) {
@@ -10222,8 +10309,13 @@ function applyVapeLogToRemaining(purchase, previousRemaining, log) {
             return Math.round(Math.max(0, Math.min(fullPuffs, fullPuffs * (parseFloat(pct) / 100))));
         }
     }
-    const used = parseFloat(log.amount) || 0;
+    const used = getVapeLogInventoryPuffAmount(log);
     return Math.max(0, Math.min(fullPuffs, previousRemaining - used));
+}
+
+function getVapeLogInventoryPuffAmount(log) {
+    if (isSharedUseLog(log)) return getLogTotalAmount(log);
+    return parseFloat(log.estimatedPuffsUsed ?? log.amount) || 0;
 }
 
 function getVapeLogEndMs(log) {
@@ -10322,7 +10414,7 @@ function recalculateVapePurchaseInventory(purchaseId, data = appData, options = 
     const fullPuffs = getVapeFullPuffCount(purchase);
     const startingPuffs = getVapeStartingPuffsLeft(purchase);
     const logs = getLogsForPurchase(purchaseId, data)
-        .filter(l => isPersonalUseLog(l) && isVapeUseLog(l, data) && !l.needsReview)
+        .filter(l => logAffectsInventoryDeduction(l) && isVapeUseLog(l, data) && !l.needsReview)
         .filter(l => !isPercentLeftDistributedChildLog(l))
         .filter(l => excludeLogId == null || String(l.id) !== String(excludeLogId))
         .sort((a, b) => getVapeLogSortMs(a) - getVapeLogSortMs(b));
@@ -10577,7 +10669,18 @@ function populateUseFormFromVapeLog(entry) {
 
     setInputValue('use-date', entry.date || '');
     setInputValue('use-notes', entry.notes || '');
-    setInputValue('use-gift-party', entry.giftPartyName || '');
+    setInputValue('use-gift-party', entry.giftPartyName || entry.recipientName || entry.giverName || '');
+    if (isSharedUseLog(entry)) {
+        setInputValue('use-shared-total', entry.totalAmount ?? entry.amount ?? '');
+        setInputValue('use-shared-personal', entry.personalAmount ?? '');
+        setInputValue('use-shared-other', entry.sharedAmount ?? '');
+        setInputValue('use-shared-with', entry.sharedWithName || '');
+    } else {
+        setInputValue('use-shared-total', '');
+        setInputValue('use-shared-personal', '');
+        setInputValue('use-shared-other', '');
+        setInputValue('use-shared-with', '');
+    }
 
     const isDateOnly = isVapeDateOnlyUseLog(entry);
     if (!isDateOnly && (entry.startedAt || entry.startTime || entry.time || entry.endTime || entry.endedAt)) {
@@ -10915,6 +11018,133 @@ function updateUsePatchesPreview() {
         : `${formatAmount(used)} patch(es)`;
 }
 
+function getNicotineUseUnitLabel(productType, unit) {
+    if (productType === 'vape') return 'puffs';
+    if (productType === 'cigarettes') return 'cigarettes';
+    if (productType === 'pouches') return 'pouches';
+    if (productType === 'gum') return 'pieces';
+    if (productType === 'patches') return 'patches';
+    return unit || 'units';
+}
+
+function parseNicotineSharedSplitFromForm(totalAmount) {
+    const totalRaw = parseFloat(document.getElementById('use-shared-total')?.value);
+    const personalRaw = parseFloat(document.getElementById('use-shared-personal')?.value);
+    const otherRaw = parseFloat(document.getElementById('use-shared-other')?.value);
+    const sharedWithName = document.getElementById('use-shared-with')?.value?.trim() || '';
+    const total = Number.isFinite(totalRaw) && totalRaw >= 0 ? totalRaw : totalAmount;
+    const personal = Number.isFinite(personalRaw) && personalRaw >= 0 ? personalRaw : null;
+    const other = Number.isFinite(otherRaw) && otherRaw >= 0 ? otherRaw : null;
+    return { total, personal, other, sharedWithName };
+}
+
+function validateNicotineSharedSplit(totalAmount, split) {
+    if (!Number.isFinite(totalAmount) || totalAmount <= 0) {
+        return 'Enter the total amount used.';
+    }
+    if (split.personal == null || split.other == null) {
+        return 'Enter both your amount and the other person\'s amount.';
+    }
+    if (Math.abs((split.personal + split.other) - totalAmount) > 0.01) {
+        return 'My amount + other person\'s amount must equal the total amount used.';
+    }
+    if (!split.sharedWithName) {
+        return 'Enter who you shared with.';
+    }
+    return null;
+}
+
+function syncNicotineSharedTotalField(totalAmount) {
+    const el = document.getElementById('use-shared-total');
+    if (!el || document.activeElement === el) return;
+    if (Number.isFinite(totalAmount) && totalAmount >= 0) {
+        el.value = String(totalAmount);
+    }
+}
+
+function updateNicotineSharedPreview() {
+    const preview = document.getElementById('use-shared-preview');
+    if (!preview) return;
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    if (tx !== 'shared_use') {
+        preview.textContent = '—';
+        return;
+    }
+    const substanceId = document.getElementById('use-substance')?.value;
+    if (!isNicotineTrackingMode(substanceId)) {
+        preview.textContent = '—';
+        return;
+    }
+    const productType = getUseFormNicotineProductType();
+    const unitLabel = getNicotineUseUnitLabel(productType, 'units');
+    let total = parseFloat(document.getElementById('use-shared-total')?.value);
+    if (!Number.isFinite(total) || total <= 0) {
+        if (productType === 'vape') {
+            const calc = computeVapeUseFromForm({ editingId: editingUseId || null });
+            if (calc && !calc.error) total = calc.puffsUsed;
+        } else {
+            const calc = computeNicotineNonVapeUseFromForm();
+            if (calc && !calc.error) total = calc.amount;
+        }
+    }
+    const split = parseNicotineSharedSplitFromForm(total);
+    const err = Number.isFinite(total) && total > 0
+        ? validateNicotineSharedSplit(total, split)
+        : 'Enter amounts to split.';
+    if (err && err !== 'Enter who you shared with.') {
+        preview.textContent = err;
+        return;
+    }
+    preview.textContent = `Shared Use · ${formatAmount(total)} ${unitLabel} total · Me ${formatAmount(split.personal ?? 0)} · ${split.sharedWithName || '—'} ${formatAmount(split.other ?? 0)}`;
+}
+
+function applyNicotineSharedFieldsToLog(log, split) {
+    if (!isSharedUseLog(log) || !split) return;
+    log.totalAmount = split.total;
+    log.personalAmount = split.personal;
+    log.sharedAmount = split.other;
+    log.sharedWithName = split.sharedWithName;
+    log.amount = split.total;
+}
+
+function finalizeNicotineUseLogForSave(log, { nicotineCalc = null, vapeCalc = null, sharedSplit = null } = {}) {
+    if (!isNicotineTrackingMode(getUseSubstanceId(log))) return;
+    const tx = getLogTransactionType(log);
+    if (tx === 'gift_given') {
+        log.recipientName = log.recipientName || log.giftPartyName || '';
+        log.giftPartyName = log.recipientName;
+    }
+    if (tx === 'gift_received') {
+        log.giverName = log.giverName || log.giftPartyName || '';
+        log.giftPartyName = log.giverName;
+    }
+    if (tx === 'shared_use' && sharedSplit) {
+        applyNicotineSharedFieldsToLog(log, sharedSplit);
+    }
+    if (nicotineCalc && !nicotineCalc.error) {
+        log.nicotineProductType = nicotineCalc.nicotineProductType || log.nicotineProductType;
+        if (nicotineCalc.cigarettesUsed != null) log.cigarettesUsed = nicotineCalc.cigarettesUsed;
+        if (nicotineCalc.pouchesUsed != null) log.pouchesUsed = nicotineCalc.pouchesUsed;
+        if (nicotineCalc.piecesUsed != null) log.piecesUsed = nicotineCalc.piecesUsed;
+        if (nicotineCalc.patchesUsed != null) log.patchesUsed = nicotineCalc.patchesUsed;
+        if (nicotineCalc.nicotineMgUsed != null) log.nicotineMgUsed = nicotineCalc.nicotineMgUsed;
+    }
+    if (vapeCalc && !vapeCalc.error) {
+        log.nicotineProductType = 'vape';
+        log.isEstimated = !!vapeCalc.isEstimated;
+        log.estimatedFromPercent = !!vapeCalc.estimatedFromPercent;
+        log.percentLeftAfter = vapeCalc.percentAfter;
+        log.remainingPuffsAfter = vapeCalc.currentRemaining;
+        log.estimatedPuffsUsed = vapeCalc.estimatedPuffsUsed ?? vapeCalc.puffsUsed;
+        if (tx === 'shared_use' && sharedSplit) {
+            log.amount = sharedSplit.total;
+            log.totalAmount = sharedSplit.total;
+        } else {
+            log.amount = vapeCalc.estimatedPuffsUsed ?? vapeCalc.puffsUsed;
+        }
+    }
+}
+
 function computeNicotineNonVapeUseFromForm() {
     const substanceId = document.getElementById('use-substance')?.value;
     if (!isNicotineTrackingMode(substanceId)) return null;
@@ -11029,14 +11259,14 @@ function updateVapeUseFormUI() {
     document.getElementById('use-log-form')?.classList.toggle('is-lsd-simple', isLsd);
     document.getElementById('use-log-form')?.classList.toggle('is-xanax-simple', isXanax);
     document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isVape || isWeed || isLsd || isXanax || isNicotineSimple || isNonUse);
-    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', isVape || isNicotineSimple);
-    document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape || isNicotineSimple);
+    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', !isNicotine);
+    document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape || isNicotineSimple || (isNicotine && !isNonUse));
 
     const dateLabel = document.getElementById('use-date-label');
     if (dateLabel) dateLabel.textContent = 'Date';
     const startTimeInput = document.getElementById('use-start-time');
     if (startTimeInput) {
-        startTimeInput.required = !isWeed && !isVape && !isNicotineSimple && !(isXanax && isNonUse);
+        startTimeInput.required = !isWeed && !isVape && !isNicotineSimple && !(isXanax && isNonUse) && !(isNicotine && !isNonUse);
     }
     if (isLsd) {
         syncLsdUseDatetimeUI();
@@ -11128,6 +11358,9 @@ function applyVapeUseInventory(calc, logEntry) {
 }
 
 function formatVapeUseSummary(log, sub) {
+    if (isNicotineSubstanceId(getUseSubstanceId(log)) && getLogTransactionType(log) !== 'use') {
+        return formatNicotineUseSummary(log);
+    }
     return formatVapeRecentUseDetailLines(log).join(' · ') || `${sub?.name || 'Vape'} use`;
 }
 
@@ -11761,21 +11994,28 @@ function getGiftMetrics(substanceId) {
 function getGiftMetricsFromLogs(logs) {
     let given = 0;
     let received = 0;
+    let shared = 0;
     const recipients = {};
     const senders = {};
+    const sharedWith = {};
     (logs || []).forEach(l => {
-        const amt = parseFloat(l.amount) || 0;
+        const amt = getLogInventoryDeductionAmount(l);
         if (isGiftGivenLog(l)) {
             given += amt;
-            const name = l.giftPartyName?.trim() || 'Unknown';
+            const name = l.recipientName?.trim() || l.giftPartyName?.trim() || 'Unknown';
             recipients[name] = (recipients[name] || 0) + amt;
         } else if (isGiftReceivedLog(l)) {
             received += amt;
-            const name = l.giftPartyName?.trim() || 'Unknown';
+            const name = l.giverName?.trim() || l.giftPartyName?.trim() || 'Unknown';
             senders[name] = (senders[name] || 0) + amt;
+        } else if (isSharedUseLog(l)) {
+            const sharedAmt = getLogSharedAmount(l);
+            shared += sharedAmt;
+            const name = l.sharedWithName?.trim() || 'Unknown';
+            sharedWith[name] = (sharedWith[name] || 0) + sharedAmt;
         }
     });
-    return { given, received, net: received - given, recipients, senders };
+    return { given, received, shared, net: received - given, recipients, senders, sharedWith };
 }
 
 function getInventoryBreakdown(substanceId) {
@@ -11785,17 +12025,22 @@ function getInventoryBreakdown(substanceId) {
     let used = 0;
     let gifted = 0;
     let received = 0;
+    let shared = 0;
     logs.forEach(l => {
-        const amt = parseFloat(l.amount) || 0;
-        if (isPersonalUseLog(l)) used += amt;
-        else if (isGiftGivenLog(l)) gifted += amt;
-        else if (isGiftReceivedLog(l)) received += amt;
+        if (isPersonalUseLog(l)) used += getLogStatsAmount(l);
+        else if (isSharedUseLog(l)) {
+            used += getLogPersonalAmount(l);
+            shared += getLogSharedAmount(l);
+        }
+        else if (isGiftGivenLog(l)) gifted += getLogInventoryDeductionAmount(l);
+        else if (isGiftReceivedLog(l)) received += getLogInventoryDeductionAmount(l);
     });
     return {
         purchased,
         used,
         gifted,
         received,
+        shared,
         remaining: getTotalRemainingSupply(substanceId)
     };
 }
@@ -12378,6 +12623,10 @@ function isNonUseTransactionType(tx) {
     return tx === 'gift_given' || tx === 'gift_received' || tx === 'inventory_adjustment';
 }
 
+function isNicotineTrackingUseForm() {
+    return isNicotineTrackingMode(document.getElementById('use-substance')?.value);
+}
+
 function updateUseEndTimeVisibility() {
     if (isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm() || isLsdDateOnlyUseForm() || isXanaxDateOnlyUseForm()) {
         document.getElementById('use-end-date-group')?.classList.add('hidden');
@@ -12662,6 +12911,7 @@ function undoLastUse() {
 }
 
 function getUseSaveSuccessMessage(entry) {
+    if (isSharedUseLog(entry)) return 'Shared use recorded!';
     if (isGiftGivenLog(entry)) return 'Gift given recorded!';
     if (isGiftReceivedLog(entry)) return 'Gift received recorded!';
     if (isInventoryAdjustmentLog(entry)) return 'Inventory adjustment saved!';
@@ -12669,6 +12919,7 @@ function getUseSaveSuccessMessage(entry) {
 }
 
 function getUseUpdateSuccessMessage(entry) {
+    if (isSharedUseLog(entry)) return 'Shared use updated!';
     if (isGiftGivenLog(entry)) return 'Gift given updated!';
     if (isGiftReceivedLog(entry)) return 'Gift received updated!';
     if (isInventoryAdjustmentLog(entry)) return 'Inventory adjustment updated!';
@@ -12707,6 +12958,32 @@ function handleUseLogSubmit(e) {
     if (isNicotineSimple) {
         nicotineCalc = computeNicotineNonVapeUseFromForm();
         if (nicotineCalc?.error) return alert(nicotineCalc.error);
+    } else if (isNicotine && nicotineProductType === 'other') {
+        nicotineCalc = computeNicotineNonVapeUseFromForm();
+        if (nicotineCalc?.error) return alert(nicotineCalc.error);
+    }
+
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    let sharedSplit = null;
+    if (isNicotine) {
+        if (tx === 'gift_given' || tx === 'gift_received') {
+            const party = document.getElementById('use-gift-party')?.value?.trim();
+            if (!party) {
+                return alert(tx === 'gift_received' ? 'Enter who gave this to you.' : 'Enter recipient name.');
+            }
+        }
+        if (tx === 'shared_use') {
+            let totalAmount = null;
+            if (isVapeUse && vapeCalc && !vapeCalc.error) totalAmount = vapeCalc.puffsUsed;
+            else if (nicotineCalc && !nicotineCalc.error) totalAmount = nicotineCalc.amount;
+            else {
+                const raw = parseFloat(document.getElementById('use-amount')?.value);
+                if (Number.isFinite(raw)) totalAmount = raw;
+            }
+            sharedSplit = parseNicotineSharedSplitFromForm(totalAmount);
+            const sharedErr = validateNicotineSharedSplit(totalAmount, sharedSplit);
+            if (sharedErr) return alert(sharedErr);
+        }
     }
 
     if (isLsdUse) {
@@ -12731,7 +13008,7 @@ function handleUseLogSubmit(e) {
     const useVapeInventory = isVapeUse && vapeCalc?.purchase && payload.inventoryAffects;
     const useLsdInventory = isLsdUse && payload.inventoryAffects;
     const useXanaxInventory = isXanaxUse && payload.inventoryAffects;
-    const useNicotineInventory = isNicotineSimple && nicotineCalc?.purchaseId && payload.inventoryAffects;
+    const useNicotineInventory = isNicotine && nicotineProductType !== 'vape' && nicotineCalc?.purchaseId && payload.inventoryAffects;
 
     if (isCokeSubstanceId(substanceId) && type === 'session') {
         if (!payload.endTime) {
@@ -12841,6 +13118,9 @@ function handleUseLogSubmit(e) {
         if (isXanaxSubstanceId(substanceId)) {
             finalizeXanaxUseLogForSave(updated, xanaxCalc);
         }
+        if (isNicotineTrackingMode(substanceId)) {
+            finalizeNicotineUseLogForSave(updated, { nicotineCalc, vapeCalc, sharedSplit });
+        }
 
         const inv = applyLogInventoryEffect(updated);
         if (!inv.ok) {
@@ -12904,6 +13184,9 @@ function handleUseLogSubmit(e) {
         delete log.durationMs;
         delete log.estimatedPuffsPerHour;
         delete log.estimatedPuffsPerMinute;
+    }
+    if (isNicotineTrackingMode(substanceId)) {
+        finalizeNicotineUseLogForSave(log, { nicotineCalc, vapeCalc, sharedSplit });
     }
     if (isLsdSubstanceId(substanceId)) {
         log.type = 'quick';
@@ -13414,6 +13697,7 @@ function applyBulkLinkPreview() {
 
 function getUseLogBadgeInfo(log) {
     const tx = getLogTransactionType(log);
+    if (tx === 'shared_use') return { label: 'Shared Use', className: 'badge-shared-use' };
     if (tx === 'gift_given') return { label: 'Gift Given', className: 'badge-gift-given' };
     if (tx === 'gift_received') return { label: 'Gift Received', className: 'badge-gift-received' };
     if (tx === 'inventory_adjustment') return { label: 'Adjustment', className: 'badge-inventory' };
@@ -17790,7 +18074,53 @@ function formatNicotinePurchaseDisplayLine(purchase) {
     return label;
 }
 
+function formatNicotineUseAmountDetail(log) {
+    const type = getNicotineProductType(log);
+    const total = getLogTotalAmount(log);
+    if (type === 'vape' || isVapeUseLog(log)) {
+        return `${formatAmount(total)} puffs`;
+    }
+    if (type === 'cigarettes') {
+        return `${formatAmount(log.cigarettesUsed ?? total)} cigarettes`;
+    }
+    if (type === 'pouches') {
+        return `${formatAmount(log.pouchesUsed ?? total)} pouches`;
+    }
+    if (type === 'gum') {
+        return `${formatAmount(log.piecesUsed ?? total)} pieces`;
+    }
+    if (type === 'patches') {
+        return `${formatAmount(log.patchesUsed ?? total)} patches`;
+    }
+    return `${formatAmount(total)} ${log.unit || 'units'}`.trim();
+}
+
+function formatNicotineUseSummary(log) {
+    const tx = getLogTransactionType(log);
+    const detail = formatNicotineUseAmountDetail(log);
+    if (tx === 'shared_use') {
+        const withName = log.sharedWithName?.trim() || '—';
+        return `Shared Use · ${detail} total · Me ${formatAmount(getLogPersonalAmount(log))} · ${withName} ${formatAmount(getLogSharedAmount(log))}`;
+    }
+    if (tx === 'gift_given') {
+        const who = log.recipientName?.trim() || log.giftPartyName?.trim() || '';
+        return `Gift Given · ${detail}${who ? ` · ${who}` : ''}`;
+    }
+    if (tx === 'gift_received') {
+        const who = log.giverName?.trim() || log.giftPartyName?.trim() || '';
+        return `Gift Received · ${detail}${who ? ` · ${who}` : ''}`;
+    }
+    if (tx === 'inventory_adjustment') {
+        const dir = getAdjustmentDirection(log) === 'remove' ? '−' : '+';
+        return `Adjustment · ${dir}${detail}`;
+    }
+    const label = getNicotineProductTypeLabel(getNicotineProductType(log));
+    return `${label}: ${detail}`;
+}
+
 function formatNicotineUseLogLabel(log) {
+    const tx = getLogTransactionType(log);
+    if (tx !== 'use') return formatNicotineUseSummary(log);
     const type = getNicotineProductType(log);
     const label = getNicotineProductTypeLabel(type);
     if (type === 'vape' || isVapeUseLog(log)) {
@@ -17814,7 +18144,7 @@ function formatNicotineUseLogLabel(log) {
 
 function formatNicotineCalendarDayLines(logsForDay, data = appData) {
     const byType = {};
-    logsForDay.filter(isPersonalUseLog).forEach(log => {
+    logsForDay.filter(logCountsTowardPersonalUseStats).forEach(log => {
         const type = getNicotineProductType(log, data);
         if (!byType[type]) byType[type] = { amount: 0, unit: log.unit };
         if (type === 'vape' || isVapeUseLog(log, data)) {
@@ -17823,7 +18153,7 @@ function formatNicotineCalendarDayLines(logsForDay, data = appData) {
                 byType.vape.amount += amount;
             });
         } else {
-            byType[type].amount += parseFloat(log.amount) || 0;
+            byType[type].amount += getLogStatsAmount(log);
         }
     });
     return NICOTINE_PRODUCT_TYPES
@@ -23150,6 +23480,11 @@ function cleanExportData(data) {
             startTime: l.startTime || l.time || '',
             endTime: l.endTime || '',
             amount: Number(l.amount || 0),
+            totalAmount: l.totalAmount ?? null,
+            personalAmount: l.personalAmount ?? null,
+            sharedAmount: l.sharedAmount ?? null,
+            sharedWithName: l.sharedWithName || '',
+            nicotineProductType: l.nicotineProductType || null,
             unit: l.unit || 'units',
             logMode: l.logMode || 'amount',
             percentRemaining: l.percentRemaining ?? null,
@@ -23179,6 +23514,7 @@ function cleanExportData(data) {
             count: Number(l.count || 0),
             giftPartyName: l.giftPartyName || l.recipientName || '',
             recipientName: l.recipientName || l.giftPartyName || '',
+            giverName: l.giverName || '',
             estimatedCost: l.estimatedCost ?? null,
             adjustmentDirection: l.adjustmentDirection || null,
             notes: l.notes || '',
@@ -23726,6 +24062,15 @@ function __getRecoveryTrackerTestExports() {
         getSpreadPercentLeftUsage,
         buildUseEntryFromForm,
         computeVapeUseFromForm,
+        isSharedUseLog,
+        getLogTotalAmount,
+        getLogPersonalAmount,
+        getLogSharedAmount,
+        getLogStatsAmount,
+        formatNicotineUseSummary,
+        finalizeNicotineUseLogForSave,
+        getStatsUsageOnDate,
+        getInventoryBreakdown,
         getPurchaseRemainingAmount,
         getVapePurchaseDeviceCount,
         formatVapePurchaseQuantitySummary,
