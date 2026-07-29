@@ -1362,7 +1362,7 @@
 
                 <section class="inventory-filter-card">
                     <div class="inventory-toolbar">
-                        <input type="search" id="inventory-search" class="inventory-search-input" placeholder="Search store, notes…" oninput="applyInventorySearchFilters()">
+                        <input type="search" id="inventory-search" class="inventory-search-input" placeholder="Search store, notes, flavor…" oninput="applyInventorySearchFilters()">
                         <select id="inventory-filter-status" class="inventory-status-select" onchange="applyInventorySearchFilters()" aria-label="Status">
                             <option value="all" selected>All status</option>
                             <option value="active">Active</option>
@@ -1497,6 +1497,10 @@
                             </div>
                         </div>
                         <p id="buy-vape-nicotine-preview" class="buy-preview">—</p>
+                    </div>
+                    <div id="buy-vape-flavor-group" class="form-group hidden">
+                        <label for="buy-vape-flavor">Flavor</label>
+                        <input type="text" id="buy-vape-flavor" placeholder="Sour Gush" autocomplete="off">
                     </div>
                     <div id="buy-alcohol-fields-group" class="hidden">
                         <div class="form-row">
