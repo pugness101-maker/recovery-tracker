@@ -267,3 +267,90 @@ test('getLsdLogTabsAmount converts ug using ug per tab at time of use', () => {
         0.5
     );
 });
+
+test('LSD gift given persists through storage reload with inventory and history parity', () => {
+    const purchase = makeLsdPurchase({
+        quantityTabs: 10,
+        ugPerTab: 250,
+        totalUg: 2500,
+        quantity: 2500,
+        quantityBought: 2500,
+        remainingAmount: 2500,
+        remainingUg: 2500,
+        remainingTabs: 10,
+        costPerUg: 0.04
+    });
+    const data = makeLsdData({
+        purchases: [purchase],
+        migrations: {
+            inventoryLinkedV1: true,
+            purchaseIdLinkV2: true,
+            lsdInventoryV1: true
+        }
+    });
+    const rt = setup(data);
+
+    const log = {
+        id: 'gift-storage-e2e',
+        type: 'quick',
+        transactionType: 'gift_given',
+        substanceId: LSD_ID,
+        date: '2026-07-08',
+        startTime: '10:00',
+        time: '10:00',
+        amount: 1000,
+        unit: 'ug',
+        tabsUsed: 4,
+        ugUsed: 1000,
+        ugPerTabAtTimeOfUse: 250,
+        logMode: 'lsd_dose',
+        purchaseId: 'lsd-purchase-1',
+        linkedPurchaseId: 'lsd-purchase-1',
+        inventoryId: 'lsd-purchase-1',
+        inventoryAffects: true,
+        supplyUnlinked: false,
+        giftPartyName: 'Sam',
+        recipientName: 'Sam'
+    };
+
+    const lsdCalc = {
+        purchaseId: 'lsd-purchase-1',
+        tabsUsed: 4,
+        ugUsed: 1000,
+        ugPerTabAtTimeOfUse: 250
+    };
+
+    const result = rt.commitUseLogEntry(log, { lsdCalc, applyInventory: true });
+    assert.equal(result.ok, true);
+    assert.equal(data.logs.length, 1);
+    assert.equal(data.logs[0].transactionType, 'gift_given');
+    assert.equal(data.logs[0].tabsUsed, 4);
+    assert.equal(data.logs[0].ugUsed, 1000);
+    assert.equal(data.logs[0].linkedPurchaseId, 'lsd-purchase-1');
+    assert.equal(data.logs[0].startTime, '10:00');
+    assert.equal(data.logs[0].recipientName, 'Sam');
+    assert.ok(Number.isFinite(data.logs[0].estimatedCost));
+    assert.equal(rt.getLsdRemainingTabs(purchase), 6);
+    assert.equal(rt.getLsdRemainingUg(purchase), 1500);
+    assert.equal(rt.isPersonalUseLog(data.logs[0]), false);
+    assert.equal(rt.__getUseHistoryEntryCount(null), 1);
+    assert.ok(rt.__getStorageSnapshot());
+
+    const reloaded = rt.__reloadTestAppDataFromStorage();
+    assert.equal(reloaded.logs.length, 1);
+    assert.equal(reloaded.logs[0].transactionType, 'gift_given');
+    assert.equal(reloaded.logs[0].tabsUsed, 4);
+    assert.equal(reloaded.logs[0].ugUsed, 1000);
+    assert.equal(reloaded.logs[0].linkedPurchaseId, 'lsd-purchase-1');
+    assert.equal(reloaded.logs[0].giftPartyName, 'Sam');
+    assert.equal(rt.getLsdRemainingTabs(reloaded.purchases[0]), 6);
+    assert.equal(rt.getLsdRemainingUg(reloaded.purchases[0]), 1500);
+    assert.equal(rt.__getUseHistoryEntryCount(null), 1);
+
+    const exported = JSON.parse(rt.__getStorageSnapshot());
+    const imported = rt.normalizeAppDataSafe(exported);
+    assert.equal(imported.logs.length, 1);
+    assert.equal(imported.logs[0].transactionType, 'gift_given');
+    assert.equal(imported.logs[0].ugUsed, 1000);
+    assert.equal(rt.getGiftMetricsFromLogs(imported.logs).given, 1000);
+});

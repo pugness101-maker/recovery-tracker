@@ -843,16 +843,127 @@ function reportUseFormValidationErrors() {
     return false;
 }
 
-function persistUseLogEntry(log, data = appData) {
-    if (!Array.isArray(data.logs)) data.logs = [];
-    data.logs.push(log);
-    if (!logInventoryAffects(log)) return { ok: true };
-    const inv = applyLogInventoryEffect(log);
-    if (!inv.ok) {
-        data.logs.pop();
-        return inv;
+function syncGiftPartyFields(log) {
+    if (!log) return;
+    if (log.recipientName && !log.giftPartyName) log.giftPartyName = String(log.recipientName).trim();
+    if (log.giftPartyName && !log.recipientName) log.recipientName = String(log.giftPartyName).trim();
+}
+
+function computeLsdUseLogEstimatedCost(log, data = appData) {
+    if (!isLsdSubstanceId(getUseSubstanceId(log), data)) return null;
+    const ug = getLsdLogUgAmount(log);
+    if (ug <= INVENTORY_EPS) return null;
+    const pid = getLogPurchaseId(log);
+    if (pid) {
+        const purchase = findPurchaseInData(pid, data);
+        if (purchase) {
+            const costPerUg = parseFloat(purchase.costPerUg);
+            if (Number.isFinite(costPerUg) && costPerUg > 0) return ug * costPerUg;
+            const totalUg = getLsdTotalUg(purchase);
+            const totalCost = parseFloat(getPurchaseTotalCost(purchase)) || 0;
+            if (totalUg > 0 && totalCost > 0) return (ug / totalUg) * totalCost;
+        }
     }
-    return { ok: true };
+    const avg = getAveragePurchaseCostPerUnit(getUseSubstanceId(log), data);
+    return avg != null ? ug * avg : null;
+}
+
+function finalizeLsdUseLogForSave(log, lsdCalc = null, data = appData) {
+    if (!log || !isLsdSubstanceId(getUseSubstanceId(log), data)) return log;
+    log.type = 'quick';
+    log.logMode = 'lsd_dose';
+    log.unit = 'ug';
+    if (lsdCalc && !lsdCalc.error) {
+        log.tabsUsed = lsdCalc.tabsUsed;
+        log.ugUsed = lsdCalc.ugUsed;
+        log.amount = lsdCalc.ugUsed;
+        log.ugPerTabAtTimeOfUse = lsdCalc.ugPerTabAtTimeOfUse;
+        if (lsdCalc.purchaseId && log.inventoryAffects !== false) {
+            setLogPurchaseId(log, lsdCalc.purchaseId);
+        }
+    } else {
+        log.ugUsed = getLsdLogUgAmount(log);
+        log.amount = log.ugUsed;
+        if (log.tabsUsed == null || log.tabsUsed === '') {
+            log.tabsUsed = getLsdLogTabsAmount(log);
+        }
+    }
+    log.startTime = log.startTime || log.time || '';
+    log.time = log.time || log.startTime || '';
+    log.endTime = '';
+    delete log.endDate;
+    delete log.startedAt;
+    delete log.endedAt;
+    delete log.durationMs;
+    syncGiftPartyFields(log);
+    syncLogPurchaseFields(log);
+    const cost = computeLsdUseLogEstimatedCost(log, data);
+    if (cost != null) log.estimatedCost = cost;
+    return log;
+}
+
+function commitUseLogEntry(log, options = {}) {
+    const data = options.data || appData;
+    const applyInventory = options.applyInventory !== false;
+    const persist = options.persist !== false;
+
+    if (!Array.isArray(data.logs)) data.logs = [];
+
+    if (isLsdSubstanceId(getUseSubstanceId(log), data)) {
+        finalizeLsdUseLogForSave(log, options.lsdCalc || null, data);
+    }
+    syncGiftPartyFields(log);
+    syncLogPurchaseFields(log);
+
+    const updateId = options.updateId;
+    let existingIdx = -1;
+    if (updateId != null) {
+        existingIdx = data.logs.findIndex(l => l.id === updateId || String(l.id) === String(updateId));
+    }
+
+    const priorState = existingIdx >= 0 ? JSON.parse(JSON.stringify(data.logs[existingIdx])) : null;
+
+    if (existingIdx >= 0) {
+        data.logs[existingIdx] = log;
+    } else {
+        data.logs.push(log);
+    }
+
+    if (applyInventory && logInventoryAffects(log)) {
+        const inv = applyLogInventoryEffect(log, data);
+        if (!inv.ok) {
+            if (existingIdx >= 0 && priorState) {
+                data.logs[existingIdx] = priorState;
+            } else {
+                data.logs.pop();
+            }
+            return inv;
+        }
+    }
+
+    if (persist && data === appData && !saveData(appData)) {
+        if (existingIdx >= 0 && priorState) {
+            data.logs[existingIdx] = priorState;
+        } else {
+            data.logs.pop();
+        }
+        return { ok: false, error: 'Failed to save data. Your entry was not stored.' };
+    }
+
+    return { ok: true, log };
+}
+
+function persistUseLogEntry(log, data = appData) {
+    if (data !== appData) {
+        const savedAppData = appData;
+        appData = data;
+        try {
+            return commitUseLogEntry(log, { data, applyInventory: true, persist: false });
+        } finally {
+            appData = savedAppData;
+        }
+    }
+    return commitUseLogEntry(log, { applyInventory: true, persist: true });
 }
 
 function getLsdLogUgAmount(log) {
@@ -4162,11 +4273,24 @@ function normalizeAppData(data) {
         if (!log.createdAt) log.createdAt = fallbackTs || new Date().toISOString();
         if (!log.updatedAt) log.updatedAt = log.createdAt;
         if (!log.timestamp && fallbackTs) log.timestamp = fallbackTs;
+        if (log.transactionType === 'session') log.transactionType = 'use';
         if (!log.transactionType) log.transactionType = 'use';
         const resolvedSubstanceId = normalizeSubstanceRef(getUseSubstanceId(log), data);
         if (resolvedSubstanceId) log.substanceId = resolvedSubstanceId;
         if (!Array.isArray(log.linkedPurchases)) log.linkedPurchases = [];
         syncLogPurchaseFields(log);
+        syncGiftPartyFields(log);
+        if (isLsdSubstanceId(getUseSubstanceId(log), data)) {
+            if (!log.logMode) log.logMode = 'lsd_dose';
+            if (log.ugUsed == null && log.amount != null) log.ugUsed = parseFloat(log.amount) || 0;
+            if ((log.tabsUsed == null || log.tabsUsed === '') && log.ugPerTabAtTimeOfUse) {
+                log.tabsUsed = getLsdLogTabsAmount(log);
+            }
+            if (log.estimatedCost == null) {
+                const cost = computeLsdUseLogEstimatedCost(log, data);
+                if (cost != null) log.estimatedCost = cost;
+            }
+        }
         normalizeUseLogWellness(log);
         if (hasLinkedSupply(log)) {
             log.inventoryAffects = true;
@@ -8559,6 +8683,7 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         endTime: (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple) ? '' : ((isGift || isAdjustment || type === 'session') ? (endTime || '') : ''),
         count: (isGift || isAdjustment || isWeedSimple || isLsdQuick || isXanaxSimple) ? 0 : (parseFloat(document.getElementById('use-count')?.value) || 0),
         giftPartyName: isGift ? (document.getElementById('use-gift-party')?.value?.trim() || '') : '',
+        recipientName: isGift ? (document.getElementById('use-gift-party')?.value?.trim() || '') : '',
         adjustmentDirection: isAdjustment ? getUseAdjustmentDirection() : undefined,
         notes: document.getElementById('use-notes')?.value || '',
         purchaseId: inventoryAffects ? linkedPurchaseId : null,
@@ -8729,6 +8854,8 @@ function deductPurchaseRemainingInData(purchase, amount) {
     const used = Math.min(amt, remaining);
     purchase.remainingAmount = Math.max(0, remaining - used);
     finalizePurchaseRemainingState(purchase);
+    if (isLsdPurchase(purchase)) syncLsdPurchaseRemaining(purchase);
+    if (isXanaxPurchase(purchase)) syncXanaxPurchaseRemaining(purchase);
     return used;
 }
 
@@ -8768,16 +8895,16 @@ function resolveGiftReceivedPurchaseId(substanceId) {
     return purchase?.id || null;
 }
 
-function addPurchaseAmount(purchaseId, amount) {
+function addPurchaseAmount(purchaseId, amount, data = appData) {
     if (!purchaseId) return { ok: true };
-    const purchase = findPurchase(purchaseId);
+    const purchase = findPurchaseInData(purchaseId, data);
     if (!purchase) return { ok: false, error: 'Linked purchase not found.' };
     addPurchaseRemainingInData(purchase, amount);
     purchase.updatedAt = new Date().toISOString();
     return { ok: true };
 }
 
-function applyLogInventoryEffect(log) {
+function applyLogInventoryEffect(log, data = appData) {
     if (!logInventoryAffects(log)) return { ok: true };
 
     const amount = parseFloat(log.amount) || 0;
@@ -8786,18 +8913,18 @@ function applyLogInventoryEffect(log) {
     if (isGiftReceivedLog(log) || inventoryAdjustmentAdds(log)) {
         if (log.linkedPurchases?.length) {
             for (const alloc of log.linkedPurchases) {
-                const result = addPurchaseAmount(alloc.purchaseId, alloc.amountUsed ?? alloc.amount);
+                const result = addPurchaseAmount(alloc.purchaseId, alloc.amountUsed ?? alloc.amount, data);
                 if (!result.ok) return result;
             }
             return { ok: true };
         }
         const pid = getLogPurchaseId(log);
-        return pid ? addPurchaseAmount(pid, amount) : { ok: true };
+        return pid ? addPurchaseAmount(pid, amount, data) : { ok: true };
     }
 
     if (log.linkedPurchases?.length) {
         for (const alloc of log.linkedPurchases) {
-            const result = deductPurchaseAmount(alloc.purchaseId, alloc.amountUsed ?? alloc.amount);
+            const result = deductPurchaseAmount(alloc.purchaseId, alloc.amountUsed ?? alloc.amount, data);
             if (!result.ok) return result;
         }
         return { ok: true };
@@ -8805,7 +8932,7 @@ function applyLogInventoryEffect(log) {
 
     const deductId = getLogPurchaseId(log);
     if (inventoryAdjustmentRemoves(log) || deductId) {
-        return deductPurchaseAmount(deductId, amount);
+        return deductPurchaseAmount(deductId, amount, data);
     }
 
     return { ok: true };
@@ -9032,17 +9159,25 @@ function getPurchaseRemainingAmount(purchase) {
 function getLinkedUseAmountForPurchase(purchaseId, logs = []) {
     let total = 0;
     (logs || []).forEach(log => {
+        if (!logInventoryAffects(log)) return;
+        const applyAmount = (amt) => {
+            const amount = parseFloat(amt) || 0;
+            if (amount <= INVENTORY_EPS) return;
+            const tx = getLogTransactionType(log);
+            if (tx === 'gift_received' || inventoryAdjustmentAdds(log)) total -= amount;
+            else if (tx === 'use' || tx === 'gift_given' || inventoryAdjustmentRemoves(log)) total += amount;
+        };
         if (log.linkedPurchases?.length) {
             log.linkedPurchases.forEach(alloc => {
                 if (alloc.purchaseId === purchaseId || String(alloc.purchaseId) === String(purchaseId)) {
-                    total += parseFloat(alloc.amountUsed) || 0;
+                    applyAmount(alloc.amountUsed ?? alloc.amount);
                 }
             });
             return;
         }
         const pid = getLogPurchaseId(log);
         if (pid === purchaseId || String(pid) === String(purchaseId)) {
-            total += parseFloat(log.amount) || 0;
+            applyAmount(log.amount);
         }
     });
     return total;
@@ -10960,9 +11095,9 @@ function formatManualBulkLinkPreview(stats) {
     `;
 }
 
-function deductPurchaseAmount(purchaseId, amount) {
+function deductPurchaseAmount(purchaseId, amount, data = appData) {
     if (!purchaseId) return { ok: true };
-    const purchase = findPurchase(purchaseId);
+    const purchase = findPurchaseInData(purchaseId, data);
     if (!purchase) return { ok: false, error: 'Linked purchase not found.' };
     const amt = parseFloat(amount) || 0;
     const remaining = getPurchaseRemainingAmount(purchase);
@@ -12059,15 +12194,7 @@ function handleUseLogSubmit(e) {
             delete updated.estimatedPuffsPerMinute;
         }
         if (isLsdSubstanceId(substanceId)) {
-            updated.type = 'quick';
-            updated.logMode = 'lsd_dose';
-            updated.startTime = payload.startTime || '';
-            updated.time = payload.time || payload.startTime || '';
-            updated.endTime = '';
-            delete updated.endDate;
-            delete updated.startedAt;
-            delete updated.endedAt;
-            delete updated.durationMs;
+            finalizeLsdUseLogForSave(updated, lsdCalc);
         }
         if (isXanaxSubstanceId(substanceId)) {
             updated.type = 'quick';
@@ -12099,7 +12226,11 @@ function handleUseLogSubmit(e) {
             appData.logs[idx] = updated;
         }
 
-        saveData(appData);
+        if (!saveData(appData)) {
+            appData.logs[idx] = priorState;
+            applyExistingLogLinks(priorState, appData.purchases || []);
+            return alert('Failed to save data. Your changes were not stored.');
+        }
         refreshAfterLogLinkChange(substanceId);
         resetUseFormAfterSave();
         populateAllSubstanceDropdowns();
@@ -12174,18 +12305,26 @@ function handleUseLogSubmit(e) {
     }
 
     if (!Array.isArray(appData.logs)) appData.logs = [];
+
+    if (isLsdSubstanceId(substanceId)) {
+        finalizeLsdUseLogForSave(log, lsdCalc);
+        const commitResult = commitUseLogEntry(log, {
+            lsdCalc,
+            applyInventory: useLsdInventory || logInventoryAffects(log)
+        });
+        if (!commitResult.ok) return alert(commitResult.error || 'Could not save this entry.');
+        resetUseFormAfterSave();
+        populateAllSubstanceDropdowns();
+        refreshUseLogRelatedViews();
+        alert(getUseSaveSuccessMessage(log));
+        return;
+    }
+
     appData.logs.push(log);
 
     if (useVapeInventory && vapeCalc.purchaseId) {
         setLogPurchaseId(log, vapeCalc.purchaseId);
         recalculateVapePurchaseInventory(vapeCalc.purchaseId);
-    } else if (useLsdInventory) {
-        if (lsdCalc?.purchaseId) setLogPurchaseId(log, lsdCalc.purchaseId);
-        const inv = applyLogInventoryEffect(log);
-        if (!inv.ok) {
-            appData.logs.pop();
-            return alert(inv.error);
-        }
     } else if (useXanaxInventory && xanaxCalc.purchaseId) {
         setLogPurchaseId(log, xanaxCalc.purchaseId);
         recalculatePurchaseRemaining(xanaxCalc.purchaseId);
@@ -12197,7 +12336,7 @@ function handleUseLogSubmit(e) {
         } else {
             recalculatePurchaseRemaining(nicotineCalc.purchaseId);
         }
-    } else if (!useVapeInventory && !useLsdInventory && !useXanaxInventory && !useNicotineInventory) {
+    } else if (!useVapeInventory && !useXanaxInventory && !useNicotineInventory) {
         const inv = applyLogInventoryEffect(log);
         if (!inv.ok) {
             appData.logs.pop();
@@ -12205,7 +12344,11 @@ function handleUseLogSubmit(e) {
         }
     }
 
-    saveData(appData);
+    if (!saveData(appData)) {
+        restoreLogInventoryEffect(log);
+        appData.logs.pop();
+        return alert('Failed to save data. Your entry was not stored.');
+    }
     resetUseFormAfterSave();
     populateAllSubstanceDropdowns();
     refreshUseLogRelatedViews();
@@ -12249,18 +12392,44 @@ function useHistorySelectionHas(id) {
     return [...useHistorySelection].some(sid => String(sid) === String(id));
 }
 
-function buildUseHistoryRows(substanceIdOverride = null) {
-    const entries = getUseEntries();
-    const filterId = substanceIdOverride ?? getUseLogViewSubstanceId();
-    let substances = filterId ? [getSubstance(filterId)].filter(Boolean) : getLoggableSubstances();
+function buildUseHistoryRows(substanceIdOverride = undefined) {
+    const filterId = substanceIdOverride !== undefined
+        ? substanceIdOverride
+        : getUseLogViewSubstanceId();
+    let entries = getUseEntries().filter(l => logMatchesUseLogFilter(l));
+    entries = entries.filter(l => !isPercentLeftDistributedChildLog(l));
+    if (filterId) entries = entries.filter(l => logMatchesSubstance(l, filterId));
 
-    if (filterId && !substances.length && entries.length) {
-        substances = getLoggableSubstances();
+    const substanceIds = [...new Set(entries.map(l => getUseSubstanceId(l)).filter(Boolean))];
+    let substances = substanceIds.map(id => getSubstance(id) || {
+        id,
+        name: getSubstanceName(id),
+        icon: '📦',
+        defaultUnit: 'units',
+        color: '#888'
+    });
+
+    if (!substances.length && filterId) {
+        substances = [getSubstance(filterId)].filter(Boolean);
+        if (!substances.length) {
+            substances = [{
+                id: filterId,
+                name: getSubstanceName(filterId),
+                icon: '📦',
+                defaultUnit: 'units',
+                color: '#888'
+            }];
+        }
     }
 
     let allRows = [];
     substances.forEach(sub => {
-        const enriched = buildEnrichedUseEntries(sub.id);
+        const subEntries = entries.filter(l => logMatchesSubstance(l, sub.id));
+        const sorted = [...subEntries].sort((a, b) => getLogDatetimeMs(a) - getLogDatetimeMs(b));
+        const enriched = [];
+        sorted.forEach((entry, i) => {
+            enriched.push(enrichUseEntry(entry, i > 0 ? enriched[i - 1] : null));
+        });
         const avgRate = (() => {
             const rates = enriched
                 .filter(e => isPersonalUseLog(e))
@@ -12270,29 +12439,6 @@ function buildUseHistoryRows(substanceIdOverride = null) {
         })();
         enriched.forEach(entry => allRows.push({ entry, sub, avgRate }));
     });
-
-    if (!allRows.length && entries.length && filterId) {
-        const matched = entries.filter(l => logMatchesSubstance(l, filterId));
-        const sub = getSubstance(filterId) || {
-            id: filterId,
-            name: getSubstanceName(filterId),
-            icon: '📦',
-            defaultUnit: 'units',
-            color: '#888'
-        };
-        const enriched = [];
-        const sorted = [...matched].sort((a, b) => getLogDatetimeMs(a) - getLogDatetimeMs(b));
-        sorted.forEach((entry, i) => {
-            enriched.push(enrichUseEntry(entry, i > 0 ? enriched[i - 1] : null));
-        });
-        const avgRate = (() => {
-            const rates = enriched.map(e => e.useRate).filter(r => r != null && r > 0);
-            return rates.length ? rates.reduce((a, b) => a + b, 0) / rates.length : null;
-        })();
-        enriched.forEach(entry => allRows.push({ entry, sub, avgRate }));
-    }
-
-    allRows = allRows.filter(({ entry }) => logMatchesUseLogFilter(entry));
 
     allRows.sort((a, b) => {
         const da = getLogDatetimeMs(a.entry);
@@ -22384,7 +22530,9 @@ function cleanExportData(data) {
             estimatedPuffsPerDay: l.estimatedPuffsPerDay ?? null,
             needsReview: !!l.needsReview,
             count: Number(l.count || 0),
-            giftPartyName: l.giftPartyName || '',
+            giftPartyName: l.giftPartyName || l.recipientName || '',
+            recipientName: l.recipientName || l.giftPartyName || '',
+            estimatedCost: l.estimatedCost ?? null,
             adjustmentDirection: l.adjustmentDirection || null,
             notes: l.notes || '',
             purchaseId: getLogPurchaseId(l),
@@ -22821,9 +22969,35 @@ function __setTestAppData(data) {
     ensureAppDataSubstancesReady(appData);
 }
 
+function __getTestAppData() {
+    return appData;
+}
+
+function __getStorageSnapshot() {
+    return localStorage.getItem(STORAGE_KEY);
+}
+
+function __reloadTestAppDataFromStorage() {
+    appData = loadData();
+    ensureAppDataSubstancesReady(appData);
+    return appData;
+}
+
+function __getUseHistoryEntryCount(substanceId = undefined) {
+    return buildUseHistoryRows(substanceId).length;
+}
+
 function __getRecoveryTrackerTestExports() {
     return {
         __setTestAppData,
+        __getTestAppData,
+        __getStorageSnapshot,
+        __reloadTestAppDataFromStorage,
+        __getUseHistoryEntryCount,
+        STORAGE_KEY,
+        saveData,
+        loadData,
+        normalizeAppDataSafe,
         getWeeklyTrackingSummaries,
         sumPersonalUseAmountThroughDate,
         getDefaultAppData,
@@ -22857,10 +23031,16 @@ function __getRecoveryTrackerTestExports() {
         isGiftReceivedLog,
         applyLogInventoryEffect,
         persistUseLogEntry,
+        commitUseLogEntry,
+        finalizeLsdUseLogForSave,
+        computeLsdUseLogEstimatedCost,
         validateLsdUseSubmit,
         getGiftMetricsFromLogs,
         getLsdRemainingUg,
-        getLsdRemainingTabs
+        getLsdRemainingTabs,
+        getUseLogsForSubstance,
+        logMatchesUseLogFilter,
+        getUseEntries: () => getUseEntries(appData)
     };
 }
 
