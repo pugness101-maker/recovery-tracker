@@ -74,7 +74,13 @@ function setup(data) {
 
 function commitNicotineLog(rt, log, data) {
     data.logs = data.logs || [];
-    rt.finalizeNicotineUseLogForSave(log, {});
+    const sharedSplit = rt.isSharedUseLog(log) ? {
+        total: log.totalAmount ?? log.amount,
+        personal: log.personalAmount,
+        other: log.sharedAmount,
+        sharedWithName: log.sharedWithName || ''
+    } : null;
+    rt.finalizeNicotineUseLogForSave(log, { sharedSplit });
     data.logs.push(log);
     if (rt.isVapeUseLog(log) && rt.getLogPurchaseId(log)) {
         rt.recalculateVapePurchaseInventory(rt.getLogPurchaseId(log), data);
@@ -337,4 +343,141 @@ test('json export includes nicotine transaction split fields', () => {
     assert.equal(exported.sharedAmount, 40);
     assert.equal(exported.sharedWithName, 'Juju');
     assert.equal(exported.nicotineProductType, 'vape');
+});
+
+test('shared use validation rejects mismatched personal and other portions', () => {
+    const rt = setup(makeNicotineData());
+    const err = rt.validateNicotineSharedSplit(10, {
+        total: 10,
+        personal: 6,
+        other: 3,
+        sharedWithName: 'Juju'
+    });
+    assert.match(err, /must equal the total/);
+});
+
+test('shared use validation rejects negative amounts', () => {
+    const rt = setup(makeNicotineData());
+    const err = rt.validateNicotineSharedSplit(10, {
+        total: 10,
+        personal: -1,
+        other: 11,
+        sharedWithName: 'Juju'
+    });
+    assert.match(err, /cannot be negative/);
+});
+
+test('inventory is deducted once for shared vape use', () => {
+    const purchase = makeVapePurchase({ remainingAmount: 10000, remainingPuffs: 10000 });
+    const data = makeNicotineData({ purchases: [purchase] });
+    const rt = setup(data);
+    const log = {
+        id: 'log-inv-once',
+        type: 'quick',
+        transactionType: 'shared_use',
+        substanceId: NICOTINE_ID,
+        nicotineProductType: 'vape',
+        date: '2026-07-13',
+        amount: 200,
+        totalAmount: 200,
+        personalAmount: 120,
+        sharedAmount: 80,
+        sharedWithName: 'Juju',
+        unit: 'puffs',
+        logMode: 'vape_puffs',
+        purchaseId: 'purchase-vape-1',
+        linkedPurchaseId: 'purchase-vape-1',
+        inventoryAffects: true
+    };
+    commitNicotineLog(rt, log, data);
+    assert.equal(rt.getPurchaseRemainingAmount(purchase), 9800);
+    const metrics = rt.getGiftMetricsFromLogs(data.logs);
+    assert.equal(metrics.shared, 80);
+});
+
+test('edit shared vape entry updates split without duplicating inventory deduction', () => {
+    const purchase = makeVapePurchase();
+    const data = makeNicotineData({ purchases: [purchase] });
+    const rt = setup(data);
+    const log = {
+        id: 'log-edit-shared',
+        type: 'quick',
+        transactionType: 'shared_use',
+        substanceId: NICOTINE_ID,
+        nicotineProductType: 'vape',
+        date: '2026-07-14',
+        amount: 100,
+        totalAmount: 100,
+        personalAmount: 60,
+        sharedAmount: 40,
+        sharedWithName: 'Juju',
+        unit: 'puffs',
+        logMode: 'vape_puffs',
+        purchaseId: 'purchase-vape-1',
+        linkedPurchaseId: 'purchase-vape-1',
+        inventoryAffects: true
+    };
+    commitNicotineLog(rt, log, data);
+    assert.equal(data.logs.length, 1);
+    assert.equal(rt.getPurchaseRemainingAmount(purchase), 9900);
+
+    const existing = data.logs[0];
+    const sharedSplit = { total: 80, personal: 50, other: 30, sharedWithName: 'Sam' };
+    const payload = {
+        ...existing,
+        transactionType: 'shared_use',
+        substanceId: NICOTINE_ID,
+        date: '2026-07-14',
+        inventoryAffects: true,
+        purchaseId: 'purchase-vape-1',
+        linkedPurchaseId: 'purchase-vape-1'
+    };
+    const vapeCalc = {
+        purchase,
+        purchaseId: purchase.id,
+        puffsUsed: 80,
+        estimatedPuffsUsed: 80,
+        currentRemaining: 9920,
+        percentAfter: 99.2,
+        previousRemaining: 10000,
+        isEstimated: false,
+        estimatedFromPercent: false
+    };
+    const result = rt.applyVapeUseLogEdit(existing, payload, vapeCalc, data, { sharedSplit });
+    assert.equal(result.ok, true);
+    assert.equal(data.logs.length, 1);
+    assert.equal(result.updated.personalAmount, 50);
+    assert.equal(result.updated.sharedAmount, 30);
+    assert.equal(result.updated.sharedWithName, 'Sam');
+    assert.equal(rt.getPurchaseRemainingAmount(purchase), 9920);
+    assert.equal(rt.getStatsUsageOnDate(NICOTINE_ID, '2026-07-14', data), 50);
+});
+
+test('delete shared use entry restores inventory', () => {
+    const purchase = makeVapePurchase();
+    const data = makeNicotineData({ purchases: [purchase] });
+    const rt = setup(data);
+    const log = {
+        id: 'log-delete-shared',
+        type: 'quick',
+        transactionType: 'shared_use',
+        substanceId: NICOTINE_ID,
+        nicotineProductType: 'vape',
+        date: '2026-07-15',
+        amount: 50,
+        totalAmount: 50,
+        personalAmount: 30,
+        sharedAmount: 20,
+        sharedWithName: 'Juju',
+        unit: 'puffs',
+        logMode: 'vape_puffs',
+        purchaseId: 'purchase-vape-1',
+        linkedPurchaseId: 'purchase-vape-1',
+        inventoryAffects: true
+    };
+    commitNicotineLog(rt, log, data);
+    assert.equal(rt.getPurchaseRemainingAmount(purchase), 9950);
+    data.logs = [];
+    rt.recalculateVapePurchaseInventory('purchase-vape-1', data);
+    assert.equal(rt.getPurchaseRemainingAmount(purchase), 10000);
 });

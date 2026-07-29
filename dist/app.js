@@ -2227,7 +2227,7 @@ function clearPercentLeftCheckpointFlags(log) {
 
 function getPercentCheckpointLogsForPurchase(purchaseId, data = appData) {
     return getLogsForPurchase(purchaseId, data)
-        .filter(l => isPersonalUseLog(l) && isVapeUseLog(l, data) && !l.needsReview)
+        .filter(l => (isPersonalUseLog(l) || isSharedUseLog(l)) && isVapeUseLog(l, data) && !l.needsReview)
         .filter(l => !isPercentLeftDistributedChildLog(l))
         .filter(l => isPercentBasedVapeLog(l));
 }
@@ -2885,17 +2885,29 @@ function syncDistributedPercentLeftEntries(parentLog, purchase, data = appData) 
     parentLog.distributedEndDate = endDate;
     parentLog.originalTotalEstimatedPuffs = totalPuffs;
 
+    const personalTotal = isSharedUseLog(parentLog) ? getLogPersonalAmount(parentLog) : totalPuffs;
+    const sharedTotal = isSharedUseLog(parentLog) ? getLogSharedAmount(parentLog) : 0;
+    const withSplit = isSharedUseLog(parentLog)
+        ? splitPersonalSharedAcrossDays(allocations, totalPuffs, personalTotal, sharedTotal)
+        : allocations.map(a => ({ ...a, personalAmount: a.amount, sharedAmount: 0 }));
+
     const now = new Date().toISOString();
     const substanceId = getUseSubstanceId(parentLog);
     let baseId = Date.now();
-    allocations.forEach((alloc, index) => {
+    withSplit.forEach((alloc, index) => {
+        const isSharedParent = isSharedUseLog(parentLog);
         data.logs.push({
             id: baseId + index,
             type: 'quick',
-            transactionType: 'use',
+            transactionType: isSharedParent ? 'shared_use' : 'use',
             substanceId,
             date: alloc.date,
-            amount: alloc.amount,
+            amount: isSharedParent ? alloc.personalAmount : alloc.amount,
+            totalAmount: alloc.amount,
+            personalAmount: isSharedParent ? alloc.personalAmount : undefined,
+            sharedAmount: isSharedParent ? alloc.sharedAmount : undefined,
+            sharedWithName: isSharedParent ? (parentLog.sharedWithName || '') : undefined,
+            nicotineProductType: 'vape',
             unit: 'puffs',
             logMode: 'vape_puffs',
             isEstimated: true,
@@ -11005,7 +11017,7 @@ function syncVapePurchaseSupplyStartedAt(purchase, logs, data = appData) {
 function getVapeRemainingBeforeLog(purchase, logDate, data = appData, excludeLogId = null) {
     let remaining = getVapeStartingPuffsLeft(purchase);
     const logs = getLogsForPurchase(purchase.id, data)
-        .filter(l => isPersonalUseLog(l) && isVapeUseLog(l, data) && !l.needsReview)
+        .filter(l => logAffectsInventoryDeduction(l) && isVapeUseLog(l, data) && !l.needsReview)
         .filter(l => !isPercentLeftDistributedChildLog(l))
         .filter(l => excludeLogId == null || String(l.id) !== String(excludeLogId))
         .filter(l => (l.date || '') <= (logDate || ''))
@@ -11050,6 +11062,9 @@ function recalculateVapePurchaseInventory(purchaseId, data = appData, options = 
             const estimatedUsed = Math.max(0, previousRemaining - remaining);
             log.amount = estimatedUsed;
             log.estimatedPuffsUsed = estimatedUsed;
+            if (isSharedUseLog(log)) {
+                log.totalAmount = estimatedUsed;
+            }
             log.isEstimated = true;
             log.estimatedFromPercent = true;
             log.remainingPuffsAfter = remaining;
@@ -11346,7 +11361,8 @@ function populateUseFormFromVapeLog(entry) {
     updateVapeUsePreview();
 }
 
-function applyVapeUseLogEdit(existing, payload, vapeCalc, data = appData) {
+function applyVapeUseLogEdit(existing, payload, vapeCalc, data = appData, options = {}) {
+    const { sharedSplit = null } = options;
     const idx = getUseEntries(data).findIndex(l => l.id === existing.id || String(l.id) === String(existing.id));
     if (idx < 0) return { ok: false, error: 'Could not find the entry to update.' };
 
@@ -11402,6 +11418,10 @@ function applyVapeUseLogEdit(existing, payload, vapeCalc, data = appData) {
         }
     }
 
+    if (isNicotineTrackingMode(getUseSubstanceId(updated))) {
+        finalizeNicotineUseLogForSave(updated, { vapeCalc, sharedSplit });
+    }
+
     setLogPurchaseId(updated, getLogPurchaseId(updated));
     data.logs[idx] = updated;
 
@@ -11452,6 +11472,7 @@ function computeVapeUseFromForm(options = {}) {
         options.editingId || null
     );
     const inputMode = getVapeLogInputMode();
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
     let percentAfter;
     let currentRemaining;
     let puffsUsed;
@@ -11460,9 +11481,15 @@ function computeVapeUseFromForm(options = {}) {
     let warning = null;
 
     if (inputMode === 'puffs') {
-        const puffsRaw = parseFloat(document.getElementById('use-vape-puffs-used')?.value);
+        let puffsRaw = parseFloat(document.getElementById('use-vape-puffs-used')?.value);
+        if (tx === 'shared_use') {
+            const sharedTotal = parseFloat(document.getElementById('use-shared-total')?.value);
+            if ((!Number.isFinite(puffsRaw) || puffsRaw <= 0) && Number.isFinite(sharedTotal) && sharedTotal > 0) {
+                puffsRaw = sharedTotal;
+            }
+        }
         if (!Number.isFinite(puffsRaw) || puffsRaw < 0) {
-            return { error: 'Enter puffs used.' };
+            return { error: tx === 'shared_use' ? 'Enter the total amount used.' : 'Enter puffs used.' };
         }
         puffsUsed = puffsRaw;
         currentRemaining = Math.max(0, previousRemaining - puffsUsed);
@@ -11534,6 +11561,10 @@ function updateVapeUsePreview() {
     }
 
     preview.textContent = lines.join('\n');
+    if (document.getElementById('use-transaction-type')?.value === 'shared_use') {
+        syncNicotineSharedTotalField(calc.puffsUsed);
+        updateNicotineSharedPreview();
+    }
 }
 
 function updateUseNicotineProductTypeUI() {
@@ -11646,10 +11677,27 @@ function parseNicotineSharedSplitFromForm(totalAmount) {
     const personalRaw = parseFloat(document.getElementById('use-shared-personal')?.value);
     const otherRaw = parseFloat(document.getElementById('use-shared-other')?.value);
     const sharedWithName = document.getElementById('use-shared-with')?.value?.trim() || '';
-    const total = Number.isFinite(totalRaw) && totalRaw >= 0 ? totalRaw : totalAmount;
-    const personal = Number.isFinite(personalRaw) && personalRaw >= 0 ? personalRaw : null;
-    const other = Number.isFinite(otherRaw) && otherRaw >= 0 ? otherRaw : null;
+    const total = Number.isFinite(totalRaw) && totalRaw >= 0
+        ? totalRaw
+        : (Number.isFinite(totalAmount) && totalAmount >= 0 ? totalAmount : null);
+    const personal = Number.isFinite(personalRaw) ? personalRaw : null;
+    const other = Number.isFinite(otherRaw) ? otherRaw : null;
     return { total, personal, other, sharedWithName };
+}
+
+function resolveNicotineSharedTotalAmount(vapeCalc, nicotineCalc, sharedSplit = null) {
+    if (sharedSplit?.total != null && Number.isFinite(sharedSplit.total) && sharedSplit.total > 0) {
+        return sharedSplit.total;
+    }
+    const raw = parseFloat(document.getElementById('use-shared-total')?.value);
+    if (Number.isFinite(raw) && raw > 0) return raw;
+    if (vapeCalc && !vapeCalc.error && Number.isFinite(vapeCalc.puffsUsed) && vapeCalc.puffsUsed > 0) {
+        return vapeCalc.puffsUsed;
+    }
+    if (nicotineCalc && !nicotineCalc.error && Number.isFinite(nicotineCalc.amount) && nicotineCalc.amount > 0) {
+        return nicotineCalc.amount;
+    }
+    return null;
 }
 
 function validateNicotineSharedSplit(totalAmount, split) {
@@ -11659,11 +11707,35 @@ function validateNicotineSharedSplit(totalAmount, split) {
     if (split.personal == null || split.other == null) {
         return 'Enter both your amount and the other person\'s amount.';
     }
+    if (split.personal < 0 || split.other < 0) {
+        return 'Amounts cannot be negative.';
+    }
     if (Math.abs((split.personal + split.other) - totalAmount) > 0.01) {
         return 'My amount + other person\'s amount must equal the total amount used.';
     }
     if (!split.sharedWithName) {
         return 'Enter who you shared with.';
+    }
+    return null;
+}
+
+function validateNicotineSharedUseSubmit(vapeCalc, nicotineCalc, sharedSplit, totalAmount) {
+    const sharedErr = validateNicotineSharedSplit(totalAmount, sharedSplit);
+    if (sharedErr) return sharedErr;
+    if (vapeCalc && !vapeCalc.error) {
+        if (!Number.isFinite(vapeCalc.puffsUsed)) return 'Could not calculate vape usage.';
+        if (Math.abs(vapeCalc.puffsUsed - totalAmount) > 0.01) {
+            return 'Shared total must match the calculated puffs used.';
+        }
+    }
+    const substanceId = document.getElementById('use-substance')?.value;
+    const productType = isNicotineTrackingMode(substanceId) ? getUseFormNicotineProductType() : null;
+    const tx = 'shared_use';
+    if (getUsePurchaseLinkMode() !== 'none') {
+        const linkedId = vapeCalc?.purchaseId
+            || nicotineCalc?.purchaseId
+            || resolveLinkedPurchaseId(substanceId, tx, { nicotineProductType: productType });
+        if (!linkedId) return 'Select a linked purchase for this shared use entry.';
     }
     return null;
 }
@@ -11714,11 +11786,17 @@ function updateNicotineSharedPreview() {
 
 function applyNicotineSharedFieldsToLog(log, split) {
     if (!isSharedUseLog(log) || !split) return;
+    log.transactionType = 'shared_use';
     log.totalAmount = split.total;
     log.personalAmount = split.personal;
     log.sharedAmount = split.other;
     log.sharedWithName = split.sharedWithName;
     log.amount = split.total;
+    const type = log.nicotineProductType || getNicotineProductType(log);
+    if (type === 'cigarettes') log.cigarettesUsed = split.total;
+    else if (type === 'pouches') log.pouchesUsed = split.total;
+    else if (type === 'gum') log.piecesUsed = split.total;
+    else if (type === 'patches') log.patchesUsed = split.total;
 }
 
 function finalizeNicotineUseLogForSave(log, { nicotineCalc = null, vapeCalc = null, sharedSplit = null } = {}) {
@@ -11732,9 +11810,6 @@ function finalizeNicotineUseLogForSave(log, { nicotineCalc = null, vapeCalc = nu
         log.giverName = log.giverName || log.giftPartyName || '';
         log.giftPartyName = log.giverName;
     }
-    if (tx === 'shared_use' && sharedSplit) {
-        applyNicotineSharedFieldsToLog(log, sharedSplit);
-    }
     if (nicotineCalc && !nicotineCalc.error) {
         log.nicotineProductType = nicotineCalc.nicotineProductType || log.nicotineProductType;
         if (nicotineCalc.cigarettesUsed != null) log.cigarettesUsed = nicotineCalc.cigarettesUsed;
@@ -11742,6 +11817,9 @@ function finalizeNicotineUseLogForSave(log, { nicotineCalc = null, vapeCalc = nu
         if (nicotineCalc.piecesUsed != null) log.piecesUsed = nicotineCalc.piecesUsed;
         if (nicotineCalc.patchesUsed != null) log.patchesUsed = nicotineCalc.patchesUsed;
         if (nicotineCalc.nicotineMgUsed != null) log.nicotineMgUsed = nicotineCalc.nicotineMgUsed;
+        if (nicotineCalc.purchaseId && log.inventoryAffects !== false) {
+            setLogPurchaseId(log, nicotineCalc.purchaseId);
+        }
     }
     if (vapeCalc && !vapeCalc.error) {
         log.nicotineProductType = 'vape';
@@ -11750,13 +11828,20 @@ function finalizeNicotineUseLogForSave(log, { nicotineCalc = null, vapeCalc = nu
         log.percentLeftAfter = vapeCalc.percentAfter;
         log.remainingPuffsAfter = vapeCalc.currentRemaining;
         log.estimatedPuffsUsed = vapeCalc.estimatedPuffsUsed ?? vapeCalc.puffsUsed;
-        if (tx === 'shared_use' && sharedSplit) {
-            log.amount = sharedSplit.total;
-            log.totalAmount = sharedSplit.total;
-        } else {
-            log.amount = vapeCalc.estimatedPuffsUsed ?? vapeCalc.puffsUsed;
+        log.amount = vapeCalc.estimatedPuffsUsed ?? vapeCalc.puffsUsed;
+        log.unit = 'puffs';
+        if (vapeCalc.purchaseId && log.inventoryAffects !== false) {
+            setLogPurchaseId(log, vapeCalc.purchaseId);
         }
     }
+    if (tx === 'shared_use' && sharedSplit) {
+        applyNicotineSharedFieldsToLog(log, sharedSplit);
+        if (vapeCalc && !vapeCalc.error) {
+            log.estimatedPuffsUsed = sharedSplit.total;
+        }
+    }
+    syncLogPurchaseFields(log);
+    return log;
 }
 
 function computeNicotineNonVapeUseFromForm() {
@@ -11770,9 +11855,27 @@ function computeNicotineNonVapeUseFromForm() {
     const purchase = linkedPurchaseId ? findPurchase(linkedPurchaseId) : null;
     const inventoryAffects = getUsePurchaseLinkMode() !== 'none' && !!linkedPurchaseId;
 
+    const resolveSharedOrProductAmount = (productAmount, sharedLabel) => {
+        if (transactionType === 'shared_use') {
+            const total = parseFloat(document.getElementById('use-shared-total')?.value);
+            if (!Number.isFinite(total) || total <= 0) {
+                return { error: 'Enter the total amount used.' };
+            }
+            return { amount: total };
+        }
+        if (!Number.isFinite(productAmount) || productAmount <= 0) {
+            return { error: sharedLabel };
+        }
+        return { amount: productAmount };
+    };
+
     if (productType === 'cigarettes') {
-        const smoked = parseFloat(document.getElementById('use-cigarettes-smoked')?.value);
-        if (!Number.isFinite(smoked) || smoked <= 0) return { error: 'Enter cigarettes smoked.' };
+        const resolved = resolveSharedOrProductAmount(
+            parseFloat(document.getElementById('use-cigarettes-smoked')?.value),
+            'Enter cigarettes smoked.'
+        );
+        if (resolved.error) return resolved;
+        const smoked = resolved.amount;
         const perPack = parseFloat(purchase?.cigarettesPerPack) || 20;
         return {
             amount: smoked,
@@ -11786,8 +11889,12 @@ function computeNicotineNonVapeUseFromForm() {
         };
     }
     if (productType === 'pouches') {
-        const used = parseFloat(document.getElementById('use-pouches-used')?.value);
-        if (!Number.isFinite(used) || used <= 0) return { error: 'Enter pouches used.' };
+        const resolved = resolveSharedOrProductAmount(
+            parseFloat(document.getElementById('use-pouches-used')?.value),
+            'Enter pouches used.'
+        );
+        if (resolved.error) return resolved;
+        const used = resolved.amount;
         const mgPer = parseFloat(purchase?.mgPerPouch);
         return {
             amount: used,
@@ -11801,8 +11908,12 @@ function computeNicotineNonVapeUseFromForm() {
         };
     }
     if (productType === 'gum') {
-        const used = parseFloat(document.getElementById('use-gum-pieces-used')?.value);
-        if (!Number.isFinite(used) || used <= 0) return { error: 'Enter pieces used.' };
+        const resolved = resolveSharedOrProductAmount(
+            parseFloat(document.getElementById('use-gum-pieces-used')?.value),
+            'Enter pieces used.'
+        );
+        if (resolved.error) return resolved;
+        const used = resolved.amount;
         const mgPer = parseFloat(purchase?.mgPerPiece);
         return {
             amount: used,
@@ -11816,9 +11927,13 @@ function computeNicotineNonVapeUseFromForm() {
         };
     }
     if (productType === 'patches') {
-        const used = parseFloat(document.getElementById('use-patches-used')?.value);
+        const resolved = resolveSharedOrProductAmount(
+            parseFloat(document.getElementById('use-patches-used')?.value),
+            'Enter patches used.'
+        );
+        if (resolved.error) return resolved;
+        const used = resolved.amount;
         const hours = parseFloat(document.getElementById('use-patch-hours-worn')?.value);
-        if (!Number.isFinite(used) || used <= 0) return { error: 'Enter patches used.' };
         const mgPer = parseFloat(purchase?.mgPerPatch);
         const duration = parseFloat(purchase?.patchDurationHours) || 24;
         const worn = Number.isFinite(hours) && hours > 0 ? hours : duration;
@@ -11836,11 +11951,15 @@ function computeNicotineNonVapeUseFromForm() {
         };
     }
 
-    const amount = parseFloat(document.getElementById('use-amount')?.value);
+    const amountRaw = transactionType === 'shared_use'
+        ? parseFloat(document.getElementById('use-shared-total')?.value)
+        : parseFloat(document.getElementById('use-amount')?.value);
     const unit = document.getElementById('use-unit')?.value || 'units';
-    if (!Number.isFinite(amount) || amount <= 0) return { error: 'Enter amount used.' };
+    if (!Number.isFinite(amountRaw) || amountRaw <= 0) {
+        return { error: transactionType === 'shared_use' ? 'Enter the total amount used.' : 'Enter amount used.' };
+    }
     return {
-        amount,
+        amount: amountRaw,
         unit,
         nicotineProductType: productType,
         purchaseId: linkedPurchaseId,
@@ -13676,15 +13795,11 @@ function handleUseLogSubmit(e) {
             }
         }
         if (tx === 'shared_use') {
-            let totalAmount = null;
-            if (isVapeUse && vapeCalc && !vapeCalc.error) totalAmount = vapeCalc.puffsUsed;
-            else if (nicotineCalc && !nicotineCalc.error) totalAmount = nicotineCalc.amount;
-            else {
-                const raw = parseFloat(document.getElementById('use-amount')?.value);
-                if (Number.isFinite(raw)) totalAmount = raw;
-            }
+            let totalAmount = resolveNicotineSharedTotalAmount(vapeCalc, nicotineCalc);
             sharedSplit = parseNicotineSharedSplitFromForm(totalAmount);
-            const sharedErr = validateNicotineSharedSplit(totalAmount, sharedSplit);
+            totalAmount = resolveNicotineSharedTotalAmount(vapeCalc, nicotineCalc, sharedSplit);
+            sharedSplit = parseNicotineSharedSplitFromForm(totalAmount);
+            const sharedErr = validateNicotineSharedUseSubmit(vapeCalc, nicotineCalc, sharedSplit, totalAmount);
             if (sharedErr) return alert(sharedErr);
         }
     }
@@ -13744,7 +13859,7 @@ function handleUseLogSubmit(e) {
 
         if (isVapeEdit) {
             const priorLogs = JSON.parse(JSON.stringify(getUseEntries()));
-            const editResult = applyVapeUseLogEdit(existing, payload, vapeCalc, appData);
+            const editResult = applyVapeUseLogEdit(existing, payload, vapeCalc, appData, { sharedSplit });
             if (!editResult.ok) {
                 alert(editResult.error || 'Could not update this vape entry.');
                 return;
@@ -18789,21 +18904,28 @@ function getNicotineUseAnalytics(logs, data = appData) {
         useByType: {},
         costByType: {}
     };
-    logs.filter(isPersonalUseLog).forEach(log => {
+    logs.filter(l => isPersonalUseLog(l) || isSharedUseLog(l)).forEach(log => {
         if (!isNicotineSubstanceId(getUseSubstanceId(log), data)) return;
         const type = getNicotineProductType(log, data);
         stats.totalEntries++;
-        stats.useByType[type] = (stats.useByType[type] || 0) + (parseFloat(log.amount) || 0);
         if (type === 'vape' || isVapeUseLog(log, data)) {
             getVapeLogStatsAllocations(log, data).forEach(({ amount }) => {
                 stats.vapePuffs += amount;
+                stats.useByType.vape = (stats.useByType.vape || 0) + amount;
             });
-        } else if (type === 'cigarettes') stats.cigarettes += parseFloat(log.cigarettesUsed ?? log.amount) || 0;
-        else if (type === 'pouches') stats.pouches += parseFloat(log.pouchesUsed ?? log.amount) || 0;
-        else if (type === 'gum') stats.gumPieces += parseFloat(log.piecesUsed ?? log.amount) || 0;
-        else if (type === 'patches') stats.patches += parseFloat(log.patchesUsed ?? log.amount) || 0;
+        } else {
+            const statsAmount = getLogStatsAmount(log);
+            stats.useByType[type] = (stats.useByType[type] || 0) + statsAmount;
+            if (type === 'cigarettes') stats.cigarettes += parseFloat(log.cigarettesUsed ?? statsAmount) || 0;
+            else if (type === 'pouches') stats.pouches += parseFloat(log.pouchesUsed ?? statsAmount) || 0;
+            else if (type === 'gum') stats.gumPieces += parseFloat(log.piecesUsed ?? statsAmount) || 0;
+            else if (type === 'patches') stats.patches += parseFloat(log.patchesUsed ?? statsAmount) || 0;
+        }
         const mg = parseFloat(log.nicotineMgUsed);
-        if (Number.isFinite(mg)) stats.nicotineMg += mg;
+        if (Number.isFinite(mg) && isPersonalUseLog(log)) stats.nicotineMg += mg;
+        else if (Number.isFinite(mg) && isSharedUseLog(log) && getLogTotalAmount(log) > 0) {
+            stats.nicotineMg += mg * (getLogPersonalAmount(log) / getLogTotalAmount(log));
+        }
     });
     return stats;
 }
@@ -24835,6 +24957,10 @@ function __getRecoveryTrackerTestExports() {
         getLogStatsAmount,
         formatNicotineUseSummary,
         finalizeNicotineUseLogForSave,
+        validateNicotineSharedSplit,
+        validateNicotineSharedUseSubmit,
+        resolveNicotineSharedTotalAmount,
+        applyNicotineSharedFieldsToLog,
         getStatsUsageOnDate,
         getInventoryBreakdown,
         getPurchaseRemainingAmount,
