@@ -975,185 +975,98 @@
                         <span>⏸</span> Taper paused — limits are not enforced until you resume.
                     </div>
 
-                    <div class="collapsible-section" data-section="taperTodayStatus">
-                        <button type="button" class="section-toggle" onclick="toggleSection('taperTodayStatus')">
-                            <span>Active Taper Plan</span>
+                    <div class="collapsible-section" data-section="taperPlanHeader">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperPlanHeader')">
+                            <span>Plan</span>
                             <span class="chevron">⌄</span>
                         </button>
                         <div class="section-content">
-                    <!-- KPI strip -->
-                    <div class="taper-kpi-row">
-                        <div class="taper-kpi-tile" id="taper-kpi-used-today">
-                            <span class="taper-kpi-label">Used Today</span>
-                            <span class="taper-kpi-value" id="taper-kpi-used-today-val">—</span>
-                        </div>
-                        <div class="taper-kpi-tile" id="taper-kpi-used-week">
-                            <span class="taper-kpi-label">Used This Week</span>
-                            <span class="taper-kpi-value" id="taper-kpi-used-week-val">—</span>
-                        </div>
-                        <div class="taper-kpi-tile taper-kpi-highlight" id="taper-kpi-remaining-week">
-                            <span class="taper-kpi-label">Remaining This Week</span>
-                            <span class="taper-kpi-value" id="taper-kpi-remaining-week-val">—</span>
-                        </div>
-                        <div class="taper-kpi-tile" id="taper-kpi-status">
-                            <span class="taper-kpi-label">Status</span>
-                            <span class="taper-kpi-value taper-kpi-status-text" id="taper-kpi-status-val">—</span>
-                        </div>
-                    </div>
-
-                    <div id="taper-purchase-kpi-row" class="taper-kpi-row taper-purchase-kpi-row hidden">
-                        <div class="taper-kpi-tile taper-purchase-kpi-tile hidden" id="taper-kpi-bought-week">
-                            <span class="taper-kpi-label">Bought this week</span>
-                            <span class="taper-kpi-value" id="taper-kpi-bought-week-val">—</span>
-                        </div>
-                        <div class="taper-kpi-tile taper-kpi-highlight taper-purchase-kpi-tile hidden" id="taper-kpi-buy-remaining-week">
-                            <span class="taper-kpi-label">Buy amount remaining this week</span>
-                            <span class="taper-kpi-value" id="taper-kpi-buy-remaining-week-val">—</span>
-                        </div>
-                        <div class="taper-kpi-tile taper-purchase-kpi-tile hidden" id="taper-kpi-spent-week">
-                            <span class="taper-kpi-label">Spent this week</span>
-                            <span class="taper-kpi-value" id="taper-kpi-spent-week-val">—</span>
-                        </div>
-                        <div class="taper-kpi-tile taper-kpi-highlight taper-purchase-kpi-tile hidden" id="taper-kpi-spend-remaining-week">
-                            <span class="taper-kpi-label">Spending remaining this week</span>
-                            <span class="taper-kpi-value" id="taper-kpi-spend-remaining-week-val">—</span>
-                        </div>
-                        <div class="taper-kpi-tile taper-purchase-kpi-tile hidden" id="taper-kpi-bought-month">
-                            <span class="taper-kpi-label">Bought this month</span>
-                            <span class="taper-kpi-value" id="taper-kpi-bought-month-val">—</span>
-                        </div>
-                        <div class="taper-kpi-tile taper-kpi-highlight taper-purchase-kpi-tile hidden" id="taper-kpi-buy-remaining-month">
-                            <span class="taper-kpi-label">Monthly buy remaining</span>
-                            <span class="taper-kpi-value" id="taper-kpi-buy-remaining-month-val">—</span>
-                        </div>
-                        <div class="taper-kpi-tile taper-purchase-kpi-tile hidden" id="taper-kpi-spent-month">
-                            <span class="taper-kpi-label">Spent this month</span>
-                            <span class="taper-kpi-value" id="taper-kpi-spent-month-val">—</span>
-                        </div>
-                        <div class="taper-kpi-tile taper-kpi-highlight taper-purchase-kpi-tile hidden" id="taper-kpi-spend-remaining-month">
-                            <span class="taper-kpi-label">Monthly spending remaining</span>
-                            <span class="taper-kpi-value" id="taper-kpi-spend-remaining-month-val">—</span>
-                        </div>
-                    </div>
-
-                    <!-- Plan control strip -->
-                    <div class="taper-plan-strip" id="taper-plan-summary-card">
-                        <div class="taper-plan-strip-main">
-                            <span class="taper-plan-icon" id="taper-plan-icon">📉</span>
-                            <div class="taper-plan-strip-copy">
-                                <p id="taper-plan-summary-text" class="taper-plan-strip-title">—</p>
-                                <div id="taper-plan-badges" class="taper-plan-badges"></div>
-                                <div class="taper-plan-meta-grid">
-                                    <div class="taper-plan-meta-item">
-                                        <span>Start</span>
-                                        <strong id="taper-plan-start-date">—</strong>
-                                    </div>
-                                    <div class="taper-plan-meta-item">
-                                        <span>End</span>
-                                        <strong id="taper-plan-end-date">—</strong>
-                                    </div>
-                                    <div class="taper-plan-meta-item">
-                                        <span>Weeks</span>
-                                        <strong id="taper-plan-week-count">—</strong>
-                                    </div>
-                                    <div class="taper-plan-meta-item">
-                                        <span>Current week</span>
-                                        <strong id="taper-plan-current-week">—</strong>
+                            <div class="taper-plan-strip" id="taper-plan-summary-card">
+                                <div class="taper-plan-strip-main">
+                                    <span class="taper-plan-icon" id="taper-plan-icon">📉</span>
+                                    <div class="taper-plan-strip-copy">
+                                        <p id="taper-plan-summary-text" class="taper-plan-strip-title">—</p>
+                                        <div id="taper-plan-badges" class="taper-plan-badges"></div>
+                                        <div class="taper-plan-meta-grid">
+                                            <div class="taper-plan-meta-item">
+                                                <span>Substance</span>
+                                                <strong id="taper-plan-substance-name">—</strong>
+                                            </div>
+                                            <div class="taper-plan-meta-item">
+                                                <span>Start</span>
+                                                <strong id="taper-plan-start-date">—</strong>
+                                            </div>
+                                            <div class="taper-plan-meta-item">
+                                                <span>End</span>
+                                                <strong id="taper-plan-end-date">—</strong>
+                                            </div>
+                                            <div class="taper-plan-meta-item">
+                                                <span>Current week</span>
+                                                <strong id="taper-plan-current-week">—</strong>
+                                            </div>
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
-                        </div>
-                        <div class="taper-plan-strip-progress">
-                            <span class="taper-plan-pct" id="taper-plan-pct-label">Plan progress</span>
-                            <div class="taper-plan-pct-bar"><div class="taper-plan-pct-fill" id="taper-plan-pct-fill"></div></div>
-                        </div>
-                        <div class="taper-plan-actions">
-                            <button type="button" class="taper-chip-btn" onclick="editTaperPlan()">✏️ Edit</button>
-                            <button type="button" class="taper-chip-btn" id="taper-pause-btn" onclick="pauseTaper()">⏸ Pause</button>
-                            <button type="button" class="taper-chip-btn taper-chip-danger" onclick="resetTaper()">Reset</button>
-                        </div>
-                    </div>
-
-                    <div class="taper-dash-grid">
-                        <div class="taper-dash-main">
-                            <!-- Progress -->
-                            <div class="taper-panel" id="taper-progress-card">
-                                <div class="taper-panel-header">
-                                    <h3>Progress Tracking</h3>
+                                <div class="taper-plan-strip-progress">
+                                    <span class="taper-plan-pct" id="taper-plan-pct-label">Plan progress</span>
+                                    <div class="taper-plan-pct-bar"><div class="taper-plan-pct-fill" id="taper-plan-pct-fill"></div></div>
                                 </div>
-                                <div class="taper-progress-panel taper-progress-weekly">
-                                    <div class="taper-progress-panel-head">
-                                        <span class="taper-panel-badge">Weekly</span>
-                                        <span id="taper-weekly-status" class="taper-status-badge">—</span>
-                                    </div>
-                                    <div class="taper-mini-stats">
-                                        <div class="taper-mini-stat"><span>Weekly target</span><strong id="taper-weekly-max-val">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Used this week</span><strong id="taper-weekly-used">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Remaining</span><strong id="taper-weekly-remaining">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Over / under</span><strong id="taper-weekly-over-under">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Monthly cap</span><strong id="taper-monthly-cap-val">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Used this month</span><strong id="taper-monthly-used-val">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Month remaining</span><strong id="taper-monthly-remaining-val">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Weekly %</span><strong id="taper-weekly-pct">—</strong></div>
-                                    </div>
-                                    <div class="progress-bar-container dns-bar-container taper-bar">
-                                        <div class="progress-bar dns-bar" id="taper-weekly-bar"><span class="progress-text" id="taper-weekly-bar-text"></span></div>
-                                    </div>
-                                </div>
-                                <p id="taper-weekly-days-left" class="taper-panel-footer hidden">—</p>
-
-                                <div id="taper-purchase-progress" class="taper-progress-panel taper-progress-purchase hidden">
-                                    <div class="taper-progress-panel-head">
-                                        <span class="taper-panel-badge">Buying Progress</span>
-                                        <span id="taper-purchase-status" class="taper-status-badge">—</span>
-                                    </div>
-                                    <div class="taper-mini-stats">
-                                        <div class="taper-mini-stat"><span>Weekly buy target</span><strong id="taper-purchase-weekly-buy-target">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Bought this week</span><strong id="taper-purchase-bought-week">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Buy remaining</span><strong id="taper-purchase-buy-remaining">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Buy over / under</span><strong id="taper-purchase-buy-over-under">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Weekly spend target</span><strong id="taper-purchase-weekly-spend-target">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Spent this week</span><strong id="taper-purchase-spent-week">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Spend remaining</span><strong id="taper-purchase-spend-remaining">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Spend over / under</span><strong id="taper-purchase-spend-over-under">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Monthly buy cap</span><strong id="taper-purchase-monthly-buy-cap">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Bought this month</span><strong id="taper-purchase-bought-month">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Monthly buy remaining</span><strong id="taper-purchase-buy-month-remaining">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Monthly spend cap</span><strong id="taper-purchase-monthly-spend-cap">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Spent this month</span><strong id="taper-purchase-spent-month">—</strong></div>
-                                        <div class="taper-mini-stat"><span>Monthly spend remaining</span><strong id="taper-purchase-spend-month-remaining">—</strong></div>
-                                    </div>
+                                <div class="taper-plan-actions">
+                                    <button type="button" class="taper-chip-btn" onclick="editTaperPlan()">✏️ Edit</button>
+                                    <button type="button" class="taper-chip-btn" id="taper-pause-btn" onclick="pauseTaper()">⏸ Pause</button>
+                                    <button type="button" class="taper-chip-btn" onclick="archiveSelectedTaperPlan()">Archive</button>
                                 </div>
                             </div>
                         </div>
                     </div>
-                        </div>
-                    </div>
 
-                    <div class="collapsible-section" data-section="taperWeeklyPlan">
-                        <button type="button" class="section-toggle" onclick="toggleSection('taperWeeklyPlan')">
-                            <span>Weekly Plan</span>
+                    <div class="collapsible-section" data-section="taperCurrentWeekSummary">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperCurrentWeekSummary')">
+                            <span>Current Week Summary</span>
                             <span class="chevron">⌄</span>
                         </button>
                         <div class="section-content">
-                            <div class="taper-panel" id="taper-weekly-plan-card">
-                                <div id="taper-weekly-summary" class="taper-kpi-chips"></div>
-                                <div id="taper-weekly-table" class="taper-table-wrap"></div>
+                            <div id="taper-current-week-summary" class="taper-current-week-summary">
+                                <div class="taper-progress-panel-head">
+                                    <span id="taper-weekly-status" class="taper-status-badge">—</span>
+                                </div>
+                                <div class="taper-mini-stats">
+                                    <div class="taper-mini-stat"><span>Weekly target</span><strong id="taper-weekly-max-val">—</strong></div>
+                                    <div class="taper-mini-stat"><span>Used this week</span><strong id="taper-weekly-used">—</strong></div>
+                                    <div class="taper-mini-stat"><span>Remaining this week</span><strong id="taper-weekly-remaining">—</strong></div>
+                                    <div class="taper-mini-stat"><span>Difference from target</span><strong id="taper-weekly-over-under">—</strong></div>
+                                    <div class="taper-mini-stat"><span>Status</span><strong id="taper-weekly-status-text">—</strong></div>
+                                    <div class="taper-mini-stat"><span>Average per day</span><strong id="taper-weekly-avg-day">—</strong></div>
+                                    <div class="taper-mini-stat"><span>Change from last week</span><strong id="taper-weekly-change-last">—</strong></div>
+                                    <div class="taper-mini-stat taper-spending-stat hidden" id="taper-weekly-spent-month-wrap"><span>Spent this month</span><strong id="taper-weekly-spent-month">—</strong></div>
+                                </div>
+                                <div class="progress-bar-container dns-bar-container taper-bar">
+                                    <div class="progress-bar dns-bar" id="taper-weekly-bar"><span class="progress-text" id="taper-weekly-bar-text"></span></div>
+                                </div>
                             </div>
                         </div>
                     </div>
 
-                    <div class="collapsible-section" data-section="taperByWeek">
-                        <button type="button" class="section-toggle" onclick="toggleSection('taperByWeek')">
-                            <span>Taper by Week</span>
+                    <div class="collapsible-section" data-section="taperWeeklyTable">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperWeeklyTable')">
+                            <span>Weekly Table</span>
                             <span class="chevron">⌄</span>
                         </button>
                         <div class="section-content">
                             <div class="sheet-table-toolbar">
-                                <button type="button" class="secondary-btn table-columns-btn" id="taper-by-week-customize-columns">Customize Columns</button>
+                                <button type="button" class="secondary-btn table-columns-btn" id="taper-weekly-customize-columns">Customize Columns</button>
                             </div>
-                            <div id="taper-by-week-summary" class="taper-kpi-chips taper-by-week-summary"></div>
-                            <div id="taper-by-week-table" class="taper-table-wrap"></div>
+                            <div id="taper-weekly-table" class="taper-table-wrap"></div>
+                        </div>
+                    </div>
+
+                    <div class="collapsible-section hidden" data-section="taperSpendingPurchases" id="taper-spending-section">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperSpendingPurchases')">
+                            <span>Spending &amp; Purchases</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
+                            <div id="taper-spending-purchases" class="taper-spending-purchases"></div>
                         </div>
                     </div>
 

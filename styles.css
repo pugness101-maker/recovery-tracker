@@ -2064,6 +2064,18 @@ input[type="range"]::-webkit-slider-thumb {
     line-height: 1.25;
 }
 
+.taper-current-week-summary .taper-progress-panel-head {
+    margin-bottom: 8px;
+}
+
+.taper-current-week-summary .taper-mini-stats {
+    margin-bottom: 12px;
+}
+
+.taper-spending-purchases .taper-spending-stats {
+    margin-bottom: 0;
+}
+
 .taper-chip-stat span {
     display: block;
     color: var(--text-secondary);
