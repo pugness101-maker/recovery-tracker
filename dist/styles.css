@@ -9850,3 +9850,56 @@ body > .app-container {
 /* Shared Insights filter hints */
 .rt-inherits, .ch-toolbar .settings-hint strong { font-weight: 600; }
 #stats-product-type-wrap.hidden { display: none; }
+
+
+/* Insights simplification */
+.ic-layout-toolbar {
+    margin: 8px 0 14px;
+    padding: 10px 12px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg, #fff) 92%, var(--accent, #4a7c59) 8%);
+}
+.ic-layout-toolbar-row {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center; justify-content: space-between;
+}
+.ic-view-mode-label {
+    display: flex; flex-direction: column; gap: 4px; font-size: 0.85rem; min-width: 140px;
+}
+.ic-view-mode-label select {
+    min-height: 40px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+    background: var(--bg, #fff); color: var(--text);
+}
+.ic-layout-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.ic-layout-hint { margin: 8px 0 0; }
+.ic-advanced-tag { font-style: normal; font-size: 0.78em; color: var(--text-secondary); font-weight: 500; }
+.ic-simple-hidden { display: none !important; }
+.ic-primary-summary {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 10px;
+}
+.insights-compact-rows .sheet-table td,
+.insights-compact-rows .sheet-table th {
+    padding-top: 6px; padding-bottom: 6px; font-size: 0.9rem;
+}
+.insights-calendar-page .sheet-table-wrap,
+.insights-calendar-page .table-scroll {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+.insights-calendar-page .sheet-table thead th {
+    position: sticky; top: 0; z-index: 1;
+    background: var(--bg, #fff);
+}
+.insights-simple-mode .ch-widget-grid > :nth-child(n+3) { display: none; }
+.ic-simplified-overview .combined-overview-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+
+@media (max-width: 720px) {
+    .ic-layout-toolbar-row { flex-direction: column; align-items: stretch; }
+    .ic-primary-summary { grid-template-columns: 1fr; }
+    .insights-simple-mode .ch-widget-grid > :nth-child(n+2) { display: none; }
+    .combined-overview-grid { grid-template-columns: 1fr; }
+    .ic-layout-actions { width: 100%; }
+    .ic-layout-actions .secondary-btn { flex: 1; }
+}

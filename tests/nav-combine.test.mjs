@@ -84,9 +84,13 @@ test('saved combined nav view state persists in settings', () => {
     const data = rt.__getTestAppData();
     const prefs = rt.ensureCombinedNavPrefs(data);
     prefs.goalsPlansView = 'templates';
-    prefs.insightsCalendarView = 'financial';
+    prefs.insightsCalendarView = 'money';
     assert.equal(data.settings.combinedNav.goalsPlansView, 'templates');
-    assert.equal(data.settings.combinedNav.insightsCalendarView, 'financial');
+    assert.equal(data.settings.combinedNav.insightsCalendarView, 'money');
+    // Legacy Insights views migrate into the simplified 5-tab set
+    prefs.insightsCalendarView = 'financial';
+    rt.ensureCombinedNavPrefs(data);
+    assert.equal(data.settings.combinedNav.insightsCalendarView, 'money');
 });
 
 test('migrate activeTab from legacy goals/plan/insights/calendar', () => {

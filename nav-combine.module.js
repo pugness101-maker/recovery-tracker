@@ -29,15 +29,9 @@ const GOALS_PLANS_VIEWS = [
 const INSIGHTS_CALENDAR_VIEWS = [
     'overview',
     'calendar',
-    'trends',
-    'comparisons',
-    'financial',
     'use',
-    'purchase',
-    'goal-analytics',
-    'plan-analytics',
-    'charts',
-    'custom'
+    'money',
+    'more'
 ];
 
 const LEGACY_TAB_TO_COMBINED = {
@@ -82,7 +76,16 @@ function ensureCombinedNavPrefs(data = appData) {
     }
     const prefs = data.settings.combinedNav;
     if (!GOALS_PLANS_VIEWS.includes(prefs.goalsPlansView)) prefs.goalsPlansView = defaults.goalsPlansView;
-    if (!INSIGHTS_CALENDAR_VIEWS.includes(prefs.insightsCalendarView)) prefs.insightsCalendarView = defaults.insightsCalendarView;
+    // Migrate legacy Insights subviews into Overview / Calendar / Use / Money / More
+    if (typeof normalizeCombinedView === 'function') {
+        prefs.insightsCalendarView = normalizeCombinedView(
+            prefs.insightsCalendarView,
+            INSIGHTS_CALENDAR_VIEWS,
+            defaults.insightsCalendarView
+        );
+    } else if (!INSIGHTS_CALENDAR_VIEWS.includes(prefs.insightsCalendarView)) {
+        prefs.insightsCalendarView = defaults.insightsCalendarView;
+    }
     if (!prefs.goalsPlansCollapsed || typeof prefs.goalsPlansCollapsed !== 'object') {
         prefs.goalsPlansCollapsed = { ...defaults.goalsPlansCollapsed };
     }
@@ -124,15 +127,20 @@ function normalizeCombinedView(view, allowed, fallback) {
     const aliases = {
         goals: 'active-goals',
         plans: 'active-plans',
-        compare: 'comparisons',
-        comparison: 'comparisons',
-        'goal-analytics': 'goal-analytics',
-        'plan-analytics': 'plan-analytics',
-        finances: 'financial',
+        compare: 'more',
+        comparison: 'more',
+        comparisons: 'more',
+        'goal-analytics': 'more',
+        'plan-analytics': 'more',
+        finances: 'money',
+        financial: 'money',
+        purchase: 'money',
         'use-analytics': 'use',
-        'purchase-analytics': 'purchase',
-        'custom-metrics': 'custom',
-        charts: 'charts'
+        'purchase-analytics': 'money',
+        'custom-metrics': 'more',
+        custom: 'more',
+        charts: 'use',
+        trends: 'use'
     };
     const mapped = aliases[raw] || raw;
     return allowed.includes(mapped) ? mapped : fallback;
@@ -552,9 +560,9 @@ function renderInsightsCalendarOverviewHtml(overview) {
                 </section>
             </div>
             <div class="combined-overview-actions">
-                <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('trends')">Trends</button>
-                <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('comparisons')">Compare</button>
-                <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('financial')">Financial</button>
+                <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('use')">Use</button>
+                <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('money')">Money</button>
+                <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('more')">More</button>
             </div>
         </div>`;
 }
@@ -562,13 +570,8 @@ function renderInsightsCalendarOverviewHtml(overview) {
 function applyInsightsCalendarSectionFilter(view) {
     const stats = typeof document !== 'undefined' ? document.getElementById('stats-tab') : null;
     if (!stats) return;
-    const showStatsShell = view !== 'calendar';
-    stats.hidden = !showStatsShell && view !== 'overview';
-    // overview uses dedicated panel; still warm stats data in background for other views
-    if (view === 'overview') {
-        stats.hidden = true;
-        return;
-    }
+    // Overview now shares the Insights shell (filter bar + summary + charts).
+    // Calendar keeps its dedicated full-page view.
     if (view === 'calendar') {
         stats.hidden = true;
         return;
@@ -652,13 +655,22 @@ function setInsightsCalendarView(view, options = {}) {
     } else {
         if (typeof applyMainSubstanceToViewSelectors === 'function') applyMainSubstanceToViewSelectors();
         if (typeof updateStats === 'function') updateStats();
-        if (next === 'plan-analytics') renderPlanAnalyticsPanel();
-        if (next === 'financial' && typeof renderFinancialAnalyticsView === 'function') renderFinancialAnalyticsView();
-        if (next === 'goal-analytics' && typeof renderGoalInsightsPanel === 'function') renderGoalInsightsPanel();
-        if (next === 'custom') {
+        if (next === 'money') {
+            if (typeof renderFinancialAnalyticsView === 'function') renderFinancialAnalyticsView();
+            if (typeof renderPurchaseAnalyticsView === 'function') renderPurchaseAnalyticsView();
+        }
+        if (next === 'use') {
+            if (typeof renderChartDashboardView === 'function') renderChartDashboardView();
+            if (typeof renderRunningTotalsView === 'function') renderRunningTotalsView();
+        }
+        if (next === 'more') {
+            if (typeof renderPlanAnalyticsPanel === 'function') renderPlanAnalyticsPanel();
+            if (typeof renderGoalInsightsPanel === 'function') renderGoalInsightsPanel();
+            if (typeof renderInsightsContactAnalytics === 'function') renderInsightsContactAnalytics();
+            if (typeof renderChartDashboardView === 'function') renderChartDashboardView();
             const customRoot = document.getElementById('custom-metrics-root');
             if (customRoot && !customRoot.dataset.ready) {
-                customRoot.innerHTML = '<p class="settings-hint">Custom metric formulas will appear here when the builder is enabled. Use Financial and Trends for built-in metrics today.</p>';
+                customRoot.innerHTML = '<p class="settings-hint">Custom metric formulas will appear here when the builder is enabled. Use Money and Use for built-in metrics today.</p>';
                 customRoot.dataset.ready = '1';
             }
         }

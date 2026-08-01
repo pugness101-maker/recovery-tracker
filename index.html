@@ -1687,28 +1687,16 @@
                     <select id="ic-subnav-select" class="combined-subnav-select" aria-label="Insights and Calendar view" onchange="setInsightsCalendarView(this.value)">
                         <option value="overview">Overview</option>
                         <option value="calendar">Calendar</option>
-                        <option value="trends">Trends</option>
-                        <option value="comparisons">Compare</option>
-                        <option value="financial">Financial</option>
-                        <option value="use">Use Analytics</option>
-                        <option value="purchase">Purchase Analytics</option>
-                        <option value="goal-analytics">Goal Analytics</option>
-                        <option value="plan-analytics">Plan Analytics</option>
-                        <option value="charts">Charts</option>
-                        <option value="custom">Custom Metrics</option>
+                        <option value="use">Use</option>
+                        <option value="money">Money</option>
+                        <option value="more">More</option>
                     </select>
                     <nav class="combined-subnav" id="ic-subnav" aria-label="Insights and Calendar sections" role="tablist">
                         <button type="button" class="combined-subnav-btn active" data-ic-view="overview" onclick="setInsightsCalendarView('overview')">Overview</button>
                         <button type="button" class="combined-subnav-btn" data-ic-view="calendar" onclick="setInsightsCalendarView('calendar')">Calendar</button>
-                        <button type="button" class="combined-subnav-btn" data-ic-view="trends" onclick="setInsightsCalendarView('trends')">Trends</button>
-                        <button type="button" class="combined-subnav-btn" data-ic-view="comparisons" onclick="setInsightsCalendarView('comparisons')">Compare</button>
-                        <button type="button" class="combined-subnav-btn" data-ic-view="financial" onclick="setInsightsCalendarView('financial')">Financial</button>
                         <button type="button" class="combined-subnav-btn" data-ic-view="use" onclick="setInsightsCalendarView('use')">Use</button>
-                        <button type="button" class="combined-subnav-btn" data-ic-view="purchase" onclick="setInsightsCalendarView('purchase')">Purchases</button>
-                        <button type="button" class="combined-subnav-btn" data-ic-view="goal-analytics" onclick="setInsightsCalendarView('goal-analytics')">Goals</button>
-                        <button type="button" class="combined-subnav-btn" data-ic-view="plan-analytics" onclick="setInsightsCalendarView('plan-analytics')">Plans</button>
-                        <button type="button" class="combined-subnav-btn" data-ic-view="charts" onclick="setInsightsCalendarView('charts')">Charts</button>
-                        <button type="button" class="combined-subnav-btn" data-ic-view="custom" onclick="setInsightsCalendarView('custom')">Custom</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="money" onclick="setInsightsCalendarView('money')">Money</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="more" onclick="setInsightsCalendarView('more')">More</button>
                     </nav>
                 </div>
 
@@ -1845,13 +1833,13 @@
                 <div id="calendar-root" class="cal-root" aria-live="polite"></div>
                 </div>
 
-                <div id="stats-tab" class="combined-subview insights-page" data-ic-view="trends comparisons financial use purchase goal-analytics plan-analytics charts custom" role="tabpanel" hidden>
+                <div id="stats-tab" class="combined-subview insights-page" data-ic-view="overview use money more" role="tabpanel" hidden>
                     <div class="page-header-row insights-page-header">
                     <h2>Insights</h2>
                     <p class="page-substance-hint settings-hint">Analytics for the substance selected in Date Range below.</p>
                 </div>
 
-                <div class="collapsible-section" data-section="statsDateRange" data-ic-panels="trends comparisons financial use purchase goal-analytics plan-analytics charts custom overview">
+                <div class="collapsible-section" data-section="statsDateRange" data-ic-panels="overview use money more">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsDateRange')">
                         <span>Date Range &amp; Substance</span>
                         <span class="chevron">⌄</span>
@@ -1916,7 +1904,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsGoalAnalytics" data-ic-panels="goal-analytics overview">
+                <div class="collapsible-section" data-section="statsGoalAnalytics" data-ic-panels="overview more">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsGoalAnalytics')">
                         <span>Goal Analytics</span>
                         <span class="chevron">⌄</span>
@@ -1926,7 +1914,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsComparePeriods" data-ic-panels="comparisons">
+                <div class="collapsible-section" data-section="statsComparePeriods" data-ic-panels="more">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsComparePeriods')">
                         <span>Compare Periods</span>
                         <span class="chevron">⌄</span>
@@ -1982,17 +1970,27 @@
 
                 <div id="stats-single-view">
 
-                <div class="collapsible-section" data-section="statsSummaryDashboard" data-ic-panels="trends use overview">
+                <div class="collapsible-section" data-section="statsSummaryDashboard" data-ic-panels="overview use">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsSummaryDashboard')">
-                        <span>Overview</span>
+                        <span>Summary</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
-                        <div id="stats-summary-dashboard" class="sheet-summary-grid"></div>
+                        <div id="stats-summary-dashboard" class="sheet-summary-grid ic-primary-summary"></div>
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsCalendarView" data-ic-panels="trends overview">
+                <div class="collapsible-section" data-section="statsMoreMetrics" data-ic-panels="overview use" data-ic-advanced="true">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsMoreMetrics')">
+                        <span>More metrics</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="stats-more-metrics-body" class="stats-more-metrics-body"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsCalendarView" data-ic-panels="overview use">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsCalendarView')">
                         <span>Calendar View</span>
                         <span class="chevron">⌄</span>
@@ -2050,7 +2048,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsMonthlySummary" data-ic-panels="trends use">
+                <div class="collapsible-section" data-section="statsMonthlySummary" data-ic-panels="use" data-ic-advanced="true">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsMonthlySummary')">
                         <span>Monthly Use Summary</span>
                         <span class="chevron">⌄</span>
@@ -2063,7 +2061,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsWeeklySummary" data-ic-panels="trends use">
+                <div class="collapsible-section" data-section="statsWeeklySummary" data-ic-panels="use" data-ic-advanced="true">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsWeeklySummary')">
                         <span>Weekly Use Summary</span>
                         <span class="chevron">⌄</span>
@@ -2077,9 +2075,9 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsRunningTotals" data-ic-panels="use" id="running-totals-section">
+                <div class="collapsible-section" data-section="statsRunningTotals" data-ic-panels="use" data-ic-advanced="true" id="running-totals-section">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsRunningTotals')">
-                        <span>Running Totals</span>
+                        <span>Running Totals <em class="ic-advanced-tag">(Advanced)</em></span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
@@ -2088,7 +2086,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsContactAnalytics" data-ic-panels="overview financial purchase use" id="insights-contacts-section">
+                <div class="collapsible-section" data-section="statsContactAnalytics" data-ic-advanced="true" data-ic-panels="more money" id="insights-contacts-section">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsContactAnalytics')">
                         <span>Contact Analytics</span>
                         <span class="chevron">⌄</span>
@@ -2099,9 +2097,9 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsChartDashboard" data-ic-panels="charts overview" id="chart-dashboard-section">
+                <div class="collapsible-section" data-section="statsChartDashboard" data-ic-panels="overview use more" id="chart-dashboard-section">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsChartDashboard')">
-                        <span>Charts</span>
+                        <span>Charts &amp; Trends</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
@@ -2110,7 +2108,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsPurchaseAnalytics" data-ic-panels="purchase overview" id="purchase-analytics-section">
+                <div class="collapsible-section" data-section="statsPurchaseAnalytics" data-ic-panels="money" id="purchase-analytics-section">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsPurchaseAnalytics')">
                         <span>Purchase Analytics</span>
                         <span class="chevron">⌄</span>
@@ -2121,7 +2119,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsBuyAnalytics" data-ic-panels="purchase overview">
+                <div class="collapsible-section" data-section="statsBuyAnalytics" data-ic-panels="money">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsBuyAnalytics')">
                         <span>Spending &amp; Purchases</span>
                         <span class="chevron">⌄</span>
@@ -2186,7 +2184,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsFinancialAnalytics" data-ic-panels="financial overview" id="financial-analytics-section">
+                <div class="collapsible-section" data-section="statsFinancialAnalytics" data-ic-panels="money" id="financial-analytics-section">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsFinancialAnalytics')">
                         <span>Financial Analytics</span>
                         <span class="chevron">⌄</span>
@@ -2197,7 +2195,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsGiftAnalytics" data-ic-panels="purchase use" id="gift-analytics-section">
+                <div class="collapsible-section" data-section="statsGiftAnalytics" data-ic-panels="money use" id="gift-analytics-section">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsGiftAnalytics')">
                         <span>Gift Analytics</span>
                         <span class="chevron">⌄</span>
@@ -2229,7 +2227,7 @@
                 </div>
 
                 </div>
-                    <div class="collapsible-section" data-section="statsPlanAnalytics" id="plan-analytics-section" data-ic-panels="plan-analytics overview">
+                    <div class="collapsible-section" data-section="statsPlanAnalytics" id="plan-analytics-section" data-ic-panels="more overview">
                         <button type="button" class="section-toggle" onclick="toggleSection('statsPlanAnalytics')">
                             <span>Plan Analytics</span>
                             <span class="chevron">⌄</span>
@@ -2238,7 +2236,7 @@
                             <div id="plan-analytics-panel" class="plan-analytics-panel" aria-live="polite"></div>
                         </div>
                     </div>
-                    <div class="collapsible-section" data-section="statsCustomMetrics" id="custom-metrics-section" data-ic-panels="custom">
+                    <div class="collapsible-section" data-section="statsCustomMetrics" id="custom-metrics-section" data-ic-panels="more" data-ic-advanced="true">
                         <button type="button" class="section-toggle" onclick="toggleSection('statsCustomMetrics')">
                             <span>Custom Metrics</span>
                             <span class="chevron">⌄</span>
