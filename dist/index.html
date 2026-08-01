@@ -2057,6 +2057,17 @@
                     </div>
                 </div>
 
+                <div class="collapsible-section" data-section="statsRunningTotals" data-ic-panels="use" id="running-totals-section">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsRunningTotals')">
+                        <span>Running Totals</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <p class="settings-hint">Cumulative personal-use by session. Gift and adjustment entries are excluded. Shared Use counts only your portion.</p>
+                        <div id="running-totals-root" class="running-totals-root" aria-live="polite"></div>
+                    </div>
+                </div>
+
                 <div class="collapsible-section" data-section="statsContactAnalytics" data-ic-panels="overview financial purchase use" id="insights-contacts-section">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsContactAnalytics')">
                         <span>Contact Analytics</span>

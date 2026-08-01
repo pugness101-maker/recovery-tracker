@@ -9817,3 +9817,32 @@ body > .app-container {
 @media (max-width: 720px) {
     .ct-detail-panel-sheet { width: 100%; border-radius: 16px 16px 0 0; top: auto; bottom: 0; height: min(88vh, 100%); }
 }
+
+
+/* Running Totals */
+.running-totals-root { margin-top: 4px; }
+.rt-dashboard { display: flex; flex-direction: column; gap: 12px; }
+.rt-filters {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px;
+}
+.rt-filters label { display: flex; flex-direction: column; gap: 4px; font-size: 0.82rem; }
+.rt-filters select, .rt-filters input[type="date"] {
+    min-height: 40px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+    background: var(--bg, #fff); color: var(--text);
+}
+.rt-check { flex-direction: row !important; align-items: center; gap: 8px !important; }
+.rt-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.rt-svg { width: 100%; height: auto; max-height: 260px; display: block; }
+.rt-bar { fill: var(--accent); opacity: 0.85; }
+.rt-line { stroke: #2e7d32; stroke-width: 2.5; }
+.rt-target { stroke: #ef6c00; stroke-width: 1.5; stroke-dasharray: 6 4; }
+.rt-axis { stroke: var(--border); stroke-width: 1; }
+.rt-axis-label { fill: var(--text-secondary); font-size: 10px; }
+.rt-table-wrap { margin-top: 8px; }
+.rt-empty, .rt-loading, .rt-error { color: var(--text-secondary); font-size: 0.9rem; }
+.rt-chart-block, .rt-table-block { margin-bottom: 14px; }
+.rt-chart-block h4, .rt-table-block h4 { margin: 0 0 6px; }
+@media (max-width: 720px) {
+    .rt-filters { grid-template-columns: 1fr 1fr; }
+    .rt-svg { max-height: 200px; }
+}
