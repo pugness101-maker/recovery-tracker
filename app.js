@@ -5534,11 +5534,18 @@ function applyWeedQuantityFromFields(payload, fields, totalCost) {
             payload.needsStrengthInfo = true;
             delete payload.remainingThcMg;
         }
-    } else if (type === 'pre-rolls' && fields.totalPreRollGrams != null) {
-        payload.quantityBought = fields.totalPreRollGrams;
-        payload.quantity = fields.totalPreRollGrams;
-        payload.unit = 'grams';
-        payload.costPerUnit = fields.totalPreRollGrams > 0 ? cost / fields.totalPreRollGrams : 0;
+    } else if (type === 'pre-rolls') {
+        if (fields.totalPreRollGrams != null) {
+            payload.quantityBought = fields.totalPreRollGrams;
+            payload.quantity = fields.totalPreRollGrams;
+            payload.unit = 'grams';
+            payload.costPerUnit = fields.totalPreRollGrams > 0 ? cost / fields.totalPreRollGrams : 0;
+        } else if (fields.preRollCount != null) {
+            payload.quantityBought = fields.preRollCount;
+            payload.quantity = fields.preRollCount;
+            payload.unit = 'pre-roll';
+            payload.costPerUnit = fields.preRollCount > 0 ? cost / fields.preRollCount : 0;
+        }
     }
 }
 
@@ -5550,7 +5557,7 @@ function validateWeedBuyForm(substanceId) {
         if (!Number.isFinite(g) || g <= 0) return 'Enter bud grams for this purchase.';
     } else if (productType === 'cart') {
         const qty = parseFloat(document.getElementById('buy-quantity')?.value);
-        if (!Number.isFinite(qty) || qty <= 0) return 'Enter quantity (count) for this purchase.';
+        if (!Number.isFinite(qty) || qty <= 0) return 'Enter cart count for this purchase.';
     } else if (productType === 'edibles') {
         const qty = parseFloat(document.getElementById('buy-quantity')?.value);
         if (!Number.isFinite(qty) || qty <= 0) return 'Enter total edible count for this purchase.';
@@ -5562,9 +5569,12 @@ function validateWeedBuyForm(substanceId) {
         }
     } else if (productType === 'pre-rolls') {
         const count = parseFloat(document.getElementById('buy-preroll-count')?.value);
-        const grams = parseFloat(document.getElementById('buy-grams-per-preroll')?.value);
+        const gramsRaw = document.getElementById('buy-grams-per-preroll')?.value;
+        const grams = parseFloat(gramsRaw);
         if (!Number.isFinite(count) || count <= 0) return 'Enter pre-roll count.';
-        if (!Number.isFinite(grams) || grams <= 0) return 'Enter grams per pre-roll.';
+        if (gramsRaw !== '' && gramsRaw != null && (!Number.isFinite(grams) || grams < 0)) {
+            return 'Grams per pre-roll must be 0 or greater when provided.';
+        }
     }
     return null;
 }
@@ -18988,6 +18998,25 @@ function updateBuyPatchesPreview() {
     preview.textContent = lines.length ? lines.join(' · ') : '—';
 }
 
+function getWeedBuyNormalizedUnit(productType) {
+    const type = normalizeWeedProductType(productType);
+    if (type === 'cart') return 'percent';
+    if (type === 'edibles') return 'edible';
+    return 'grams';
+}
+
+function setBuyUnitSelectNormalizedValue(unit) {
+    const unitSelect = document.getElementById('buy-unit');
+    if (!unitSelect || !unit) return;
+    if (![...unitSelect.options].some(o => o.value === unit)) {
+        const option = document.createElement('option');
+        option.value = unit;
+        option.textContent = unit;
+        unitSelect.appendChild(option);
+    }
+    unitSelect.value = unit;
+}
+
 function updateBuyWeedEdiblesPreview() {
     const preview = document.getElementById('buy-edibles-preview');
     if (!preview) return;
@@ -19020,26 +19049,30 @@ function updateBuyWeedProductTypeUI() {
     document.getElementById('buy-weed-prerolls-group')?.classList.toggle('hidden', productType !== 'pre-rolls');
     document.getElementById('buy-quantity-group')?.classList.toggle('hidden', hideQty);
 
+    // Product type owns the unit — never show the generic Unit dropdown for Weed/THC.
+    const unitGroup = document.getElementById('buy-unit-group');
+    unitGroup?.classList.add('hidden');
+    const unitSelect = document.getElementById('buy-unit');
+    if (unitSelect) {
+        unitSelect.required = false;
+        setBuyUnitSelectNormalizedValue(getWeedBuyNormalizedUnit(productType));
+    }
+
     const qtyInput = document.getElementById('buy-quantity');
     const qtyLabel = document.getElementById('buy-quantity-label');
     if (qtyInput) {
         qtyInput.required = needsCountQty;
-        if (productType === 'edibles') {
-            qtyInput.step = '0.01';
+        if (productType === 'edibles' || productType === 'cart') {
+            qtyInput.step = productType === 'edibles' ? '0.01' : '1';
             qtyInput.min = '0';
         }
     }
     if (qtyLabel) {
         if (productType === 'edibles') qtyLabel.textContent = 'Total edible count';
-        else if (productType === 'cart') qtyLabel.textContent = 'Quantity (count)';
+        else if (productType === 'cart') qtyLabel.textContent = 'Cart count';
+        else if (productType === 'bud') qtyLabel.textContent = 'Bud grams';
+        else if (productType === 'pre-rolls') qtyLabel.textContent = 'Pre-roll count';
         else qtyLabel.textContent = 'Quantity Bought';
-    }
-
-    const unitSelect = document.getElementById('buy-unit');
-    if (unitSelect && (productType === 'bud' || productType === 'pre-rolls')) {
-        if ([...unitSelect.options].some(o => o.value === 'grams')) {
-            unitSelect.value = 'grams';
-        }
     }
 
     updateBuyWeedPreRollPreview();
@@ -19068,7 +19101,11 @@ function updateBuyVapeFieldsVisibility() {
     document.getElementById('buy-patches-fields-group')?.classList.toggle('hidden', !isNicotine || getBuyFormNicotineProductType() !== 'patches');
     document.getElementById('buy-lsd-fields-group')?.classList.toggle('hidden', !isLsd);
     document.getElementById('buy-xanax-fields-group')?.classList.toggle('hidden', !isXanax);
-    document.getElementById('buy-unit-group')?.classList.toggle('hidden', isLsd || isXanax || isNicotine);
+    document.getElementById('buy-unit-group')?.classList.toggle('hidden', isLsd || isXanax || isNicotine || isWeed);
+    const unitSelect = document.getElementById('buy-unit');
+    if (unitSelect) {
+        unitSelect.required = !(isLsd || isXanax || isNicotine || isWeed);
+    }
     document.getElementById('buy-time-group')?.classList.toggle('hidden', isVape);
     if (!isWeed && !isNicotine) {
         document.getElementById('buy-quantity-group')?.classList.remove('hidden');
@@ -19513,7 +19550,12 @@ function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
     setInputValue('buy-substance', substanceId);
     updateBuyUnitDropdown();
 
-    const unit = purchase.unit || 'units';
+    const weedType = isWeedPurchase(purchase)
+        ? normalizeWeedProductType(purchase.weedProductType || 'bud')
+        : '';
+    const unit = isWeedPurchase(purchase)
+        ? getWeedBuyNormalizedUnit(weedType)
+        : (purchase.unit || 'units');
     const unitSelect = document.getElementById('buy-unit');
     if (unitSelect) {
         if (unit && ![...unitSelect.options].some(o => o.value === unit)) {
@@ -19537,11 +19579,12 @@ function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
     }
 
     updateBuyVapeFieldsVisibility();
-    const weedType = normalizeWeedProductType(purchase.weedProductType || 'bud');
     if (isWeedPurchase(purchase) && weedType === 'bud') {
         setInputValue('buy-quantity', '');
     } else if (isWeedPurchase(purchase) && weedType === 'pre-rolls') {
         setInputValue('buy-quantity', '');
+    } else if (isWeedPurchase(purchase) && weedType === 'cart') {
+        setInputValue('buy-quantity', purchase.cartCount ?? 1);
     } else if (isLsdPurchase(purchase)) {
         setInputValue('buy-quantity', getLsdQuantityTabs(purchase) ?? getPurchaseQuantity(purchase));
     } else if (isXanaxPurchase(purchase)) {
@@ -32940,6 +32983,9 @@ function __getRecoveryTrackerTestExports() {
         applyWeedQuantityFromFields,
         applyWeedFieldsToPayload,
         parseWeedFieldsFromForm,
+        getWeedBuyNormalizedUnit,
+        updateBuyWeedProductTypeUI,
+        updateBuyVapeFieldsVisibility,
         buildUseEntryFromForm,
         applyLogInventoryEffect,
         restoreLogInventoryEffect,

@@ -62,6 +62,7 @@ function makeEdiblePurchase(overrides = {}) {
 function el(id, { value = '', options = null, tag = 'input', hidden = false } = {}) {
     const classes = new Set(hidden ? ['hidden'] : []);
     const optionList = (options || []).map(o => ({ value: o.value, textContent: o.label || o.value }));
+    let textContent = '';
     return {
         id,
         tagName: tag.toUpperCase(),
@@ -88,6 +89,8 @@ function el(id, { value = '', options = null, tag = 'input', hidden = false } = 
         },
         get value() { return this._value; },
         set value(v) { this._value = String(v ?? ''); },
+        get textContent() { return textContent; },
+        set textContent(v) { textContent = String(v ?? ''); },
         get innerHTML() { return ''; },
         set innerHTML(_) { this.options = []; },
         appendChild(opt) {
@@ -362,6 +365,43 @@ test('cannabis use history catalog includes THC Used and Strength columns', () =
     assert.ok(catalog.includes('strength'));
     assert.equal(rt.getUseHistoryColumnLabel('thcUsed', WEED_ID), 'THC Used');
     assert.equal(rt.getUseHistoryColumnLabel('strength', WEED_ID), 'Strength');
+});
+
+test('Weed Add Inventory hides Unit dropdown and normalizes unit by product type', () => {
+    const rt = loadRecoveryTrackerApp();
+    rt.__setTestAppData(rt.normalizeAppDataSafe(makeWeedData([])));
+    const nodes = installEdibleDom(rt);
+    nodes.set('buy-unit-group', el('buy-unit-group', { tag: 'div' }));
+    nodes.set('buy-substance', el('buy-substance', { value: WEED_ID, tag: 'select' }));
+    nodes.get('buy-unit').required = true;
+
+    const expected = {
+        bud: { unit: 'grams', label: 'Bud grams' },
+        cart: { unit: 'percent', label: 'Cart count' },
+        edibles: { unit: 'edible', label: 'Total edible count' },
+        'pre-rolls': { unit: 'grams', label: 'Pre-roll count' }
+    };
+
+    for (const [type, { unit, label }] of Object.entries(expected)) {
+        assert.equal(rt.getWeedBuyNormalizedUnit(type), unit);
+        nodes.get('buy-weed-product-type').value = type;
+        rt.updateBuyVapeFieldsVisibility();
+        assert.equal(nodes.get('buy-unit-group').classList.contains('hidden'), true, `${type} unit hidden`);
+        assert.equal(nodes.get('buy-unit').required, false, `${type} unit not required`);
+        assert.equal(nodes.get('buy-unit').value, unit, `${type} normalized unit`);
+        assert.equal(nodes.get('buy-quantity-label').textContent, label, `${type} quantity label`);
+    }
+
+    const fields = {
+        weedProductType: 'edibles',
+        edibleCount: 4,
+        mgPerEdible: 20,
+        totalThcMg: 80
+    };
+    const payload = { substanceId: WEED_ID, totalCost: 20 };
+    rt.applyWeedFieldsToPayload(payload, fields);
+    rt.applyWeedQuantityFromFields(payload, fields, 20);
+    assert.equal(payload.unit, 'edible');
 });
 
 test('export / import preserves edible strength and THC used', () => {
