@@ -1105,7 +1105,12 @@ function updateLsdUseFormUI() {
     const isLsd = isLsdSubstanceId(substanceId);
     document.getElementById('use-lsd-fields-group')?.classList.toggle('hidden', !isLsd);
     document.getElementById('use-xanax-fields-group')?.classList.toggle('hidden', true);
-    document.getElementById('use-amount-mode-group')?.classList.toggle('hidden', isLsd || isVapeTrackingMode(substanceId) || isWeedTrackingMode(substanceId) || isXanaxSubstanceId(substanceId));
+    const hideAmountForWeed = isWeedTrackingMode(substanceId)
+        && getWeedUseProductType({ allowEmpty: true }) === 'cart';
+    document.getElementById('use-amount-mode-group')?.classList.toggle(
+        'hidden',
+        isLsd || isVapeTrackingMode(substanceId) || hideAmountForWeed || isXanaxSubstanceId(substanceId)
+    );
     if (isLsd) {
         setUseLogType('quick');
         syncLsdUseDatetimeUI();
@@ -5105,11 +5110,85 @@ function purchaseMatchesWeedProductType(purchase, productType) {
 }
 
 function getWeedProductTypeLabel(type) {
-    const normalized = normalizeWeedProductType(type);
+    const normalized = normalizeWeedProductType(type, { allowEmpty: true });
+    if (!normalized) return 'Needs review';
     if (normalized === 'cart') return 'Cart';
     if (normalized === 'edibles') return 'Edibles';
     if (normalized === 'pre-rolls') return 'Pre-rolls';
     return 'Bud';
+}
+
+function weedLogNeedsProductTypeReview(log, data = appData) {
+    if (!log || !isWeedTrackingMode(getUseSubstanceId(log, data), data)) return false;
+    return !normalizeWeedProductType(log.weedProductType, { allowEmpty: true });
+}
+
+function getWeedLogProductTypeLabel(log, data = appData) {
+    if (!log || !isWeedTrackingMode(getUseSubstanceId(log, data), data)) return '—';
+    if (weedLogNeedsProductTypeReview(log, data)) return 'Needs review';
+    return getWeedProductTypeLabel(log.weedProductType);
+}
+
+function isWeedCartPurchase(purchase, data = appData) {
+    return isWeedPurchase(purchase, data)
+        && normalizeWeedProductType(purchase?.weedProductType || 'bud') === 'cart';
+}
+
+function isWeedCartPercentLog(log, data = appData) {
+    if (!log || !isWeedTrackingMode(getUseSubstanceId(log, data), data)) return false;
+    if (normalizeWeedProductType(log.weedProductType, { allowEmpty: true }) !== 'cart') return false;
+    return log.logMode === 'weed_cart_percent'
+        || log.unit === 'percent'
+        || log.percentBefore != null
+        || log.percentLeftAfter != null
+        || log.estimatedPercentUsed != null;
+}
+
+function clampWeedCartPercent(value) {
+    const n = parseFloat(value);
+    if (!Number.isFinite(n)) return null;
+    return Math.max(0, Math.min(100, n));
+}
+
+function getWeedCartPercentRemaining(purchase) {
+    if (!purchase) return null;
+    ensureWeedCartTracksPercent(purchase);
+    return clampWeedCartPercent(getPurchaseRemainingAmount(purchase));
+}
+
+/** Convert legacy count-based cart inventory to 0–100% remaining. */
+function ensureWeedCartTracksPercent(purchase) {
+    if (!isWeedCartPurchase(purchase) || purchase.cartTracksPercent) return purchase;
+    const bought = getPurchaseQuantityBought(purchase);
+    const rem = getPurchaseRemainingAmount(purchase);
+    const looksLikeCount = bought > 0 && bought <= 50 && rem <= bought + 0.001 && purchase.unit !== 'percent';
+    if (looksLikeCount) {
+        purchase.cartCount = bought;
+        purchase.remainingAmount = clampWeedCartPercent((rem / bought) * 100) ?? 0;
+    } else if (purchase.unit === 'percent' || (bought === 100 && rem <= 100)) {
+        purchase.remainingAmount = clampWeedCartPercent(rem) ?? 0;
+    } else {
+        purchase.remainingAmount = clampWeedCartPercent(rem <= 100 ? rem : 100) ?? 100;
+    }
+    purchase.quantityBought = 100;
+    purchase.quantity = 100;
+    purchase.unit = 'percent';
+    purchase.cartTracksPercent = true;
+    finalizePurchaseRemainingState(purchase);
+    return purchase;
+}
+
+function migrateWeedCartPercentInventory(data) {
+    (data.purchases || []).forEach(purchase => {
+        if (!purchase || typeof purchase !== 'object') return;
+        if (isWeedCartPurchase(purchase, data)) ensureWeedCartTracksPercent(purchase);
+    });
+    (data.logs || []).forEach(log => {
+        if (!log || typeof log !== 'object') return;
+        if (weedLogNeedsProductTypeReview(log, data)) {
+            log.needsReview = true;
+        }
+    });
 }
 
 function computeWeedTotalPreRollGrams(count, gramsPer) {
@@ -5124,9 +5203,12 @@ function formatWeedPurchaseDisplayLine(purchase) {
         return `Bud · ${formatAmount(g)} g`;
     }
     if (type === 'cart') {
-        const count = getPurchaseQuantityBought(purchase);
+        ensureWeedCartTracksPercent(purchase);
+        const remainingPct = getWeedCartPercentRemaining(purchase);
         const g = purchase.cartGrams;
-        let line = `Cart · ${formatAmount(count)} carts`;
+        const count = purchase.cartCount;
+        let line = `Cart · ${formatAmount(remainingPct)}% left`;
+        if (count != null && count !== '' && Number(count) > 1) line += ` · ${formatAmount(count)} carts`;
         if (g != null && g !== '') line += ` · ${formatAmount(g)} g`;
         return line;
     }
@@ -5190,6 +5272,16 @@ function applyWeedQuantityFromFields(payload, fields, totalCost) {
         payload.quantity = fields.budGrams;
         payload.unit = 'grams';
         payload.costPerUnit = fields.budGrams > 0 ? cost / fields.budGrams : 0;
+    } else if (type === 'cart') {
+        const cartCountRaw = parseFloat(document.getElementById('buy-quantity')?.value);
+        const cartCount = Number.isFinite(cartCountRaw) && cartCountRaw > 0 ? cartCountRaw : 1;
+        payload.cartCount = cartCount;
+        payload.quantityBought = 100;
+        payload.quantity = 100;
+        payload.unit = 'percent';
+        payload.remainingAmount = 100;
+        payload.cartTracksPercent = true;
+        payload.costPerUnit = cost;
     } else if (type === 'pre-rolls' && fields.totalPreRollGrams != null) {
         payload.quantityBought = fields.totalPreRollGrams;
         payload.quantity = fields.totalPreRollGrams;
@@ -5386,6 +5478,7 @@ function migrateWeedProductTypeValues(data) {
 
 function migrateInventorySubstanceFields(data) {
     migrateWeedProductTypeValues(data);
+    migrateWeedCartPercentInventory(data);
     (data.purchases || []).forEach(purchase => {
         if (!purchase || typeof purchase !== 'object') return;
         try {
@@ -5981,7 +6074,7 @@ function normalizePurchaseDisplayUnit(unit, purchase) {
         if (type === 'edibles') return 'edibles';
         if (type === 'pre-rolls') return 'g';
         if (type === 'bud') return 'g';
-        if (type === 'cart') return raw === 'grams' ? 'g' : 'carts';
+        if (type === 'cart') return '%';
     }
     if (raw === 'grams') return 'g';
     return raw;
@@ -8458,6 +8551,9 @@ function formatUseHistoryAmountHtml(entry) {
     if (isAlcoholTrackingMode(getUseSubstanceId(entry))) {
         return formatAlcoholUseSummary(entry);
     }
+    if (isWeedTrackingMode(getUseSubstanceId(entry))) {
+        return formatUseHistoryWeedAmountHtml(entry);
+    }
     if (isPercentLeftDistributedChildLog(entry)) {
         return `~${formatAmount(entry.amount)} <span class="use-history-est-label">(est. daily)</span>`;
     }
@@ -8507,12 +8603,18 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
         case 'substance':
             return `<td data-col="${colId}"${dataLabel}>${sub.icon || ''} ${sub.name}</td>`;
         case 'productType':
+            if (isWeedTrackingMode(getUseSubstanceId(entry))) {
+                return `<td data-col="${colId}"${dataLabel}>${escapeHtml(getWeedLogProductTypeLabel(entry))}</td>`;
+            }
             return `<td data-col="${colId}"${dataLabel}>${getNicotineProductTypeLabel(getNicotineProductType(entry))}</td>`;
         case 'transactionType':
             return `<td data-col="${colId}"${dataLabel}>${formatUseHistoryTransactionType(entry)}</td>`;
         case 'amount':
             return `<td class="use-history-amount-cell" data-col="${colId}"${dataLabel}>${formatUseHistoryAmountHtml(entry)}</td>`;
         case 'unit':
+            if (isWeedCartPercentLog(entry)) {
+                return `<td data-col="${colId}"${dataLabel}>%</td>`;
+            }
             return `<td data-col="${colId}"${dataLabel}>${isLsdDateOnlyUseLog(entry) ? 'ug' : (entry.unit || '—')}</td>`;
         case 'tabs':
             return `<td data-col="${colId}"${dataLabel}>${entry.tabsUsed != null ? formatAmount(entry.tabsUsed) : '—'}</td>`;
@@ -10831,19 +10933,36 @@ function setWeedUseProductType(value, { defaultIfEmpty = false } = {}) {
     return next || getWeedUseProductType({ allowEmpty: true });
 }
 
-/** Default to Bud only when Weed/THC is active and no product type is selected yet. */
+/** Default to Bud only for new Weed/THC logs when no product type is selected. */
 function ensureWeedUseProductTypeDefault() {
     if (!isWeedDateOnlyUseForm()) return '';
+    if (editingUseId != null) {
+        const entry = findUseEntry(editingUseId);
+        if (entry && weedLogNeedsProductTypeReview(entry)) {
+            const current = getWeedUseProductType({ allowEmpty: true });
+            updateWeedProductTypeReviewHint(!current);
+            return current;
+        }
+    }
     const current = getWeedUseProductType({ allowEmpty: true });
     if (current) {
         setWeedUseProductType(current);
+        updateWeedProductTypeReviewHint(false);
         return current;
     }
-    return setWeedUseProductType('bud', { defaultIfEmpty: true });
+    const next = setWeedUseProductType('bud', { defaultIfEmpty: true });
+    updateWeedProductTypeReviewHint(false);
+    return next;
+}
+
+function updateWeedProductTypeReviewHint(show) {
+    document.getElementById('use-weed-product-type-review')?.classList.toggle('hidden', !show);
 }
 
 function onWeedUseProductTypeChange() {
-    const type = setWeedUseProductType(document.getElementById('use-weed-product-type')?.value || 'bud');
+    const raw = document.getElementById('use-weed-product-type')?.value || '';
+    const type = setWeedUseProductType(raw || 'bud');
+    updateWeedProductTypeReviewHint(false);
     const select = document.getElementById('use-purchase-select');
     if (select?.value) {
         const purchase = findPurchase(parsePurchaseSelectId(select.value));
@@ -10855,10 +10974,27 @@ function onWeedUseProductTypeChange() {
     updateUsePurchaseLinkUI();
 }
 
+function getWeedCartLogInputMode() {
+    return document.getElementById('use-weed-cart-log-mode')?.value === 'estimated'
+        ? 'estimated'
+        : 'checkpoints';
+}
+
+function setWeedCartLogInputMode(mode) {
+    const val = mode === 'estimated' ? 'estimated' : 'checkpoints';
+    setInputValue('use-weed-cart-log-mode', val);
+    document.querySelectorAll('.use-weed-cart-mode-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.cartMode === val);
+    });
+    document.getElementById('use-weed-cart-checkpoints-group')?.classList.toggle('hidden', val === 'estimated');
+    document.getElementById('use-weed-cart-estimated-group')?.classList.toggle('hidden', val !== 'estimated');
+    updateWeedCartUsePreview();
+}
+
 function updateWeedUseUnitOptions(productType) {
     const unitSelect = document.getElementById('use-unit');
     if (!unitSelect) return;
-    const type = normalizeWeedProductType(productType);
+    const type = normalizeWeedProductType(productType, { allowEmpty: true }) || 'bud';
     const current = unitSelect.value;
     unitSelect.innerHTML = '';
     if (type === 'bud') {
@@ -10869,6 +11005,12 @@ function updateWeedUseUnitOptions(productType) {
             unitSelect.appendChild(option);
         });
         unitSelect.value = 'grams';
+    } else if (type === 'cart') {
+        const option = document.createElement('option');
+        option.value = 'percent';
+        option.textContent = '%';
+        unitSelect.appendChild(option);
+        unitSelect.value = 'percent';
     } else {
         const option = document.createElement('option');
         option.value = 'units';
@@ -10884,9 +11026,11 @@ function updateWeedUseUnitOptions(productType) {
 function updateWeedUseAmountLabel(productType) {
     const amountLabel = document.getElementById('use-amount-label');
     if (!amountLabel) return;
-    const type = normalizeWeedProductType(productType);
-    if (type === 'bud' || type === 'cart') {
+    const type = normalizeWeedProductType(productType, { allowEmpty: true }) || 'bud';
+    if (type === 'bud') {
         amountLabel.textContent = 'Amount';
+    } else if (type === 'cart') {
+        amountLabel.textContent = 'Estimated percent used';
     } else {
         amountLabel.textContent = 'Quantity (count)';
     }
@@ -10901,12 +11045,144 @@ function syncWeedProductTypeFromPurchase() {
     ensureWeedUseProductTypeDefault();
 }
 
+function syncWeedCartPercentBeforeFromInventory() {
+    if (getWeedCartLogInputMode() !== 'checkpoints') return;
+    const beforeEl = document.getElementById('use-weed-cart-percent-before');
+    if (!beforeEl || document.activeElement === beforeEl) return;
+    if (beforeEl.value !== '' && beforeEl.value != null) return;
+    const substanceId = document.getElementById('use-substance')?.value;
+    const purchaseId = resolveLinkedPurchaseId(substanceId, document.getElementById('use-transaction-type')?.value || 'use');
+    const purchase = purchaseId ? findPurchase(purchaseId) : null;
+    if (!purchase || !isWeedCartPurchase(purchase)) return;
+    const remaining = getWeedCartPercentRemaining(purchase);
+    if (remaining != null) beforeEl.value = String(remaining);
+}
+
+function computeWeedCartUseFromForm(options = {}) {
+    const substanceId = document.getElementById('use-substance')?.value;
+    if (!isWeedTrackingMode(substanceId)) return null;
+    if (getWeedUseProductType({ allowEmpty: true }) !== 'cart') return null;
+
+    const mode = getWeedCartLogInputMode();
+    const purchaseId = resolveLinkedPurchaseId(
+        substanceId,
+        document.getElementById('use-transaction-type')?.value || 'use',
+        { weedProductType: 'cart' }
+    );
+    const purchase = purchaseId ? findPurchase(purchaseId) : null;
+    if (purchase) ensureWeedCartTracksPercent(purchase);
+
+    let percentBefore = null;
+    let percentAfter = null;
+    let estimatedPercentUsed = null;
+
+    if (mode === 'estimated') {
+        estimatedPercentUsed = clampWeedCartPercent(document.getElementById('use-weed-cart-percent-used')?.value);
+        if (estimatedPercentUsed == null) {
+            return { error: 'Enter estimated percent used (0–100).' };
+        }
+        if (purchase) {
+            const remaining = getWeedCartPercentRemaining(purchase);
+            percentBefore = remaining;
+            percentAfter = clampWeedCartPercent((remaining ?? 0) - estimatedPercentUsed);
+        }
+    } else {
+        percentBefore = clampWeedCartPercent(document.getElementById('use-weed-cart-percent-before')?.value);
+        percentAfter = clampWeedCartPercent(document.getElementById('use-weed-cart-percent-after')?.value);
+        if (percentBefore == null) return { error: 'Enter percent before use (0–100).' };
+        if (percentAfter == null) return { error: 'Enter percent after use (0–100).' };
+        if (percentBefore < percentAfter) {
+            return { error: 'Percent before use must be greater than or equal to percent after use.' };
+        }
+        estimatedPercentUsed = clampWeedCartPercent(percentBefore - percentAfter) ?? 0;
+    }
+
+    const remainingBefore = purchase ? getWeedCartPercentRemaining(purchase) : null;
+    let remainingAfter = null;
+    if (purchase && estimatedPercentUsed != null) {
+        remainingAfter = clampWeedCartPercent((remainingBefore ?? 0) - estimatedPercentUsed) ?? 0;
+    }
+
+    return {
+        purchase,
+        purchaseId: purchase?.id ?? null,
+        percentBefore,
+        percentAfter: percentAfter ?? remainingAfter,
+        estimatedPercentUsed,
+        remainingBefore,
+        remainingAfter,
+        inputMode: mode,
+        inventoryAffects: getUsePurchaseLinkMode() !== 'none' && !!purchase?.id
+    };
+}
+
+function updateWeedCartUsePreview() {
+    const preview = document.getElementById('use-weed-cart-estimated-preview');
+    if (!preview) return;
+    if (!isWeedDateOnlyUseForm() || getWeedUseProductType({ allowEmpty: true }) !== 'cart') {
+        preview.textContent = 'Estimated percent used: —';
+        return;
+    }
+    const calc = computeWeedCartUseFromForm({ editingId: editingUseId || null });
+    if (!calc || calc.error) {
+        preview.textContent = calc?.error || 'Estimated percent used: —';
+        return;
+    }
+    const usedLabel = formatAmount(calc.estimatedPercentUsed);
+    if (calc.inputMode === 'checkpoints' && calc.percentBefore != null && calc.percentAfter != null) {
+        preview.textContent = `${formatAmount(calc.percentBefore)}% → ${formatAmount(calc.percentAfter)}% · ${usedLabel}% used`;
+    } else {
+        preview.textContent = `${usedLabel}% estimated use`;
+    }
+    if (calc.remainingAfter != null && calc.purchase) {
+        preview.textContent += ` · inventory → ${formatAmount(calc.remainingAfter)}%`;
+    }
+}
+
+function formatWeedCartUseSummary(log) {
+    if (!log) return '—';
+    const used = clampWeedCartPercent(log.estimatedPercentUsed ?? log.amount);
+    const before = clampWeedCartPercent(log.percentBefore);
+    const after = clampWeedCartPercent(log.percentLeftAfter ?? log.percentAfter ?? log.percentRemaining);
+    if (before != null && after != null && used != null) {
+        return `${formatAmount(before)}% → ${formatAmount(after)}% · ${formatAmount(used)}% used`;
+    }
+    if (used != null) return `${formatAmount(used)}% estimated use`;
+    return '—';
+}
+
+function formatUseHistoryWeedAmountHtml(entry) {
+    if (isWeedCartPercentLog(entry) || normalizeWeedProductType(entry.weedProductType, { allowEmpty: true }) === 'cart') {
+        return `<span class="use-history-amount-compact">${escapeHtml(formatWeedCartUseSummary(entry))}</span>`;
+    }
+    const unit = entry.unit || '';
+    const amount = formatAmount(entry.amount);
+    if (normalizeWeedProductType(entry.weedProductType) === 'bud') {
+        return `<span class="use-history-amount-compact">${amount}${unit ? ` ${escapeHtml(unit)}` : ''}</span>`;
+    }
+    return `<span class="use-history-amount-compact">${amount}${unit && unit !== 'units' ? ` ${escapeHtml(unit)}` : ''}</span>`;
+}
+
 function updateWeedUseFormUI() {
     if (!isWeedDateOnlyUseForm()) return;
     const productType = ensureWeedUseProductTypeDefault();
+    const isCart = productType === 'cart';
     document.getElementById('use-weed-product-type-group')?.classList.remove('hidden');
-    updateWeedUseAmountLabel(productType);
-    updateWeedUseUnitOptions(productType);
+    document.getElementById('use-weed-cart-fields-group')?.classList.toggle('hidden', !isCart);
+    document.getElementById('use-amount-mode-group')?.classList.toggle('hidden', isCart);
+    const amountInput = document.getElementById('use-amount');
+    if (amountInput) amountInput.required = !isCart;
+    const unitSelect = document.getElementById('use-unit');
+    if (unitSelect) {
+        unitSelect.required = !isCart;
+        unitSelect.disabled = isCart;
+    }
+    updateWeedUseAmountLabel(productType || 'bud');
+    updateWeedUseUnitOptions(productType || 'bud');
+    if (isCart) {
+        syncWeedCartPercentBeforeFromInventory();
+        updateWeedCartUsePreview();
+    }
 }
 
 function ensureWeedUseFormDefaults() {
@@ -11625,7 +11901,7 @@ function getUseCreatedAt(entry) {
     return entry.createdAt || entry.timestamp || new Date().toISOString();
 }
 
-function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = null, xanaxCalc = null, alcoholCalc = null) {
+function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = null, xanaxCalc = null, alcoholCalc = null, weedCartCalc = null) {
     const rawSubstanceId = document.getElementById('use-substance')?.value;
     const substanceId = isNicotineTrackingMode(rawSubstanceId) ? NICOTINE_ID : rawSubstanceId;
     const isNicotine = isNicotineTrackingMode(substanceId);
@@ -11635,6 +11911,8 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
     const isVapeDateOnly = isNicotine ? nicotineProductType === 'vape' : isVapeTrackingMode(substanceId);
     const isNicotineSimple = isNicotine && nicotineProductType !== 'vape' && nicotineProductType !== 'other';
     const isWeedSimple = isWeedTrackingMode(substanceId);
+    const weedProductType = isWeedSimple ? getWeedUseProductType({ allowEmpty: true }) : '';
+    const isWeedCart = isWeedSimple && weedProductType === 'cart';
     const isLsdQuick = isLsdSubstanceId(substanceId);
     const isXanaxSimple = isXanaxSubstanceId(substanceId);
     const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
@@ -11676,6 +11954,14 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         logMode = 'vape_puffs';
         percentRemaining = vapeCalc.percentAfter;
         previousRemainingBeforeLog = vapeCalc.previousRemaining;
+    } else if (isWeedCart && weedCartCalc && !weedCartCalc.error) {
+        amount = weedCartCalc.estimatedPercentUsed;
+        unit = 'percent';
+        linkedPurchaseId = weedCartCalc.purchaseId;
+        inventoryAffects = !!weedCartCalc.inventoryAffects && linkedPurchaseId != null;
+        logMode = 'weed_cart_percent';
+        percentRemaining = weedCartCalc.percentAfter;
+        previousRemainingBeforeLog = weedCartCalc.remainingBefore;
     } else if (isNicotineSimple && nicotineCalc && !nicotineCalc.error) {
         amount = nicotineCalc.amount;
         unit = nicotineCalc.unit;
@@ -11758,7 +12044,29 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
     }
 
     if (isWeedSimple) {
-        base.weedProductType = getWeedUseProductType();
+        if (weedProductType) {
+            base.weedProductType = weedProductType;
+            base.needsReview = false;
+        } else {
+            delete base.weedProductType;
+            base.needsReview = true;
+        }
+    }
+
+    if (isWeedCart && weedCartCalc && !weedCartCalc.error) {
+        base.weedProductType = 'cart';
+        base.logMode = 'weed_cart_percent';
+        base.unit = 'percent';
+        base.amount = weedCartCalc.estimatedPercentUsed;
+        base.estimatedPercentUsed = weedCartCalc.estimatedPercentUsed;
+        if (weedCartCalc.percentBefore != null) base.percentBefore = weedCartCalc.percentBefore;
+        if (weedCartCalc.percentAfter != null) {
+            base.percentLeftAfter = weedCartCalc.percentAfter;
+            base.percentAfter = weedCartCalc.percentAfter;
+            base.percentRemaining = weedCartCalc.percentAfter;
+        }
+        base.estimatedFromPercent = weedCartCalc.inputMode === 'checkpoints';
+        base.needsReview = false;
     }
 
     if (isNicotine) {
@@ -11914,6 +12222,7 @@ function finalizePurchaseRemainingState(purchase) {
 function deductPurchaseRemainingInData(purchase, amount) {
     const amt = parseFloat(amount) || 0;
     if (amt <= 0) return 0;
+    if (isWeedCartPurchase(purchase)) ensureWeedCartTracksPercent(purchase);
     const remaining = getPurchaseRemainingAmount(purchase);
     const used = Math.min(amt, remaining);
     purchase.remainingAmount = Math.max(0, remaining - used);
@@ -12445,7 +12754,7 @@ const USE_HISTORY_FAMILY_COLUMNS = {
         'amount', 'unit', 'gPerHour', 'inventory', 'notes', 'actions'
     ],
     cannabis: [
-        'select', 'date', 'start', 'end', 'duration', 'transactionType',
+        'select', 'date', 'start', 'end', 'duration', 'productType', 'transactionType',
         'amount', 'unit', 'cost', 'inventory', 'notes', 'actions'
     ],
     ketamine: [
@@ -14434,6 +14743,7 @@ function updateVapeUseFormUI() {
         positionUseInventoryFields(isNicotineSimple);
         document.getElementById('use-duration-preview')?.classList.add('hidden');
         document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
+        document.getElementById('use-weed-cart-fields-group')?.classList.add('hidden');
     } else if (isWeed) {
         ensureWeedUseFormDefaults();
         updateWeedUseFormUI();
@@ -14444,12 +14754,14 @@ function updateVapeUseFormUI() {
         positionUseInventoryFields(true);
         document.getElementById('use-duration-preview')?.classList.add('hidden');
         document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
+        document.getElementById('use-weed-cart-fields-group')?.classList.add('hidden');
     } else if (isXanax) {
         ensureXanaxUseFormDefaults();
         updateXanaxUseFormUI();
         positionUseInventoryFields(true);
         document.getElementById('use-duration-preview')?.classList.add('hidden');
         document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
+        document.getElementById('use-weed-cart-fields-group')?.classList.add('hidden');
     } else if (isAlcohol) {
         document.getElementById('use-nicotine-product-type-group')?.classList.add('hidden');
         document.getElementById('use-cigarettes-fields-group')?.classList.add('hidden');
@@ -14457,6 +14769,7 @@ function updateVapeUseFormUI() {
         document.getElementById('use-gum-fields-group')?.classList.add('hidden');
         document.getElementById('use-patches-fields-group')?.classList.add('hidden');
         document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
+        document.getElementById('use-weed-cart-fields-group')?.classList.add('hidden');
         document.getElementById('use-lsd-fields-group')?.classList.add('hidden');
         document.getElementById('use-xanax-fields-group')?.classList.add('hidden');
         positionUseInventoryFields(false);
@@ -14466,6 +14779,7 @@ function updateVapeUseFormUI() {
         positionUseInventoryFields(false);
         document.getElementById('use-duration-preview')?.classList.add('hidden');
         document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
+        document.getElementById('use-weed-cart-fields-group')?.classList.add('hidden');
     } else {
         document.getElementById('use-nicotine-product-type-group')?.classList.add('hidden');
         document.getElementById('use-cigarettes-fields-group')?.classList.add('hidden');
@@ -14473,6 +14787,7 @@ function updateVapeUseFormUI() {
         document.getElementById('use-gum-fields-group')?.classList.add('hidden');
         document.getElementById('use-patches-fields-group')?.classList.add('hidden');
         document.getElementById('use-weed-product-type-group')?.classList.add('hidden');
+        document.getElementById('use-weed-cart-fields-group')?.classList.add('hidden');
         document.getElementById('use-lsd-fields-group')?.classList.add('hidden');
         document.getElementById('use-xanax-fields-group')?.classList.add('hidden');
         positionUseInventoryFields(false);
@@ -14484,13 +14799,17 @@ function updateVapeUseFormUI() {
         setVapeLogInputMode(getVapeLogInputMode());
     }
 
-    amountGroup?.classList.toggle('hidden', isVapeUse || isLsd || isXanax || isNicotineSimple);
+    const isWeedCart = isWeed && getWeedUseProductType({ allowEmpty: true }) === 'cart';
+    if (!isWeed) {
+        document.getElementById('use-weed-cart-fields-group')?.classList.add('hidden');
+    }
+    amountGroup?.classList.toggle('hidden', isVapeUse || isLsd || isXanax || isNicotineSimple || isWeedCart);
     if (!isNicotine) {
         vapeGroup?.classList.toggle('hidden', !isVapeUse);
     }
     document.getElementById('use-vape-purchase-block')?.classList.toggle('hidden', !isVapeUse);
     if (amountInput) {
-        amountInput.required = !isVapeUse && !isLsd && !isXanax && !isNicotineSimple;
+        amountInput.required = !isVapeUse && !isLsd && !isXanax && !isNicotineSimple && !isWeedCart;
     }
     if (percentInput) {
         if (isVapeUse) {
@@ -15137,6 +15456,12 @@ function deductPurchaseAmount(purchaseId, amount, data = appData) {
     const purchase = findPurchaseInData(purchaseId, data);
     if (!purchase) return { ok: false, error: 'Linked purchase not found.' };
     const amt = parseFloat(amount) || 0;
+    if (isWeedCartPurchase(purchase, data)) {
+        // Cart percent inventory clamps at 0% instead of rejecting overdrafts.
+        deductPurchaseRemainingInData(purchase, amt);
+        purchase.updatedAt = new Date().toISOString();
+        return { ok: true };
+    }
     const remaining = getPurchaseRemainingAmount(purchase);
     if (amt > remaining + 0.0001) {
         return {
@@ -15374,6 +15699,10 @@ function updateUsePurchaseLinkUI() {
     }
 
     syncWeedProductTypeFromPurchase();
+    if (isWeedTrackingMode(substanceId) && getWeedUseProductType({ allowEmpty: true }) === 'cart') {
+        syncWeedCartPercentBeforeFromInventory();
+        updateWeedCartUsePreview();
+    }
 }
 
 function updateCurrentSupplyDashboard() {
@@ -15571,7 +15900,15 @@ function editUseEntry(id) {
         updateUseNicotineProductTypeUI();
     } else if (isWeed || isLsd || isXanax) {
         if (isWeed) {
-            setWeedUseProductType(entry.weedProductType || 'bud', { defaultIfEmpty: true });
+            const savedType = normalizeWeedProductType(entry.weedProductType, { allowEmpty: true });
+            if (savedType) {
+                setWeedUseProductType(savedType);
+                updateWeedProductTypeReviewHint(false);
+            } else {
+                const sel = document.getElementById('use-weed-product-type');
+                if (sel) sel.value = '';
+                updateWeedProductTypeReviewHint(true);
+            }
         }
         if (isLsd || (isXanax && !isPersonalUseLog(entry))) {
             setInputValue('use-start-time', entry.startTime || entry.time || getLocalTimeString(new Date()));
@@ -15646,9 +15983,21 @@ function editUseEntry(id) {
             setInputValue('use-xanax-pills-used', entry.amount ?? '');
         }
         updateXanaxUsePreview();
+    } else if (isWeed && isWeedCartPercentLog(entry)) {
+        setInputValue('use-amount', '');
+        setInputValue('use-percent-after', '');
+        const hasCheckpoints = entry.percentBefore != null && (entry.percentLeftAfter != null || entry.percentAfter != null);
+        setWeedCartLogInputMode(hasCheckpoints ? 'checkpoints' : 'estimated');
+        setInputValue('use-weed-cart-percent-before', entry.percentBefore ?? '');
+        setInputValue('use-weed-cart-percent-after', entry.percentLeftAfter ?? entry.percentAfter ?? '');
+        setInputValue('use-weed-cart-percent-used', entry.estimatedPercentUsed ?? entry.amount ?? '');
+        updateWeedCartUsePreview();
     } else {
         setInputValue('use-amount', entry.amount != null ? entry.amount : '');
         setInputValue('use-percent-after', '');
+        setInputValue('use-weed-cart-percent-before', '');
+        setInputValue('use-weed-cart-percent-after', '');
+        setInputValue('use-weed-cart-percent-used', '');
     }
     setInputValue('use-count', getUseCount(entry));
     setInputValue('use-notes', entry.notes || '');
@@ -15667,6 +16016,7 @@ function editUseEntry(id) {
 
     if (isWeed || isLsd) {
         updateVapeUseFormUI();
+        if (isWeed) updateWeedUseFormUI();
         if (!hasLinkedSupply(entry) && !logInventoryAffects(entry)) {
             setUsePurchaseLinkMode('none');
         } else if (hasLinkedSupply(entry)) {
@@ -16271,16 +16621,26 @@ function handleUseLogSubmit(e) {
     const isLsdUse = isLsdSubstanceId(substanceIdPreview);
     const isXanaxUse = isXanaxSubstanceId(substanceIdPreview);
     const isAlcoholUse = isAlcoholTrackingMode(substanceIdPreview);
+    const isWeedUse = isWeedTrackingMode(substanceIdPreview);
+    const isWeedCartUse = isWeedUse && getWeedUseProductType({ allowEmpty: true }) === 'cart';
     let vapeCalc = null;
     let lsdCalc = null;
     let nicotineCalc = null;
     let xanaxCalc = null;
     let alcoholCalc = null;
     let alcoholSharedSplit = null;
+    let weedCartCalc = null;
 
     if (isAlcoholUse) {
         alcoholCalc = computeAlcoholUseFromForm({ editingId: editingUseId || null });
         if (alcoholCalc?.error) return alert(alcoholCalc.error);
+    }
+
+    if (isWeedCartUse) {
+        weedCartCalc = computeWeedCartUseFromForm({ editingId: editingUseId || null });
+        if (weedCartCalc?.error) return alert(weedCartCalc.error);
+    } else if (isWeedUse && !getWeedUseProductType({ allowEmpty: true }) && editingUseId != null) {
+        return alert('This older Weed entry needs a product type. Choose Bud, Cart, Edibles, or Pre-rolls before saving.');
     }
 
     if (isVapeUse) {
@@ -16351,7 +16711,7 @@ function handleUseLogSubmit(e) {
         if (xanaxErr) return alert(xanaxErr);
     }
 
-    const payload = buildUseEntryFromForm(vapeCalc, lsdCalc, nicotineCalc, xanaxCalc, alcoholCalc);
+    const payload = buildUseEntryFromForm(vapeCalc, lsdCalc, nicotineCalc, xanaxCalc, alcoholCalc, weedCartCalc);
     const { substanceId, amount, type, transactionType } = payload;
     const isPersonalUse = isPersonalUseLog({ transactionType });
     const eventTimestamp = getUseEventTimestamp(payload.date, payload.startTime);
@@ -16431,7 +16791,7 @@ function handleUseLogSubmit(e) {
         delete updated.lines;
         if (isWeedTrackingMode(substanceId)) {
             updated.type = 'quick';
-            updated.logMode = 'amount';
+            updated.logMode = payload.logMode || 'amount';
             updated.startTime = '';
             updated.time = '';
             updated.endTime = '';
@@ -16439,6 +16799,27 @@ function handleUseLogSubmit(e) {
             delete updated.startedAt;
             delete updated.endedAt;
             delete updated.durationMs;
+            if (payload.weedProductType) {
+                updated.weedProductType = payload.weedProductType;
+                updated.needsReview = false;
+            } else {
+                delete updated.weedProductType;
+                updated.needsReview = true;
+            }
+            if (payload.logMode === 'weed_cart_percent') {
+                updated.estimatedPercentUsed = payload.estimatedPercentUsed;
+                updated.percentBefore = payload.percentBefore;
+                updated.percentLeftAfter = payload.percentLeftAfter;
+                updated.percentAfter = payload.percentAfter;
+                updated.percentRemaining = payload.percentRemaining;
+                updated.unit = 'percent';
+            } else {
+                delete updated.estimatedPercentUsed;
+                delete updated.percentBefore;
+                delete updated.percentLeftAfter;
+                delete updated.percentAfter;
+                delete updated.estimatedFromPercent;
+            }
         }
         if (isNicotineNonVapeFormContext(substanceId, updated)) {
             updated.type = 'quick';
@@ -16516,7 +16897,7 @@ function handleUseLogSubmit(e) {
     stripLegacyUseLogFields(log);
     if (isWeedTrackingMode(substanceId)) {
         log.type = 'quick';
-        log.logMode = 'amount';
+        log.logMode = payload.logMode || 'amount';
         log.startTime = '';
         log.time = '';
         log.endTime = '';
@@ -16524,6 +16905,14 @@ function handleUseLogSubmit(e) {
         delete log.startedAt;
         delete log.endedAt;
         delete log.durationMs;
+        if (payload.logMode === 'weed_cart_percent') {
+            log.estimatedPercentUsed = payload.estimatedPercentUsed;
+            log.percentBefore = payload.percentBefore;
+            log.percentLeftAfter = payload.percentLeftAfter;
+            log.percentAfter = payload.percentAfter;
+            log.percentRemaining = payload.percentRemaining;
+            log.unit = 'percent';
+        }
     }
     if (isNicotineNonVapeFormContext(substanceId, log)) {
         log.type = 'quick';
@@ -17242,9 +17631,17 @@ function renderRecentUseList() {
                     ? formatNicotineUseLogLabel(log)
                     : (isAlcohol
                         ? formatAlcoholUseSummary(log)
-                        : `${log.amount != null ? formatAmount(log.amount) : '—'} ${log.unit || ''}`)));
+                        : (isWeedSimple
+                            ? (isWeedCartPercentLog(log)
+                                ? formatWeedCartUseSummary(log)
+                                : `${log.amount != null ? formatAmount(log.amount) : '—'} ${log.unit || ''}`.trim())
+                            : `${log.amount != null ? formatAmount(log.amount) : '—'} ${log.unit || ''}`))));
+        const weedProductTypeLabel = isWeedSimple ? getWeedLogProductTypeLabel(log) : '';
         const vapeDetailHtml = isVape
             ? formatVapeRecentUseDetailLines(log).map(line => `<div class="use-recent-detail">${line}</div>`).join('')
+            : '';
+        const weedDetailHtml = isWeedSimple
+            ? `<div class="use-recent-detail">Product type: ${escapeHtml(weedProductTypeLabel)}</div>`
             : '';
         const distDaysHtml = isCheckpoint && distChildren.length
             ? `<button type="button" class="link-btn percent-dist-toggle" onclick="togglePercentDistDays(${log.id})">View distributed days (${distChildren.length})</button>
@@ -17277,6 +17674,7 @@ function renderRecentUseList() {
                 </div>
                 ${sessionBodyHtml}
                 ${vapeDetailHtml}
+                ${weedDetailHtml}
                 ${distDaysHtml}
                 ${multiDayHtml}
                 ${!isSessionLog && !isVape && enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}
@@ -30883,7 +31281,10 @@ function buildUseHistoryCsvRows(options = {}) {
             case 'end': return entry.endTime || '';
             case 'duration': return formatDurationHours(entry.durationHours) || '';
             case 'substance': return sub?.name || getSubstanceName(getUseSubstanceId(entry)) || '';
-            case 'productType': return getNicotineProductTypeLabel(getNicotineProductType(entry));
+            case 'productType':
+                return isWeedTrackingMode(getUseSubstanceId(entry))
+                    ? getWeedLogProductTypeLabel(entry)
+                    : getNicotineProductTypeLabel(getNicotineProductType(entry));
             case 'transactionType': return formatUseHistoryTransactionType(entry);
             case 'amount': {
                 if (isVapeUseLog(entry) || getNicotineProductType(entry) === 'vape') {
@@ -30891,7 +31292,9 @@ function buildUseHistoryCsvRows(options = {}) {
                 }
                 return String(formatUseHistoryAmountHtml(entry)).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
             }
-            case 'unit': return entry.unit || '';
+            case 'unit':
+                if (isWeedCartPercentLog(entry)) return '%';
+                return entry.unit || '';
             case 'tabs': return entry.tabsUsed ?? '';
             case 'ug': return entry.ugUsed ?? '';
             case 'pills': return entry.pillsUsed ?? '';
@@ -30950,7 +31353,9 @@ function exportDataCsv() {
             log.amount,
             log.unit,
             getLogTransactionType(log),
-            isNicotineSubstanceId(getUseSubstanceId(log)) ? (getNicotineProductType(log) || '') : '',
+            isWeedTrackingMode(getUseSubstanceId(log))
+                ? getWeedLogProductTypeLabel(log)
+                : (isNicotineSubstanceId(getUseSubstanceId(log)) ? (getNicotineProductType(log) || '') : ''),
             log.tabsUsed ?? '',
             log.ugUsed ?? '',
             log.pillsUsed ?? '',
@@ -31689,11 +32094,29 @@ function __getRecoveryTrackerTestExports() {
         getPurchasesForInsightMetrics,
         normalizeWeedProductType,
         getWeedProductTypeLabel,
+        getWeedLogProductTypeLabel,
+        weedLogNeedsProductTypeReview,
         purchaseMatchesWeedProductType,
         getWeedUseProductType,
         setWeedUseProductType,
         ensureWeedUseProductTypeDefault,
         onWeedUseProductTypeChange,
+        getWeedCartLogInputMode,
+        setWeedCartLogInputMode,
+        computeWeedCartUseFromForm,
+        updateWeedCartUsePreview,
+        formatWeedCartUseSummary,
+        formatUseHistoryWeedAmountHtml,
+        isWeedCartPurchase,
+        isWeedCartPercentLog,
+        ensureWeedCartTracksPercent,
+        migrateWeedCartPercentInventory,
+        getWeedCartPercentRemaining,
+        applyWeedQuantityFromFields,
+        applyWeedFieldsToPayload,
+        buildUseEntryFromForm,
+        applyLogInventoryEffect,
+        getUseHistoryColumnCatalog,
         getActivePurchasesForWeedProductType,
         getOldestActivePurchase,
         resolveLinkedPurchaseId,
