@@ -34,6 +34,7 @@ const INSIGHTS_CALENDAR_VIEWS = [
     'purchase',
     'goal-analytics',
     'plan-analytics',
+    'charts',
     'custom'
 ];
 
@@ -128,7 +129,8 @@ function normalizeCombinedView(view, allowed, fallback) {
         finances: 'financial',
         'use-analytics': 'use',
         'purchase-analytics': 'purchase',
-        'custom-metrics': 'custom'
+        'custom-metrics': 'custom',
+        charts: 'charts'
     };
     const mapped = aliases[raw] || raw;
     return allowed.includes(mapped) ? mapped : fallback;

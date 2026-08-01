@@ -1675,6 +1675,7 @@
                         <option value="purchase">Purchase Analytics</option>
                         <option value="goal-analytics">Goal Analytics</option>
                         <option value="plan-analytics">Plan Analytics</option>
+                        <option value="charts">Charts</option>
                         <option value="custom">Custom Metrics</option>
                     </select>
                     <nav class="combined-subnav" id="ic-subnav" aria-label="Insights and Calendar sections" role="tablist">
@@ -1687,6 +1688,7 @@
                         <button type="button" class="combined-subnav-btn" data-ic-view="purchase" onclick="setInsightsCalendarView('purchase')">Purchases</button>
                         <button type="button" class="combined-subnav-btn" data-ic-view="goal-analytics" onclick="setInsightsCalendarView('goal-analytics')">Goals</button>
                         <button type="button" class="combined-subnav-btn" data-ic-view="plan-analytics" onclick="setInsightsCalendarView('plan-analytics')">Plans</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="charts" onclick="setInsightsCalendarView('charts')">Charts</button>
                         <button type="button" class="combined-subnav-btn" data-ic-view="custom" onclick="setInsightsCalendarView('custom')">Custom</button>
                     </nav>
                 </div>
@@ -1824,13 +1826,13 @@
                 <div id="calendar-root" class="cal-root" aria-live="polite"></div>
                 </div>
 
-                <div id="stats-tab" class="combined-subview insights-page" data-ic-view="trends comparisons financial use purchase goal-analytics plan-analytics custom" role="tabpanel" hidden>
+                <div id="stats-tab" class="combined-subview insights-page" data-ic-view="trends comparisons financial use purchase goal-analytics plan-analytics charts custom" role="tabpanel" hidden>
                     <div class="page-header-row insights-page-header">
                     <h2>Insights</h2>
                     <p class="page-substance-hint settings-hint">Analytics for the substance selected in Date Range below.</p>
                 </div>
 
-                <div class="collapsible-section" data-section="statsDateRange" data-ic-panels="trends comparisons financial use purchase goal-analytics plan-analytics custom overview">
+                <div class="collapsible-section" data-section="statsDateRange" data-ic-panels="trends comparisons financial use purchase goal-analytics plan-analytics charts custom overview">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsDateRange')">
                         <span>Date Range &amp; Substance</span>
                         <span class="chevron">⌄</span>
@@ -2033,6 +2035,17 @@
                             <button type="button" class="secondary-btn" id="stats-weekly-export-btn">Export CSV</button>
                         </div>
                         <div id="stats-weekly-summary" class="sheet-table-wrap"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsChartDashboard" data-ic-panels="charts overview" id="chart-dashboard-section">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsChartDashboard')">
+                        <span>Charts</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <p class="settings-hint">Interactive charts for use, spending, purchases, inventory, goals, and recovery. Incompatible units stay separate.</p>
+                        <div id="chart-dashboard-root" class="chart-dashboard-root" aria-live="polite"></div>
                     </div>
                 </div>
 
