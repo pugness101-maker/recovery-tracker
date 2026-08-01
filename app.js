@@ -4138,6 +4138,10 @@ function migrateInventoryStatusFields(data) {
     (data.purchases || []).forEach(purchase => {
         if (!purchase || typeof purchase !== 'object') return;
         if (purchase.inventoryHidden == null) purchase.inventoryHidden = false;
+        if (purchaseIsPurchasedAsGift(purchase)) {
+            applyPurchasedAsGiftInventoryState(purchase);
+            return;
+        }
 
         const rem = getPurchaseRemainingAmount(purchase);
         const remPuffs = isVapePuffPurchase(purchase, data)
@@ -4155,7 +4159,7 @@ function migrateInventoryStatusFields(data) {
             purchase.inventoryStatus = 'active';
             purchase.isDepleted = false;
             purchase.depletedAt = null;
-        } else if (purchase.inventoryStatus !== 'depleted') {
+        } else if (purchase.inventoryStatus !== 'depleted' && purchase.inventoryStatus !== 'gifted') {
             purchase.inventoryStatus = 'active';
         }
     });
@@ -4164,6 +4168,10 @@ function migrateInventoryStatusFields(data) {
 function syncPurchaseInventoryStatus(purchase) {
     if (!purchase) return;
     if (purchase.inventoryHidden) return;
+    if (purchaseIsPurchasedAsGift(purchase)) {
+        applyPurchasedAsGiftInventoryState(purchase);
+        return;
+    }
     const rem = getPurchaseRemainingAmount(purchase);
     const remPuffs = isVapePuffPurchase(purchase)
         ? (parseFloat(purchase.remainingPuffs ?? rem) || 0)
@@ -4182,6 +4190,9 @@ function syncPurchaseInventoryStatus(purchase) {
 function getPurchaseInventoryTab(purchase) {
     if (!purchase) return 'all';
     if (purchase.inventoryHidden) return 'hidden';
+    if (purchaseIsPurchasedAsGift(purchase) || purchase.inventoryStatus === 'gifted') {
+        return 'gifted';
+    }
     const rem = getPurchaseRemainingAmount(purchase);
     const remPuffs = isVapePuffPurchase(purchase)
         ? (parseFloat(purchase.remainingPuffs ?? rem) || 0)
@@ -4194,6 +4205,9 @@ function getPurchaseInventoryTab(purchase) {
 
 function getVapePurchaseDisplayStatus(purchase) {
     if (purchase.inventoryHidden) return { key: 'hidden', label: 'Hidden', className: 'vape-status-hidden' };
+    if (purchaseIsPurchasedAsGift(purchase) || purchase.inventoryStatus === 'gifted') {
+        return { key: 'gifted', label: 'Gifted', className: 'vape-status-gifted' };
+    }
     const remaining = getPurchaseRemainingAmount(purchase);
     if (purchase.isDepleted || remaining <= INVENTORY_EPS) {
         return { key: 'empty', label: 'Empty', className: 'vape-status-empty' };
@@ -4211,7 +4225,8 @@ function purchaseMatchesInventorySearch(purchase, query, data = appData) {
     const sub = getSubstance(getPurchaseSubstanceId(purchase), data);
     const haystackParts = [
         purchase.store, purchase.location, purchase.notes, purchase.substanceName,
-        sub?.name, purchase.paymentMethod
+        sub?.name, purchase.paymentMethod,
+        getPurchaseGiftSource(purchase), getPurchaseGiftRecipient(purchase)
     ];
     if (purchaseSupportsFlavor(purchase, data)) {
         haystackParts.push(getVapePurchaseFlavor(purchase));
@@ -4273,6 +4288,15 @@ function recalculatePurchaseRemaining(purchaseId, data = appData) {
     const purchase = findPurchaseInData(purchaseId, data);
     if (!purchase) return null;
     const oldRemaining = getPurchaseRemainingAmount(purchase);
+    if (purchaseIsPurchasedAsGift(purchase)) {
+        applyPurchasedAsGiftInventoryState(purchase);
+        purchase.updatedAt = new Date().toISOString();
+        return {
+            purchaseId,
+            oldRemaining,
+            newRemaining: getPurchaseRemainingAmount(purchase)
+        };
+    }
 
     if (isVapePuffPurchase(purchase, data)) {
         recalculateVapePurchaseInventory(purchaseId, data);
@@ -4320,6 +4344,15 @@ function recalculateAllPurchaseRemaining(data = appData) {
 function markPurchaseInventoryStatus(purchaseId, status, persist = true) {
     const purchase = findPurchase(purchaseId);
     if (!purchase) return false;
+    if (purchaseIsPurchasedAsGift(purchase)) {
+        applyPurchasedAsGiftInventoryState(purchase);
+        purchase.updatedAt = new Date().toISOString();
+        if (persist) {
+            saveData(appData);
+            refreshBuyTrackerRelatedViews();
+        }
+        return true;
+    }
     const now = new Date().toISOString();
     if (status === 'active') {
         purchase.inventoryStatus = 'active';
@@ -4369,6 +4402,9 @@ function duplicatePurchaseNow(id) {
     const newId = `purchase-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     const acquisitionType = getPurchaseAcquisitionType(purchase);
     const giftSource = getPurchaseGiftSource(purchase);
+    const giftRecipient = getPurchaseGiftRecipient(purchase);
+    const giftDate = getPurchaseGiftDate(purchase);
+    const isPurchasedAsGift = acquisitionType === 'purchased_as_gift';
     const record = {
         substanceId: getPurchaseSubstanceId(purchase),
         substanceName: purchase.substanceName || getSubstance(getPurchaseSubstanceId(purchase))?.name || '',
@@ -4385,15 +4421,18 @@ function duplicatePurchaseNow(id) {
         notes: purchase.notes || '',
         acquisitionType,
         giftSource,
+        giftRecipient,
+        giftDate,
         isGiftReceived: acquisitionType === 'gift_received',
-        remainingAmount: isVape ? startingPuffs : qty,
-        isDepleted: false,
-        inventoryStatus: 'active',
+        isPurchasedAsGift,
+        remainingAmount: isPurchasedAsGift ? 0 : (isVape ? startingPuffs : qty),
+        isDepleted: isPurchasedAsGift,
+        inventoryStatus: isPurchasedAsGift ? 'gifted' : 'active',
         inventoryHidden: false,
         startedAt: null,
         finishedAt: null,
         supplyStartedAt: null,
-        depletedAt: null,
+        depletedAt: isPurchasedAsGift ? now : null,
         archivedAt: null,
         createdAt: now,
         updatedAt: now,
@@ -4403,6 +4442,10 @@ function duplicatePurchaseNow(id) {
     if (acquisitionType === 'gift_received' && giftSource) {
         record.giverName = giftSource;
         record.giftPartyName = giftSource;
+    }
+    if (isPurchasedAsGift && giftRecipient) {
+        record.recipientName = giftRecipient;
+        record.giftPartyName = giftRecipient;
     }
     if (isVape) {
         record.fullPuffCount = fullPuffs;
@@ -4515,6 +4558,7 @@ function getInventorySummary(selectedSubstanceId, data = appData, purchaseList =
     const scope = purchaseList ?? getFilteredPurchases(data.purchases || [], selectedSubstanceId, null, data);
     const active = scope.filter(p => getPurchaseInventoryTab(p) === 'active');
     const depleted = scope.filter(p => getPurchaseInventoryTab(p) === 'depleted');
+    const gifted = scope.filter(p => getPurchaseInventoryTab(p) === 'gifted');
     const hidden = scope.filter(p => getPurchaseInventoryTab(p) === 'hidden');
 
     let inventoryValue = 0;
@@ -4545,6 +4589,7 @@ function getInventorySummary(selectedSubstanceId, data = appData, purchaseList =
     return {
         activeCount: active.length,
         depletedCount: depleted.length,
+        giftedCount: gifted.length,
         hiddenCount: hidden.length,
         inventoryValue,
         totalRemaining,
@@ -4649,6 +4694,7 @@ function renderInventorySummaryCards() {
             <div class="inventory-status-counts">
                 <span class="inventory-count-pill"><span class="inventory-count-label">Active</span><strong>${m.activeCount}</strong></span>
                 <span class="inventory-count-pill"><span class="inventory-count-label">Depleted</span><strong>${m.depletedCount}</strong></span>
+                <span class="inventory-count-pill"><span class="inventory-count-label">Gifted</span><strong>${m.giftedCount || 0}</strong></span>
                 <span class="inventory-count-pill"><span class="inventory-count-label">Hidden</span><strong>${m.hiddenCount}</strong></span>
             </div>
             <div class="inventory-summary-meta">${metaParts.join('<span class="inventory-meta-sep">·</span>')}</div>
@@ -4659,6 +4705,7 @@ function getInventoryStatusFilterLabel() {
     switch (inventoryTabFilter) {
         case 'all': return 'Any status';
         case 'depleted': return 'Depleted';
+        case 'gifted': return 'Gifted';
         case 'hidden': return 'Hidden';
         case 'active':
         default: return 'Active';
@@ -4667,7 +4714,7 @@ function getInventoryStatusFilterLabel() {
 
 function normalizeInventoryStatusFilter(value) {
     const status = value === 'stored' ? 'active' : (value || 'all');
-    return ['active', 'depleted', 'hidden', 'all'].includes(status) ? status : 'all';
+    return ['active', 'depleted', 'gifted', 'hidden', 'all'].includes(status) ? status : 'all';
 }
 
 function syncInventoryStatusFilterUI() {
@@ -6658,6 +6705,7 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     statsBuyPurchaseDetails: true,
     statsBuyStoreBreakdown: true,
     statsBuyAdvanced: true,
+    statsGiftAnalytics: true,
     taperPlanHeader: false,
     taperCurrentWeekSummary: false,
     taperWeeklyTable: false,
@@ -8864,6 +8912,8 @@ function renderPurchaseInventoryStatusButtons(purchase) {
     const parts = [];
     if (tab === 'hidden') {
         parts.push(`<button type="button" class="secondary-btn btn-sm" data-unhide-purchase="${pid}">Unhide</button>`);
+    } else if (tab === 'gifted') {
+        parts.push(`<button type="button" class="secondary-btn btn-sm" data-hide-purchase="${pid}">Hide</button>`);
     } else {
         if (tab === 'depleted' && remaining > INVENTORY_EPS) {
             parts.push(`<button type="button" class="secondary-btn btn-sm" data-mark-purchase-active="${pid}">Mark Active</button>`);
@@ -12679,7 +12729,9 @@ function getActivePurchasesForSubstance(substanceId) {
         .filter(p => {
             const pid = getPurchaseSubstanceId(p);
             return (pid === substanceId || normalizeNicotineSubstanceRef(pid) === resolved)
-                && !p.isDepleted && getPurchaseRemainingAmount(p) > 0;
+                && purchaseIsPersonalUseInventory(p)
+                && !p.isDepleted
+                && getPurchaseRemainingAmount(p) > 0;
         })
         .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
 }
@@ -12719,6 +12771,9 @@ function getPurchasePercentUsed(purchase) {
 }
 
 function getPurchaseSupplyStatus(purchase) {
+    if (purchaseIsPurchasedAsGift(purchase) || purchase?.inventoryStatus === 'gifted') {
+        return { key: 'gifted', label: '🎁 Gifted', className: 'supply-gifted' };
+    }
     if (isVapePuffPurchase(purchase)) {
         const starting = getVapeStartingPuffsLeft(purchase);
         const remaining = getPurchaseRemainingAmount(purchase);
@@ -14020,10 +14075,12 @@ function showVapeEditPurchaseWarning(purchaseId) {
 function buildVapePurchaseSelectList(substanceId, linkedPurchaseId = null, data = appData) {
     const active = (data.purchases || [])
         .filter(p => getPurchaseSubstanceId(p) === substanceId && isVapePuffPurchase(p, data))
+        .filter(p => purchaseIsPersonalUseInventory(p))
         .filter(p => getPurchaseInventoryTab(p) === 'active' && getPurchaseRemainingAmount(p) > INVENTORY_EPS)
         .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
     const fallback = (data.purchases || [])
         .filter(p => getPurchaseSubstanceId(p) === substanceId && isVapePuffPurchase(p, data))
+        .filter(p => purchaseIsPersonalUseInventory(p))
         .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
     let list = active.length ? active : fallback;
     if (linkedPurchaseId != null && linkedPurchaseId !== '') {
@@ -15324,7 +15381,7 @@ function restoreLogSupplyLinks(log, data = appData) {
 
 function getPurchasesForManualLink(substanceId) {
     return (appData.purchases || [])
-        .filter(p => getPurchaseSubstanceId(p) === substanceId)
+        .filter(p => getPurchaseSubstanceId(p) === substanceId && purchaseIsPersonalUseInventory(p))
         .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
 }
 
@@ -15566,13 +15623,33 @@ function deductPurchaseAmount(purchaseId, amount, data = appData) {
 
 function getTotalRemainingSupply(substanceId) {
     return (appData.purchases || [])
-        .filter(p => getPurchaseSubstanceId(p) === substanceId && !p.isDepleted)
+        .filter(p => getPurchaseSubstanceId(p) === substanceId
+            && purchaseIsPersonalUseInventory(p)
+            && !p.isDepleted)
         .reduce((s, p) => s + getPurchaseRemainingAmount(p), 0);
 }
 
-function getGiftMetrics(substanceId) {
-    const logs = getUseEntries().filter(l => logMatchesSubstance(l, substanceId));
-    return getGiftMetricsFromLogs(logs);
+function getGiftMetrics(substanceId, bounds = null, data = appData) {
+    let logs = getUseEntries(data).filter(l => logMatchesSubstance(l, substanceId, data));
+    if (bounds?.startDate || bounds?.endDate) {
+        logs = filterLogsByDateRange(logs, bounds.startDate, bounds.endDate);
+    }
+    const metrics = getGiftMetricsFromLogs(logs);
+    let giftPurchases = (data.purchases || []).filter(p =>
+        purchaseMatchesSubstance(p, substanceId, data) && purchaseIsPurchasedAsGift(p)
+    );
+    if (bounds?.startDate || bounds?.endDate) {
+        giftPurchases = giftPurchases.filter(p => purchaseInDateRange(p, bounds.startDate, bounds.endDate));
+    }
+    giftPurchases.forEach(p => {
+        const amt = getPurchaseQuantityBought(p);
+        if (!(amt > 0)) return;
+        metrics.given += amt;
+        const name = getPurchaseGiftRecipient(p) || 'Unknown';
+        metrics.recipients[name] = (metrics.recipients[name] || 0) + amt;
+    });
+    metrics.net = metrics.received - metrics.given;
+    return metrics;
 }
 
 function getGiftMetricsFromLogs(logs) {
@@ -17966,11 +18043,17 @@ function getPurchaseTotalCost(purchase) {
     return c != null && c !== '' ? c : '';
 }
 
-const PURCHASE_ACQUISITION_TYPES = ['purchased', 'gift_received', 'other_adjustment'];
+const PURCHASE_ACQUISITION_TYPES = ['purchased', 'gift_received', 'purchased_as_gift', 'other_adjustment'];
 
 function normalizePurchaseAcquisitionType(value, purchase = null) {
     const raw = String(value || '').trim().toLowerCase();
     if (raw === 'gift_received' || raw === 'gift-received' || raw === 'gift') return 'gift_received';
+    if (
+        raw === 'purchased_as_gift'
+        || raw === 'purchased-as-gift'
+        || raw === 'gift_purchased'
+        || raw === 'bought_as_gift'
+    ) return 'purchased_as_gift';
     if (
         raw === 'other_adjustment'
         || raw === 'other'
@@ -17979,6 +18062,13 @@ function normalizePurchaseAcquisitionType(value, purchase = null) {
         || raw === 'correction'
     ) return 'other_adjustment';
     if (raw === 'purchased' || raw === 'purchase' || raw === 'bought') return 'purchased';
+    if (
+        purchase?.isPurchasedAsGift
+        || purchase?.source === 'purchased_as_gift'
+        || purchase?.inventoryStatus === 'gifted'
+    ) {
+        return 'purchased_as_gift';
+    }
     if (purchase?.isGiftReceived || purchase?.source === 'gift_received' || purchase?.transactionType === 'gift_received') {
         return 'gift_received';
     }
@@ -17990,17 +18080,52 @@ function getPurchaseAcquisitionType(purchase) {
     return normalizePurchaseAcquisitionType(purchase.acquisitionType, purchase);
 }
 
+function purchaseIsPurchasedAsGift(purchase) {
+    return getPurchaseAcquisitionType(purchase) === 'purchased_as_gift';
+}
+
 function purchaseCountsAsBuySpend(purchase) {
-    return getPurchaseAcquisitionType(purchase) === 'purchased';
+    const type = getPurchaseAcquisitionType(purchase);
+    return type === 'purchased' || type === 'purchased_as_gift';
 }
 
 function purchaseIsNonPurchasedAcquisition(purchase) {
     return !purchaseCountsAsBuySpend(purchase);
 }
 
+function purchaseIsPersonalUseInventory(purchase) {
+    return !!purchase && !purchaseIsPurchasedAsGift(purchase);
+}
+
 function getPurchaseGiftSource(purchase) {
     if (!purchase) return '';
+    if (purchaseIsPurchasedAsGift(purchase)) return '';
     return String(purchase.giftSource || purchase.giverName || purchase.giftPartyName || '').trim();
+}
+
+function getPurchaseGiftRecipient(purchase) {
+    if (!purchase) return '';
+    return String(purchase.giftRecipient || purchase.recipientName || '').trim();
+}
+
+function getPurchaseGiftDate(purchase) {
+    if (!purchase) return '';
+    return String(purchase.giftDate || '').trim();
+}
+
+function applyPurchasedAsGiftInventoryState(purchase) {
+    if (!purchase || !purchaseIsPurchasedAsGift(purchase)) return purchase;
+    purchase.remainingAmount = 0;
+    if (purchase.remainingPuffs != null) purchase.remainingPuffs = 0;
+    if (purchase.remainingTabs != null) purchase.remainingTabs = 0;
+    if (purchase.remainingUg != null) purchase.remainingUg = 0;
+    if (purchase.remainingPills != null) purchase.remainingPills = 0;
+    if (purchase.remainingMg != null) purchase.remainingMg = 0;
+    purchase.isDepleted = true;
+    purchase.inventoryStatus = 'gifted';
+    purchase.inventoryHidden = false;
+    if (!purchase.depletedAt) purchase.depletedAt = new Date().toISOString();
+    return purchase;
 }
 
 function syncPurchaseAcquisitionFields(purchase) {
@@ -18009,6 +18134,7 @@ function syncPurchaseAcquisitionFields(purchase) {
     purchase.acquisitionType = acquisitionType;
     if (acquisitionType === 'gift_received') {
         purchase.isGiftReceived = true;
+        purchase.isPurchasedAsGift = false;
         purchase.source = 'gift_received';
         const giftSource = getPurchaseGiftSource(purchase);
         purchase.giftSource = giftSource;
@@ -18019,25 +18145,59 @@ function syncPurchaseAcquisitionFields(purchase) {
             delete purchase.giverName;
             delete purchase.giftPartyName;
         }
+        purchase.giftRecipient = '';
+        purchase.giftDate = '';
+        delete purchase.recipientName;
         purchase.totalCost = 0;
         purchase.costPerUnit = 0;
         purchase.paymentMethod = '';
-    } else if (acquisitionType === 'other_adjustment') {
+    } else if (acquisitionType === 'purchased_as_gift') {
         purchase.isGiftReceived = false;
-        purchase.source = 'other_adjustment';
+        purchase.isPurchasedAsGift = true;
+        purchase.source = 'purchased_as_gift';
         purchase.giftSource = '';
         delete purchase.giverName;
+        const recipient = getPurchaseGiftRecipient(purchase);
+        purchase.giftRecipient = recipient;
+        if (recipient) {
+            purchase.recipientName = recipient;
+            purchase.giftPartyName = recipient;
+        } else {
+            delete purchase.recipientName;
+            delete purchase.giftPartyName;
+        }
+        const giftDate = getPurchaseGiftDate(purchase);
+        if (giftDate) purchase.giftDate = giftDate;
+        else delete purchase.giftDate;
+        applyPurchasedAsGiftInventoryState(purchase);
+    } else if (acquisitionType === 'other_adjustment') {
+        purchase.isGiftReceived = false;
+        purchase.isPurchasedAsGift = false;
+        purchase.source = 'other_adjustment';
+        purchase.giftSource = '';
+        purchase.giftRecipient = '';
+        purchase.giftDate = '';
+        delete purchase.giverName;
+        delete purchase.recipientName;
         delete purchase.giftPartyName;
         purchase.totalCost = 0;
         purchase.costPerUnit = 0;
         purchase.paymentMethod = '';
     } else {
         purchase.isGiftReceived = false;
-        if (purchase.source === 'gift_received' || purchase.source === 'other_adjustment') {
+        purchase.isPurchasedAsGift = false;
+        if (
+            purchase.source === 'gift_received'
+            || purchase.source === 'other_adjustment'
+            || purchase.source === 'purchased_as_gift'
+        ) {
             delete purchase.source;
         }
         purchase.giftSource = '';
+        purchase.giftRecipient = '';
+        purchase.giftDate = '';
         delete purchase.giverName;
+        delete purchase.recipientName;
         delete purchase.giftPartyName;
     }
     return purchase;
@@ -18046,6 +18206,7 @@ function syncPurchaseAcquisitionFields(purchase) {
 function getPurchaseAcquisitionBadgeInfo(purchase) {
     const type = getPurchaseAcquisitionType(purchase);
     if (type === 'gift_received') return { label: 'Gift Received', className: 'badge-gift-received' };
+    if (type === 'purchased_as_gift') return { label: 'Purchased as Gift', className: 'badge-purchased-as-gift' };
     if (type === 'other_adjustment') return { label: 'Adjustment', className: 'badge-inventory' };
     return null;
 }
@@ -18070,11 +18231,13 @@ function setBuyAcquisitionType(type) {
 
 function updateBuyAcquisitionTypeUI() {
     const type = getBuyFormAcquisitionType();
-    const isGift = type === 'gift_received';
+    const isGiftReceived = type === 'gift_received';
+    const isPurchasedAsGift = type === 'purchased_as_gift';
     const isNonPurchase = type === 'gift_received' || type === 'other_adjustment';
     const costInput = document.getElementById('buy-total-cost');
     const acquisitionBlock = document.getElementById('buy-acquisition-type-block');
     const acquisitionSelect = document.getElementById('buy-acquisition-type');
+    const giftRecipientInput = document.getElementById('buy-gift-recipient');
     acquisitionBlock?.classList.remove('hidden');
     if (acquisitionSelect) {
         acquisitionSelect.hidden = false;
@@ -18082,11 +18245,14 @@ function updateBuyAcquisitionTypeUI() {
         acquisitionSelect.style.display = '';
         if (!acquisitionSelect.value) acquisitionSelect.value = 'purchased';
     }
-    document.getElementById('buy-gift-source-group')?.classList.toggle('hidden', !isGift);
+    document.getElementById('buy-gift-source-group')?.classList.toggle('hidden', !isGiftReceived);
+    document.getElementById('buy-gift-recipient-group')?.classList.toggle('hidden', !isPurchasedAsGift);
+    document.getElementById('buy-gift-date-group')?.classList.toggle('hidden', !isPurchasedAsGift);
     document.getElementById('buy-total-cost-group')?.classList.toggle('hidden', isNonPurchase);
     document.getElementById('buy-cost-per-unit-group')?.classList.toggle('hidden', isNonPurchase);
-    document.getElementById('buy-store-group')?.classList.toggle('hidden', isGift);
+    document.getElementById('buy-store-group')?.classList.toggle('hidden', isGiftReceived);
     document.getElementById('buy-payment-group')?.classList.toggle('hidden', isNonPurchase);
+    if (giftRecipientInput) giftRecipientInput.required = isPurchasedAsGift;
     if (costInput) {
         costInput.required = !isNonPurchase;
         if (isNonPurchase) {
@@ -18095,16 +18261,22 @@ function updateBuyAcquisitionTypeUI() {
             if (payment) payment.value = '';
         }
     }
-    if (isGift) {
+    if (isGiftReceived) {
         const storeSelect = document.getElementById('buy-store-select');
         if (storeSelect) storeSelect.value = '';
         const storeNew = document.getElementById('buy-store-new');
         if (storeNew) storeNew.value = '';
         document.getElementById('buy-store-new-group')?.classList.add('hidden');
     }
-    if (!isGift) {
+    if (!isGiftReceived) {
         const giftSource = document.getElementById('buy-gift-source');
         if (giftSource) giftSource.value = '';
+    }
+    if (!isPurchasedAsGift) {
+        const giftRecipient = document.getElementById('buy-gift-recipient');
+        if (giftRecipient) giftRecipient.value = '';
+        const giftDate = document.getElementById('buy-gift-date');
+        if (giftDate) giftDate.value = '';
     }
     updateBuyCostPerUnitPreview();
 }
@@ -18569,6 +18741,7 @@ function buildPurchaseFromForm() {
     const quantity = parseFloat(document.getElementById('buy-quantity')?.value);
     const acquisitionType = getBuyFormAcquisitionType();
     const isNonPurchase = acquisitionType === 'gift_received' || acquisitionType === 'other_adjustment';
+    const isPurchasedAsGift = acquisitionType === 'purchased_as_gift';
     const totalCostRaw = parseFloat(document.getElementById('buy-total-cost')?.value);
     const totalCost = isNonPurchase ? 0 : (Number.isFinite(totalCostRaw) ? totalCostRaw : 0);
     const substanceId = document.getElementById('buy-substance')?.value;
@@ -18580,6 +18753,12 @@ function buildPurchaseFromForm() {
         || (!isNicotineTrackingMode(substanceId) && isVapeTrackingMode(substanceId) && isVapePuffUnit(unit));
     const giftSource = acquisitionType === 'gift_received'
         ? (document.getElementById('buy-gift-source')?.value || '').trim()
+        : '';
+    const giftRecipient = isPurchasedAsGift
+        ? (document.getElementById('buy-gift-recipient')?.value || '').trim()
+        : '';
+    const giftDate = isPurchasedAsGift
+        ? (document.getElementById('buy-gift-date')?.value || '').trim()
         : '';
     const payload = {
         substanceId,
@@ -18597,12 +18776,19 @@ function buildPurchaseFromForm() {
         notes: document.getElementById('buy-notes')?.value || '',
         acquisitionType,
         giftSource,
-        isGiftReceived: acquisitionType === 'gift_received'
+        giftRecipient,
+        giftDate,
+        isGiftReceived: acquisitionType === 'gift_received',
+        isPurchasedAsGift
     };
     if (acquisitionType !== 'purchased') payload.source = acquisitionType;
     if (acquisitionType === 'gift_received' && giftSource) {
         payload.giverName = giftSource;
         payload.giftPartyName = giftSource;
+    }
+    if (isPurchasedAsGift && giftRecipient) {
+        payload.recipientName = giftRecipient;
+        payload.giftPartyName = giftRecipient;
     }
     if (isVape) {
         const percentRaw = parseFloat(document.getElementById('buy-percent-bought')?.value);
@@ -18687,20 +18873,23 @@ function buildPurchaseFromForm() {
 function finalizeNewPurchaseRecord(payload) {
     const now = new Date().toISOString();
     const isVape = isVapeTrackingMode(payload.substanceId) && isVapePuffUnit(payload.unit);
+    const isPurchasedAsGift = normalizePurchaseAcquisitionType(payload?.acquisitionType, payload) === 'purchased_as_gift';
     const record = {
         ...payload,
-        remainingAmount: isVape
-            ? (payload.startingPuffsLeft ?? payload.remainingAmount ?? 0)
-            : (payload.quantityBought ?? payload.quantity ?? 0),
-        isDepleted: false,
+        remainingAmount: isPurchasedAsGift
+            ? 0
+            : (isVape
+                ? (payload.startingPuffsLeft ?? payload.remainingAmount ?? 0)
+                : (payload.quantityBought ?? payload.quantity ?? 0)),
+        isDepleted: isPurchasedAsGift,
         createdAt: now,
         updatedAt: now
     };
     if (isVape) {
         record.fullPuffCount = payload.fullPuffCount ?? payload.quantityBought;
         record.percentBoughtAt = payload.percentBoughtAt ?? 100;
-        record.startingPuffsLeft = payload.startingPuffsLeft ?? record.remainingAmount;
-        record.remainingPuffs = payload.remainingPuffs ?? record.remainingAmount;
+        record.startingPuffsLeft = payload.startingPuffsLeft ?? (isPurchasedAsGift ? 0 : record.remainingAmount);
+        record.remainingPuffs = isPurchasedAsGift ? 0 : (payload.remainingPuffs ?? record.remainingAmount);
         if (payload.eLiquidCapacityMl != null) record.eLiquidCapacityMl = payload.eLiquidCapacityMl;
         if (payload.nicotineMgPerMl != null) record.nicotineMgPerMl = payload.nicotineMgPerMl;
         if (payload.totalNicotineMg != null) record.totalNicotineMg = payload.totalNicotineMg;
@@ -18715,9 +18904,10 @@ function finalizeNewPurchaseRecord(payload) {
     if (isXanaxPurchase(record)) {
         syncXanaxPurchaseFields(record, parseFloat(getPurchaseTotalCost(record)) || 0);
     }
-    record.inventoryStatus = 'active';
+    record.inventoryStatus = isPurchasedAsGift ? 'gifted' : 'active';
     record.inventoryHidden = false;
     syncPurchaseAcquisitionFields(record);
+    applyPurchasedAsGiftInventoryState(record);
     stripIrrelevantPurchaseFields(record);
     return record;
 }
@@ -18744,6 +18934,7 @@ function applyPurchaseQuantityEdit(existing, newQty, options = {}) {
         recalculateVapePurchaseInventory(existing.id);
         syncVapePurchaseCostPerUnit(existing);
         existing.updatedAt = new Date().toISOString();
+        if (purchaseIsPurchasedAsGift(existing)) applyPurchasedAsGiftInventoryState(existing);
         return;
     }
     if (isLsdPurchase(existing)) {
@@ -18759,6 +18950,7 @@ function applyPurchaseQuantityEdit(existing, newQty, options = {}) {
         syncLsdPurchaseFields(existing);
         existing.isDepleted = existing.remainingAmount <= INVENTORY_EPS;
         existing.updatedAt = new Date().toISOString();
+        if (purchaseIsPurchasedAsGift(existing)) applyPurchasedAsGiftInventoryState(existing);
         return;
     }
     if (isXanaxPurchase(existing)) {
@@ -18775,6 +18967,7 @@ function applyPurchaseQuantityEdit(existing, newQty, options = {}) {
         syncXanaxPurchaseFields(existing);
         existing.isDepleted = existing.remainingAmount <= INVENTORY_EPS;
         existing.updatedAt = new Date().toISOString();
+        if (purchaseIsPurchasedAsGift(existing)) applyPurchasedAsGiftInventoryState(existing);
         return;
     }
     const used = getPurchaseQuantityBought(existing) - getPurchaseRemainingAmount(existing);
@@ -18788,6 +18981,7 @@ function applyPurchaseQuantityEdit(existing, newQty, options = {}) {
         existing.costPerUnit = total / newQty;
     }
     existing.updatedAt = new Date().toISOString();
+    if (purchaseIsPurchasedAsGift(existing)) applyPurchasedAsGiftInventoryState(existing);
 }
 
 function resetBuyFormAfterSave() {
@@ -18957,6 +19151,8 @@ function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
     setInputValue('buy-notes', purchase.notes || '');
     setBuyAcquisitionType(getPurchaseAcquisitionType(purchase));
     setInputValue('buy-gift-source', getPurchaseGiftSource(purchase));
+    setInputValue('buy-gift-recipient', getPurchaseGiftRecipient(purchase));
+    setInputValue('buy-gift-date', getPurchaseGiftDate(purchase));
 
     updateBuyCostPerUnitPreview();
     updateBuyVapeFieldsPreview();
@@ -19018,6 +19214,8 @@ function cancelBuyEdit() {
     updateBuyUnitDropdown();
     setBuyAcquisitionType('purchased');
     setInputValue('buy-gift-source', '');
+    setInputValue('buy-gift-recipient', '');
+    setInputValue('buy-gift-date', '');
     updateBuyCostPerUnitPreview();
     updateBuyVapeFieldsVisibility();
 }
@@ -19073,6 +19271,14 @@ function handleBuySubmit(e) {
         alert(xanaxErr);
         return;
     }
+    if (getBuyFormAcquisitionType() === 'purchased_as_gift') {
+        const recipient = (document.getElementById('buy-gift-recipient')?.value || '').trim();
+        if (!recipient) {
+            alert('Gift Recipient is required for Purchased as Gift.');
+            document.getElementById('buy-gift-recipient')?.focus();
+            return;
+        }
+    }
 
     const payload = buildPurchaseFromForm();
 
@@ -19113,6 +19319,7 @@ function handleBuySubmit(e) {
         }
         syncAlcoholPurchaseFields(appData.purchases[idx]);
         syncPurchaseAcquisitionFields(appData.purchases[idx]);
+        applyPurchasedAsGiftInventoryState(appData.purchases[idx]);
         stripIrrelevantPurchaseFields(appData.purchases[idx]);
         delete appData.purchases[idx].substance;
         delete appData.purchases[idx].item;
@@ -24470,6 +24677,7 @@ function updateStats() {
     renderStatsWeeklySummary(currentSubstanceId, insights);
 
     renderBuyInsights(currentSubstanceId, insights);
+    renderGiftAnalytics(insights.bounds);
     updateRecoveryStreakDisplay(currentSubstanceId);
     applyCollapsedSections();
 }
@@ -24522,12 +24730,7 @@ function renderGiftAnalytics(bounds) {
     section.classList.remove('hidden');
     const sub = getSubstance(currentSubstanceId);
     const unit = sub?.defaultUnit || 'units';
-    const giftLogs = filterLogsByDateRange(
-        (appData.logs || []).filter(l => getUseSubstanceId(l) === currentSubstanceId),
-        bounds?.startDate,
-        bounds?.endDate
-    );
-    const metrics = getGiftMetricsFromLogs(giftLogs);
+    const metrics = getGiftMetrics(currentSubstanceId, bounds);
 
     setText('stats-gift-given', `${metrics.given.toFixed(1)} ${unit}`);
     setText('stats-gift-received', `${metrics.received.toFixed(1)} ${unit}`);
@@ -31255,6 +31458,8 @@ function cleanExportData(data) {
         purchases: (data.purchases || []).map(p => {
             const acquisitionType = getPurchaseAcquisitionType(p);
             const giftSource = getPurchaseGiftSource(p);
+            const giftRecipient = getPurchaseGiftRecipient(p);
+            const giftDate = getPurchaseGiftDate(p);
             const base = {
             id: p.id,
             substanceId: p.substanceId || '',
@@ -31270,11 +31475,21 @@ function cleanExportData(data) {
             notes: p.notes || '',
             acquisitionType,
             giftSource,
+            giftRecipient,
+            giftDate,
             isGiftReceived: acquisitionType === 'gift_received',
+            isPurchasedAsGift: acquisitionType === 'purchased_as_gift',
             ...(acquisitionType !== 'purchased' ? { source: acquisitionType } : {}),
             ...(acquisitionType === 'gift_received' && giftSource ? { giverName: giftSource, giftPartyName: giftSource } : {}),
-            remainingAmount: Number(p.remainingAmount ?? p.quantityBought ?? p.quantity ?? 0),
-            isDepleted: !!p.isDepleted,
+            ...(acquisitionType === 'purchased_as_gift' && giftRecipient
+                ? { recipientName: giftRecipient, giftPartyName: giftRecipient }
+                : {}),
+            remainingAmount: Number(
+                acquisitionType === 'purchased_as_gift'
+                    ? 0
+                    : (p.remainingAmount ?? p.quantityBought ?? p.quantity ?? 0)
+            ),
+            isDepleted: acquisitionType === 'purchased_as_gift' ? true : !!p.isDepleted,
             fullPuffCount: p.fullPuffCount != null ? Number(p.fullPuffCount) : null,
             percentBoughtAt: p.percentBoughtAt != null ? Number(p.percentBoughtAt) : null,
             startingPuffsLeft: p.startingPuffsLeft != null ? Number(p.startingPuffsLeft) : null,
@@ -31994,12 +32209,21 @@ function __getRecoveryTrackerTestExports() {
         getPurchaseGiftSource,
         purchaseCountsAsBuySpend,
         purchaseIsNonPurchasedAcquisition,
+        purchaseIsPurchasedAsGift,
+        purchaseIsPersonalUseInventory,
         syncPurchaseAcquisitionFields,
         normalizePurchaseAcquisitionType,
+        getPurchaseGiftRecipient,
+        getPurchaseGiftDate,
+        applyPurchasedAsGiftInventoryState,
         getPurchaseSpendAmount,
         getPurchasesForInsightMetrics,
         getPurchasesForBuyMetrics,
         getBuyStats,
+        getGiftMetrics,
+        getActivePurchasesForSubstance,
+        getPurchaseInventoryTab,
+        getPurchaseSupplyStatus,
         setBuyAcquisitionType,
         getBuyFormAcquisitionType,
         updateBuyAcquisitionTypeUI,

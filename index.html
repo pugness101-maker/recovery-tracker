@@ -1025,6 +1025,37 @@
                     </div>
                 </div>
 
+                <div class="collapsible-section" data-section="statsGiftAnalytics" id="gift-analytics-section">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsGiftAnalytics')">
+                        <span>Gift Analytics</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="sheet-summary-grid">
+                            <div class="sheet-summary-card">
+                                <span class="sheet-summary-label">Gift Given</span>
+                                <strong id="stats-gift-given">—</strong>
+                            </div>
+                            <div class="sheet-summary-card">
+                                <span class="sheet-summary-label">Gift Received</span>
+                                <strong id="stats-gift-received">—</strong>
+                            </div>
+                            <div class="sheet-summary-card">
+                                <span class="sheet-summary-label">Net</span>
+                                <strong id="stats-gift-net">—</strong>
+                            </div>
+                        </div>
+                        <div class="stats-section">
+                            <h4 class="stats-inline-heading">Recipients</h4>
+                            <div id="stats-gift-recipients"></div>
+                        </div>
+                        <div class="stats-section">
+                            <h4 class="stats-inline-heading">Senders</h4>
+                            <div id="stats-gift-senders"></div>
+                        </div>
+                    </div>
+                </div>
+
                 </div>
             </section>
 
@@ -1686,6 +1717,7 @@
                             <option value="all" selected>All status</option>
                             <option value="active">Active</option>
                             <option value="depleted">Depleted</option>
+                            <option value="gifted">Gifted</option>
                             <option value="hidden">Hidden</option>
                         </select>
                         <button type="button" id="inventory-filter-toggle" class="inventory-more-filters-btn secondary-btn btn-sm" onclick="toggleInventoryFiltersPanel()">
@@ -1968,12 +2000,21 @@
                         <select id="buy-acquisition-type" required onchange="setBuyAcquisitionType(this.value)">
                             <option value="purchased" selected>Purchased</option>
                             <option value="gift_received">Gift Received</option>
+                            <option value="purchased_as_gift">Purchased as Gift</option>
                             <option value="other_adjustment">Other / Adjustment</option>
                         </select>
                     </div>
                     <div class="form-group hidden" id="buy-gift-source-group">
                         <label for="buy-gift-source">Gift From (optional)</label>
                         <input type="text" id="buy-gift-source" placeholder="Who gave this to you?" autocomplete="off">
+                    </div>
+                    <div class="form-group hidden" id="buy-gift-recipient-group">
+                        <label for="buy-gift-recipient">Gift Recipient</label>
+                        <input type="text" id="buy-gift-recipient" placeholder="Who is this gift for?" autocomplete="off">
+                    </div>
+                    <div class="form-group hidden" id="buy-gift-date-group">
+                        <label for="buy-gift-date">Gift Date (optional)</label>
+                        <input type="date" id="buy-gift-date">
                     </div>
                     <div class="form-row">
                         <div class="form-group" id="buy-unit-group">

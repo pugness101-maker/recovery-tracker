@@ -1406,6 +1406,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .supply-ok { color: var(--accent); }
+.supply-gifted { color: #ffb74d; }
 .supply-low { color: var(--warning); }
 .supply-depleted { color: var(--danger); }
 
@@ -5245,6 +5246,11 @@ body.table-col-resizing {
     color: #81c784;
 }
 
+.badge-purchased-as-gift {
+    background: rgba(255, 152, 0, 0.2);
+    color: #ffb74d;
+}
+
 .badge-inventory {
     background: rgba(121, 134, 203, 0.2);
     color: #9fa8da;
@@ -5979,6 +5985,11 @@ body.table-col-resizing {
 .badge-gift-received {
     background: rgba(76, 175, 80, 0.2);
     color: #81c784;
+}
+
+.badge-purchased-as-gift {
+    background: rgba(255, 152, 0, 0.2);
+    color: #ffb74d;
 }
 
 .badge-inventory {

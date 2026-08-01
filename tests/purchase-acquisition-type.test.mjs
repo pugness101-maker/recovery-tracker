@@ -102,11 +102,16 @@ function installBuyFormDom(rt, substanceId = COKE_ID) {
         options: [
             { value: 'purchased', text: 'Purchased' },
             { value: 'gift_received', text: 'Gift Received' },
+            { value: 'purchased_as_gift', text: 'Purchased as Gift' },
             { value: 'other_adjustment', text: 'Other / Adjustment' }
         ]
     });
     put('buy-gift-source-group', { className: 'form-group', hidden: true });
     put('buy-gift-source', { tag: 'input', value: '' });
+    put('buy-gift-recipient-group', { className: 'form-group', hidden: true });
+    put('buy-gift-recipient', { tag: 'input', value: '' });
+    put('buy-gift-date-group', { className: 'form-group', hidden: true });
+    put('buy-gift-date', { tag: 'input', value: '' });
     put('buy-total-cost-group', { className: 'form-group' });
     put('buy-total-cost', { tag: 'input', value: '100' });
     put('buy-cost-per-unit-group', { className: 'form-row' });
@@ -156,10 +161,13 @@ test('Add Inventory markup uses a visible full-width How Acquired select', () =>
     assert.match(html, /<select id="buy-acquisition-type" required/);
     assert.match(html, /<option value="purchased" selected>Purchased<\/option>/);
     assert.match(html, /<option value="gift_received">Gift Received<\/option>/);
+    assert.match(html, /<option value="purchased_as_gift">Purchased as Gift<\/option>/);
     assert.match(html, /<option value="other_adjustment">Other \/ Adjustment<\/option>/);
     assert.doesNotMatch(html, /buy-acq-pill/);
     assert.doesNotMatch(html, /type="hidden" id="buy-acquisition-type"/);
     assert.match(html, /id="buy-gift-source"/);
+    assert.match(html, /id="buy-gift-recipient"/);
+    assert.match(html, /id="buy-gift-date"/);
     assert.match(html, /id="buy-total-cost-group"/);
     assert.match(html, /id="buy-store-group"/);
     assert.match(html, /id="buy-payment-group"/);
@@ -345,4 +353,166 @@ test('inventory history badge markup for gift received', () => {
     assert.match(badge, /Gift Received/);
     assert.match(badge, /badge-gift-received/);
     assert.equal(rt.renderPurchaseAcquisitionBadge({ acquisitionType: 'purchased' }), '');
+});
+
+test('purchased as gift keeps spend fields and shows gift recipient UI', () => {
+    const rt = loadRecoveryTrackerApp();
+    rt.__setTestAppData(rt.normalizeAppDataSafe(makeData([])));
+    const nodes = installBuyFormDom(rt, COKE_ID);
+
+    rt.setBuyAcquisitionType('purchased_as_gift');
+
+    assert.equal(nodes.get('buy-acquisition-type').value, 'purchased_as_gift');
+    assert.equal(nodes.get('buy-gift-recipient-group').classList.contains('hidden'), false);
+    assert.equal(nodes.get('buy-gift-date-group').classList.contains('hidden'), false);
+    assert.equal(nodes.get('buy-gift-source-group').classList.contains('hidden'), true);
+    assert.equal(nodes.get('buy-total-cost-group').classList.contains('hidden'), false);
+    assert.equal(nodes.get('buy-store-group').classList.contains('hidden'), false);
+    assert.equal(nodes.get('buy-payment-group').classList.contains('hidden'), false);
+    assert.equal(nodes.get('buy-gift-recipient').required, true);
+    assert.equal(nodes.get('buy-total-cost').required, true);
+    assert.equal(nodes.get('buy-total-cost').value, '100');
+});
+
+test('purchased as gift records spend with no usable inventory', () => {
+    const rt = loadRecoveryTrackerApp();
+    rt.__setTestAppData(rt.normalizeAppDataSafe(makeData([])));
+    const nodes = installBuyFormDom(rt, COKE_ID);
+
+    rt.setBuyAcquisitionType('purchased_as_gift');
+    nodes.get('buy-gift-recipient').value = 'Sam';
+    nodes.get('buy-gift-date').value = '2026-08-02';
+    nodes.get('buy-quantity').value = '2';
+    nodes.get('buy-total-cost').value = '80';
+
+    const payload = rt.buildPurchaseFromForm();
+    assert.equal(payload.acquisitionType, 'purchased_as_gift');
+    assert.equal(payload.giftRecipient, 'Sam');
+    assert.equal(payload.giftDate, '2026-08-02');
+    assert.equal(payload.totalCost, 80);
+    assert.equal(payload.store, 'Corner');
+    assert.equal(payload.paymentMethod, 'Cash');
+    assert.equal(payload.isGiftReceived, false);
+
+    const record = rt.finalizeNewPurchaseRecord(payload);
+    assert.equal(rt.getPurchaseAcquisitionType(record), 'purchased_as_gift');
+    assert.equal(rt.purchaseCountsAsBuySpend(record), true);
+    assert.equal(rt.getPurchaseSpendAmount(record), 80);
+    assert.equal(rt.getPurchaseRemainingAmount(record), 0);
+    assert.equal(record.inventoryStatus, 'gifted');
+    assert.equal(record.isDepleted, true);
+    assert.equal(rt.getPurchaseInventoryTab(record), 'gifted');
+    assert.equal(rt.getPurchaseSupplyStatus(record).key, 'gifted');
+    assert.match(rt.renderPurchaseAcquisitionBadge(record), /Purchased as Gift/);
+    assert.match(rt.renderPurchaseAcquisitionBadge(record), /badge-purchased-as-gift/);
+});
+
+test('purchased as gift is distinct from gift received for inventory and spend', () => {
+    const personal = makePurchase({
+        id: 'buy-1',
+        totalCost: 100,
+        quantityBought: 2,
+        quantity: 2,
+        remainingAmount: 2
+    });
+    const giftReceived = makePurchase({
+        id: 'gift-recv-1',
+        acquisitionType: 'gift_received',
+        giftSource: 'Alex',
+        totalCost: 0,
+        quantityBought: 1,
+        quantity: 1,
+        remainingAmount: 1,
+        paymentMethod: ''
+    });
+    const purchasedAsGift = makePurchase({
+        id: 'gift-buy-1',
+        acquisitionType: 'purchased_as_gift',
+        giftRecipient: 'Jordan',
+        giftDate: '2026-08-03',
+        totalCost: 60,
+        costPerUnit: 30,
+        quantityBought: 2,
+        quantity: 2,
+        remainingAmount: 0,
+        isDepleted: true,
+        inventoryStatus: 'gifted'
+    });
+    const rt = loadRecoveryTrackerApp();
+    rt.setTestReferenceDate('2026-08-01');
+    const data = rt.normalizeAppDataSafe(makeData([personal, giftReceived, purchasedAsGift]));
+    rt.__setTestAppData(data);
+
+    const gifted = data.purchases.find(p => p.id === 'gift-buy-1');
+    assert.equal(rt.getPurchaseAcquisitionType(gifted), 'purchased_as_gift');
+    assert.equal(rt.getPurchaseGiftRecipient(gifted), 'Jordan');
+    assert.equal(rt.purchaseCountsAsBuySpend(gifted), true);
+    assert.equal(rt.getPurchaseSpendAmount(gifted), 60);
+    assert.equal(rt.getPurchaseRemainingAmount(gifted), 0);
+    assert.equal(rt.purchaseIsPersonalUseInventory(gifted), false);
+
+    const insight = rt.getPurchasesForInsightMetrics(COKE_ID, data);
+    assert.equal(insight.length, 2);
+    assert.ok(insight.some(p => p.id === 'buy-1'));
+    assert.ok(insight.some(p => p.id === 'gift-buy-1'));
+    assert.ok(!insight.some(p => p.id === 'gift-recv-1'));
+
+    const active = rt.getActivePurchasesForSubstance(COKE_ID);
+    assert.equal(active.length, 2);
+    assert.ok(active.every(p => p.id !== 'gift-buy-1'));
+    assert.ok(active.some(p => p.id === 'gift-recv-1'));
+
+    const stats = rt.getBuyStats(COKE_ID);
+    assert.equal(stats.countMonth, 2);
+    assert.ok(Math.abs(stats.spentMonth - 160) < 0.001);
+
+    const giftMetrics = rt.getGiftMetrics(COKE_ID);
+    assert.ok(Math.abs(giftMetrics.given - 2) < 0.001);
+    assert.equal(giftMetrics.recipients.Jordan, 2);
+});
+
+test('purchased as gift export / import / duplicate preserve recipient and gifted status', () => {
+    const rt = loadRecoveryTrackerApp();
+    const original = makePurchase({
+        id: 'gift-buy-keep',
+        acquisitionType: 'purchased_as_gift',
+        giftRecipient: 'Casey',
+        giftDate: '2026-08-04',
+        totalCost: 45,
+        costPerUnit: 15,
+        quantityBought: 3,
+        quantity: 3,
+        remainingAmount: 0,
+        isDepleted: true,
+        inventoryStatus: 'gifted'
+    });
+    const data = rt.normalizeAppDataSafe(makeData([original]));
+    rt.__setTestAppData(data);
+
+    const exported = rt.cleanExportData(data);
+    const exportedPurchase = exported.purchases.find(p => p.id === 'gift-buy-keep');
+    assert.equal(exportedPurchase.acquisitionType, 'purchased_as_gift');
+    assert.equal(exportedPurchase.giftRecipient, 'Casey');
+    assert.equal(exportedPurchase.giftDate, '2026-08-04');
+    assert.equal(exportedPurchase.totalCost, 45);
+
+    const reimported = rt.normalizeAppDataSafe({
+        ...rt.getDefaultAppData(),
+        substances: data.substances,
+        purchases: exported.purchases
+    });
+    const roundTrip = reimported.purchases.find(p => p.id === 'gift-buy-keep');
+    assert.equal(rt.getPurchaseAcquisitionType(roundTrip), 'purchased_as_gift');
+    assert.equal(rt.getPurchaseGiftRecipient(roundTrip), 'Casey');
+    assert.equal(rt.getPurchaseRemainingAmount(roundTrip), 0);
+    assert.equal(roundTrip.inventoryStatus, 'gifted');
+
+    rt.__setTestAppData(data);
+    const dup = rt.duplicatePurchaseNow('gift-buy-keep');
+    assert.ok(dup);
+    assert.equal(rt.getPurchaseAcquisitionType(dup), 'purchased_as_gift');
+    assert.equal(rt.getPurchaseGiftRecipient(dup), 'Casey');
+    assert.equal(rt.getPurchaseSpendAmount(dup), 45);
+    assert.equal(rt.getPurchaseRemainingAmount(dup), 0);
+    assert.equal(dup.inventoryStatus, 'gifted');
 });
