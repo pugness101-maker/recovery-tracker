@@ -14,6 +14,21 @@ const COLUMN_PRESET_IDS = Object.freeze(['basic', 'cost', 'inventory', 'detailed
 const DEFAULT_DASHBOARD_WIDGETS = Object.freeze([
     'todayUsed', 'weekUsed', 'monthUsed', 'spentMonth', 'monthCap', 'streak', 'quickActions'
 ]);
+const RECOVERY_DASHBOARD_PRESETS = Object.freeze({
+    today: 'Today',
+    'this-week': 'This week',
+    'this-month': 'This month',
+    'last-30': 'Last 30 days',
+    custom: 'Custom range'
+});
+const RECOVERY_SCORE_FACTORS = Object.freeze([
+    { key: 'goalAdherence', label: 'Goal adherence', weight: 0.22 },
+    { key: 'planAdherence', label: 'Plan adherence', weight: 0.22 },
+    { key: 'sobrietyProgress', label: 'Sobriety streak progress', weight: 0.18 },
+    { key: 'reduction', label: 'Reduction vs baseline', weight: 0.14 },
+    { key: 'spending', label: 'Spending improvement', weight: 0.12 },
+    { key: 'logging', label: 'Logging consistency', weight: 0.12 }
+]);
 
 let themePreference = 'dark';
 let resolvedTheme = 'dark';
@@ -6974,6 +6989,7 @@ function ensureAppDataSettings(data) {
     }
     ensureInsightPrefs(data);
     ensureComparePeriodsPrefs(data);
+    ensureRecoveryDashboardPrefs(data);
     ensureTableColumnSettings(data);
     ensureUseStatsConfig(data);
     ensureCollapsedSections(data);
@@ -10702,6 +10718,8 @@ function switchTab(tabId) {
     } else if (tabId === 'settings-tab') {
         applyMainSubstanceToViewSelectors();
         renderSubstancesList();
+        syncRecoveryScoreSettingsToggle();
+        syncUseCustomNamesInCsvToggle();
     }
     applyCollapsedSections();
 }
@@ -21745,6 +21763,1201 @@ function renderVapeDashboardSection(substanceId) {
 }
 
 // ——— Dashboard ———
+// ——— Recovery Dashboard ———
+
+function getLogDateStr(log) {
+    return log?.date || log?.startDate || '';
+}
+
+function ensureRecoveryDashboardPrefs(data = appData) {
+    if (!data.settings) data.settings = {};
+    const defaults = {
+        dateRangePreset: 'this-week',
+        customStart: '',
+        customEnd: '',
+        scoreEnabled: true
+    };
+    if (!data.settings.recoveryDashboard || typeof data.settings.recoveryDashboard !== 'object') {
+        data.settings.recoveryDashboard = { ...defaults };
+    }
+    const prefs = data.settings.recoveryDashboard;
+    if (!RECOVERY_DASHBOARD_PRESETS[prefs.dateRangePreset]) {
+        prefs.dateRangePreset = defaults.dateRangePreset;
+    }
+    prefs.customStart = typeof prefs.customStart === 'string' ? prefs.customStart : '';
+    prefs.customEnd = typeof prefs.customEnd === 'string' ? prefs.customEnd : '';
+    prefs.scoreEnabled = prefs.scoreEnabled !== false;
+    return prefs;
+}
+
+function getRecoveryDashboardPrefs(data = appData) {
+    return ensureRecoveryDashboardPrefs(data);
+}
+
+function persistRecoveryDashboardPrefs(patch = {}, data = appData) {
+    const prefs = ensureRecoveryDashboardPrefs(data);
+    Object.assign(prefs, patch);
+    saveData(data);
+    return prefs;
+}
+
+function setRecoveryScoreEnabled(enabled) {
+    persistRecoveryDashboardPrefs({ scoreEnabled: !!enabled });
+    const el = document.getElementById('settings-recovery-score-enabled');
+    if (el) el.checked = !!enabled;
+    renderRecoveryDashboard();
+}
+
+function syncRecoveryScoreSettingsToggle() {
+    const el = document.getElementById('settings-recovery-score-enabled');
+    if (!el) return;
+    el.checked = getRecoveryDashboardPrefs().scoreEnabled !== false;
+}
+
+function resolveRecoveryDashboardBounds(prefs = null, data = appData) {
+    const p = prefs || getRecoveryDashboardPrefs(data);
+    const todayStr = getLocalDateString();
+    const today = parseLocalDate(todayStr) || new Date();
+    switch (p.dateRangePreset) {
+        case 'today':
+            return { startDate: todayStr, endDate: todayStr, preset: 'today' };
+        case 'this-month': {
+            const start = new Date(today.getFullYear(), today.getMonth(), 1);
+            return { startDate: toDateStr(start), endDate: todayStr, preset: 'this-month' };
+        }
+        case 'last-30': {
+            const start = new Date(today);
+            start.setDate(start.getDate() - 29);
+            return { startDate: toDateStr(start), endDate: todayStr, preset: 'last-30' };
+        }
+        case 'custom': {
+            let startDate = p.customStart || todayStr;
+            let endDate = p.customEnd || todayStr;
+            if (startDate > endDate) {
+                const tmp = startDate;
+                startDate = endDate;
+                endDate = tmp;
+            }
+            return { startDate, endDate, preset: 'custom' };
+        }
+        case 'this-week':
+        default: {
+            const start = new Date(today);
+            start.setDate(start.getDate() - start.getDay());
+            return { startDate: toDateStr(start), endDate: todayStr, preset: 'this-week' };
+        }
+    }
+}
+
+function setRecoveryDashboardPreset(preset) {
+    if (!RECOVERY_DASHBOARD_PRESETS[preset]) return;
+    const prefs = getRecoveryDashboardPrefs();
+    const patch = { dateRangePreset: preset };
+    if (preset === 'custom' && (!prefs.customStart || !prefs.customEnd)) {
+        const today = getLocalDateString();
+        const start = parseLocalDate(today) || new Date();
+        start.setDate(start.getDate() - 6);
+        patch.customStart = prefs.customStart || toDateStr(start);
+        patch.customEnd = prefs.customEnd || today;
+    }
+    persistRecoveryDashboardPrefs(patch);
+    renderRecoveryDashboard();
+}
+
+function onRecoveryDashboardCustomRangeChange() {
+    const start = document.getElementById('rd-custom-start')?.value || '';
+    const end = document.getElementById('rd-custom-end')?.value || '';
+    persistRecoveryDashboardPrefs({
+        dateRangePreset: 'custom',
+        customStart: start,
+        customEnd: end
+    });
+    renderRecoveryDashboard();
+}
+
+function formatRecoveryDashboardDateTime(msOrDate) {
+    if (msOrDate == null) return '—';
+    const date = msOrDate instanceof Date ? msOrDate : new Date(msOrDate);
+    return formatDatetimeLong(date);
+}
+
+function getLastPurchaseForSubstance(substanceId, data = appData) {
+    return (data.purchases || [])
+        .filter(p => purchaseMatchesSubstance(p, substanceId, data) && purchaseCountsTowardSpend(p))
+        .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a))[0] || null;
+}
+
+function purchaseCountsTowardSpend(purchase) {
+    const type = getPurchaseAcquisitionType(purchase);
+    return type === 'purchased' || type === 'purchased_as_gift';
+}
+
+function computeNoPurchaseStreakDays(substanceId, data = appData) {
+    const purchases = (data.purchases || [])
+        .filter(p => purchaseMatchesSubstance(p, substanceId, data) && purchaseCountsTowardSpend(p))
+        .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
+    if (!purchases.length) return { days: 0, sinceLabel: 'No purchases logged' };
+    const lastMs = getPurchaseDatetimeMs(purchases[0]);
+    if (!lastMs) return { days: 0, sinceLabel: '—' };
+    const refMs = testReferenceDateStr
+        ? (parseLocalDate(testReferenceDateStr)?.getTime() ?? Date.now())
+        : Date.now();
+    const days = Math.max(0, Math.floor((refMs - lastMs) / 86400000));
+    return {
+        days,
+        sinceLabel: days === 0 ? 'Purchased today' : `${days} day${days !== 1 ? 's' : ''} since last purchase`
+    };
+}
+
+function getLongestNoPurchaseStreakDays(substanceId, startDate, endDate, data = appData) {
+    if (!substanceId || !startDate || !endDate || startDate > endDate) return 0;
+    const purchaseDates = new Set(
+        (data.purchases || [])
+            .filter(p => purchaseMatchesSubstance(p, substanceId, data) && purchaseCountsTowardSpend(p))
+            .map(p => getPurchaseDateStr(p))
+            .filter(Boolean)
+    );
+    let longest = 0;
+    let run = 0;
+    let cursor = startDate;
+    while (cursor <= endDate) {
+        if (!purchaseDates.has(cursor)) {
+            run += 1;
+            if (run > longest) longest = run;
+        } else {
+            run = 0;
+        }
+        cursor = addDaysYYYYMMDD(cursor, 1);
+    }
+    return longest;
+}
+
+function formatRecoveryUsageAmount(substanceId, amount, data = appData, options = {}) {
+    if (amount == null || Number.isNaN(amount)) return '—';
+    if (isWeedTrackingMode(substanceId, data) && options.productType) {
+        const type = normalizeWeedProductType(options.productType);
+        if (type === 'cart') return `${formatAmount(amount)}% used`;
+        if (type === 'edibles') return `${formatAmount(amount)} mg THC`;
+        return `${formatAmount(amount)} g`;
+    }
+    if (isVapeNicotineSubstanceId(substanceId, data) || isNicotineTrackingMode(substanceId, data)) {
+        return `${Math.round(amount).toLocaleString('en-US')} puffs`;
+    }
+    const unit = getSubstanceDisplayUnit(substanceId, data);
+    return formatAmountWithUnit(amount, unit);
+}
+
+function getWeedProductTypeUsageInRange(substanceId, startDate, endDate, data = appData) {
+    if (!isWeedTrackingMode(substanceId, data)) return [];
+    const buckets = { bud: 0, cart: 0, edibles: 0, 'pre-roll': 0 };
+    getUseLogsForSubstance(substanceId, { personalUseOnly: false, data }).forEach(log => {
+        if (!logCountsTowardPersonalUseStats(log)) return;
+        const dateStr = getLogDateStr(log);
+        if (!dateStr || dateStr < startDate || dateStr > endDate) return;
+        const type = normalizeWeedProductType(log.weedProductType || 'bud');
+        let amt = getLogStatsAmount(log);
+        if (type === 'edibles') {
+            amt = getWeedEdibleLogThcUsed(log) ?? amt;
+        } else if (type === 'cart') {
+            amt = parseFloat(log.estimatedPercentUsed ?? log.amount) || amt;
+        }
+        buckets[type] = (buckets[type] || 0) + (Number.isFinite(amt) ? amt : 0);
+    });
+    return Object.entries(buckets)
+        .filter(([, amount]) => amount > 0)
+        .map(([productType, amount]) => ({
+            productType,
+            label: getWeedProductTypeLabel(productType),
+            amount,
+            display: formatRecoveryUsageAmount(substanceId, amount, data, { productType })
+        }));
+}
+
+function getActiveInventoryItems(substanceId, data = appData) {
+    return (data.purchases || []).filter(p => {
+        if (!purchaseMatchesSubstance(p, substanceId, data)) return false;
+        if (purchaseIsPurchasedAsGift(p)) return false;
+        return getPurchaseInventoryTab(p) === 'active';
+    });
+}
+
+function formatActiveInventoryRemaining(substanceId, data = appData) {
+    const items = getActiveInventoryItems(substanceId, data);
+    if (!items.length) return 'None active';
+    if (isWeedTrackingMode(substanceId, data)) {
+        const byType = {};
+        items.forEach(p => {
+            const type = normalizeWeedProductType(p.weedProductType || 'bud');
+            if (!byType[type]) byType[type] = { rem: 0, unit: getPurchaseRemainingDisplayUnit(p) };
+            byType[type].rem += getPurchaseRemainingDisplayAmount(p) || 0;
+        });
+        return Object.entries(byType)
+            .map(([type, info]) => {
+                if (type === 'cart') return `Cart ${formatAmount(info.rem)}%`;
+                if (type === 'edibles') return `Edibles ${formatAmount(info.rem)} mg THC`;
+                return `${getWeedProductTypeLabel(type)} ${formatAmountWithUnit(info.rem, info.unit || 'g')}`;
+            })
+            .join(' · ');
+    }
+    const summary = getInventorySummary(substanceId, data, items);
+    return formatInventoryTotalRemainingValue(summary, substanceId, data);
+}
+
+function estimateInventoryDaysRemaining(substanceId, remaining, data = appData) {
+    if (remaining == null || remaining <= INVENTORY_EPS) return null;
+    const today = getLocalDateString();
+    const weekStart = getWeekStartDateStr(today);
+    const weekUsed = getCanonicalUsageInRange(substanceId, weekStart, today, data);
+    const avgDaily = weekUsed > 0 ? weekUsed / Math.max(1, countDaysInRange(weekStart, today)) : 0;
+    if (!(avgDaily > 0)) return null;
+    return remaining / avgDaily;
+}
+
+function getLastLinkedUseForPurchase(purchase, data = appData) {
+    if (!purchase?.id) return null;
+    return (data.logs || [])
+        .filter(l => String(getLogPurchaseId(l) || '') === String(purchase.id))
+        .sort((a, b) => getLogDatetimeMs(b) - getLogDatetimeMs(a))[0] || null;
+}
+
+function buildRecoveryStatusCards(bounds, data = appData) {
+    const today = getLocalDateString();
+    const weekStart = getWeekStartDateStr(today);
+    const monthStart = getMonthStartDateStr(today);
+    return getActiveSubstances(data).map(sub => {
+        const sid = sub.id;
+        const metrics = buildNormalizedSubstanceMetrics(sid, { today }, data);
+        const streak = computeRecoveryStreakDays(sid);
+        const best = Math.max(data.recoveryStreaks?.[sid]?.best || 0, streak.days);
+        const lastUse = getLastUseForSubstance(sid);
+        const lastPurchase = getLastPurchaseForSubstance(sid, data);
+        const plan = getPrimaryTaperPlan(sid, data);
+        let taperStatus = 'No active plan';
+        if (plan && plan.status === 'active') {
+            const byWeek = buildTaperByWeekData(sid, plan);
+            const current = byWeek?.rows?.find(r => r.isCurrent);
+            taperStatus = current
+                ? `Week ${current.weekNum}: ${current.statusLabel || current.status}`
+                : `${plan.name || 'Plan'} · ${getRecoveryTaperStatusLabel(plan.status) || plan.status}`;
+        } else if (plan) {
+            taperStatus = getRecoveryTaperStatusLabel(plan.status) || plan.status;
+        }
+        const weedBreakdown = isWeedTrackingMode(sid, data)
+            ? {
+                week: getWeedProductTypeUsageInRange(sid, weekStart, today, data),
+                month: getWeedProductTypeUsageInRange(sid, monthStart, today, data),
+                range: getWeedProductTypeUsageInRange(sid, bounds.startDate, bounds.endDate, data)
+            }
+            : null;
+        return {
+            substanceId: sid,
+            name: getSubstanceDisplayName(sub, data),
+            icon: sub.icon || '',
+            color: sub.color || '',
+            unit: metrics.unit,
+            currentStreakDays: streak.days,
+            longestStreakDays: best,
+            lastUseLabel: lastUse
+                ? formatRecoveryDashboardDateTime(getLogDatetimeMs(lastUse))
+                : 'No use logged',
+            lastPurchaseLabel: lastPurchase
+                ? formatRecoveryDashboardDateTime(getPurchaseDatetimeMs(lastPurchase))
+                : 'No purchase logged',
+            usedWeekLabel: weedBreakdown?.week?.length
+                ? weedBreakdown.week.map(w => w.display).join(' · ')
+                : formatRecoveryUsageAmount(sid, metrics.usage.week, data),
+            usedMonthLabel: weedBreakdown?.month?.length
+                ? weedBreakdown.month.map(w => w.display).join(' · ')
+                : formatRecoveryUsageAmount(sid, metrics.usage.month, data),
+            usedRangeLabel: weedBreakdown?.range?.length
+                ? weedBreakdown.range.map(w => w.display).join(' · ')
+                : formatRecoveryUsageAmount(
+                    sid,
+                    getCanonicalUsageInRange(sid, bounds.startDate, bounds.endDate, data),
+                    data
+                ),
+            spentMonthLabel: `${getCurrencySymbol()}${(metrics.spend.month || 0).toFixed(2)}`,
+            inventoryLabel: formatActiveInventoryRemaining(sid, data),
+            taperStatus,
+            weedBreakdown
+        };
+    });
+}
+
+function buildRecoveryGoalStatuses(bounds, data = appData) {
+    const today = getLocalDateString();
+    const weekStart = getWeekStartDateStr(today);
+    const statuses = [];
+    getActiveSubstances(data).forEach(sub => {
+        const sid = sub.id;
+        const weekUsed = getCanonicalUsageInRange(sid, weekStart, today, data);
+        const weekGoal = getWeeklyLimit(sid, weekStart);
+        if (weekGoal != null && weekGoal > 0) {
+            const badge = getUsageVsTargetBadge(weekUsed, weekGoal);
+            statuses.push({
+                substanceId: sid,
+                name: getSubstanceDisplayName(sub, data),
+                kind: 'weekly',
+                used: weekUsed,
+                target: weekGoal,
+                pct: weekUsed / weekGoal,
+                badge,
+                onTrack: badge.level === 'good' || badge.level === 'caution',
+                nearLimit: badge.level === 'high' || badge.level === 'risk'
+            });
+        }
+        const monthUsed = getCanonicalUsageInRange(sid, getMonthStartDateStr(today), today, data);
+        const monthGoal = getMonthlyLimit(sid, today);
+        if (monthGoal != null && monthGoal > 0) {
+            const badge = getUsageVsTargetBadge(monthUsed, monthGoal);
+            statuses.push({
+                substanceId: sid,
+                name: getSubstanceDisplayName(sub, data),
+                kind: 'monthly',
+                used: monthUsed,
+                target: monthGoal,
+                pct: monthUsed / monthGoal,
+                badge,
+                onTrack: badge.level === 'good' || badge.level === 'caution',
+                nearLimit: badge.level === 'high' || badge.level === 'risk'
+            });
+        }
+    });
+    return statuses;
+}
+
+function buildRecoveryActivePlans(data = appData) {
+    ensureTaperPlansV2(data);
+    const today = getLocalDateString();
+    return (data.taperPlansV2 || [])
+        .filter(p => p.status === 'active')
+        .map(plan => {
+            const sub = getSubstance(plan.substanceId, data);
+            const byWeek = buildTaperByWeekData(plan.substanceId, plan);
+            const current = byWeek?.rows?.find(r => r.isCurrent) || null;
+            const weekEnd = current?.weekEnd || plan.endDate || today;
+            const daysRemaining = Math.max(0, countDaysInRange(today, weekEnd));
+            const planned = current?.planned ?? null;
+            const used = current?.used ?? null;
+            const progressPct = planned > 0 && used != null
+                ? Math.min(100, Math.round((used / planned) * 100))
+                : null;
+            return {
+                planId: plan.id,
+                substanceId: plan.substanceId,
+                substanceName: getSubstanceDisplayName(sub, data),
+                planName: plan.name || 'Plan',
+                currentWeek: current?.weekNum ?? byWeek?.currentWeek ?? '—',
+                weeklyTarget: planned,
+                actualUse: used,
+                difference: current?.diff ?? null,
+                status: current?.statusLabel || current?.status || getRecoveryTaperStatusLabel(plan.status) || plan.status,
+                statusKey: current?.status || plan.status,
+                spendingTarget: current?.spendPlanned ?? null,
+                actualSpending: current?.spent ?? null,
+                progressPct,
+                daysRemaining,
+                unit: getSubstanceDisplayUnit(plan.substanceId, data)
+            };
+        });
+}
+
+function buildRecoveryInventoryOverview(data = appData) {
+    const groups = [];
+    getActiveSubstances(data).forEach(sub => {
+        const items = getActiveInventoryItems(sub.id, data).map(purchase => {
+            const rem = getPurchaseRemainingDisplayAmount(purchase);
+            const unit = getPurchaseRemainingDisplayUnit(purchase);
+            const pct = getPurchasePercentRemaining(purchase);
+            const daysLeft = estimateInventoryDaysRemaining(sub.id, rem, data);
+            const depleteDate = daysLeft != null
+                ? addDaysYYYYMMDD(getLocalDateString(), Math.floor(daysLeft))
+                : null;
+            const lastUse = getLastLinkedUseForPurchase(purchase, data);
+            const productType = isWeedTrackingMode(sub.id, data)
+                ? getWeedProductTypeLabel(purchase.weedProductType || 'bud')
+                : (purchase.productType || purchase.nicotineProductType || '—');
+            const statusInfo = isVapePuffPurchase(purchase, data)
+                ? getVapePurchaseDisplayStatus(purchase)
+                : { label: getPurchaseInventoryTab(purchase) === 'active' ? 'Active' : '—' };
+            return {
+                purchaseId: purchase.id,
+                itemName: purchase.name || purchase.store || purchase.flavor || formatWeedPurchaseDisplayLine(purchase) || 'Item',
+                productType,
+                remainingLabel: formatAmountWithUnit(rem, unit),
+                percentRemaining: pct != null ? Math.round(pct) : null,
+                daysRemaining: daysLeft != null ? Math.round(daysLeft * 10) / 10 : null,
+                depletionDate: depleteDate,
+                lastLinkedUse: lastUse
+                    ? formatRecoveryDashboardDateTime(getLogDatetimeMs(lastUse))
+                    : '—',
+                status: statusInfo.label || 'Active'
+            };
+        });
+        if (items.length) {
+            groups.push({
+                substanceId: sub.id,
+                substanceName: getSubstanceDisplayName(sub, data),
+                items
+            });
+        }
+    });
+    return groups;
+}
+
+function buildRecoveryMilestones(statusCards, activePlans, bounds, data = appData) {
+    const milestones = [];
+    const streakTargets = [7, 14, 30, 60, 90];
+    statusCards.forEach(card => {
+        const nextUse = streakTargets.find(t => card.currentStreakDays < t);
+        if (nextUse) {
+            milestones.push({
+                id: `no-use-${card.substanceId}-${nextUse}`,
+                name: `${nextUse}-day no-use streak`,
+                substance: card.name,
+                substanceId: card.substanceId,
+                current: card.currentStreakDays,
+                target: nextUse,
+                progressPct: Math.min(100, Math.round((card.currentStreakDays / nextUse) * 100)),
+                targetDate: addDaysYYYYMMDD(getLocalDateString(), nextUse - card.currentStreakDays),
+                timeRemaining: `${Math.max(0, nextUse - card.currentStreakDays)} day(s)`
+            });
+        }
+        const noBuy = computeNoPurchaseStreakDays(card.substanceId, data);
+        const nextBuy = streakTargets.find(t => noBuy.days < t);
+        if (nextBuy) {
+            milestones.push({
+                id: `no-buy-${card.substanceId}-${nextBuy}`,
+                name: `${nextBuy}-day no-purchase streak`,
+                substance: card.name,
+                substanceId: card.substanceId,
+                current: noBuy.days,
+                target: nextBuy,
+                progressPct: Math.min(100, Math.round((noBuy.days / nextBuy) * 100)),
+                targetDate: addDaysYYYYMMDD(getLocalDateString(), nextBuy - noBuy.days),
+                timeRemaining: `${Math.max(0, nextBuy - noBuy.days)} day(s)`
+            });
+        }
+    });
+
+    activePlans.forEach(plan => {
+        if (plan.currentWeek === '—' || plan.currentWeek == null) return;
+        milestones.push({
+            id: `taper-week-${plan.planId}`,
+            name: `Complete taper week ${plan.currentWeek}`,
+            substance: plan.substanceName,
+            substanceId: plan.substanceId,
+            current: plan.actualUse ?? 0,
+            target: plan.weeklyTarget ?? 0,
+            progressPct: plan.progressPct ?? 0,
+            targetDate: null,
+            timeRemaining: `${plan.daysRemaining} day(s) left in week`
+        });
+    });
+
+    const monthStart = getMonthStartDateStr(getLocalDateString());
+    const prevMonthEnd = addDaysYYYYMMDD(monthStart, -1);
+    const prevMonthStart = getMonthStartDateStr(prevMonthEnd);
+    let thisMonthSpend = 0;
+    let lastMonthSpend = 0;
+    (data.purchases || []).forEach(p => {
+        if (!purchaseCountsTowardSpend(p)) return;
+        const d = getPurchaseDateStr(p);
+        const cost = getPurchaseSpendAmount(p);
+        if (d >= monthStart) thisMonthSpend += cost;
+        else if (d >= prevMonthStart && d <= prevMonthEnd) lastMonthSpend += cost;
+    });
+    if (lastMonthSpend > 0) {
+        const target = lastMonthSpend;
+        const progress = Math.max(0, Math.min(100, Math.round((1 - (thisMonthSpend / target)) * 100)));
+        milestones.push({
+            id: 'lowest-spend-month',
+            name: 'Lowest spending month',
+            substance: 'All',
+            substanceId: null,
+            current: thisMonthSpend,
+            target,
+            progressPct: progress,
+            targetDate: null,
+            timeRemaining: thisMonthSpend < lastMonthSpend
+                ? 'On pace to beat last month'
+                : 'Above last month so far'
+        });
+    }
+
+    return milestones
+        .sort((a, b) => (b.progressPct - a.progressPct) || String(a.name).localeCompare(b.name))
+        .slice(0, 12);
+}
+
+function buildRecoveryAlerts(goalStatuses, activePlans, inventoryGroups, data = appData) {
+    const alerts = [];
+    const health = scanDataHealth(data);
+    (health.issues || []).forEach(issue => {
+        if (['duplicate', 'brokenInventoryLink', 'negativeRemaining'].includes(issue.type)
+            || issue.severity === 'error') {
+            alerts.push({
+                id: issue.id,
+                type: issue.type,
+                severity: issue.severity === 'error' ? 'error' : 'warn',
+                message: issue.label,
+                linkTab: issue.type === 'brokenInventoryLink' || issue.type === 'duplicate'
+                    ? 'use-log-tab'
+                    : 'buy-tracker-tab',
+                linkLabel: 'Open related section',
+                payload: issue.payload
+            });
+        }
+    });
+
+    (data.logs || []).forEach(log => {
+        if (weedLogNeedsProductTypeReview(log, data)) {
+            alerts.push({
+                id: `missing-ptype-${log.id}`,
+                type: 'missingProductType',
+                severity: 'warn',
+                message: `Log missing weed product type (${log.date || 'unknown date'})`,
+                linkTab: 'use-log-tab',
+                linkLabel: 'Open Log',
+                payload: { logId: log.id }
+            });
+        }
+    });
+
+    (data.purchases || []).forEach(purchase => {
+        if (purchase.needsStrengthInfo || weedEdiblePurchaseNeedsStrengthInfo(purchase)) {
+            alerts.push({
+                id: `missing-strength-${purchase.id}`,
+                type: 'missingStrength',
+                severity: 'warn',
+                message: `Purchase missing strength info (${purchase.date || purchase.id})`,
+                linkTab: 'buy-tracker-tab',
+                linkLabel: 'Open Inventory',
+                payload: { purchaseId: purchase.id }
+            });
+        }
+    });
+
+    inventoryGroups.forEach(group => {
+        group.items.forEach(item => {
+            if (item.daysRemaining != null && item.daysRemaining <= 7) {
+                alerts.push({
+                    id: `runout-${item.purchaseId}`,
+                    type: 'inventoryRunout',
+                    severity: item.daysRemaining <= 3 ? 'error' : 'warn',
+                    message: `${group.substanceName}: ${item.itemName} may run out in ~${item.daysRemaining} day(s)`,
+                    linkTab: 'buy-tracker-tab',
+                    linkLabel: 'Open Inventory',
+                    payload: { purchaseId: item.purchaseId }
+                });
+            }
+        });
+    });
+
+    goalStatuses.filter(g => g.nearLimit).forEach(g => {
+        alerts.push({
+            id: `goal-near-${g.substanceId}-${g.kind}`,
+            type: 'goalNearLimit',
+            severity: g.badge.level === 'risk' ? 'error' : 'warn',
+            message: `${g.name} ${g.kind} goal ${g.badge.label.toLowerCase()} (${formatAmount(g.used)} / ${formatAmount(g.target)})`,
+            linkTab: 'stats-tab',
+            linkLabel: 'Open Insights',
+            payload: { substanceId: g.substanceId }
+        });
+    });
+
+    activePlans.forEach(plan => {
+        if (plan.weeklyTarget != null && plan.actualUse != null && plan.actualUse > plan.weeklyTarget) {
+            alerts.push({
+                id: `plan-over-${plan.planId}`,
+                type: 'planAboveTarget',
+                severity: 'warn',
+                message: `${plan.substanceName} plan “${plan.planName}” is above weekly target`,
+                linkTab: 'taper-tab',
+                linkLabel: 'Open Plan',
+                payload: { planId: plan.planId, substanceId: plan.substanceId }
+            });
+        }
+        if (plan.spendingTarget != null && plan.actualSpending != null && plan.actualSpending > plan.spendingTarget) {
+            alerts.push({
+                id: `spend-over-${plan.planId}`,
+                type: 'spendingAboveBudget',
+                severity: 'warn',
+                message: `${plan.substanceName} spending is above this week’s budget`,
+                linkTab: 'taper-tab',
+                linkLabel: 'Open Plan',
+                payload: { planId: plan.planId }
+            });
+        }
+    });
+
+    return alerts.slice(0, 40);
+}
+
+function buildRecoveryTodayCard(data = appData) {
+    const today = getLocalDateString();
+    const bounds = { startDate: today, endDate: today };
+    const cur = getCurrencySymbol();
+    let purchases = 0;
+    let giftsGiven = 0;
+    let giftsReceived = 0;
+    let adjustments = 0;
+    let spending = 0;
+    const useLines = [];
+
+    getActiveSubstances(data).forEach(sub => {
+        const amt = getCanonicalUsageOnDate(sub.id, today, data);
+        if (amt > 0) {
+            useLines.push(`${getSubstanceDisplayName(sub, data)}: ${formatRecoveryUsageAmount(sub.id, amt, data)}`);
+        }
+    });
+
+    (data.logs || []).forEach(log => {
+        if (getLogDateStr(log) !== today) return;
+        if (isInventoryAdjustmentLog(log)) adjustments += 1;
+        if (isGiftGivenLog(log)) giftsGiven += 1;
+        if (isGiftReceivedLog(log)) giftsReceived += 1;
+    });
+
+    (data.purchases || []).forEach(p => {
+        if (getPurchaseDateStr(p) !== today) return;
+        purchases += 1;
+        if (purchaseCountsTowardSpend(p)) spending += getPurchaseSpendAmount(p);
+        if (purchaseIsPurchasedAsGift(p)) giftsGiven += 1;
+        if (getPurchaseAcquisitionType(p) === 'gift_received') giftsReceived += 1;
+    });
+
+    let remainingPlanned = null;
+    const plannedLines = [];
+    getActiveSubstances(data).forEach(sub => {
+        const daily = getDailyLimitForDate(sub.id, today);
+        if (daily == null) return;
+        const used = getCanonicalUsageOnDate(sub.id, today, data);
+        const rem = Math.max(0, daily - used);
+        plannedLines.push(`${getSubstanceDisplayName(sub, data)}: ${formatRecoveryUsageAmount(sub.id, rem, data)} left`);
+        remainingPlanned = (remainingPlanned || 0) + rem;
+    });
+
+    const goalsNear = buildRecoveryGoalStatuses(bounds, data).filter(g => g.nearLimit);
+
+    return {
+        useLoggedCount: useLines.length,
+        useLines,
+        purchasesToday: purchases,
+        giftsGivenToday: giftsGiven,
+        giftsReceivedToday: giftsReceived,
+        adjustmentsToday: adjustments,
+        remainingPlannedLabel: plannedLines.length ? plannedLines.join(' · ') : 'No daily plan limit set',
+        dailySpendingLabel: `${cur}${spending.toFixed(2)}`,
+        goalsNearLimit: goalsNear
+    };
+}
+
+function buildRecoverySummary(statusCards, goalStatuses, activePlans, milestones, bounds, data = appData) {
+    const cur = getCurrencySymbol();
+    const monthStart = getMonthStartDateStr(getLocalDateString());
+    const prevMonthEnd = addDaysYYYYMMDD(monthStart, -1);
+    const prevMonthStart = getMonthStartDateStr(prevMonthEnd);
+    let thisMonth = 0;
+    let lastMonth = 0;
+    (data.purchases || []).forEach(p => {
+        if (!purchaseCountsTowardSpend(p)) return;
+        const d = getPurchaseDateStr(p);
+        const cost = getPurchaseSpendAmount(p);
+        if (d >= monthStart) thisMonth += cost;
+        else if (d >= prevMonthStart && d <= prevMonthEnd) lastMonth += cost;
+    });
+    const spendDelta = thisMonth - lastMonth;
+    const spendCompare = lastMonth > 0
+        ? `${cur}${thisMonth.toFixed(2)} vs ${cur}${lastMonth.toFixed(2)} (${spendDelta >= 0 ? '+' : ''}${cur}${spendDelta.toFixed(2)})`
+        : `${cur}${thisMonth.toFixed(2)} this month`;
+
+    let longestNoUse = { days: 0, name: '—' };
+    let longestNoBuy = { days: 0, name: '—' };
+    statusCards.forEach(card => {
+        if (card.currentStreakDays > longestNoUse.days) {
+            longestNoUse = { days: card.currentStreakDays, name: card.name };
+        }
+        const noBuy = computeNoPurchaseStreakDays(card.substanceId, data);
+        if (noBuy.days > longestNoBuy.days) {
+            longestNoBuy = { days: noBuy.days, name: card.name };
+        }
+    });
+
+    const upcoming = milestones[0] || null;
+    return {
+        totalSubstances: statusCards.length,
+        substancesWithPlans: activePlans.length,
+        goalsOnTrack: goalStatuses.filter(g => g.onTrack && !g.nearLimit).length,
+        goalsNearLimit: goalStatuses.filter(g => g.nearLimit).length,
+        longestNoUseLabel: longestNoUse.days
+            ? `${longestNoUse.days}d (${longestNoUse.name})`
+            : '0 days',
+        longestNoPurchaseLabel: longestNoBuy.days
+            ? `${longestNoBuy.days}d (${longestNoBuy.name})`
+            : '0 days',
+        upcomingMilestone: upcoming
+            ? `${upcoming.name}${upcoming.substance && upcoming.substance !== 'All' ? ` · ${upcoming.substance}` : ''}`
+            : 'None yet',
+        monthlySpendCompare: spendCompare,
+        thisMonthSpend: thisMonth,
+        lastMonthSpend: lastMonth
+    };
+}
+
+function computeRecoveryScore(dataset, data = appData) {
+    const prefs = getRecoveryDashboardPrefs(data);
+    if (!prefs.scoreEnabled) {
+        return { enabled: false, available: false, score: null, factors: [], explanation: [] };
+    }
+
+    const { statusCards, goalStatuses, activePlans, summary, bounds } = dataset;
+    const hasLogs = (data.logs || []).some(l => logCountsTowardPersonalUseStats(l));
+    const hasEnough = statusCards.length > 0 && (hasLogs || activePlans.length > 0 || goalStatuses.length > 0);
+    if (!hasEnough) {
+        return {
+            enabled: true,
+            available: false,
+            score: null,
+            factors: [],
+            explanation: [
+                'Not enough data yet. Log use, set a goal, or create a plan to unlock the recovery score.',
+                'This score is an optional progress indicator, not a medical assessment.'
+            ]
+        };
+    }
+
+    const factors = {};
+    // Goal adherence
+    if (goalStatuses.length) {
+        const good = goalStatuses.filter(g => g.onTrack && !g.nearLimit).length;
+        const near = goalStatuses.filter(g => g.nearLimit).length;
+        factors.goalAdherence = Math.round(((good + near * 0.4) / goalStatuses.length) * 100);
+    } else {
+        factors.goalAdherence = null;
+    }
+
+    // Plan adherence
+    if (activePlans.length) {
+        const ok = activePlans.filter(p => {
+            if (p.weeklyTarget == null || p.actualUse == null) return true;
+            return p.actualUse <= p.weeklyTarget * 1.05;
+        }).length;
+        factors.planAdherence = Math.round((ok / activePlans.length) * 100);
+    } else {
+        factors.planAdherence = null;
+    }
+
+    // Sobriety streak progress toward 30 days
+    const bestStreak = Math.max(0, ...statusCards.map(c => c.currentStreakDays), 0);
+    factors.sobrietyProgress = Math.min(100, Math.round((bestStreak / 30) * 100));
+
+    // Reduction vs prior equal-length window
+    let reductionScores = [];
+    statusCards.forEach(card => {
+        const days = Math.max(1, countDaysInRange(bounds.startDate, bounds.endDate));
+        const prevEnd = addDaysYYYYMMDD(bounds.startDate, -1);
+        const prevStart = addDaysYYYYMMDD(prevEnd, -(days - 1));
+        const curr = getCanonicalUsageInRange(card.substanceId, bounds.startDate, bounds.endDate, data);
+        const prev = getCanonicalUsageInRange(card.substanceId, prevStart, prevEnd, data);
+        if (prev > 0) {
+            const ratio = Math.max(0, Math.min(1.5, curr / prev));
+            reductionScores.push(Math.round(Math.max(0, (1 - ratio) * 100 + 50)));
+        }
+    });
+    factors.reduction = reductionScores.length
+        ? Math.round(reductionScores.reduce((a, b) => a + b, 0) / reductionScores.length)
+        : null;
+
+    // Spending improvement
+    if (summary.lastMonthSpend > 0) {
+        const ratio = summary.thisMonthSpend / summary.lastMonthSpend;
+        factors.spending = Math.round(Math.max(0, Math.min(100, (1 - ratio) * 100 + 50)));
+    } else {
+        factors.spending = summary.thisMonthSpend === 0 ? 70 : null;
+    }
+
+    // Logging consistency: share of days in range with at least one personal-use-capable log activity or intentional no-use day after first log
+    const logDates = new Set(
+        (data.logs || [])
+            .filter(l => getLogDateStr(l) >= bounds.startDate && getLogDateStr(l) <= bounds.endDate)
+            .map(l => getLogDateStr(l))
+    );
+    const dayCount = Math.max(1, countDaysInRange(bounds.startDate, bounds.endDate));
+    factors.logging = Math.min(100, Math.round((logDates.size / dayCount) * 100));
+
+    const usable = RECOVERY_SCORE_FACTORS.filter(f => factors[f.key] != null);
+    if (usable.length < 3) {
+        return {
+            enabled: true,
+            available: false,
+            score: null,
+            factors: usable.map(f => ({ ...f, value: factors[f.key] })),
+            explanation: [
+                'Not enough overlapping metrics to calculate a fair score yet.',
+                'This score is an optional progress indicator, not a medical assessment.'
+            ]
+        };
+    }
+
+    const weightSum = usable.reduce((s, f) => s + f.weight, 0);
+    const score = Math.round(
+        usable.reduce((s, f) => s + factors[f.key] * (f.weight / weightSum), 0)
+    );
+
+    return {
+        enabled: true,
+        available: true,
+        score: Math.max(0, Math.min(100, score)),
+        factors: usable.map(f => ({ ...f, value: factors[f.key] })),
+        explanation: [
+            'Score blends goal adherence, plan adherence, sobriety streak progress, reduction vs the prior period, spending improvement, and logging consistency.',
+            'This is an optional progress indicator for your own tracking — not a medical assessment or diagnosis.'
+        ]
+    };
+}
+
+function buildRecoveryDashboardDataset(data = appData, options = {}) {
+    if (!data) data = appData;
+    const prefs = options.prefs || getRecoveryDashboardPrefs(data);
+    const bounds = options.bounds || resolveRecoveryDashboardBounds(prefs, data);
+    const statusCards = buildRecoveryStatusCards(bounds, data);
+    const goalStatuses = buildRecoveryGoalStatuses(bounds, data);
+    const activePlans = buildRecoveryActivePlans(data);
+    const inventoryGroups = buildRecoveryInventoryOverview(data);
+    const milestones = buildRecoveryMilestones(statusCards, activePlans, bounds, data);
+    const alerts = buildRecoveryAlerts(goalStatuses, activePlans, inventoryGroups, data);
+    const todayCard = buildRecoveryTodayCard(data);
+    const summary = buildRecoverySummary(statusCards, goalStatuses, activePlans, milestones, bounds, data);
+    const dataset = {
+        prefs,
+        bounds,
+        statusCards,
+        goalStatuses,
+        activePlans,
+        inventoryGroups,
+        milestones,
+        alerts,
+        todayCard,
+        summary
+    };
+    dataset.score = computeRecoveryScore(dataset, data);
+    return dataset;
+}
+
+function openRecoveryQuickAction(action) {
+    switch (action) {
+        case 'personal-use':
+            switchTab('use-log-tab');
+            selectUseEntryType('quick');
+            setUseTransactionType('use');
+            break;
+        case 'session':
+            openUseLogSession();
+            break;
+        case 'shared':
+            switchTab('use-log-tab');
+            selectUseEntryType('quick');
+            setUseTransactionType('shared_use');
+            break;
+        case 'gift-given':
+            switchTab('use-log-tab');
+            selectUseEntryType('gift_adjustment');
+            setUseTransactionType('gift_given');
+            break;
+        case 'gift-received':
+            switchTab('use-log-tab');
+            selectUseEntryType('gift_adjustment');
+            setUseTransactionType('gift_received');
+            break;
+        case 'inventory':
+            openBuyTrackerModal();
+            break;
+        case 'adjustment':
+            switchTab('use-log-tab');
+            selectUseEntryType('gift_adjustment');
+            setUseTransactionType('inventory_adjustment');
+            break;
+        case 'goal':
+            switchTab('taper-tab');
+            showNewTaperPlan();
+            break;
+        case 'plan':
+            switchTab('taper-tab');
+            showNewTaperPlan();
+            break;
+        default:
+            break;
+    }
+}
+
+function followRecoveryAlert(alertId) {
+    const root = document.getElementById('rd-alerts');
+    const btn = root?.querySelector(`[data-alert-id="${alertId}"]`);
+    const tab = btn?.dataset.linkTab;
+    if (tab) switchTab(tab);
+}
+
+function rdProgressBar(pct, extraClass = '') {
+    const width = Math.max(0, Math.min(100, pct ?? 0));
+    return `<div class="rd-progress ${extraClass}"><div class="rd-progress-fill" style="width:${width}%"></div></div>`;
+}
+
+function renderRecoveryDashboardDateControls(dataset) {
+    const prefs = dataset.prefs;
+    document.querySelectorAll('.rd-date-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.rdPreset === prefs.dateRangePreset);
+    });
+    const custom = document.getElementById('rd-custom-range');
+    if (custom) custom.classList.toggle('hidden', prefs.dateRangePreset !== 'custom');
+    const startEl = document.getElementById('rd-custom-start');
+    const endEl = document.getElementById('rd-custom-end');
+    if (startEl) startEl.value = prefs.customStart || dataset.bounds.startDate;
+    if (endEl) endEl.value = prefs.customEnd || dataset.bounds.endDate;
+    const label = document.getElementById('rd-range-label');
+    if (label) {
+        label.textContent = `${RECOVERY_DASHBOARD_PRESETS[prefs.dateRangePreset] || 'Range'}: ${formatDate(dataset.bounds.startDate)} – ${formatDate(dataset.bounds.endDate)}`;
+    }
+}
+
+function renderRecoveryScoreCard(score) {
+    const el = document.getElementById('rd-score-card');
+    const section = document.getElementById('rd-section-score');
+    if (!el || !section) return;
+    if (!score.enabled) {
+        section.classList.add('hidden');
+        return;
+    }
+    section.classList.remove('hidden');
+    if (!score.available) {
+        el.innerHTML = `
+            <p class="rd-score-unavailable">${escapeHtml(score.explanation[0] || 'Insufficient data')}</p>
+            <p class="rd-section-hint">${escapeHtml(score.explanation[1] || '')}</p>
+        `;
+        return;
+    }
+    el.innerHTML = `
+        <div class="rd-score-main">
+            <strong class="rd-score-value">${score.score}</strong>
+            <span class="rd-score-max">/ 100</span>
+        </div>
+        ${rdProgressBar(score.score, 'rd-score-bar')}
+        <ul class="rd-score-factors">
+            ${score.factors.map(f => `<li><span>${escapeHtml(f.label)}</span><strong>${f.value}</strong></li>`).join('')}
+        </ul>
+        <p class="rd-section-hint">${escapeHtml(score.explanation.join(' '))}</p>
+    `;
+}
+
+function renderRecoverySummaryGrid(summary) {
+    const el = document.getElementById('rd-summary-grid');
+    if (!el) return;
+    const tiles = [
+        ['Substances tracked', summary.totalSubstances],
+        ['Active plans', summary.substancesWithPlans],
+        ['Goals on track', summary.goalsOnTrack],
+        ['Goals near limit', summary.goalsNearLimit],
+        ['Longest no-use streak', summary.longestNoUseLabel],
+        ['Longest no-purchase streak', summary.longestNoPurchaseLabel],
+        ['Upcoming milestone', summary.upcomingMilestone],
+        ['Monthly spending', summary.monthlySpendCompare]
+    ];
+    el.innerHTML = tiles.map(([label, value]) => `
+        <div class="rd-summary-tile">
+            <span>${escapeHtml(String(label))}</span>
+            <strong>${escapeHtml(String(value))}</strong>
+        </div>
+    `).join('');
+}
+
+function renderRecoveryTodayCard(todayCard) {
+    const el = document.getElementById('rd-today-card');
+    if (!el) return;
+    const goals = todayCard.goalsNearLimit.length
+        ? todayCard.goalsNearLimit.map(g => `${g.name} (${g.kind})`).join(', ')
+        : 'None';
+    el.innerHTML = `
+        <div class="rd-today-grid">
+            <div><span>Use logged today</span><strong>${todayCard.useLines.length ? escapeHtml(todayCard.useLines.join(' · ')) : 'None'}</strong></div>
+            <div><span>Purchases today</span><strong>${todayCard.purchasesToday}</strong></div>
+            <div><span>Gifts given</span><strong>${todayCard.giftsGivenToday}</strong></div>
+            <div><span>Gifts received</span><strong>${todayCard.giftsReceivedToday}</strong></div>
+            <div><span>Adjustments</span><strong>${todayCard.adjustmentsToday}</strong></div>
+            <div><span>Remaining planned</span><strong>${escapeHtml(todayCard.remainingPlannedLabel)}</strong></div>
+            <div><span>Daily spending</span><strong>${escapeHtml(todayCard.dailySpendingLabel)}</strong></div>
+            <div><span>Goals near limit</span><strong>${escapeHtml(goals)}</strong></div>
+        </div>
+    `;
+}
+
+function renderRecoveryStatusCards(cards) {
+    const el = document.getElementById('rd-status-cards');
+    if (!el) return;
+    if (!cards.length) {
+        el.innerHTML = '<p class="empty-hint">No active substances.</p>';
+        return;
+    }
+    el.innerHTML = cards.map(card => `
+        <article class="rd-status-card" style="border-top-color:${escapeHtml(card.color || 'var(--accent)')}">
+            <header class="rd-status-card-head">
+                <h4>${escapeHtml(card.icon || '')} ${escapeHtml(card.name)}</h4>
+            </header>
+            <dl class="rd-stat-list">
+                <div><dt>Current sobriety streak</dt><dd>${card.currentStreakDays} day${card.currentStreakDays === 1 ? '' : 's'}</dd></div>
+                <div><dt>Longest sobriety streak</dt><dd>${card.longestStreakDays} day${card.longestStreakDays === 1 ? '' : 's'}</dd></div>
+                <div><dt>Last use</dt><dd>${escapeHtml(card.lastUseLabel)}</dd></div>
+                <div><dt>Last purchase</dt><dd>${escapeHtml(card.lastPurchaseLabel)}</dd></div>
+                <div><dt>Used this week</dt><dd>${escapeHtml(card.usedWeekLabel)}</dd></div>
+                <div><dt>Used this month</dt><dd>${escapeHtml(card.usedMonthLabel)}</dd></div>
+                <div><dt>Used in selected range</dt><dd>${escapeHtml(card.usedRangeLabel)}</dd></div>
+                <div><dt>Spent this month</dt><dd>${escapeHtml(card.spentMonthLabel)}</dd></div>
+                <div><dt>Active inventory</dt><dd>${escapeHtml(card.inventoryLabel)}</dd></div>
+                <div><dt>Active taper</dt><dd>${escapeHtml(card.taperStatus)}</dd></div>
+            </dl>
+        </article>
+    `).join('');
+}
+
+function renderRecoveryActivePlans(plans) {
+    const el = document.getElementById('rd-active-plans');
+    if (!el) return;
+    if (!plans.length) {
+        el.innerHTML = '<p class="empty-hint">No active plans. Use Quick Actions to create one.</p>';
+        return;
+    }
+    const cur = getCurrencySymbol();
+    el.innerHTML = plans.map(plan => `
+        <article class="rd-plan-card">
+            <header>
+                <h4>${escapeHtml(plan.substanceName)} · ${escapeHtml(plan.planName)}</h4>
+                <span class="rd-pill">${escapeHtml(String(plan.status))}</span>
+            </header>
+            <dl class="rd-stat-list">
+                <div><dt>Current week</dt><dd>${escapeHtml(String(plan.currentWeek))}</dd></div>
+                <div><dt>Weekly target</dt><dd>${plan.weeklyTarget != null ? escapeHtml(formatAmountWithUnit(plan.weeklyTarget, plan.unit)) : '—'}</dd></div>
+                <div><dt>Actual use</dt><dd>${plan.actualUse != null ? escapeHtml(formatAmountWithUnit(plan.actualUse, plan.unit)) : '—'}</dd></div>
+                <div><dt>Difference</dt><dd>${plan.difference != null ? escapeHtml(formatAmount(plan.difference)) : '—'}</dd></div>
+                <div><dt>Spending target</dt><dd>${plan.spendingTarget != null ? `${cur}${Number(plan.spendingTarget).toFixed(2)}` : '—'}</dd></div>
+                <div><dt>Actual spending</dt><dd>${plan.actualSpending != null ? `${cur}${Number(plan.actualSpending).toFixed(2)}` : '—'}</dd></div>
+                <div><dt>Days remaining</dt><dd>${plan.daysRemaining}</dd></div>
+            </dl>
+            ${rdProgressBar(plan.progressPct ?? 0)}
+            <button type="button" class="secondary-btn btn-sm" onclick="openTaperPlanFromManage('${escapeHtml(plan.planId)}')">Open plan</button>
+        </article>
+    `).join('');
+}
+
+function renderRecoveryInventoryOverview(groups) {
+    const el = document.getElementById('rd-inventory-overview');
+    if (!el) return;
+    if (!groups.length) {
+        el.innerHTML = '<p class="empty-hint">No active inventory (Purchased as Gift excluded).</p>';
+        return;
+    }
+    el.innerHTML = groups.map(group => `
+        <div class="rd-inventory-group">
+            <h4>${escapeHtml(group.substanceName)}</h4>
+            <div class="rd-inventory-items">
+                ${group.items.map(item => `
+                    <article class="rd-inventory-item">
+                        <header>
+                            <strong>${escapeHtml(item.itemName)}</strong>
+                            <span class="rd-pill">${escapeHtml(item.status)}</span>
+                        </header>
+                        <dl class="rd-stat-list">
+                            <div><dt>Product type</dt><dd>${escapeHtml(item.productType)}</dd></div>
+                            <div><dt>Remaining</dt><dd>${escapeHtml(item.remainingLabel)}</dd></div>
+                            <div><dt>Percent remaining</dt><dd>${item.percentRemaining != null ? `${item.percentRemaining}%` : '—'}</dd></div>
+                            <div><dt>Est. days left</dt><dd>${item.daysRemaining != null ? item.daysRemaining : '—'}</dd></div>
+                            <div><dt>Est. depletion</dt><dd>${item.depletionDate ? escapeHtml(formatDate(item.depletionDate)) : '—'}</dd></div>
+                            <div><dt>Last linked use</dt><dd>${escapeHtml(item.lastLinkedUse)}</dd></div>
+                        </dl>
+                    </article>
+                `).join('')}
+            </div>
+        </div>
+    `).join('');
+}
+
+function renderRecoveryMilestones(milestones) {
+    const el = document.getElementById('rd-milestones');
+    if (!el) return;
+    if (!milestones.length) {
+        el.innerHTML = '<p class="empty-hint">Milestones will appear as you build streaks, plans, and spending history.</p>';
+        return;
+    }
+    el.innerHTML = milestones.map(m => `
+        <article class="rd-milestone-card">
+            <header>
+                <h4>${escapeHtml(m.name)}</h4>
+                <span>${escapeHtml(m.substance || '')}</span>
+            </header>
+            <p class="rd-milestone-meta">Progress: ${escapeHtml(String(m.current))} / ${escapeHtml(String(m.target))} · ${escapeHtml(m.timeRemaining || '')}</p>
+            ${m.targetDate ? `<p class="rd-milestone-meta">Target date: ${escapeHtml(formatDate(m.targetDate))}</p>` : ''}
+            ${rdProgressBar(m.progressPct)}
+        </article>
+    `).join('');
+}
+
+function renderRecoveryAlerts(alerts) {
+    const el = document.getElementById('rd-alerts');
+    if (!el) return;
+    if (!alerts.length) {
+        el.innerHTML = '<p class="empty-hint">No alerts right now.</p>';
+        return;
+    }
+    el.innerHTML = alerts.map(a => `
+        <div class="rd-alert rd-alert-${escapeHtml(a.severity)}" data-alert-id="${escapeHtml(a.id)}">
+            <div>
+                <strong>${escapeHtml(a.type.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()))}</strong>
+                <p>${escapeHtml(a.message)}</p>
+            </div>
+            <button type="button" class="secondary-btn btn-sm" data-link-tab="${escapeHtml(a.linkTab || '')}"
+                onclick="followRecoveryAlert('${escapeHtml(a.id)}')">${escapeHtml(a.linkLabel || 'Open')}</button>
+        </div>
+    `).join('');
+}
+
+function setRecoveryDashboardState({ loading = false, error = null, empty = false } = {}) {
+    document.getElementById('rd-loading')?.classList.toggle('hidden', !loading);
+    document.getElementById('rd-error')?.classList.toggle('hidden', !error);
+    document.getElementById('rd-empty')?.classList.toggle('hidden', !empty);
+    document.getElementById('rd-content')?.classList.toggle('hidden', loading || !!error || empty);
+    if (error) {
+        const msg = document.getElementById('rd-error-message');
+        if (msg) msg.textContent = error;
+    }
+}
+
+function renderRecoveryDashboard() {
+    const root = document.getElementById('recovery-dashboard');
+    if (!root) return;
+    syncRecoveryScoreSettingsToggle();
+    setRecoveryDashboardState({ loading: true });
+    try {
+        const dataset = buildRecoveryDashboardDataset();
+        if (!dataset.statusCards.length) {
+            setRecoveryDashboardState({ empty: true });
+            renderRecoveryDashboardDateControls(dataset);
+            return;
+        }
+        renderRecoveryDashboardDateControls(dataset);
+        renderRecoveryScoreCard(dataset.score);
+        renderRecoverySummaryGrid(dataset.summary);
+        renderRecoveryTodayCard(dataset.todayCard);
+        renderRecoveryStatusCards(dataset.statusCards);
+        renderRecoveryActivePlans(dataset.activePlans);
+        renderRecoveryInventoryOverview(dataset.inventoryGroups);
+        renderRecoveryMilestones(dataset.milestones);
+        renderRecoveryAlerts(dataset.alerts);
+        setRecoveryDashboardState({});
+    } catch (err) {
+        console.error('Recovery dashboard failed', err);
+        setRecoveryDashboardState({ error: err?.message || 'Failed to render recovery dashboard.' });
+    }
+}
+
+
 function updateDashboard() {
     const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
 
@@ -21794,6 +23007,7 @@ function updateDashboard() {
     renderDashboardSummaryCards(dashSubId);
     renderVapeDashboardSection(dashSubId);
     renderDashboardRecoveryInsights();
+    renderRecoveryDashboard();
 }
 
 function formatBreakFromHours(hours) {
@@ -33691,6 +34905,7 @@ function __setTestAppData(data) {
     invalidateInsightsDatasetCache();
     ensureAppDataSubstancesReady(appData);
     ensureComparePeriodsPrefs(appData);
+    ensureRecoveryDashboardPrefs(appData);
     loadComparePeriodsPrefsIntoState(appData);
 }
 
@@ -34179,6 +35394,24 @@ function __getRecoveryTrackerTestExports() {
         ensureComparePeriodsPrefs,
         loadComparePeriodsPrefsIntoState,
         persistComparePeriodsPrefs,
+        ensureRecoveryDashboardPrefs,
+        getRecoveryDashboardPrefs,
+        persistRecoveryDashboardPrefs,
+        resolveRecoveryDashboardBounds,
+        buildRecoveryDashboardDataset,
+        buildRecoveryStatusCards,
+        buildRecoveryTodayCard,
+        buildRecoveryActivePlans,
+        buildRecoveryInventoryOverview,
+        buildRecoveryMilestones,
+        buildRecoveryAlerts,
+        computeRecoveryScore,
+        setRecoveryDashboardPreset,
+        setRecoveryScoreEnabled,
+        openRecoveryQuickAction,
+        purchaseCountsTowardSpend,
+        computeNoPurchaseStreakDays,
+        getWeedProductTypeUsageInRange,
         get statsComparePreset() { return statsComparePreset; },
         set statsComparePreset(v) { statsComparePreset = v; },
         get statsCompareChartView() { return statsCompareChartView; },

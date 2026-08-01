@@ -191,10 +191,11 @@
 
                 <header class="dash-header">
                     <div class="dash-header-top">
-                        <h2 class="dash-title">Home</h2>
+                        <h2 class="dash-title">Recovery Dashboard</h2>
                         <div class="dash-header-meta">
                             <p class="dash-main-substance" id="dashboard-main-substance">Main: —</p>
                             <p class="dash-viewing-label" id="dashboard-viewing-label"></p>
+                            <p class="last-saved-status dash-last-saved" id="dashboard-last-saved">Last Saved: Never</p>
                         </div>
                     </div>
                     <div class="form-group dash-substance-field">
@@ -202,6 +203,116 @@
                         <select id="dashboard-substance" onchange="switchSubstance(this.value)"></select>
                     </div>
                 </header>
+
+                <div id="recovery-dashboard" class="recovery-dashboard" aria-live="polite">
+                    <div class="rd-date-controls" id="rd-date-controls">
+                        <div class="rd-date-presets" role="group" aria-label="Dashboard date range">
+                            <button type="button" class="rd-date-btn" data-rd-preset="today" onclick="setRecoveryDashboardPreset('today')">Today</button>
+                            <button type="button" class="rd-date-btn" data-rd-preset="this-week" onclick="setRecoveryDashboardPreset('this-week')">This week</button>
+                            <button type="button" class="rd-date-btn" data-rd-preset="this-month" onclick="setRecoveryDashboardPreset('this-month')">This month</button>
+                            <button type="button" class="rd-date-btn" data-rd-preset="last-30" onclick="setRecoveryDashboardPreset('last-30')">Last 30 days</button>
+                            <button type="button" class="rd-date-btn" data-rd-preset="custom" onclick="setRecoveryDashboardPreset('custom')">Custom</button>
+                        </div>
+                        <div id="rd-custom-range" class="rd-custom-range hidden">
+                            <label class="rd-custom-field">
+                                <span>From</span>
+                                <input type="date" id="rd-custom-start" onchange="onRecoveryDashboardCustomRangeChange()">
+                            </label>
+                            <label class="rd-custom-field">
+                                <span>To</span>
+                                <input type="date" id="rd-custom-end" onchange="onRecoveryDashboardCustomRangeChange()">
+                            </label>
+                        </div>
+                        <p class="rd-range-label" id="rd-range-label"></p>
+                    </div>
+
+                    <div id="rd-loading" class="rd-state rd-loading hidden">Loading recovery dashboard…</div>
+                    <div id="rd-error" class="rd-state rd-error hidden">
+                        <p id="rd-error-message">Something went wrong loading the dashboard.</p>
+                        <button type="button" class="secondary-btn btn-sm" onclick="renderRecoveryDashboard()">Retry</button>
+                    </div>
+                    <div id="rd-empty" class="rd-state rd-empty hidden">
+                        <p>No substances to track yet. Add a substance in Settings to start your recovery dashboard.</p>
+                    </div>
+
+                    <div id="rd-content" class="rd-content hidden">
+                        <section class="rd-section" id="rd-section-score" aria-labelledby="rd-score-heading">
+                            <div class="rd-section-head">
+                                <h3 id="rd-score-heading">Recovery Score</h3>
+                                <p class="rd-section-hint">Optional progress indicator — not a medical assessment.</p>
+                            </div>
+                            <div id="rd-score-card" class="rd-score-card"></div>
+                        </section>
+
+                        <section class="rd-section" aria-labelledby="rd-summary-heading">
+                            <div class="rd-section-head">
+                                <h3 id="rd-summary-heading">Recovery Summary</h3>
+                            </div>
+                            <div id="rd-summary-grid" class="rd-summary-grid"></div>
+                        </section>
+
+                        <section class="rd-section" aria-labelledby="rd-today-heading">
+                            <div class="rd-section-head">
+                                <h3 id="rd-today-heading">Today</h3>
+                            </div>
+                            <div id="rd-today-card" class="rd-today-card"></div>
+                        </section>
+
+                        <section class="rd-section" aria-labelledby="rd-actions-heading">
+                            <div class="rd-section-head">
+                                <h3 id="rd-actions-heading">Quick Actions</h3>
+                            </div>
+                            <div class="rd-quick-actions" id="rd-quick-actions">
+                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('personal-use')">Log personal use</button>
+                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('session')">Log session</button>
+                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('shared')">Log shared use</button>
+                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('gift-given')">Log gift given</button>
+                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('gift-received')">Log gift received</button>
+                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('inventory')">Add inventory</button>
+                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('adjustment')">Add adjustment</button>
+                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('goal')">Create goal</button>
+                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('plan')">Create plan</button>
+                            </div>
+                        </section>
+
+                        <section class="rd-section" aria-labelledby="rd-status-heading">
+                            <div class="rd-section-head">
+                                <h3 id="rd-status-heading">Current Status</h3>
+                                <p class="rd-section-hint">One card per substance. Units are never mixed.</p>
+                            </div>
+                            <div id="rd-status-cards" class="rd-status-cards"></div>
+                        </section>
+
+                        <section class="rd-section" aria-labelledby="rd-plans-heading">
+                            <div class="rd-section-head">
+                                <h3 id="rd-plans-heading">Active Plans</h3>
+                            </div>
+                            <div id="rd-active-plans" class="rd-active-plans"></div>
+                        </section>
+
+                        <section class="rd-section" aria-labelledby="rd-inventory-heading">
+                            <div class="rd-section-head">
+                                <h3 id="rd-inventory-heading">Inventory Overview</h3>
+                                <p class="rd-section-hint">Purchased as Gift items are excluded from usable inventory.</p>
+                            </div>
+                            <div id="rd-inventory-overview" class="rd-inventory-overview"></div>
+                        </section>
+
+                        <section class="rd-section" aria-labelledby="rd-milestones-heading">
+                            <div class="rd-section-head">
+                                <h3 id="rd-milestones-heading">Upcoming Milestones</h3>
+                            </div>
+                            <div id="rd-milestones" class="rd-milestones"></div>
+                        </section>
+
+                        <section class="rd-section" aria-labelledby="rd-alerts-heading">
+                            <div class="rd-section-head">
+                                <h3 id="rd-alerts-heading">Alerts &amp; Data Warnings</h3>
+                            </div>
+                            <div id="rd-alerts" class="rd-alerts"></div>
+                        </section>
+                    </div>
+                </div>
 
                 <div id="substance-compare" class="substance-compare hidden"></div>
 
@@ -2282,6 +2393,11 @@
                             <p class="settings-hint">Choose which Home widgets to show. Grouped substance summaries are used for All Substances (no fake mixed-unit totals).</p>
                             <div id="dashboard-layout-editor" class="dashboard-layout-editor"></div>
                             <button type="button" class="secondary-btn" onclick="saveDashboardLayoutFromEditor()">Save Dashboard Layout</button>
+                            <label class="settings-toggle-row" for="settings-recovery-score-enabled">
+                                <input type="checkbox" id="settings-recovery-score-enabled" onchange="setRecoveryScoreEnabled(this.checked)">
+                                <span>Show Recovery Score on dashboard</span>
+                            </label>
+                            <p class="settings-hint">Optional 0–100 progress indicator based on goals, plans, streaks, reduction, spending, and logging. Not a medical assessment. Hidden when there is not enough data.</p>
                         </div>
                     </div>
                 </div>
