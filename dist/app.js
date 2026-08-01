@@ -3773,12 +3773,11 @@ function updateAlcoholUseFormUI() {
     document.getElementById('use-alcohol-entry-mode-block')?.classList.toggle('hidden', !isAlcohol || isNonUse);
     document.getElementById('use-alcohol-multiday-options')?.classList.toggle('hidden', !isMultiDay);
     document.getElementById('use-alcohol-custom-unit-group')?.classList.toggle('hidden', !isAlcohol || document.getElementById('use-unit')?.value !== 'custom');
-    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', !isAlcohol && !isNicotineTrackingMode(substanceId));
+    updateUseTransactionTypePillsVisibility();
 
     if (!isAlcohol) return;
 
     document.getElementById('use-log-form')?.classList.toggle('is-alcohol-multiday', isMultiDay);
-    document.getElementById('use-entry-type-group')?.classList.add('hidden');
 
     const dateLabel = document.getElementById('use-date-label');
     if (dateLabel) dateLabel.textContent = isMultiDay ? 'Start date' : 'Date';
@@ -11458,13 +11457,9 @@ function setUseTransactionType(tx) {
     const isAdjustment = tx === 'inventory_adjustment';
     const isNonUse = isGift || isAdjustment;
 
-    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isNonUse || isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm() || isLsdDateOnlyUseForm() || isXanaxDateOnlyUseForm() || isAlcoholTrackingMode(document.getElementById('use-substance')?.value));
     document.getElementById('use-adjustment-direction-group')?.classList.toggle('hidden', !isAdjustment);
     document.getElementById('use-gift-party-group')?.classList.toggle('hidden', !isGift);
     document.getElementById('use-shared-fields-group')?.classList.toggle('hidden', !isSharedUse);
-
-    const substanceIdForTx = document.getElementById('use-substance')?.value;
-    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', !isNicotineTrackingMode(substanceIdForTx) && !isAlcoholTrackingMode(substanceIdForTx));
 
     const partyLabel = document.getElementById('use-gift-party-label');
     if (partyLabel) partyLabel.textContent = isGiftReceived ? 'From' : 'Recipient Name';
@@ -11492,11 +11487,12 @@ function setUseTransactionType(tx) {
     document.querySelector('.use-log-core-card')?.classList.toggle('gift-adjustment-mode', isNonUse);
 
     if (isNonUse) {
-        setUseLogType('quick');
-    } else {
-        updateUseEndTimeVisibility();
+        const typeHidden = document.getElementById('use-type');
+        if (typeHidden) typeHidden.value = 'quick';
     }
+    updateUseEndTimeVisibility();
     updateVapeUseFormUI();
+    updateUseTransactionTypePillsVisibility();
     updateUsePurchaseLinkUI();
     updateNicotineSharedPreview();
     updateAlcoholSharedPreview();
@@ -14319,8 +14315,7 @@ function updateVapeUseFormUI() {
     document.getElementById('use-log-form')?.classList.toggle('is-vape-simple', isVape || isNicotineSimple);
     document.getElementById('use-log-form')?.classList.toggle('is-lsd-simple', isLsd);
     document.getElementById('use-log-form')?.classList.toggle('is-xanax-simple', isXanax);
-    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', isVape || isWeed || isLsd || isXanax || isNicotineSimple || isNonUse || isAlcohol);
-    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', !isNicotine && !isAlcohol);
+    updateUseTransactionTypePillsVisibility();
     document.getElementById('use-start-time-group')?.classList.toggle('hidden', isWeed || isVape || isNicotineSimple || (isNicotine && !isNonUse));
 
     const dateLabel = document.getElementById('use-date-label');
@@ -15733,6 +15728,66 @@ function isNonUseTransactionType(tx) {
     return tx === 'gift_given' || tx === 'gift_received' || tx === 'inventory_adjustment';
 }
 
+function shouldHideUseEntryTypeGroup(substanceId = document.getElementById('use-substance')?.value) {
+    const isNicotine = isNicotineTrackingMode(substanceId);
+    const nicotineProductType = isNicotine ? getUseFormNicotineProductType() : null;
+    const isVape = isNicotine ? nicotineProductType === 'vape' : isVapeTrackingMode(substanceId);
+    const isNicotineSimple = isNicotine && nicotineProductType !== 'vape' && nicotineProductType !== 'other';
+    return isVape
+        || isWeedTrackingMode(substanceId)
+        || isLsdSubstanceId(substanceId)
+        || isXanaxSubstanceId(substanceId)
+        || isNicotineSimple
+        || isAlcoholTrackingMode(substanceId);
+}
+
+function syncUseEntryTypeToggleActive() {
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    const activeType = isNonUseTransactionType(tx)
+        ? 'gift_adjustment'
+        : (document.getElementById('use-type')?.value || 'quick');
+    document.querySelectorAll('#use-entry-type-group .use-entry-toggle-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.type === activeType);
+    });
+}
+
+function updateUseTransactionTypePillsVisibility() {
+    const substanceId = document.getElementById('use-substance')?.value;
+    const isNicotine = isNicotineTrackingMode(substanceId);
+    const isAlcohol = isAlcoholTrackingMode(substanceId);
+    const hideEntryType = shouldHideUseEntryTypeGroup(substanceId);
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    const isGiftMode = isNonUseTransactionType(tx);
+    const supportsShared = isNicotine || isAlcohol;
+
+    document.getElementById('use-entry-type-group')?.classList.toggle('hidden', hideEntryType);
+
+    const showTxBlock = hideEntryType || isGiftMode || supportsShared;
+    document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', !showTxBlock);
+
+    document.querySelectorAll('.use-tx-pill').forEach(btn => {
+        const group = btn.dataset.txGroup
+            || ((btn.dataset.tx === 'gift_given'
+                || btn.dataset.tx === 'gift_received'
+                || btn.dataset.tx === 'inventory_adjustment')
+                ? 'gift'
+                : 'use');
+        const isSharedPill = btn.dataset.tx === 'shared_use';
+        let show = false;
+        if (hideEntryType) {
+            if (group === 'gift' || btn.dataset.tx === 'use') show = true;
+            if (isSharedPill && supportsShared) show = true;
+        } else if (isGiftMode) {
+            show = group === 'gift';
+        } else if (supportsShared) {
+            show = group === 'use';
+        }
+        btn.classList.toggle('hidden', !show);
+    });
+
+    syncUseEntryTypeToggleActive();
+}
+
 function isNicotineTrackingUseForm() {
     return isNicotineTrackingMode(document.getElementById('use-substance')?.value);
 }
@@ -15761,15 +15816,46 @@ function updateUseEndTimeVisibility() {
     }
 }
 
+function selectUseEntryType(type) {
+    if (type === 'gift_adjustment') {
+        setUseLogType('gift_adjustment');
+        return;
+    }
+    const tx = document.getElementById('use-transaction-type')?.value || 'use';
+    if (isNonUseTransactionType(tx)) {
+        const txHidden = document.getElementById('use-transaction-type');
+        if (txHidden) txHidden.value = 'use';
+        setUseLogType(type);
+        setUseTransactionType('use');
+        const typeHidden = document.getElementById('use-type');
+        if (typeHidden) typeHidden.value = type;
+        syncUseEntryTypeToggleActive();
+        return;
+    }
+    setUseLogType(type);
+}
+
 function setUseLogType(type) {
+    if (type === 'gift_adjustment') {
+        const typeHidden = document.getElementById('use-type');
+        if (typeHidden) typeHidden.value = 'quick';
+        const tx = document.getElementById('use-transaction-type')?.value || 'use';
+        if (!isNonUseTransactionType(tx)) {
+            setUseTransactionType('gift_given');
+        } else {
+            updateUseTransactionTypePillsVisibility();
+            updateUseEndTimeVisibility();
+            computeUseFormDuration();
+            syncCokeSessionEndDateDefault();
+        }
+        return;
+    }
     if (isWeedDateOnlyUseForm() || isVapeDateOnlyUseForm()) {
         type = 'quick';
     }
     const hidden = document.getElementById('use-type');
     if (hidden) hidden.value = type;
-    document.querySelectorAll('.use-entry-toggle-btn, .type-toggle-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.type === type);
-    });
+    syncUseEntryTypeToggleActive();
     const tx = document.getElementById('use-transaction-type')?.value || 'use';
     if (type === 'quick' && !isNonUseTransactionType(tx) && !isVapeSessionFormActive()) {
         const endEl = document.getElementById('use-end-time');
@@ -31054,6 +31140,13 @@ function __getRecoveryTrackerTestExports() {
         isPersonalUseLog,
         isGiftGivenLog,
         isGiftReceivedLog,
+        isNonUseTransactionType,
+        shouldHideUseEntryTypeGroup,
+        syncUseEntryTypeToggleActive,
+        updateUseTransactionTypePillsVisibility,
+        selectUseEntryType,
+        setUseLogType,
+        setUseTransactionType,
         applyLogInventoryEffect,
         persistUseLogEntry,
         commitUseLogEntry,

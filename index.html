@@ -437,14 +437,18 @@
                     </button>
                     <div class="section-content">
                 <form id="use-log-form" class="use-log-form">
-                    <div class="use-log-entry-toggle" id="use-entry-type-group">
-                        <button type="button" class="use-entry-toggle-btn type-toggle-btn active" data-type="quick" onclick="setUseLogType('quick')">
+                    <div class="use-log-entry-toggle use-entry-type-three" id="use-entry-type-group">
+                        <button type="button" class="use-entry-toggle-btn type-toggle-btn active" data-type="quick" onclick="selectUseEntryType('quick')">
                             <span class="use-entry-toggle-icon">⚡</span>
                             <span class="use-entry-toggle-label">Quick Use</span>
                         </button>
-                        <button type="button" class="use-entry-toggle-btn type-toggle-btn" data-type="session" onclick="setUseLogType('session')">
+                        <button type="button" class="use-entry-toggle-btn type-toggle-btn" data-type="session" onclick="selectUseEntryType('session')">
                             <span class="use-entry-toggle-icon">⏱️</span>
                             <span class="use-entry-toggle-label">Session</span>
+                        </button>
+                        <button type="button" class="use-entry-toggle-btn type-toggle-btn" data-type="gift_adjustment" onclick="selectUseEntryType('gift_adjustment')">
+                            <span class="use-entry-toggle-icon">🎁</span>
+                            <span class="use-entry-toggle-label">Gift / Adjustment</span>
                         </button>
                         <input type="hidden" id="use-type" value="quick">
                     </div>
@@ -452,11 +456,11 @@
                     <div class="use-log-field-block" id="use-transaction-type-block">
                         <span class="use-log-field-label">Transaction Type</span>
                         <div class="use-tx-pills" role="group" aria-label="Transaction type">
-                            <button type="button" class="use-tx-pill active" data-tx="use" onclick="setUseTransactionType('use')">Personal Use</button>
-                            <button type="button" class="use-tx-pill" data-tx="shared_use" onclick="setUseTransactionType('shared_use')">Shared Use</button>
-                            <button type="button" class="use-tx-pill" data-tx="gift_given" onclick="setUseTransactionType('gift_given')">Gift Given</button>
-                            <button type="button" class="use-tx-pill" data-tx="gift_received" onclick="setUseTransactionType('gift_received')">Gift Received</button>
-                            <button type="button" class="use-tx-pill" data-tx="inventory_adjustment" onclick="setUseTransactionType('inventory_adjustment')">Adjustment</button>
+                            <button type="button" class="use-tx-pill active" data-tx="use" data-tx-group="use" onclick="setUseTransactionType('use')">Personal Use</button>
+                            <button type="button" class="use-tx-pill" data-tx="shared_use" data-tx-group="use" onclick="setUseTransactionType('shared_use')">Shared Use</button>
+                            <button type="button" class="use-tx-pill" data-tx="gift_given" data-tx-group="gift" onclick="setUseTransactionType('gift_given')">Gift Given</button>
+                            <button type="button" class="use-tx-pill" data-tx="gift_received" data-tx-group="gift" onclick="setUseTransactionType('gift_received')">Gift Received</button>
+                            <button type="button" class="use-tx-pill" data-tx="inventory_adjustment" data-tx-group="gift" onclick="setUseTransactionType('inventory_adjustment')">Adjustment</button>
                         </div>
                         <input type="hidden" id="use-transaction-type" value="use">
                     </div>
