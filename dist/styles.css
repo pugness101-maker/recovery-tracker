@@ -8531,3 +8531,29 @@ body > .app-container {
     min-width: 150px;
     max-width: 160px;
 }
+
+/* Weed/THC log: keep Product type above Linked Inventory with clear stacking */
+#use-weed-product-type-group {
+    position: relative;
+    z-index: 2;
+    margin-bottom: 14px;
+}
+
+#use-inventory-core-anchor {
+    position: relative;
+    z-index: 1;
+    margin-top: 4px;
+}
+
+#use-inventory-core-anchor #use-inventory-fields-group,
+#use-inventory-fields-group {
+    position: relative;
+    z-index: 1;
+    margin-top: 8px;
+}
+
+#use-weed-product-type-group select,
+#use-inventory-fields-group select {
+    position: relative;
+    z-index: 1;
+}
