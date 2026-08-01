@@ -29,6 +29,17 @@ const RECOVERY_SCORE_FACTORS = Object.freeze([
     { key: 'spending', label: 'Spending improvement', weight: 0.12 },
     { key: 'logging', label: 'Logging consistency', weight: 0.12 }
 ]);
+const RECOVERY_DASHBOARD_SECTION_DEFAULTS = Object.freeze({
+    score: true,
+    summary: true,
+    today: false,
+    actions: false,
+    status: false,
+    plans: false,
+    inventory: true,
+    milestones: true,
+    alerts: false
+});
 
 let themePreference = 'dark';
 let resolvedTheme = 'dark';
@@ -7115,6 +7126,7 @@ function applyCollapsedSections() {
     const collapsed = appData.settings?.collapsedSections || {};
 
     document.querySelectorAll('.collapsible-section').forEach(section => {
+        if (section.dataset.rdSection) return;
         const key = section.dataset.section;
         if (!key) return;
         const isCollapsed = !!collapsed[key];
@@ -7129,6 +7141,7 @@ function applyCollapsedSections() {
         }
         if (chevron) chevron.textContent = isCollapsed ? '›' : '⌄';
     });
+    applyRecoveryDashboardCollapsedSections();
 }
 
 const TABLE_COLUMN_DEFAULTS = {
@@ -9818,6 +9831,9 @@ ensureAppDataSubstancesReady(appData);
 
 let currentSubstanceId = resolveStartupSubstanceId() || DASHBOARD_ALL;
 let selectedSubstanceId = resolveDefaultSelectedSubstanceId() || DASHBOARD_ALL;
+let selectedDashboardSubstance = currentSubstanceId || DASHBOARD_ALL;
+let recoveryDashboardDatasetCache = null;
+let recoveryDashboardDatasetCacheKey = null;
 let statsDateRangePreset = 'last-7';
 let statsCustomStartDate = '';
 let statsCustomEndDate = '';
@@ -10006,7 +10022,8 @@ function saveDashboardViewSubstanceId(substanceId) {
 
 function ensureDashboardSubstanceDropdownReady() {
     ensureAppDataSubstancesReady(appData);
-    currentSubstanceId = resolveDashboardViewSubstanceId();
+    selectedDashboardSubstance = getSelectedDashboardSubstance(appData);
+    currentSubstanceId = selectedDashboardSubstance;
     populateAllSubstanceDropdowns();
     syncSubstanceSelectors();
 
@@ -10027,12 +10044,16 @@ function ensureDashboardSubstanceDropdownReady() {
         syncSubstanceSelectors();
     }
 
-    if (dash && [...dash.options].some(o => o.value === currentSubstanceId)) {
-        dash.value = currentSubstanceId;
+    if (dash && [...dash.options].some(o => o.value === selectedDashboardSubstance)) {
+        dash.value = selectedDashboardSubstance;
+        currentSubstanceId = selectedDashboardSubstance;
     } else if (dash) {
         const fallback = getActiveSubstances()[0]?.id || DASHBOARD_ALL;
+        selectedDashboardSubstance = fallback;
         currentSubstanceId = fallback;
         dash.value = fallback;
+        persistRecoveryDashboardPrefs({ selectedDashboardSubstance: fallback });
+        saveDashboardViewSubstanceId(fallback);
     }
 }
 
@@ -10148,7 +10169,7 @@ function populateSelect(selectId, substances, { includeAll = false, currentValue
 
 function populateAllSubstanceDropdowns() {
     const active = getActiveSubstances();
-    const viewDefault = resolveDashboardViewSubstanceId();
+    const viewDefault = getSelectedDashboardSubstance();
     const mainId = getMainSubstanceId();
 
     populateSelect('dashboard-substance', active, { includeAll: true, currentValue: viewDefault });
@@ -10250,25 +10271,18 @@ function updateQuickActions() {
 }
 
 function switchSubstance(substanceId) {
-    currentSubstanceId = substanceId || DASHBOARD_ALL;
-    saveDashboardViewSubstanceId(currentSubstanceId);
-    const dashSelect = document.getElementById('dashboard-substance');
-    if (dashSelect) dashSelect.value = currentSubstanceId;
-    const statsSelect = document.getElementById('stats-substance');
-    if (statsSelect) statsSelect.value = currentSubstanceId;
-    updateDashboard();
-    checkTaperTarget();
-    updateQuickActions();
+    setSelectedDashboardSubstance(substanceId, { persist: true, render: true, syncStats: true });
 }
 
 function switchStatsSubstance(substanceId) {
-    currentSubstanceId = substanceId || DASHBOARD_ALL;
-    saveDashboardViewSubstanceId(currentSubstanceId);
+    setSelectedDashboardSubstance(substanceId, { persist: true, render: false, syncStats: false });
     const dash = document.getElementById('dashboard-substance');
-    if (dash) dash.value = substanceId;
+    if (dash) dash.value = selectedDashboardSubstance;
+    const statsSelect = document.getElementById('stats-substance');
+    if (statsSelect) statsSelect.value = selectedDashboardSubstance;
     const calSel = document.getElementById('stats-calendar-substance');
-    if (calSel && [...calSel.options].some(o => o.value === substanceId)) {
-        calSel.value = substanceId;
+    if (calSel && [...calSel.options].some(o => o.value === selectedDashboardSubstance)) {
+        calSel.value = selectedDashboardSubstance;
     }
     updateStats();
 }
@@ -21769,16 +21783,28 @@ function getLogDateStr(log) {
     return log?.date || log?.startDate || '';
 }
 
+function getDefaultRecoveryDashboardCollapsedSections() {
+    return {
+        desktop: { ...RECOVERY_DASHBOARD_SECTION_DEFAULTS },
+        mobile: { ...RECOVERY_DASHBOARD_SECTION_DEFAULTS }
+    };
+}
+
 function ensureRecoveryDashboardPrefs(data = appData) {
     if (!data.settings) data.settings = {};
     const defaults = {
         dateRangePreset: 'this-week',
         customStart: '',
         customEnd: '',
-        scoreEnabled: true
+        scoreEnabled: true,
+        selectedDashboardSubstance: null,
+        collapsedSections: getDefaultRecoveryDashboardCollapsedSections()
     };
     if (!data.settings.recoveryDashboard || typeof data.settings.recoveryDashboard !== 'object') {
-        data.settings.recoveryDashboard = { ...defaults };
+        data.settings.recoveryDashboard = {
+            ...defaults,
+            collapsedSections: getDefaultRecoveryDashboardCollapsedSections()
+        };
     }
     const prefs = data.settings.recoveryDashboard;
     if (!RECOVERY_DASHBOARD_PRESETS[prefs.dateRangePreset]) {
@@ -21787,6 +21813,24 @@ function ensureRecoveryDashboardPrefs(data = appData) {
     prefs.customStart = typeof prefs.customStart === 'string' ? prefs.customStart : '';
     prefs.customEnd = typeof prefs.customEnd === 'string' ? prefs.customEnd : '';
     prefs.scoreEnabled = prefs.scoreEnabled !== false;
+    if (prefs.selectedDashboardSubstance == null && data.settings.dashboardSubstanceId) {
+        prefs.selectedDashboardSubstance = data.settings.dashboardSubstanceId;
+    }
+    if (!prefs.collapsedSections || typeof prefs.collapsedSections !== 'object') {
+        prefs.collapsedSections = getDefaultRecoveryDashboardCollapsedSections();
+    }
+    ['desktop', 'mobile'].forEach(viewport => {
+        if (!prefs.collapsedSections[viewport] || typeof prefs.collapsedSections[viewport] !== 'object') {
+            prefs.collapsedSections[viewport] = { ...RECOVERY_DASHBOARD_SECTION_DEFAULTS };
+        }
+        Object.keys(RECOVERY_DASHBOARD_SECTION_DEFAULTS).forEach(key => {
+            if (prefs.collapsedSections[viewport][key] === undefined) {
+                prefs.collapsedSections[viewport][key] = RECOVERY_DASHBOARD_SECTION_DEFAULTS[key];
+            } else {
+                prefs.collapsedSections[viewport][key] = !!prefs.collapsedSections[viewport][key];
+            }
+        });
+    });
     return prefs;
 }
 
@@ -21799,6 +21843,176 @@ function persistRecoveryDashboardPrefs(patch = {}, data = appData) {
     Object.assign(prefs, patch);
     saveData(data);
     return prefs;
+}
+
+function invalidateRecoveryDashboardCache() {
+    recoveryDashboardDatasetCache = null;
+    recoveryDashboardDatasetCacheKey = null;
+}
+
+function getRecoveryDashboardViewportKey() {
+    if (typeof window !== 'undefined' && window.matchMedia) {
+        if (document.documentElement?.dataset?.viewLayout === 'phone') return 'mobile';
+        if (document.documentElement?.dataset?.viewLayout === 'laptop') return 'desktop';
+        if (window.matchMedia('(max-width: 640px)').matches) return 'mobile';
+    }
+    return 'desktop';
+}
+
+function getSelectedDashboardSubstance(data = appData) {
+    ensureRecoveryDashboardPrefs(data);
+    // Prefer persisted dashboard selection so refresh restores the user's choice.
+    // In-memory state is kept in sync by setSelectedDashboardSubstance.
+    const candidates = [
+        data.settings?.recoveryDashboard?.selectedDashboardSubstance,
+        data.settings?.dashboardSubstanceId,
+        selectedDashboardSubstance
+    ];
+    for (const candidate of candidates) {
+        if (candidate == null || candidate === '') continue;
+        if (candidate === DASHBOARD_ALL) return DASHBOARD_ALL;
+        if (substanceIsDashboardViewOption(candidate, data)) {
+            return normalizeSubstanceRef(candidate, data) || candidate;
+        }
+    }
+    const active = getActiveSubstances(data);
+    return active[0]?.id || DASHBOARD_ALL;
+}
+
+function isRecoveryDashboardAllSubstances(substanceId = null, data = appData) {
+    const selected = substanceId == null ? getSelectedDashboardSubstance(data) : substanceId;
+    return !selected || selected === DASHBOARD_ALL;
+}
+
+function getRecoveryDashboardSubstances(data = appData, substanceId = null) {
+    const selected = substanceId == null ? getSelectedDashboardSubstance(data) : substanceId;
+    const active = getActiveSubstances(data);
+    if (isRecoveryDashboardAllSubstances(selected, data)) return active;
+    const resolved = normalizeSubstanceRef(selected, data) || selected;
+    return active.filter(s => s.id === resolved);
+}
+
+function recoveryDashboardMatchesSubstance(recordSubstanceId, selectedId, data = appData) {
+    if (isRecoveryDashboardAllSubstances(selectedId, data)) return true;
+    if (!recordSubstanceId) return false;
+    const resolvedSelected = normalizeSubstanceRef(selectedId, data) || selectedId;
+    const resolvedRecord = normalizeSubstanceRef(recordSubstanceId, data) || recordSubstanceId;
+    return String(resolvedSelected) === String(resolvedRecord);
+}
+
+function setSelectedDashboardSubstance(substanceId, options = {}) {
+    const {
+        persist = true,
+        render = true,
+        syncStats = true,
+        data = appData
+    } = options;
+    ensureAppDataSubstancesReady(data);
+    let next = substanceId || DASHBOARD_ALL;
+    if (next !== DASHBOARD_ALL) {
+        next = normalizeSubstanceRef(next, data) || next;
+        if (!substanceIsDashboardViewOption(next, data)) {
+            next = getActiveSubstances(data)[0]?.id || DASHBOARD_ALL;
+        }
+    }
+    const previous = selectedDashboardSubstance;
+    selectedDashboardSubstance = next;
+    currentSubstanceId = next;
+    invalidateRecoveryDashboardCache();
+
+    if (persist) {
+        persistRecoveryDashboardPrefs({ selectedDashboardSubstance: next }, data);
+        saveDashboardViewSubstanceId(next);
+    }
+
+    const dashSelect = document.getElementById('dashboard-substance');
+    if (dashSelect) dashSelect.value = next;
+    if (syncStats) {
+        const statsSelect = document.getElementById('stats-substance');
+        if (statsSelect) statsSelect.value = next;
+    }
+
+    updateDashboardMainDisplay();
+    if (render) {
+        clearRecoveryDashboardRenderedContent();
+        setRecoveryDashboardState({ loading: true });
+        const loadingEl = document.getElementById('rd-loading');
+        if (loadingEl) {
+            const name = next === DASHBOARD_ALL
+                ? 'All Substances'
+                : (getSubstanceDisplayName(getSubstance(next, data), data) || next);
+            loadingEl.textContent = previous !== next
+                ? `Updating dashboard for ${name}…`
+                : 'Updating recovery dashboard…';
+        }
+        updateDashboard();
+        checkTaperTarget();
+        updateQuickActions();
+    }
+    return next;
+}
+
+function clearRecoveryDashboardRenderedContent() {
+    [
+        'rd-score-card', 'rd-summary-grid', 'rd-today-card', 'rd-status-cards',
+        'rd-active-plans', 'rd-inventory-overview', 'rd-milestones', 'rd-alerts'
+    ].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '';
+    });
+}
+
+function getRecoveryDashboardCollapsedMap(data = appData) {
+    const prefs = ensureRecoveryDashboardPrefs(data);
+    const viewport = getRecoveryDashboardViewportKey();
+    return prefs.collapsedSections[viewport];
+}
+
+function toggleRecoveryDashboardSection(sectionKey) {
+    if (!(sectionKey in RECOVERY_DASHBOARD_SECTION_DEFAULTS)) return;
+    const prefs = ensureRecoveryDashboardPrefs(appData);
+    const viewport = getRecoveryDashboardViewportKey();
+    const map = prefs.collapsedSections[viewport];
+    map[sectionKey] = !map[sectionKey];
+    saveData(appData);
+    applyRecoveryDashboardCollapsedSections();
+}
+
+function setAllRecoveryDashboardSectionsCollapsed(collapsed) {
+    const prefs = ensureRecoveryDashboardPrefs(appData);
+    const viewport = getRecoveryDashboardViewportKey();
+    Object.keys(RECOVERY_DASHBOARD_SECTION_DEFAULTS).forEach(key => {
+        prefs.collapsedSections[viewport][key] = !!collapsed;
+    });
+    saveData(appData);
+    applyRecoveryDashboardCollapsedSections();
+}
+
+function expandAllRecoveryDashboardSections() {
+    setAllRecoveryDashboardSectionsCollapsed(false);
+}
+
+function collapseAllRecoveryDashboardSections() {
+    setAllRecoveryDashboardSectionsCollapsed(true);
+}
+
+function applyRecoveryDashboardCollapsedSections() {
+    const map = getRecoveryDashboardCollapsedMap();
+    document.querySelectorAll('#recovery-dashboard [data-rd-section]').forEach(section => {
+        const key = section.dataset.rdSection;
+        if (!(key in RECOVERY_DASHBOARD_SECTION_DEFAULTS)) return;
+        const isCollapsed = !!map[key];
+        section.classList.toggle('collapsed', isCollapsed);
+        const toggle = section.querySelector('.rd-section-toggle');
+        const content = section.querySelector('.rd-section-body, .section-content');
+        const chevron = section.querySelector('.chevron');
+        if (toggle) toggle.setAttribute('aria-expanded', isCollapsed ? 'false' : 'true');
+        if (content) {
+            content.hidden = isCollapsed;
+            content.style.display = isCollapsed ? 'none' : '';
+        }
+        if (chevron) chevron.textContent = isCollapsed ? '›' : '⌄';
+    });
 }
 
 function setRecoveryScoreEnabled(enabled) {
@@ -22020,11 +22234,12 @@ function getLastLinkedUseForPurchase(purchase, data = appData) {
         .sort((a, b) => getLogDatetimeMs(b) - getLogDatetimeMs(a))[0] || null;
 }
 
-function buildRecoveryStatusCards(bounds, data = appData) {
+function buildRecoveryStatusCards(bounds, data = appData, options = {}) {
     const today = getLocalDateString();
     const weekStart = getWeekStartDateStr(today);
     const monthStart = getMonthStartDateStr(today);
-    return getActiveSubstances(data).map(sub => {
+    const substances = options.substances || getRecoveryDashboardSubstances(data, options.substanceId);
+    return substances.map(sub => {
         const sid = sub.id;
         const metrics = buildNormalizedSubstanceMetrics(sid, { today }, data);
         const streak = computeRecoveryStreakDays(sid);
@@ -22084,11 +22299,12 @@ function buildRecoveryStatusCards(bounds, data = appData) {
     });
 }
 
-function buildRecoveryGoalStatuses(bounds, data = appData) {
+function buildRecoveryGoalStatuses(bounds, data = appData, options = {}) {
     const today = getLocalDateString();
     const weekStart = getWeekStartDateStr(today);
     const statuses = [];
-    getActiveSubstances(data).forEach(sub => {
+    const substances = options.substances || getRecoveryDashboardSubstances(data, options.substanceId);
+    substances.forEach(sub => {
         const sid = sub.id;
         const weekUsed = getCanonicalUsageInRange(sid, weekStart, today, data);
         const weekGoal = getWeeklyLimit(sid, weekStart);
@@ -22126,11 +22342,15 @@ function buildRecoveryGoalStatuses(bounds, data = appData) {
     return statuses;
 }
 
-function buildRecoveryActivePlans(data = appData) {
+function buildRecoveryActivePlans(data = appData, options = {}) {
     ensureTaperPlansV2(data);
     const today = getLocalDateString();
+    const selectedId = options.substanceId == null
+        ? getSelectedDashboardSubstance(data)
+        : options.substanceId;
     return (data.taperPlansV2 || [])
         .filter(p => p.status === 'active')
+        .filter(p => recoveryDashboardMatchesSubstance(p.substanceId, selectedId, data))
         .map(plan => {
             const sub = getSubstance(plan.substanceId, data);
             const byWeek = buildTaperByWeekData(plan.substanceId, plan);
@@ -22162,9 +22382,10 @@ function buildRecoveryActivePlans(data = appData) {
         });
 }
 
-function buildRecoveryInventoryOverview(data = appData) {
+function buildRecoveryInventoryOverview(data = appData, options = {}) {
     const groups = [];
-    getActiveSubstances(data).forEach(sub => {
+    const substances = options.substances || getRecoveryDashboardSubstances(data, options.substanceId);
+    substances.forEach(sub => {
         const items = getActiveInventoryItems(sub.id, data).map(purchase => {
             const rem = getPurchaseRemainingDisplayAmount(purchase);
             const unit = getPurchaseRemainingDisplayUnit(purchase);
@@ -22205,9 +22426,12 @@ function buildRecoveryInventoryOverview(data = appData) {
     return groups;
 }
 
-function buildRecoveryMilestones(statusCards, activePlans, bounds, data = appData) {
+function buildRecoveryMilestones(statusCards, activePlans, bounds, data = appData, options = {}) {
     const milestones = [];
     const streakTargets = [7, 14, 30, 60, 90];
+    const selectedId = options.substanceId == null
+        ? getSelectedDashboardSubstance(data)
+        : options.substanceId;
     statusCards.forEach(card => {
         const nextUse = streakTargets.find(t => card.currentStreakDays < t);
         if (nextUse) {
@@ -22262,6 +22486,7 @@ function buildRecoveryMilestones(statusCards, activePlans, bounds, data = appDat
     let lastMonthSpend = 0;
     (data.purchases || []).forEach(p => {
         if (!purchaseCountsTowardSpend(p)) return;
+        if (!recoveryDashboardMatchesSubstance(getPurchaseSubstanceId(p), selectedId, data)) return;
         const d = getPurchaseDateStr(p);
         const cost = getPurchaseSpendAmount(p);
         if (d >= monthStart) thisMonthSpend += cost;
@@ -22270,11 +22495,14 @@ function buildRecoveryMilestones(statusCards, activePlans, bounds, data = appDat
     if (lastMonthSpend > 0) {
         const target = lastMonthSpend;
         const progress = Math.max(0, Math.min(100, Math.round((1 - (thisMonthSpend / target)) * 100)));
+        const spendLabel = isRecoveryDashboardAllSubstances(selectedId, data)
+            ? 'All (spending only)'
+            : (getSubstanceDisplayName(getSubstance(selectedId, data), data) || 'Selected');
         milestones.push({
             id: 'lowest-spend-month',
             name: 'Lowest spending month',
-            substance: 'All',
-            substanceId: null,
+            substance: spendLabel,
+            substanceId: isRecoveryDashboardAllSubstances(selectedId, data) ? null : selectedId,
             current: thisMonthSpend,
             target,
             progressPct: progress,
@@ -22290,12 +22518,30 @@ function buildRecoveryMilestones(statusCards, activePlans, bounds, data = appDat
         .slice(0, 12);
 }
 
-function buildRecoveryAlerts(goalStatuses, activePlans, inventoryGroups, data = appData) {
+function buildRecoveryAlerts(goalStatuses, activePlans, inventoryGroups, data = appData, options = {}) {
     const alerts = [];
+    const selectedId = options.substanceId == null
+        ? getSelectedDashboardSubstance(data)
+        : options.substanceId;
     const health = scanDataHealth(data);
     (health.issues || []).forEach(issue => {
         if (['duplicate', 'brokenInventoryLink', 'negativeRemaining'].includes(issue.type)
             || issue.severity === 'error') {
+            const linkedPurchase = issue.payload?.purchaseId
+                ? (data.purchases || []).find(p => String(p.id) === String(issue.payload.purchaseId))
+                : null;
+            const linkedLog = issue.payload?.logId
+                ? (data.logs || []).find(l => String(l.id) === String(issue.payload.logId))
+                : null;
+            const sid = issue.payload?.substanceId
+                || (linkedPurchase ? getPurchaseSubstanceId(linkedPurchase) : null)
+                || (linkedLog ? getUseSubstanceId(linkedLog) : null);
+            if (sid && !recoveryDashboardMatchesSubstance(sid, selectedId, data)) return;
+            if (!sid && !isRecoveryDashboardAllSubstances(selectedId, data)
+                && (issue.type === 'negativeRemaining' || issue.type === 'brokenInventoryLink')) {
+                // keep unscoped only in All view
+                return;
+            }
             alerts.push({
                 id: issue.id,
                 type: issue.type,
@@ -22311,6 +22557,7 @@ function buildRecoveryAlerts(goalStatuses, activePlans, inventoryGroups, data = 
     });
 
     (data.logs || []).forEach(log => {
+        if (!recoveryDashboardMatchesSubstance(getUseSubstanceId(log), selectedId, data)) return;
         if (weedLogNeedsProductTypeReview(log, data)) {
             alerts.push({
                 id: `missing-ptype-${log.id}`,
@@ -22325,6 +22572,7 @@ function buildRecoveryAlerts(goalStatuses, activePlans, inventoryGroups, data = 
     });
 
     (data.purchases || []).forEach(purchase => {
+        if (!recoveryDashboardMatchesSubstance(getPurchaseSubstanceId(purchase), selectedId, data)) return;
         if (purchase.needsStrengthInfo || weedEdiblePurchaseNeedsStrengthInfo(purchase)) {
             alerts.push({
                 id: `missing-strength-${purchase.id}`,
@@ -22394,10 +22642,14 @@ function buildRecoveryAlerts(goalStatuses, activePlans, inventoryGroups, data = 
     return alerts.slice(0, 40);
 }
 
-function buildRecoveryTodayCard(data = appData) {
+function buildRecoveryTodayCard(data = appData, options = {}) {
     const today = getLocalDateString();
     const bounds = { startDate: today, endDate: today };
     const cur = getCurrencySymbol();
+    const selectedId = options.substanceId == null
+        ? getSelectedDashboardSubstance(data)
+        : options.substanceId;
+    const substances = options.substances || getRecoveryDashboardSubstances(data, selectedId);
     let purchases = 0;
     let giftsGiven = 0;
     let giftsReceived = 0;
@@ -22405,7 +22657,7 @@ function buildRecoveryTodayCard(data = appData) {
     let spending = 0;
     const useLines = [];
 
-    getActiveSubstances(data).forEach(sub => {
+    substances.forEach(sub => {
         const amt = getCanonicalUsageOnDate(sub.id, today, data);
         if (amt > 0) {
             useLines.push(`${getSubstanceDisplayName(sub, data)}: ${formatRecoveryUsageAmount(sub.id, amt, data)}`);
@@ -22414,6 +22666,7 @@ function buildRecoveryTodayCard(data = appData) {
 
     (data.logs || []).forEach(log => {
         if (getLogDateStr(log) !== today) return;
+        if (!recoveryDashboardMatchesSubstance(getUseSubstanceId(log), selectedId, data)) return;
         if (isInventoryAdjustmentLog(log)) adjustments += 1;
         if (isGiftGivenLog(log)) giftsGiven += 1;
         if (isGiftReceivedLog(log)) giftsReceived += 1;
@@ -22421,6 +22674,7 @@ function buildRecoveryTodayCard(data = appData) {
 
     (data.purchases || []).forEach(p => {
         if (getPurchaseDateStr(p) !== today) return;
+        if (!recoveryDashboardMatchesSubstance(getPurchaseSubstanceId(p), selectedId, data)) return;
         purchases += 1;
         if (purchaseCountsTowardSpend(p)) spending += getPurchaseSpendAmount(p);
         if (purchaseIsPurchasedAsGift(p)) giftsGiven += 1;
@@ -22429,7 +22683,7 @@ function buildRecoveryTodayCard(data = appData) {
 
     let remainingPlanned = null;
     const plannedLines = [];
-    getActiveSubstances(data).forEach(sub => {
+    substances.forEach(sub => {
         const daily = getDailyLimitForDate(sub.id, today);
         if (daily == null) return;
         const used = getCanonicalUsageOnDate(sub.id, today, data);
@@ -22438,7 +22692,8 @@ function buildRecoveryTodayCard(data = appData) {
         remainingPlanned = (remainingPlanned || 0) + rem;
     });
 
-    const goalsNear = buildRecoveryGoalStatuses(bounds, data).filter(g => g.nearLimit);
+    const goalsNear = buildRecoveryGoalStatuses(bounds, data, { substanceId: selectedId, substances })
+        .filter(g => g.nearLimit);
 
     return {
         useLoggedCount: useLines.length,
@@ -22453,8 +22708,11 @@ function buildRecoveryTodayCard(data = appData) {
     };
 }
 
-function buildRecoverySummary(statusCards, goalStatuses, activePlans, milestones, bounds, data = appData) {
+function buildRecoverySummary(statusCards, goalStatuses, activePlans, milestones, bounds, data = appData, options = {}) {
     const cur = getCurrencySymbol();
+    const selectedId = options.substanceId == null
+        ? getSelectedDashboardSubstance(data)
+        : options.substanceId;
     const monthStart = getMonthStartDateStr(getLocalDateString());
     const prevMonthEnd = addDaysYYYYMMDD(monthStart, -1);
     const prevMonthStart = getMonthStartDateStr(prevMonthEnd);
@@ -22462,6 +22720,7 @@ function buildRecoverySummary(statusCards, goalStatuses, activePlans, milestones
     let lastMonth = 0;
     (data.purchases || []).forEach(p => {
         if (!purchaseCountsTowardSpend(p)) return;
+        if (!recoveryDashboardMatchesSubstance(getPurchaseSubstanceId(p), selectedId, data)) return;
         const d = getPurchaseDateStr(p);
         const cost = getPurchaseSpendAmount(p);
         if (d >= monthStart) thisMonth += cost;
@@ -22621,17 +22880,41 @@ function buildRecoveryDashboardDataset(data = appData, options = {}) {
     if (!data) data = appData;
     const prefs = options.prefs || getRecoveryDashboardPrefs(data);
     const bounds = options.bounds || resolveRecoveryDashboardBounds(prefs, data);
-    const statusCards = buildRecoveryStatusCards(bounds, data);
-    const goalStatuses = buildRecoveryGoalStatuses(bounds, data);
-    const activePlans = buildRecoveryActivePlans(data);
-    const inventoryGroups = buildRecoveryInventoryOverview(data);
-    const milestones = buildRecoveryMilestones(statusCards, activePlans, bounds, data);
-    const alerts = buildRecoveryAlerts(goalStatuses, activePlans, inventoryGroups, data);
-    const todayCard = buildRecoveryTodayCard(data);
-    const summary = buildRecoverySummary(statusCards, goalStatuses, activePlans, milestones, bounds, data);
+    const substanceId = options.substanceId !== undefined
+        ? options.substanceId
+        : getSelectedDashboardSubstance(data);
+    const cacheKey = [
+        substanceId || DASHBOARD_ALL,
+        bounds.startDate,
+        bounds.endDate,
+        bounds.preset,
+        prefs.scoreEnabled ? '1' : '0',
+        (data.logs || []).length,
+        (data.purchases || []).length,
+        (data.taperPlansV2 || []).length
+    ].join('|');
+    if (!options.bypassCache
+        && recoveryDashboardDatasetCache
+        && recoveryDashboardDatasetCacheKey === cacheKey) {
+        return recoveryDashboardDatasetCache;
+    }
+
+    const substances = getRecoveryDashboardSubstances(data, substanceId);
+    const scope = { substanceId, substances };
+    const statusCards = buildRecoveryStatusCards(bounds, data, scope);
+    const goalStatuses = buildRecoveryGoalStatuses(bounds, data, scope);
+    const activePlans = buildRecoveryActivePlans(data, scope);
+    const inventoryGroups = buildRecoveryInventoryOverview(data, scope);
+    const milestones = buildRecoveryMilestones(statusCards, activePlans, bounds, data, scope);
+    const alerts = buildRecoveryAlerts(goalStatuses, activePlans, inventoryGroups, data, scope);
+    const todayCard = buildRecoveryTodayCard(data, scope);
+    const summary = buildRecoverySummary(statusCards, goalStatuses, activePlans, milestones, bounds, data, scope);
     const dataset = {
         prefs,
         bounds,
+        substanceId,
+        substances,
+        isAllSubstances: isRecoveryDashboardAllSubstances(substanceId, data),
         statusCards,
         goalStatuses,
         activePlans,
@@ -22641,7 +22924,45 @@ function buildRecoveryDashboardDataset(data = appData, options = {}) {
         todayCard,
         summary
     };
-    dataset.score = computeRecoveryScore(dataset, data);
+
+    if (dataset.isAllSubstances && substances.length > 1) {
+        const bySubstance = substances.map(sub => {
+            const single = buildRecoveryDashboardDataset(data, {
+                prefs,
+                bounds,
+                substanceId: sub.id,
+                bypassCache: true,
+                scoreOnly: true
+            });
+            return {
+                substanceId: sub.id,
+                name: getSubstanceDisplayName(sub, data),
+                score: single.score
+            };
+        });
+        const overall = computeRecoveryScore(dataset, data);
+        dataset.score = {
+            ...overall,
+            mode: 'all',
+            label: 'Overall score (across selected substances; units are never mixed)',
+            bySubstance
+        };
+    } else {
+        const single = computeRecoveryScore(dataset, data);
+        dataset.score = {
+            ...single,
+            mode: 'single',
+            label: substances[0]
+                ? `${getSubstanceDisplayName(substances[0], data)} score`
+                : 'Recovery score',
+            bySubstance: []
+        };
+    }
+
+    if (!options.scoreOnly) {
+        recoveryDashboardDatasetCache = dataset;
+        recoveryDashboardDatasetCacheKey = cacheKey;
+    }
     return dataset;
 }
 
@@ -22714,38 +23035,53 @@ function renderRecoveryDashboardDateControls(dataset) {
     const endEl = document.getElementById('rd-custom-end');
     if (startEl) startEl.value = prefs.customStart || dataset.bounds.startDate;
     if (endEl) endEl.value = prefs.customEnd || dataset.bounds.endDate;
+    const rangeText = `${RECOVERY_DASHBOARD_PRESETS[prefs.dateRangePreset] || 'Range'}: ${formatDate(dataset.bounds.startDate)} – ${formatDate(dataset.bounds.endDate)}`;
     const label = document.getElementById('rd-range-label');
-    if (label) {
-        label.textContent = `${RECOVERY_DASHBOARD_PRESETS[prefs.dateRangePreset] || 'Range'}: ${formatDate(dataset.bounds.startDate)} – ${formatDate(dataset.bounds.endDate)}`;
-    }
+    if (label) label.textContent = rangeText;
+    const headerRange = document.getElementById('rd-header-range');
+    if (headerRange) headerRange.textContent = `Date range: ${formatDate(dataset.bounds.startDate)} – ${formatDate(dataset.bounds.endDate)}`;
 }
 
 function renderRecoveryScoreCard(score) {
     const el = document.getElementById('rd-score-card');
     const section = document.getElementById('rd-section-score');
     if (!el || !section) return;
-    if (!score.enabled) {
+    if (!score?.enabled) {
         section.classList.add('hidden');
         return;
     }
     section.classList.remove('hidden');
     if (!score.available) {
         el.innerHTML = `
-            <p class="rd-score-unavailable">${escapeHtml(score.explanation[0] || 'Insufficient data')}</p>
-            <p class="rd-section-hint">${escapeHtml(score.explanation[1] || '')}</p>
+            <p class="rd-score-unavailable">${escapeHtml(score.explanation?.[0] || 'Insufficient data')}</p>
+            <p class="rd-section-hint">${escapeHtml(score.explanation?.[1] || '')}</p>
         `;
         return;
     }
+    const bySubstanceHtml = (score.bySubstance || []).length
+        ? `<div class="rd-score-by-substance">
+            <h4>Score by substance</h4>
+            <ul class="rd-score-factors">
+                ${score.bySubstance.map(item => {
+                    const value = item.score?.available ? item.score.score : '—';
+                    return `<li><span>${escapeHtml(item.name)}</span><strong>${escapeHtml(String(value))}</strong></li>`;
+                }).join('')}
+            </ul>
+            <p class="rd-section-hint">Per-substance scores keep units separate. Overall score is labeled and does not mix incompatible amounts.</p>
+           </div>`
+        : '';
     el.innerHTML = `
+        <p class="rd-score-label">${escapeHtml(score.label || 'Recovery score')}</p>
         <div class="rd-score-main">
             <strong class="rd-score-value">${score.score}</strong>
             <span class="rd-score-max">/ 100</span>
         </div>
         ${rdProgressBar(score.score, 'rd-score-bar')}
         <ul class="rd-score-factors">
-            ${score.factors.map(f => `<li><span>${escapeHtml(f.label)}</span><strong>${f.value}</strong></li>`).join('')}
+            ${(score.factors || []).map(f => `<li><span>${escapeHtml(f.label)}</span><strong>${f.value}</strong></li>`).join('')}
         </ul>
-        <p class="rd-section-hint">${escapeHtml(score.explanation.join(' '))}</p>
+        ${bySubstanceHtml}
+        <p class="rd-section-hint">${escapeHtml((score.explanation || []).join(' '))}</p>
     `;
 }
 
@@ -22933,12 +23269,24 @@ function renderRecoveryDashboard() {
     const root = document.getElementById('recovery-dashboard');
     if (!root) return;
     syncRecoveryScoreSettingsToggle();
+    selectedDashboardSubstance = getSelectedDashboardSubstance();
+    const dash = document.getElementById('dashboard-substance');
+    if (dash && dash.value !== selectedDashboardSubstance) {
+        if ([...dash.options].some(o => o.value === selectedDashboardSubstance)) {
+            dash.value = selectedDashboardSubstance;
+        }
+    }
     setRecoveryDashboardState({ loading: true });
     try {
-        const dataset = buildRecoveryDashboardDataset();
+        invalidateRecoveryDashboardCache();
+        const dataset = buildRecoveryDashboardDataset(appData, {
+            substanceId: selectedDashboardSubstance,
+            bypassCache: true
+        });
         if (!dataset.statusCards.length) {
             setRecoveryDashboardState({ empty: true });
             renderRecoveryDashboardDateControls(dataset);
+            applyRecoveryDashboardCollapsedSections();
             return;
         }
         renderRecoveryDashboardDateControls(dataset);
@@ -22950,6 +23298,7 @@ function renderRecoveryDashboard() {
         renderRecoveryInventoryOverview(dataset.inventoryGroups);
         renderRecoveryMilestones(dataset.milestones);
         renderRecoveryAlerts(dataset.alerts);
+        applyRecoveryDashboardCollapsedSections();
         setRecoveryDashboardState({});
     } catch (err) {
         console.error('Recovery dashboard failed', err);
@@ -23094,9 +23443,10 @@ function updateDashboardMainDisplay() {
     const main = getMainSubstance();
     if (el) el.textContent = main ? `Main: ${getSubstanceDisplayName(main)}` : 'Main: —';
     if (viewingEl) {
-        viewingEl.textContent = isAllSubstancesView()
+        const selected = getSelectedDashboardSubstance();
+        viewingEl.textContent = selected === DASHBOARD_ALL
             ? 'Viewing: All Substances'
-            : `Viewing: ${getSubstanceDisplayName(getSubstance(currentSubstanceId))}`;
+            : `Viewing: ${getSubstanceDisplayName(getSubstance(selected)) || selected}`;
     }
 }
 
@@ -34903,9 +35253,12 @@ function __setTestAppData(data) {
     appData = data;
     appDataLoadedFromStorage = true;
     invalidateInsightsDatasetCache();
+    invalidateRecoveryDashboardCache();
     ensureAppDataSubstancesReady(appData);
     ensureComparePeriodsPrefs(appData);
     ensureRecoveryDashboardPrefs(appData);
+    selectedDashboardSubstance = getSelectedDashboardSubstance(appData);
+    currentSubstanceId = selectedDashboardSubstance;
     loadComparePeriodsPrefsIntoState(appData);
 }
 
@@ -34920,6 +35273,10 @@ function __getStorageSnapshot() {
 function __reloadTestAppDataFromStorage() {
     appData = loadData();
     ensureAppDataSubstancesReady(appData);
+    ensureRecoveryDashboardPrefs(appData);
+    invalidateRecoveryDashboardCache();
+    selectedDashboardSubstance = getSelectedDashboardSubstance(appData);
+    currentSubstanceId = selectedDashboardSubstance;
     return appData;
 }
 
@@ -35412,6 +35769,20 @@ function __getRecoveryTrackerTestExports() {
         purchaseCountsTowardSpend,
         computeNoPurchaseStreakDays,
         getWeedProductTypeUsageInRange,
+        getSelectedDashboardSubstance,
+        setSelectedDashboardSubstance,
+        getRecoveryDashboardSubstances,
+        isRecoveryDashboardAllSubstances,
+        invalidateRecoveryDashboardCache,
+        toggleRecoveryDashboardSection,
+        expandAllRecoveryDashboardSections,
+        collapseAllRecoveryDashboardSections,
+        applyRecoveryDashboardCollapsedSections,
+        getRecoveryDashboardCollapsedMap,
+        getRecoveryDashboardViewportKey,
+        DASHBOARD_ALL,
+        get selectedDashboardSubstance() { return selectedDashboardSubstance; },
+        set selectedDashboardSubstance(v) { selectedDashboardSubstance = v; },
         get statsComparePreset() { return statsComparePreset; },
         set statsComparePreset(v) { statsComparePreset = v; },
         get statsCompareChartView() { return statsCompareChartView; },

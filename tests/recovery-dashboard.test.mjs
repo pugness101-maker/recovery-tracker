@@ -67,9 +67,18 @@ function makePurchase(substanceId, overrides = {}) {
     };
 }
 
-function setup({ substances, logs = [], purchases = [], settings = {}, taperPlansV2 = [], recoveryStreaks = {} }) {
+function setup({
+    substances,
+    logs = [],
+    purchases = [],
+    settings = {},
+    taperPlansV2 = [],
+    recoveryStreaks = {},
+    selectedDashboardSubstance = null
+}) {
     const rt = loadRecoveryTrackerApp();
     rt.setTestReferenceDate(REFERENCE_DATE);
+    const selected = selectedDashboardSubstance ?? rt.DASHBOARD_ALL;
     rt.__setTestAppData({
         substances,
         logs,
@@ -79,13 +88,24 @@ function setup({ substances, logs = [], purchases = [], settings = {}, taperPlan
             currency: '$',
             substanceSettings: {},
             spreadPercentLeftUsage: true,
+            dashboardSubstanceId: selected,
             recoveryDashboard: {
                 dateRangePreset: 'this-week',
                 customStart: '',
                 customEnd: '',
-                scoreEnabled: true
+                scoreEnabled: true,
+                selectedDashboardSubstance: selected,
+                ...(settings.recoveryDashboard || {})
             },
-            ...settings
+            ...settings,
+            recoveryDashboard: {
+                dateRangePreset: 'this-week',
+                customStart: '',
+                customEnd: '',
+                scoreEnabled: true,
+                selectedDashboardSubstance: selected,
+                ...(settings.recoveryDashboard || {})
+            }
         },
         taperPlans: {},
         taperPlansV2,
@@ -93,7 +113,8 @@ function setup({ substances, logs = [], purchases = [], settings = {}, taperPlan
         privacy: { enabled: false, pinHash: '', autoLockMinutes: 5 },
         migrations: { inventoryLinkedV1: true, purchaseIdLinkV2: true, vapeInventoryLinkV2: true, taperPlansV2: true }
     });
-    rt.currentSubstanceId = substances[0]?.id || COKE_ID;
+    rt.selectedDashboardSubstance = selected;
+    rt.currentSubstanceId = selected;
     return rt;
 }
 
@@ -347,4 +368,129 @@ test('milestones and active plans surface from taper data', () => {
     assert.equal(dataset.activePlans[0].planName, 'Coke taper');
     assert.ok(dataset.milestones.length >= 1);
     assert.ok(dataset.summary.totalSubstances >= 1);
+});
+
+test('substance selector recalculates dashboard metrics and persists selection', () => {
+    const rt = setup({
+        substances: [makeSubstance('coke'), makeSubstance('weed'), makeSubstance('nicotine')],
+        logs: [
+            makeUseLog({ id: 'c1', substanceId: COKE_ID, date: '2026-07-30', amount: 0.4 }),
+            {
+                id: 'w1',
+                substanceId: WEED_ID,
+                date: '2026-07-31',
+                time: '10:00',
+                amount: 12,
+                estimatedPercentUsed: 12,
+                weedProductType: 'cart',
+                transactionType: 'use',
+                type: 'quick'
+            },
+            {
+                id: 'n1',
+                substanceId: NICOTINE_ID,
+                date: '2026-07-31',
+                time: '12:00',
+                amount: 2400,
+                transactionType: 'use',
+                type: 'quick',
+                nicotineProductType: 'vape'
+            }
+        ],
+        purchases: [
+            makePurchase(COKE_ID, { id: 'pc', remainingAmount: 2, totalCost: 80, date: '2026-07-20' }),
+            makePurchase(WEED_ID, {
+                id: 'pw',
+                remainingAmount: 40,
+                quantityBought: 100,
+                unit: '%',
+                weedProductType: 'cart',
+                totalCost: 45,
+                date: '2026-07-21'
+            }),
+            makePurchase(NICOTINE_ID, {
+                id: 'pn',
+                remainingAmount: 1000,
+                quantityBought: 5000,
+                unit: 'puffs',
+                totalCost: 25,
+                date: '2026-07-22',
+                nicotineProductType: 'vape'
+            })
+        ],
+        selectedDashboardSubstance: COKE_ID
+    });
+
+    rt.setSelectedDashboardSubstance(COKE_ID, { persist: true, render: false });
+    const coke = rt.buildRecoveryDashboardDataset(undefined, { substanceId: COKE_ID, bypassCache: true });
+    assert.equal(coke.statusCards.length, 1);
+    assert.equal(coke.statusCards[0].substanceId, COKE_ID);
+    assert.match(coke.statusCards[0].usedWeekLabel, /0\.4|0\.40/);
+    assert.equal(coke.inventoryGroups.every(g => g.substanceId === COKE_ID), true);
+
+    rt.setSelectedDashboardSubstance(WEED_ID, { persist: true, render: false });
+    const weed = rt.buildRecoveryDashboardDataset(undefined, { substanceId: WEED_ID, bypassCache: true });
+    assert.equal(weed.statusCards.length, 1);
+    assert.equal(weed.statusCards[0].substanceId, WEED_ID);
+    assert.notEqual(weed.statusCards[0].usedWeekLabel, coke.statusCards[0].usedWeekLabel);
+    assert.ok(weed.statusCards[0].usedWeekLabel.includes('%') || weed.statusCards[0].name.includes('Weed'));
+    assert.equal(weed.statusCards.some(c => c.substanceId === COKE_ID), false);
+
+    rt.setSelectedDashboardSubstance(NICOTINE_ID, { persist: true, render: false });
+    const nic = rt.buildRecoveryDashboardDataset(undefined, { substanceId: NICOTINE_ID, bypassCache: true });
+    assert.equal(nic.statusCards.length, 1);
+    assert.equal(nic.statusCards[0].substanceId, NICOTINE_ID);
+    assert.ok(nic.statusCards[0].usedWeekLabel.toLowerCase().includes('puff'));
+    assert.equal(nic.statusCards.some(c => c.substanceId === COKE_ID || c.substanceId === WEED_ID), false);
+    assert.equal(nic.inventoryGroups.some(g => g.substanceId === COKE_ID || g.substanceId === WEED_ID), false);
+
+    rt.setSelectedDashboardSubstance(rt.DASHBOARD_ALL, { persist: true, render: false });
+    const all = rt.buildRecoveryDashboardDataset(undefined, { substanceId: rt.DASHBOARD_ALL, bypassCache: true });
+    assert.equal(all.isAllSubstances, true);
+    const allIds = all.statusCards.map(c => c.substanceId);
+    assert.ok(allIds.includes(COKE_ID));
+    assert.ok(allIds.includes(WEED_ID));
+    assert.ok(allIds.includes(NICOTINE_ID));
+    assert.equal(new Set(allIds).size, allIds.length);
+    assert.equal(all.score.mode, 'all');
+    assert.ok((all.score.bySubstance || []).length >= 1);
+    const cokeCard = all.statusCards.find(c => c.substanceId === COKE_ID);
+    const weedCard = all.statusCards.find(c => c.substanceId === WEED_ID);
+    assert.notEqual(cokeCard.usedWeekLabel, weedCard.usedWeekLabel);
+    assert.ok(!String(cokeCard.usedWeekLabel).toLowerCase().includes('puff'));
+    assert.ok(!String(weedCard.usedWeekLabel).includes('0.4'));
+
+    assert.equal(rt.getSelectedDashboardSubstance(), rt.DASHBOARD_ALL);
+    const stored = JSON.parse(rt.localStorage.getItem('recovery-tracker-v2'));
+    assert.equal(stored.settings.recoveryDashboard.selectedDashboardSubstance, rt.DASHBOARD_ALL);
+    assert.equal(stored.settings.dashboardSubstanceId, rt.DASHBOARD_ALL);
+
+    const reloaded = loadRecoveryTrackerApp();
+    reloaded.setTestReferenceDate(REFERENCE_DATE);
+    reloaded.localStorage.store = rt.localStorage.store;
+    reloaded.__reloadTestAppDataFromStorage();
+    reloaded.selectedDashboardSubstance = reloaded.getSelectedDashboardSubstance();
+    assert.equal(reloaded.getSelectedDashboardSubstance(), rt.DASHBOARD_ALL);
+});
+
+test('recovery dashboard section collapse state persists per viewport', () => {
+    const rt = setup({ substances: [makeSubstance('coke')] });
+    const prefs = rt.ensureRecoveryDashboardPrefs();
+    assert.equal(prefs.collapsedSections.desktop.status, false);
+    assert.equal(prefs.collapsedSections.desktop.score, true);
+    assert.equal(prefs.collapsedSections.mobile.alerts, false);
+
+    rt.getRecoveryDashboardCollapsedMap().score = false;
+    rt.persistRecoveryDashboardPrefs();
+    const raw = JSON.parse(rt.localStorage.getItem('recovery-tracker-v2'));
+    assert.equal(raw.settings.recoveryDashboard.collapsedSections.desktop.score, false);
+
+    rt.collapseAllRecoveryDashboardSections();
+    const collapsed = rt.getRecoveryDashboardCollapsedMap();
+    assert.equal(collapsed.today, true);
+    assert.equal(collapsed.alerts, true);
+    rt.expandAllRecoveryDashboardSections();
+    const expanded = rt.getRecoveryDashboardCollapsedMap();
+    assert.equal(expanded.score, false);
+    assert.equal(expanded.inventory, false);
 });

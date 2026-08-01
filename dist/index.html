@@ -194,13 +194,14 @@
                         <h2 class="dash-title">Recovery Dashboard</h2>
                         <div class="dash-header-meta">
                             <p class="dash-main-substance" id="dashboard-main-substance">Main: —</p>
-                            <p class="dash-viewing-label" id="dashboard-viewing-label"></p>
+                            <p class="dash-viewing-label" id="dashboard-viewing-label">Viewing: —</p>
+                            <p class="rd-header-range" id="rd-header-range">Date range: —</p>
                             <p class="last-saved-status dash-last-saved" id="dashboard-last-saved">Last Saved: Never</p>
                         </div>
                     </div>
                     <div class="form-group dash-substance-field">
                         <label for="dashboard-substance">Viewing</label>
-                        <select id="dashboard-substance" onchange="switchSubstance(this.value)"></select>
+                        <select id="dashboard-substance" onchange="setSelectedDashboardSubstance(this.value)"></select>
                     </div>
                 </header>
 
@@ -223,10 +224,16 @@
                                 <input type="date" id="rd-custom-end" onchange="onRecoveryDashboardCustomRangeChange()">
                             </label>
                         </div>
-                        <p class="rd-range-label" id="rd-range-label"></p>
+                        <div class="rd-controls-row">
+                            <p class="rd-range-label" id="rd-range-label"></p>
+                            <div class="rd-expand-controls">
+                                <button type="button" class="secondary-btn btn-sm" onclick="expandAllRecoveryDashboardSections()">Expand all</button>
+                                <button type="button" class="secondary-btn btn-sm" onclick="collapseAllRecoveryDashboardSections()">Collapse all</button>
+                            </div>
+                        </div>
                     </div>
 
-                    <div id="rd-loading" class="rd-state rd-loading hidden">Loading recovery dashboard…</div>
+                    <div id="rd-loading" class="rd-state rd-loading hidden">Updating dashboard for selected substance…</div>
                     <div id="rd-error" class="rd-state rd-error hidden">
                         <p id="rd-error-message">Something went wrong loading the dashboard.</p>
                         <button type="button" class="secondary-btn btn-sm" onclick="renderRecoveryDashboard()">Retry</button>
@@ -236,80 +243,107 @@
                     </div>
 
                     <div id="rd-content" class="rd-content hidden">
-                        <section class="rd-section" id="rd-section-score" aria-labelledby="rd-score-heading">
-                            <div class="rd-section-head">
-                                <h3 id="rd-score-heading">Recovery Score</h3>
+                        <section class="rd-section collapsible-section" id="rd-section-score" data-rd-section="score" aria-labelledby="rd-score-heading">
+                            <button type="button" class="section-toggle rd-section-toggle" id="rd-score-heading" onclick="toggleRecoveryDashboardSection('score')" aria-expanded="false" aria-controls="rd-score-body">
+                                <span>Recovery Score</span>
+                                <span class="chevron" aria-hidden="true">›</span>
+                            </button>
+                            <div id="rd-score-body" class="section-content rd-section-body">
                                 <p class="rd-section-hint">Optional progress indicator — not a medical assessment.</p>
-                            </div>
-                            <div id="rd-score-card" class="rd-score-card"></div>
-                        </section>
-
-                        <section class="rd-section" aria-labelledby="rd-summary-heading">
-                            <div class="rd-section-head">
-                                <h3 id="rd-summary-heading">Recovery Summary</h3>
-                            </div>
-                            <div id="rd-summary-grid" class="rd-summary-grid"></div>
-                        </section>
-
-                        <section class="rd-section" aria-labelledby="rd-today-heading">
-                            <div class="rd-section-head">
-                                <h3 id="rd-today-heading">Today</h3>
-                            </div>
-                            <div id="rd-today-card" class="rd-today-card"></div>
-                        </section>
-
-                        <section class="rd-section" aria-labelledby="rd-actions-heading">
-                            <div class="rd-section-head">
-                                <h3 id="rd-actions-heading">Quick Actions</h3>
-                            </div>
-                            <div class="rd-quick-actions" id="rd-quick-actions">
-                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('personal-use')">Log personal use</button>
-                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('session')">Log session</button>
-                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('shared')">Log shared use</button>
-                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('gift-given')">Log gift given</button>
-                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('gift-received')">Log gift received</button>
-                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('inventory')">Add inventory</button>
-                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('adjustment')">Add adjustment</button>
-                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('goal')">Create goal</button>
-                                <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('plan')">Create plan</button>
+                                <div id="rd-score-card" class="rd-score-card"></div>
                             </div>
                         </section>
 
-                        <section class="rd-section" aria-labelledby="rd-status-heading">
-                            <div class="rd-section-head">
-                                <h3 id="rd-status-heading">Current Status</h3>
+                        <section class="rd-section collapsible-section" data-rd-section="summary" aria-labelledby="rd-summary-heading">
+                            <button type="button" class="section-toggle rd-section-toggle" id="rd-summary-heading" onclick="toggleRecoveryDashboardSection('summary')" aria-expanded="false" aria-controls="rd-summary-body">
+                                <span>Recovery Summary</span>
+                                <span class="chevron" aria-hidden="true">›</span>
+                            </button>
+                            <div id="rd-summary-body" class="section-content rd-section-body">
+                                <div id="rd-summary-grid" class="rd-summary-grid"></div>
+                            </div>
+                        </section>
+
+                        <section class="rd-section collapsible-section" data-rd-section="today" aria-labelledby="rd-today-heading">
+                            <button type="button" class="section-toggle rd-section-toggle" id="rd-today-heading" onclick="toggleRecoveryDashboardSection('today')" aria-expanded="true" aria-controls="rd-today-body">
+                                <span>Today</span>
+                                <span class="chevron" aria-hidden="true">⌄</span>
+                            </button>
+                            <div id="rd-today-body" class="section-content rd-section-body">
+                                <div id="rd-today-card" class="rd-today-card"></div>
+                            </div>
+                        </section>
+
+                        <section class="rd-section collapsible-section" data-rd-section="actions" aria-labelledby="rd-actions-heading">
+                            <button type="button" class="section-toggle rd-section-toggle" id="rd-actions-heading" onclick="toggleRecoveryDashboardSection('actions')" aria-expanded="true" aria-controls="rd-actions-body">
+                                <span>Quick Actions</span>
+                                <span class="chevron" aria-hidden="true">⌄</span>
+                            </button>
+                            <div id="rd-actions-body" class="section-content rd-section-body">
+                                <div class="rd-quick-actions" id="rd-quick-actions">
+                                    <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('personal-use')">Log personal use</button>
+                                    <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('session')">Log session</button>
+                                    <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('shared')">Log shared use</button>
+                                    <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('gift-given')">Log gift given</button>
+                                    <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('gift-received')">Log gift received</button>
+                                    <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('inventory')">Add inventory</button>
+                                    <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('adjustment')">Add adjustment</button>
+                                    <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('goal')">Create goal</button>
+                                    <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('plan')">Create plan</button>
+                                </div>
+                            </div>
+                        </section>
+
+                        <section class="rd-section collapsible-section" data-rd-section="status" aria-labelledby="rd-status-heading">
+                            <button type="button" class="section-toggle rd-section-toggle" id="rd-status-heading" onclick="toggleRecoveryDashboardSection('status')" aria-expanded="true" aria-controls="rd-status-body">
+                                <span>Current Status</span>
+                                <span class="chevron" aria-hidden="true">⌄</span>
+                            </button>
+                            <div id="rd-status-body" class="section-content rd-section-body">
                                 <p class="rd-section-hint">One card per substance. Units are never mixed.</p>
+                                <div id="rd-status-cards" class="rd-status-cards"></div>
                             </div>
-                            <div id="rd-status-cards" class="rd-status-cards"></div>
                         </section>
 
-                        <section class="rd-section" aria-labelledby="rd-plans-heading">
-                            <div class="rd-section-head">
-                                <h3 id="rd-plans-heading">Active Plans</h3>
+                        <section class="rd-section collapsible-section" data-rd-section="plans" aria-labelledby="rd-plans-heading">
+                            <button type="button" class="section-toggle rd-section-toggle" id="rd-plans-heading" onclick="toggleRecoveryDashboardSection('plans')" aria-expanded="true" aria-controls="rd-plans-body">
+                                <span>Active Plans</span>
+                                <span class="chevron" aria-hidden="true">⌄</span>
+                            </button>
+                            <div id="rd-plans-body" class="section-content rd-section-body">
+                                <div id="rd-active-plans" class="rd-active-plans"></div>
                             </div>
-                            <div id="rd-active-plans" class="rd-active-plans"></div>
                         </section>
 
-                        <section class="rd-section" aria-labelledby="rd-inventory-heading">
-                            <div class="rd-section-head">
-                                <h3 id="rd-inventory-heading">Inventory Overview</h3>
+                        <section class="rd-section collapsible-section" data-rd-section="inventory" aria-labelledby="rd-inventory-heading">
+                            <button type="button" class="section-toggle rd-section-toggle" id="rd-inventory-heading" onclick="toggleRecoveryDashboardSection('inventory')" aria-expanded="false" aria-controls="rd-inventory-body">
+                                <span>Inventory Overview</span>
+                                <span class="chevron" aria-hidden="true">›</span>
+                            </button>
+                            <div id="rd-inventory-body" class="section-content rd-section-body">
                                 <p class="rd-section-hint">Purchased as Gift items are excluded from usable inventory.</p>
+                                <div id="rd-inventory-overview" class="rd-inventory-overview"></div>
                             </div>
-                            <div id="rd-inventory-overview" class="rd-inventory-overview"></div>
                         </section>
 
-                        <section class="rd-section" aria-labelledby="rd-milestones-heading">
-                            <div class="rd-section-head">
-                                <h3 id="rd-milestones-heading">Upcoming Milestones</h3>
+                        <section class="rd-section collapsible-section" data-rd-section="milestones" aria-labelledby="rd-milestones-heading">
+                            <button type="button" class="section-toggle rd-section-toggle" id="rd-milestones-heading" onclick="toggleRecoveryDashboardSection('milestones')" aria-expanded="false" aria-controls="rd-milestones-body">
+                                <span>Upcoming Milestones</span>
+                                <span class="chevron" aria-hidden="true">›</span>
+                            </button>
+                            <div id="rd-milestones-body" class="section-content rd-section-body">
+                                <div id="rd-milestones" class="rd-milestones"></div>
                             </div>
-                            <div id="rd-milestones" class="rd-milestones"></div>
                         </section>
 
-                        <section class="rd-section" aria-labelledby="rd-alerts-heading">
-                            <div class="rd-section-head">
-                                <h3 id="rd-alerts-heading">Alerts &amp; Data Warnings</h3>
+                        <section class="rd-section collapsible-section" data-rd-section="alerts" aria-labelledby="rd-alerts-heading">
+                            <button type="button" class="section-toggle rd-section-toggle" id="rd-alerts-heading" onclick="toggleRecoveryDashboardSection('alerts')" aria-expanded="true" aria-controls="rd-alerts-body">
+                                <span>Alerts &amp; Data Warnings</span>
+                                <span class="chevron" aria-hidden="true">⌄</span>
+                            </button>
+                            <div id="rd-alerts-body" class="section-content rd-section-body">
+                                <div id="rd-alerts" class="rd-alerts"></div>
                             </div>
-                            <div id="rd-alerts" class="rd-alerts"></div>
                         </section>
                     </div>
                 </div>

@@ -9179,3 +9179,66 @@ body > .app-container {
     }
 }
 
+
+.rd-header-range {
+    margin: 0;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.rd-controls-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.rd-expand-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.rd-section-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    text-align: left;
+    background: transparent;
+    border: none;
+    color: inherit;
+    padding: 4px 0;
+    cursor: pointer;
+}
+
+.rd-section-toggle span:first-child {
+    font-size: 1.05rem;
+    font-weight: 600;
+    color: var(--accent);
+}
+
+.rd-section.collapsed .rd-section-body {
+    display: none;
+}
+
+.rd-score-label {
+    margin: 0 0 6px;
+    font-size: 0.82rem;
+    color: var(--text-secondary);
+}
+
+.rd-score-by-substance {
+    margin-top: 12px;
+}
+
+.rd-score-by-substance h4 {
+    margin: 0 0 6px;
+    font-size: 0.9rem;
+}
+
+.rd-loading:not(.hidden) {
+    font-weight: 600;
+}
