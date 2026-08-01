@@ -3070,7 +3070,8 @@ function applyColumnPreset(tableKey, presetId) {
     saveTableColumnConfig(tableKey, {
         order: def.order,
         visible: def.visible,
-        widths: current.widths || TABLE_COLUMN_DEFAULTS[tableKey]?.widths || {}
+        widths: current.widths || TABLE_COLUMN_DEFAULTS[tableKey]?.widths || {},
+        customNames: current.customNames || {}
     }, variantKey);
     refreshTableAfterColumnChange(tableKey);
 }
@@ -6966,6 +6967,11 @@ function ensureAppDataSettings(data) {
         data.settings.laptopViewZoom ?? data.settings.appearanceZoom
     );
     data.settings.appearanceSpacing = normalizeAppearanceSpacing(data.settings.appearanceSpacing);
+    if (data.settings.useCustomNamesInCsvExport === undefined) {
+        data.settings.useCustomNamesInCsvExport = false;
+    } else {
+        data.settings.useCustomNamesInCsvExport = !!data.settings.useCustomNamesInCsvExport;
+    }
     ensureInsightPrefs(data);
     ensureComparePeriodsPrefs(data);
     ensureTableColumnSettings(data);
@@ -7760,9 +7766,11 @@ function migratePurchaseHistoryColumnSettingsIfNeeded() {
     loadPurchaseHistoryColumnSettings();
 }
 
+const COLUMN_CUSTOM_NAME_MAX_LENGTH = 40;
+
 function getDefaultColumnSettings(tableKey) {
     const defaults = TABLE_COLUMN_DEFAULTS[tableKey];
-    if (!defaults) return { order: [], visible: {}, widths: {} };
+    if (!defaults) return { order: [], visible: {}, widths: {}, customNames: {} };
     const visible = {};
     defaults.order.forEach(id => {
         visible[id] = !(defaults.hidden || []).includes(id);
@@ -7770,8 +7778,48 @@ function getDefaultColumnSettings(tableKey) {
     return {
         order: [...defaults.order],
         visible,
-        widths: { ...(defaults.widths || {}) }
+        widths: { ...(defaults.widths || {}) },
+        customNames: {}
     };
+}
+
+function sanitizeCustomColumnName(raw) {
+    if (raw == null) return '';
+    const trimmed = String(raw).trim().replace(/\s+/g, ' ');
+    if (!trimmed) return '';
+    return trimmed.slice(0, COLUMN_CUSTOM_NAME_MAX_LENGTH);
+}
+
+function normalizeCustomNamesMap(tableKey, storedNames, allowedIds = null) {
+    const defaults = TABLE_COLUMN_DEFAULTS[tableKey];
+    const allowed = new Set(allowedIds || defaults?.order || []);
+    const out = {};
+    if (!storedNames || typeof storedNames !== 'object' || Array.isArray(storedNames)) return out;
+    Object.entries(storedNames).forEach(([id, val]) => {
+        const mapped = tableKey === 'useHistory' ? remapUseHistoryColumnId(id) : id;
+        if (!allowed.has(mapped)) return;
+        const cleaned = sanitizeCustomColumnName(val);
+        if (cleaned) out[mapped] = cleaned;
+    });
+    return out;
+}
+
+function getUseCustomNamesInCsvExport(data = appData) {
+    ensureAppDataSettings(data);
+    return !!data.settings.useCustomNamesInCsvExport;
+}
+
+function setUseCustomNamesInCsvExport(enabled) {
+    ensureAppDataSettings(appData);
+    appData.settings.useCustomNamesInCsvExport = !!enabled;
+    saveData(appData);
+    const el = document.getElementById('settings-use-custom-names-in-csv');
+    if (el) el.checked = !!enabled;
+}
+
+function syncUseCustomNamesInCsvToggle() {
+    const el = document.getElementById('settings-use-custom-names-in-csv');
+    if (el) el.checked = getUseCustomNamesInCsvExport();
 }
 
 function remapUseHistoryColumnId(colId) {
@@ -7815,7 +7863,8 @@ function normalizeStoredColumnSettings(tableKey, stored) {
         });
     }
 
-    return { order, visible, widths };
+    const customNames = normalizeCustomNamesMap(tableKey, stored?.customNames, defaults.order);
+    return { order, visible, widths, customNames };
 }
 
 function migrateLegacyTableColumnsToLocalStorageIfNeeded(data = appData) {
@@ -7969,7 +8018,8 @@ function filterTaperByWeekColumnSettingsToCatalog(settings, substanceId, plan = 
             widths[id] = TABLE_COLUMN_DEFAULTS.taperByWeek.widths[id];
         }
     });
-    return { order, visible, widths };
+    const customNames = normalizeCustomNamesMap('taperByWeek', settings?.customNames, order);
+    return { order, visible, widths, customNames };
 }
 
 function getDefaultTaperByWeekColumnSettings(substanceId, plan) {
@@ -8667,27 +8717,31 @@ function renderColumnSettingsList(tableKey) {
         });
     }
 
+    const customNames = config.customNames || {};
     list.innerHTML = availableOrder.map(colId => {
         const checked = visible[colId] !== false;
         const disabled = required.has(colId) ? 'disabled checked' : (checked ? 'checked' : '');
         const reqNote = required.has(colId) ? ' <span class="column-required-tag">(required)</span>' : '';
-        const label = tableKey === 'taperByWeek'
-            ? getTaperByWeekColumnLabel(colId, plan, substanceId)
-            : (tableKey === 'useHistory'
-                ? getUseHistoryColumnLabel(colId, substanceId)
-                : getTableColumnLabelForSubstance(tableKey, colId, currentSubstanceId));
+        const defaultLabel = getDefaultColumnLabel(tableKey, colId, { substanceId, plan });
+        const customName = sanitizeCustomColumnName(customNames[colId]);
         const widthPx = getTableColumnWidthPx(tableKey, colId, variantKey);
         const widthControl = `<div class="column-settings-width">
             <label class="column-settings-width-label" for="column-width-${tableKey}-${colId}">Width</label>
             <input type="number" id="column-width-${tableKey}-${colId}" class="column-settings-width-input" data-col-id="${colId}" min="${getTableColumnMinWidth(tableKey, colId)}" step="1" value="${widthPx}">
             <span class="column-settings-width-hint">px</span>
         </div>`;
+        const nameControl = `<div class="column-settings-display-name">
+            <label class="column-settings-display-name-label" for="column-name-${tableKey}-${colId}">Display name</label>
+            <input type="text" id="column-name-${tableKey}-${colId}" class="column-settings-custom-name" data-col-id="${colId}" maxlength="${COLUMN_CUSTOM_NAME_MAX_LENGTH}" placeholder="${escapeAttr(defaultLabel)}" value="${escapeAttr(customName)}" aria-label="Display name for ${escapeAttr(defaultLabel)}">
+            <button type="button" class="secondary-btn btn-sm column-settings-reset-name" data-col-id="${colId}">Reset name</button>
+        </div>`;
         return `<li class="column-settings-item column-settings-item-with-width" draggable="true" data-col-id="${colId}">
             <span class="column-drag-handle" draggable="true" aria-hidden="true">☰</span>
             <label class="column-settings-label">
                 <input type="checkbox" class="column-settings-visible" data-col-id="${colId}" ${disabled}>
-                ${label}${reqNote}
+                <span class="column-settings-internal-key" title="Internal key: ${escapeAttr(colId)}">${escapeHtml(defaultLabel)}${reqNote}</span>
             </label>
+            ${nameControl}
             ${widthControl}
         </li>`;
     }).join('');
@@ -8762,20 +8816,35 @@ function readColumnSettingsFromModal(tableKey) {
             widths[colId] = Math.max(getTableColumnMinWidth(tableKey, colId), px);
         }
     });
+    const customNames = { ...(previous.customNames || {}) };
+    // Drop names for rows currently in the modal, then re-apply from inputs.
+    order.forEach(id => { delete customNames[id]; });
+    list.querySelectorAll('.column-settings-custom-name').forEach(input => {
+        const colId = input.dataset.colId;
+        if (!colId) return;
+        const cleaned = sanitizeCustomColumnName(input.value);
+        if (cleaned) customNames[colId] = cleaned;
+        else delete customNames[colId];
+    });
     if (tableKey === 'taperByWeek') {
         return filterTaperByWeekColumnSettingsToCatalog(
-            { order, visible, widths },
+            { order, visible, widths, customNames },
             getTaperSubstanceId(),
             getSelectedTaperPlan()
         );
     }
     if (tableKey === 'useHistory') {
         return filterUseHistoryColumnSettingsToCatalog(
-            { order, visible, widths },
+            { order, visible, widths, customNames },
             getUseLogViewSubstanceId()
         );
     }
-    return { order, visible, widths };
+    return {
+        order,
+        visible,
+        widths,
+        customNames: normalizeCustomNamesMap(tableKey, customNames, order)
+    };
 }
 
 function refreshTableAfterColumnChange(tableKey) {
@@ -8980,6 +9049,22 @@ function resetColumnSettingsFromModal() {
     refreshTableAfterColumnChange(tableKey);
 }
 
+function resetColumnCustomNameInModal(colId) {
+    if (!colId || !columnSettingsTableKey) return;
+    const input = document.querySelector(
+        `#column-settings-list .column-settings-custom-name[data-col-id="${CSS.escape?.(colId) || colId}"]`
+    ) || [...document.querySelectorAll('#column-settings-list .column-settings-custom-name')]
+        .find(el => el.dataset.colId === colId);
+    if (input) input.value = '';
+}
+
+function resetAllColumnCustomNamesInModal() {
+    if (!columnSettingsTableKey) return;
+    document.querySelectorAll('#column-settings-list .column-settings-custom-name').forEach(input => {
+        input.value = '';
+    });
+}
+
 function setupColumnSettingsModal() {
     document.getElementById('use-history-customize-columns')?.addEventListener('click', () => {
         openColumnSettingsModal('useHistory', getUseHistoryColumnVariantKey());
@@ -9011,15 +9096,26 @@ function setupColumnSettingsModal() {
     document.getElementById('column-settings-close')?.addEventListener('click', closeColumnSettingsModal);
     document.getElementById('column-settings-apply')?.addEventListener('click', applyColumnSettingsFromModal);
     document.getElementById('column-settings-reset')?.addEventListener('click', resetColumnSettingsFromModal);
+    document.getElementById('column-settings-reset-all-names')?.addEventListener('click', resetAllColumnCustomNamesInModal);
     document.getElementById('column-settings-show-all')?.addEventListener('click', () => {
         if (columnSettingsTableKey) setColumnSettingsVisibilityInModal(columnSettingsTableKey, true);
     });
     document.getElementById('column-settings-hide-optional')?.addEventListener('click', () => {
         if (columnSettingsTableKey) setColumnSettingsVisibilityInModal(columnSettingsTableKey, false);
     });
+    document.getElementById('settings-use-custom-names-in-csv')?.addEventListener('change', (e) => {
+        setUseCustomNamesInCsvExport(!!e.target.checked);
+    });
 
     const list = document.getElementById('column-settings-list');
     if (!list) return;
+
+    list.addEventListener('click', e => {
+        const btn = e.target.closest?.('.column-settings-reset-name');
+        if (!btn) return;
+        e.preventDefault();
+        resetColumnCustomNameInModal(btn.dataset.colId);
+    });
 
     let dragItem = null;
 
@@ -9121,15 +9217,18 @@ function formatUseHistoryAmountHtml(entry) {
 }
 
 function renderUseHistoryHeaderCell(colId, substanceId = getUseLogViewSubstanceId()) {
-    const label = getUseHistoryColumnLabel(colId, substanceId);
+    const label = resolveColumnDisplayLabel('useHistory', colId, {
+        substanceId,
+        variantKey: getUseHistoryColumnVariantKey(substanceId)
+    });
     const resize = colId === 'select' ? '' : renderColumnResizeHandle('useHistory', colId, label);
     if (colId === 'select') {
-        return `<th class="use-history-cb-col" data-col="${colId}"><span class="sr-only">${label}</span></th>`;
+        return `<th class="use-history-cb-col" data-col="${colId}"><span class="sr-only">${escapeHtml(label)}</span></th>`;
     }
     if (colId === 'actions') {
-        return `<th class="actions-cell use-history-actions-header" data-col="${colId}"><span class="customizable-th-label">${label}</span>${resize}</th>`;
+        return `<th class="actions-cell use-history-actions-header" data-col="${colId}" title="${escapeAttr(label)}"><span class="customizable-th-label">${escapeHtml(label)}</span>${resize}</th>`;
     }
-    return `<th data-col="${colId}"><span class="customizable-th-label">${label}</span>${resize}</th>`;
+    return `<th data-col="${colId}" title="${escapeAttr(label)}"><span class="customizable-th-label">${escapeHtml(label)}</span>${resize}</th>`;
 }
 
 function formatUseHistoryTransactionType(log) {
@@ -9270,21 +9369,21 @@ function getPurchaseHistoryTableMinWidth(columns) {
 }
 
 function renderPurchaseHistoryHeaderCell(colId) {
-    const label = getPurchaseHistoryColumnLabel(colId);
+    const label = resolveColumnDisplayLabel('purchaseHistory', colId);
     const resize = colId === 'select' ? '' : renderColumnResizeHandle('purchaseHistory', colId, label);
     if (colId === 'select') {
         return `<th class="select-cell" data-col="${colId}"><input type="checkbox" id="inventory-select-all" aria-label="Select all"></th>`;
     }
     if (colId === 'actions') {
-        return `<th class="actions-cell" data-col="${colId}"><span class="customizable-th-label">${label}</span>${resize}</th>`;
+        return `<th class="actions-cell" data-col="${colId}" title="${escapeAttr(label)}"><span class="customizable-th-label">${escapeHtml(label)}</span>${resize}</th>`;
     }
     if (colId === 'flavor') {
         const sortInd = purchaseHistorySort.colId === 'flavor'
             ? (purchaseHistorySort.dir === 'asc' ? ' ↑' : ' ↓')
             : '';
-        return `<th data-col="${colId}" class="purchase-history-sortable" data-sort-col="flavor" role="button" tabindex="0" aria-label="Sort by flavor"><span class="customizable-th-label">${label}${sortInd}</span>${resize}</th>`;
+        return `<th data-col="${colId}" class="purchase-history-sortable" data-sort-col="flavor" role="button" tabindex="0" aria-label="Sort by ${escapeAttr(label)}" title="${escapeAttr(label)}"><span class="customizable-th-label">${escapeHtml(label)}${sortInd}</span>${resize}</th>`;
     }
-    return `<th data-col="${colId}"><span class="customizable-th-label">${label}</span>${resize}</th>`;
+    return `<th data-col="${colId}" title="${escapeAttr(label)}"><span class="customizable-th-label">${escapeHtml(label)}</span>${resize}</th>`;
 }
 
 function phTd(colId, content, className = '') {
@@ -9762,6 +9861,7 @@ function initializeApp() {
     setupSubstanceForm();
     setupStatsDateRange();
     setupStatsComparePeriods();
+    syncUseCustomNamesInCsvToggle();
     setDefaultUseLogDateTime();
     refreshAllRecoveryStreaks();
     updateQuickActions();
@@ -10728,6 +10828,45 @@ function getTableColumnLabelForSubstance(tableKey, colId, substanceId = currentS
         return vapeStatsLabels[colId] || labels[colId] || colId;
     }
     return labels[colId] || colId;
+}
+
+function getDefaultColumnLabel(tableKey, colId, {
+    substanceId = currentSubstanceId,
+    plan = null
+} = {}) {
+    if (tableKey === 'taperByWeek') {
+        return getTaperByWeekColumnLabel(colId, plan, substanceId);
+    }
+    if (tableKey === 'useHistory') {
+        return getUseHistoryColumnLabel(colId, substanceId === DASHBOARD_ALL ? null : substanceId);
+    }
+    if (tableKey === 'purchaseHistory') {
+        return getPurchaseHistoryColumnLabel(colId);
+    }
+    return getTableColumnLabelForSubstance(tableKey, colId, substanceId);
+}
+
+/** Display label with optional custom name. Internal colId is never changed. */
+function resolveColumnDisplayLabel(tableKey, colId, options = {}) {
+    const {
+        substanceId = currentSubstanceId,
+        plan = null,
+        variantKey = null,
+        forCsv = false,
+        config = null
+    } = options;
+    const defaultLabel = getDefaultColumnLabel(tableKey, colId, { substanceId, plan });
+    if (forCsv && !getUseCustomNamesInCsvExport()) return defaultLabel;
+    const resolvedVariant = variantKey != null
+        ? variantKey
+        : (tableKey === 'useHistory'
+            ? getUseHistoryColumnVariantKey(substanceId)
+            : (tableKey === 'taperByWeek'
+                ? getTaperByWeekColumnVariantKey(substanceId, plan)
+                : null));
+    const cfg = config || getTableColumnConfig(tableKey, resolvedVariant);
+    const custom = sanitizeCustomColumnName(cfg?.customNames?.[colId]);
+    return custom || defaultLabel;
 }
 
 function getLocalDateFromIso(isoString) {
@@ -13537,7 +13676,7 @@ function getDefaultUseHistoryColumnSettings(substanceId = getUseLogViewSubstance
     order.forEach(id => {
         widths[id] = base.widths?.[id] ?? TABLE_COLUMN_DEFAULTS.useHistory.widths?.[id];
     });
-    return { order, visible, widths };
+    return { order, visible, widths, customNames: {} };
 }
 
 function filterUseHistoryColumnSettingsToCatalog(settings, substanceId = getUseLogViewSubstanceId()) {
@@ -13564,10 +13703,11 @@ function filterUseHistoryColumnSettingsToCatalog(settings, substanceId = getUseL
     order.forEach(id => {
         if (settings?.widths?.[id] != null) widths[id] = settings.widths[id];
         else if (TABLE_COLUMN_DEFAULTS.useHistory.widths?.[id] != null) {
-            widths[id] = TABLE_COLUMN_DEFAULTS.useHistory.widths[id];
+            widths[id] = TABLE_COLUMN_DEFAULTS.useHistory.widths?.[id];
         }
     });
-    return { order, visible, widths };
+    const customNames = normalizeCustomNamesMap('useHistory', settings?.customNames, order);
+    return { order, visible, widths, customNames };
 }
 
 function getUseHistoryVisibleColumns(substanceId = getUseLogViewSubstanceId()) {
@@ -23432,22 +23572,22 @@ function renderConfigurableSheetTable(tableKey, rows, renderCell, substanceId = 
     const colgroup = buildTableColgroup(tableKey, order);
     let html = `<div class="table-scroll"><table class="sheet-table customizable-table" data-table-key="${tableKey}" style="min-width:${tableMinWidth}px;table-layout:fixed">${colgroup}<thead><tr>`;
     order.forEach(colId => {
-        const label = getTableColumnLabelForSubstance(tableKey, colId, substanceId);
+        const label = resolveColumnDisplayLabel(tableKey, colId, { substanceId });
         const tooltip = getTableColumnTooltip(tableKey, colId);
-        const titleAttr = tooltip ? ` title="${escapeAttr(tooltip)}"` : '';
+        const titleAttr = ` title="${escapeAttr(tooltip || label)}"`;
         const resize = renderColumnResizeHandle(tableKey, colId, label);
-        html += `<th data-col="${colId}"${titleAttr}><span class="customizable-th-label">${label}</span>${resize}</th>`;
+        html += `<th data-col="${colId}"${titleAttr}><span class="customizable-th-label">${escapeHtml(label)}</span>${resize}</th>`;
     });
     html += '</tr></thead><tbody>';
     rows.forEach(rowData => {
         html += '<tr>';
         order.forEach(colId => {
             const cell = renderCell(colId, rowData);
-            const label = getTableColumnLabelForSubstance(tableKey, colId, substanceId);
+            const label = resolveColumnDisplayLabel(tableKey, colId, { substanceId });
             if (cell && typeof cell === 'object' && cell.html) {
-                html += `<td data-col="${colId}" data-label="${escapeAttr(label)}">${cell.html}</td>`;
+                html += `<td data-col="${colId}" data-label="${escapeAttr(label)}" title="${escapeAttr(label)}">${cell.html}</td>`;
             } else {
-                html += `<td data-col="${colId}" data-label="${escapeAttr(label)}">${cell ?? '—'}</td>`;
+                html += `<td data-col="${colId}" data-label="${escapeAttr(label)}" title="${escapeAttr(String(cell ?? '—').replace(/<[^>]*>/g, ''))}">${cell ?? '—'}</td>`;
             }
         });
         html += '</tr>';
@@ -24690,7 +24830,17 @@ function buildStatsWeeklySummaryCsvRows(substanceId, bounds = null, data = appDa
     const summaries = getWeeklyTrackingSummaries(substanceId, bounds, data);
     const sub = getSubstance(substanceId, data);
     const displayUnit = getStatsDisplayUnit(substanceId, sub?.defaultUnit || 'units');
-    const rows = [['Week Start', 'Week End', 'Usage', 'Unit', 'Monthly Running Total']];
+    const rows = [[
+        'Week Start',
+        'Week End',
+        resolveColumnDisplayLabel('statsWeekly', 'usage', { substanceId, forCsv: true }),
+        'Unit',
+        resolveColumnDisplayLabel('statsWeekly', 'monthRunning', { substanceId, forCsv: true })
+    ]];
+    // When custom CSV names are off, keep the long-standing stable headers.
+    if (!getUseCustomNamesInCsvExport()) {
+        rows[0] = ['Week Start', 'Week End', 'Usage', 'Unit', 'Monthly Running Total'];
+    }
     summaries.forEach(summary => {
         rows.push([
             summary.weekStart,
@@ -24733,7 +24883,10 @@ function buildBuyWeeklySummaryCsvRows(substanceId, bounds = null, data = appData
     const summaries = getBuyWeeklySummaries(substanceId, bounds, data);
     const columns = getEffectiveColumnOrder('buyWeekly');
     const displayUnit = getSubstanceBuyDisplayUnit(substanceId);
-    const headers = columns.map(colId => getTableColumnLabelForSubstance('buyWeekly', colId, substanceId));
+    const headers = columns.map(colId => resolveColumnDisplayLabel('buyWeekly', colId, {
+        substanceId,
+        forCsv: true
+    }));
     const rows = [headers];
     summaries.forEach(summary => {
         rows.push(columns.map(colId => getBuyWeeklySummaryCsvCellValue(colId, summary, displayUnit)));
@@ -24811,9 +24964,26 @@ function exportStatsBuyMonthSummaryCsv() {
     const displayUnit = getSubstanceBuyDisplayUnit(substanceId);
     const substanceName = getSubstanceDisplayName(sub);
     const runningMode = getBuyMonthRunningMode();
-    const headers = ['Month', 'Amount Purchased', 'Unit', 'Total Spent', 'Avg Cost per Unit', 'Purchase Count'];
+    const useCustomCsv = getUseCustomNamesInCsvExport();
+    const headers = useCustomCsv
+        ? [
+            resolveColumnDisplayLabel('buyMonthly', 'month', { substanceId, forCsv: true }),
+            resolveColumnDisplayLabel('buyMonthly', 'purchased', { substanceId, forCsv: true }),
+            'Unit',
+            resolveColumnDisplayLabel('buyMonthly', 'spent', { substanceId, forCsv: true }),
+            resolveColumnDisplayLabel('buyMonthly', 'costPerUnit', { substanceId, forCsv: true }),
+            resolveColumnDisplayLabel('buyMonthly', 'purchaseCount', { substanceId, forCsv: true })
+        ]
+        : ['Month', 'Amount Purchased', 'Unit', 'Total Spent', 'Avg Cost per Unit', 'Purchase Count'];
     if (runningMode !== 'hide') {
-        headers.push('Running Amount Purchased', 'Running Amount Spent');
+        headers.push(
+            useCustomCsv
+                ? resolveColumnDisplayLabel('buyMonthly', 'runningPurchased', { substanceId, forCsv: true })
+                : 'Running Amount Purchased',
+            useCustomCsv
+                ? resolveColumnDisplayLabel('buyMonthly', 'runningSpent', { substanceId, forCsv: true })
+                : 'Running Amount Spent'
+        );
     }
     const csvRows = [headers.map(csvEscape).join(',')];
     rows.slice().reverse().forEach(row => {
@@ -32446,8 +32616,12 @@ function renderTaperWeeklyTable(substanceId) {
     html += buildTableColgroup('taperByWeek', columnOrder, variantKey);
     html += '<thead><tr>';
     columnLayout.forEach(col => {
-        const label = getTaperByWeekColumnLabel(col.id, plan, substanceId);
-        html += `<th data-col="${col.id}" draggable="true" title="${escapeAttr(label)}" style="width:${col.widthPx}px;min-width:${col.minWidthPx}px;max-width:${col.widthPx}px"><span class="customizable-th-label">${label}</span>${renderColumnResizeHandle('taperByWeek', col.id, label)}</th>`;
+        const label = resolveColumnDisplayLabel('taperByWeek', col.id, {
+            substanceId,
+            plan,
+            variantKey
+        });
+        html += `<th data-col="${col.id}" draggable="true" title="${escapeAttr(label)}" style="width:${col.widthPx}px;min-width:${col.minWidthPx}px;max-width:${col.widthPx}px"><span class="customizable-th-label">${escapeHtml(label)}</span>${renderColumnResizeHandle('taperByWeek', col.id, label)}</th>`;
     });
     html += '</tr></thead><tbody>';
 
@@ -32455,7 +32629,11 @@ function renderTaperWeeklyTable(substanceId) {
         const cells = buildTaperByWeekCellValues(row, plan, substanceId, unit, displayUnit);
         html += `<tr class="taper-by-week-row taper-by-week-${row.status}${row.isCurrent ? ' taper-by-week-current' : ''}">`;
         columnLayout.forEach(col => {
-            const label = getTaperByWeekColumnLabel(col.id, plan, substanceId);
+            const label = resolveColumnDisplayLabel('taperByWeek', col.id, {
+                substanceId,
+                plan,
+                variantKey
+            });
             const raw = cells[col.id] ?? '—';
             const titleText = String(raw).replace(/<[^>]*>/g, '').trim();
             html += `<td data-col="${col.id}" data-label="${escapeAttr(label)}" title="${escapeAttr(titleText)}" style="width:${col.widthPx}px;min-width:${col.minWidthPx}px;max-width:${col.widthPx}px"${col.id === 'dates' ? ' class="taper-by-week-dates"' : ''}>${raw}</td>`;
@@ -32951,12 +33129,35 @@ function exportJsonBackup() {
         app: 'recovery-tracker',
         version: 2,
         exportedAt: new Date().toISOString(),
-        appData: appDataExport
+        appData: appDataExport,
+        columnSettings: loadColumnSettingsStore(),
+        purchaseHistoryColumns: loadPurchaseHistoryColumnSettings()
     };
     const dataStr = JSON.stringify(exportObject, null, 2);
     JSON.parse(dataStr);
     const blob = new Blob([dataStr], { type: 'application/json' });
     downloadBlob(blob, `recovery-tracker-backup-${getLocalDateString()}.json`);
+}
+
+function applyImportedColumnSettings(parsed) {
+    if (!parsed || typeof parsed !== 'object') return;
+    if (parsed.columnSettings && typeof parsed.columnSettings === 'object' && !Array.isArray(parsed.columnSettings)) {
+        const nextStore = { ...parsed.columnSettings };
+        // Re-normalize known table keys so customNames survive sanitize.
+        Object.keys(nextStore).forEach(key => {
+            if (key === '__migratedFromAppData') return;
+            const tableKey = String(key).split('::')[0];
+            if (TABLE_COLUMN_DEFAULTS[tableKey]) {
+                nextStore[key] = normalizeStoredColumnSettings(tableKey, nextStore[key]);
+            }
+        });
+        saveColumnSettingsStore(nextStore);
+    }
+    if (parsed.purchaseHistoryColumns
+        && typeof parsed.purchaseHistoryColumns === 'object'
+        && !Array.isArray(parsed.purchaseHistoryColumns)) {
+        savePurchaseHistoryColumnSettings(parsed.purchaseHistoryColumns);
+    }
 }
 
 function exportData() {
@@ -32976,7 +33177,11 @@ function buildUseHistoryCsvRows(options = {}) {
     const rows = buildUseHistoryRows(substanceId);
     const family = getUseHistoryColumnFamily(substanceId);
     const columns = getUseHistoryVisibleColumns(substanceId).filter(id => id !== 'select' && id !== 'actions');
-    const headers = columns.map(colId => getUseHistoryColumnLabel(colId, substanceId));
+    const headers = columns.map(colId => resolveColumnDisplayLabel('useHistory', colId, {
+        substanceId,
+        variantKey: getUseHistoryColumnVariantKey(substanceId),
+        forCsv: true
+    }));
     const body = rows.map(({ entry, sub }) => columns.map(colId => {
         switch (colId) {
             case 'date': return entry.date || '';
@@ -33275,8 +33480,10 @@ function buildImportPreview(imported, current = appData) {
 }
 
 let pendingImportData = null;
+let pendingImportExtras = null;
 
-function openImportPreviewModal(imported) {
+function openImportPreviewModal(imported, extras = null) {
+    pendingImportExtras = extras;
     pendingImportData = imported;
     const preview = buildImportPreview(imported);
     const summaryEl = document.getElementById('import-preview-summary');
@@ -33304,20 +33511,22 @@ function openImportPreviewModal(imported) {
 
 function closeImportPreviewModal() {
     pendingImportData = null;
+    pendingImportExtras = null;
     document.getElementById('import-preview-modal')?.classList.add('hidden');
 }
 
 function confirmImportPreview(mode) {
     if (!pendingImportData) return;
     const imported = pendingImportData;
+    const extras = pendingImportExtras;
     closeImportPreviewModal();
     pushChangeHistory(`before-import-${mode}`, { summary: `Before ${mode} import` });
-    applyImportedBackup(imported, mode);
+    applyImportedBackup(imported, mode, extras);
     alert(mode === 'merge' ? 'Backup merged successfully.' : 'Backup replaced current data.');
     renderChangeHistoryPanel();
 }
 
-function applyImportedBackup(imported, mode) {
+function applyImportedBackup(imported, mode, extras = null) {
     createAutoBackup(mode === 'replace' ? 'before-import-replace' : 'before-import-merge');
     const normalized = normalizeImportedAppData(imported);
     if (mode === 'replace') {
@@ -33328,6 +33537,10 @@ function applyImportedBackup(imported, mode) {
     normalizeAppData(appData);
     repairAppDataAfterImport(appData);
     saveData(appData);
+    if (extras) applyImportedColumnSettings(extras);
+    else if (imported && (imported.columnSettings || imported.purchaseHistoryColumns)) {
+        applyImportedColumnSettings(imported);
+    }
     refreshAppAfterDataChange();
 }
 
@@ -33369,7 +33582,10 @@ async function handleImportJsonFile(event) {
             return;
         }
 
-        openImportPreviewModal(validation.data);
+        openImportPreviewModal(validation.data, {
+            columnSettings: parsed.columnSettings || null,
+            purchaseHistoryColumns: parsed.purchaseHistoryColumns || null
+        });
     } catch (err) {
         console.error('Import failed:', err);
         alert('Import failed. Check the console for details.');
@@ -33929,6 +34145,22 @@ function __getRecoveryTrackerTestExports() {
         sumBuyMetricsThroughDateInMonth,
         buildBuyWeeklySummaryCsvRows,
         getDefaultColumnSettings,
+        normalizeStoredColumnSettings,
+        sanitizeCustomColumnName,
+        normalizeCustomNamesMap,
+        resolveColumnDisplayLabel,
+        getDefaultColumnLabel,
+        getUseCustomNamesInCsvExport,
+        setUseCustomNamesInCsvExport,
+        COLUMN_CUSTOM_NAME_MAX_LENGTH,
+        COLUMN_SETTINGS_STORAGE_KEY,
+        PURCHASE_HISTORY_COLUMNS_STORAGE_KEY,
+        applyImportedColumnSettings,
+        exportJsonBackup,
+        readColumnSettingsFromModal,
+        renderColumnSettingsList,
+        resetAllColumnCustomNamesInModal,
+        resetColumnCustomNameInModal,
         getWeeklyTrackingSummaries,
         getMonthlyTrackingSummaries,
         calculateMonthlyTrackingSummary,

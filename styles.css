@@ -6607,7 +6607,45 @@ body.table-col-resizing {
 }
 
 .column-settings-item-with-width .column-settings-label {
-    flex: 1 1 160px;
+    flex: 1 1 140px;
+}
+
+.column-settings-internal-key {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.column-settings-display-name {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 8px;
+    flex: 1 1 220px;
+    min-width: 180px;
+}
+
+.column-settings-display-name-label {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+}
+
+.column-settings-custom-name {
+    flex: 1 1 140px;
+    min-width: 120px;
+    max-width: 100%;
+    padding: 5px 8px;
+    border-radius: 6px;
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 0.82rem;
+}
+
+.column-settings-reset-name {
+    flex: 0 0 auto;
 }
 
 .column-settings-width {
@@ -6616,6 +6654,20 @@ body.table-col-resizing {
     gap: 8px;
     margin-left: auto;
     flex: 0 0 auto;
+}
+
+.settings-toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 12px;
+    font-size: 0.88rem;
+    color: var(--text-primary);
+    cursor: pointer;
+}
+
+.settings-toggle-row input {
+    accent-color: var(--accent);
 }
 
 .column-settings-width-label {

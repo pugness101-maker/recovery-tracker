@@ -2304,6 +2304,11 @@
                         <button type="button" class="secondary-btn" onclick="exportDataCsv()">Export CSV</button>
                         <button type="button" class="secondary-btn" onclick="repairAppData()">Repair Data</button>
                     </div>
+                    <label class="settings-toggle-row" for="settings-use-custom-names-in-csv">
+                        <input type="checkbox" id="settings-use-custom-names-in-csv">
+                        <span>Use custom names in CSV export</span>
+                    </label>
+                    <p class="settings-hint">Off by default so CSV headers stay stable. Turn on to use your Display names in table CSV exports.</p>
                 </div>
                     </div>
                 </div>
@@ -2448,7 +2453,7 @@
         <div class="modal-content modal-wide">
             <h2 id="column-settings-title">Customize Columns</h2>
             <p id="column-settings-subtitle" class="settings-hint column-settings-subtitle hidden"></p>
-            <p class="settings-hint">Drag rows to reorder columns. Uncheck to hide optional columns; required columns stay visible.</p>
+            <p class="settings-hint">Drag rows to reorder columns. Uncheck to hide optional columns; required columns stay visible. Rename with Display name — internal keys stay unchanged for calculations and exports.</p>
             <div class="column-preset-row" role="group" aria-label="Column presets">
                 <button type="button" class="taper-chip-btn" onclick="applyColumnPresetFromModal('basic')">Basic</button>
                 <button type="button" class="taper-chip-btn" onclick="applyColumnPresetFromModal('cost')">Cost</button>
@@ -2458,6 +2463,7 @@
             <div class="column-settings-bulk-actions">
                 <button type="button" class="secondary-btn btn-sm" id="column-settings-show-all">Show all</button>
                 <button type="button" class="secondary-btn btn-sm" id="column-settings-hide-optional">Hide all optional</button>
+                <button type="button" class="secondary-btn btn-sm" id="column-settings-reset-all-names">Reset all names</button>
             </div>
             <div id="column-settings-buy-month-running-wrap" class="column-settings-extra hidden form-group">
                 <label for="column-settings-buy-month-running-mode">Running totals</label>
