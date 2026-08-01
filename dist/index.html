@@ -865,6 +865,53 @@
                     </div>
                 </div>
 
+                <div class="collapsible-section" data-section="statsComparePeriods">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsComparePeriods')">
+                        <span>Compare Periods</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="stats-compare-toolbar">
+                            <div class="form-group">
+                                <label for="stats-compare-preset">Comparison</label>
+                                <select id="stats-compare-preset" onchange="onStatsComparePresetChange()">
+                                    <option value="past-30">Past 30 days vs previous 30 days</option>
+                                    <option value="past-3m">Past 3 months vs previous 3 months</option>
+                                    <option value="past-6m">Past 6 months vs previous 6 months</option>
+                                    <option value="past-12m">Past 12 months vs previous 12 months</option>
+                                    <option value="this-month">This month vs last month</option>
+                                    <option value="this-quarter">This quarter vs last quarter</option>
+                                    <option value="this-year">This year vs last year</option>
+                                    <option value="custom">Custom period vs previous equal-length period</option>
+                                </select>
+                            </div>
+                            <div id="stats-compare-custom-wrap" class="stats-custom-range hidden">
+                                <div class="form-group">
+                                    <label for="stats-compare-custom-start">Current start</label>
+                                    <input type="date" id="stats-compare-custom-start">
+                                </div>
+                                <div class="form-group">
+                                    <label for="stats-compare-custom-end">Current end</label>
+                                    <input type="date" id="stats-compare-custom-end">
+                                </div>
+                                <button type="button" class="secondary-btn" onclick="applyStatsCompareCustomRange()">Apply</button>
+                            </div>
+                            <div class="form-group">
+                                <label for="stats-compare-chart-view">Chart view</label>
+                                <select id="stats-compare-chart-view" onchange="onStatsCompareChartViewChange()">
+                                    <option value="monthly">Monthly view</option>
+                                    <option value="weekly">Weekly view</option>
+                                    <option value="rolling-30">Rolling 30-day view</option>
+                                </select>
+                            </div>
+                            <button type="button" class="secondary-btn" id="stats-compare-export-btn" onclick="exportStatsComparePeriodsCsv()">Export Comparison CSV</button>
+                        </div>
+                        <p class="stats-range-summary" id="stats-compare-range-summary"></p>
+                        <div id="stats-compare-summary" class="stats-compare-summary"></div>
+                        <div id="stats-compare-results" class="stats-compare-results"></div>
+                    </div>
+                </div>
+
                 <div id="stats-all-view" class="hidden">
                     <div class="stats-section">
                         <h3>By Substance</h3>

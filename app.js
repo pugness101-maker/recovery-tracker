@@ -6888,6 +6888,61 @@ function ensureAppDataMigrations(data) {
     if (!data.migrations) data.migrations = {};
 }
 
+const COMPARE_PERIOD_PRESET_LABELS = {
+    'past-30': 'Past 30 days vs previous 30 days',
+    'past-3m': 'Past 3 months vs previous 3 months',
+    'past-6m': 'Past 6 months vs previous 6 months',
+    'past-12m': 'Past 12 months vs previous 12 months',
+    'this-month': 'This month vs last month',
+    'this-quarter': 'This quarter vs last quarter',
+    'this-year': 'This year vs last year',
+    custom: 'Custom period vs previous equal-length period'
+};
+
+function ensureComparePeriodsPrefs(data = appData) {
+    if (!data.settings) {
+        data.settings = JSON.parse(JSON.stringify(defaultData.settings));
+    }
+    const defaults = {
+        preset: 'past-30',
+        chartView: 'monthly',
+        customStart: '',
+        customEnd: ''
+    };
+    if (!data.settings.comparePeriods || typeof data.settings.comparePeriods !== 'object') {
+        data.settings.comparePeriods = { ...defaults };
+    } else {
+        data.settings.comparePeriods = {
+            ...defaults,
+            ...data.settings.comparePeriods
+        };
+    }
+    if (!COMPARE_PERIOD_PRESET_LABELS[data.settings.comparePeriods.preset]) {
+        data.settings.comparePeriods.preset = defaults.preset;
+    }
+    if (!['monthly', 'weekly', 'rolling-30'].includes(data.settings.comparePeriods.chartView)) {
+        data.settings.comparePeriods.chartView = defaults.chartView;
+    }
+    return data.settings.comparePeriods;
+}
+
+function loadComparePeriodsPrefsIntoState(data = appData) {
+    const prefs = ensureComparePeriodsPrefs(data);
+    statsComparePreset = prefs.preset;
+    statsCompareChartView = prefs.chartView;
+    statsCompareCustomStart = prefs.customStart || '';
+    statsCompareCustomEnd = prefs.customEnd || '';
+}
+
+function persistComparePeriodsPrefs() {
+    const prefs = ensureComparePeriodsPrefs(appData);
+    prefs.preset = statsComparePreset;
+    prefs.chartView = statsCompareChartView;
+    prefs.customStart = statsCompareCustomStart;
+    prefs.customEnd = statsCompareCustomEnd;
+    saveData(appData);
+}
+
 function ensureAppDataSettings(data) {
     if (!data.settings) {
         data.settings = JSON.parse(JSON.stringify(defaultData.settings));
@@ -6912,6 +6967,7 @@ function ensureAppDataSettings(data) {
     );
     data.settings.appearanceSpacing = normalizeAppearanceSpacing(data.settings.appearanceSpacing);
     ensureInsightPrefs(data);
+    ensureComparePeriodsPrefs(data);
     ensureTableColumnSettings(data);
     ensureUseStatsConfig(data);
     ensureCollapsedSections(data);
@@ -6930,6 +6986,7 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     purchaseForm: true,
     purchaseHistory: false,
     statsDateRange: false,
+    statsComparePeriods: false,
     statsSummaryDashboard: false,
     statsCalendarView: false,
     statsMonthlySummary: false,
@@ -9649,6 +9706,10 @@ let selectedSubstanceId = resolveDefaultSelectedSubstanceId() || DASHBOARD_ALL;
 let statsDateRangePreset = 'last-7';
 let statsCustomStartDate = '';
 let statsCustomEndDate = '';
+let statsComparePreset = 'past-30';
+let statsCompareChartView = 'monthly';
+let statsCompareCustomStart = '';
+let statsCompareCustomEnd = '';
 let insightsDatasetCache = null;
 let insightsDatasetCacheKey = null;
 let testReferenceDateStr = null;
@@ -9700,6 +9761,7 @@ function initializeApp() {
     setupUseLogForm();
     setupSubstanceForm();
     setupStatsDateRange();
+    setupStatsComparePeriods();
     setDefaultUseLogDateTime();
     refreshAllRecoveryStreaks();
     updateQuickActions();
@@ -22114,17 +22176,17 @@ function getBuyBreakMetricsFromPurchases(substanceId, purchases, data = appData)
     };
 }
 
-function buildInsightsDataset(substanceId, data = appData) {
-    const range = getStatsDateRange();
+function buildInsightsDataset(substanceId, data = appData, overrideRange = null) {
+    const range = overrideRange || getStatsDateRange();
     const bounds = resolveInsightsRangeBounds(range, substanceId, data);
     const cacheKey = [
         substanceId,
         bounds.startDate,
         bounds.endDate,
-        range.preset,
+        range.preset || 'override',
         getInsightsDataFingerprint(data)
     ].join('|');
-    if (insightsDatasetCache && insightsDatasetCacheKey === cacheKey) {
+    if (!overrideRange && insightsDatasetCache && insightsDatasetCacheKey === cacheKey) {
         return insightsDatasetCache;
     }
 
@@ -22179,9 +22241,707 @@ function buildInsightsDataset(substanceId, data = appData) {
         supplyStats: getSubstanceSupplyDurationStatsFromPurchases(purchases, isVape)
     };
 
-    insightsDatasetCache = dataset;
-    insightsDatasetCacheKey = cacheKey;
+    if (!overrideRange) {
+        insightsDatasetCache = dataset;
+        insightsDatasetCacheKey = cacheKey;
+    }
     return dataset;
+}
+
+function shiftLocalDateByMonths(dateStr, months) {
+    const d = parseLocalDate(dateStr);
+    if (!d) return dateStr;
+    const day = d.getDate();
+    d.setDate(1);
+    d.setMonth(d.getMonth() + months);
+    const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+    d.setDate(Math.min(day, lastDay));
+    return toDateStr(d);
+}
+
+function getEqualLengthPreviousBounds(startDate, endDate) {
+    const days = countDaysInRange(startDate, endDate);
+    const prevEnd = addDaysYYYYMMDD(startDate, -1);
+    const prevStart = addDaysYYYYMMDD(prevEnd, -(days - 1));
+    return { startDate: prevStart, endDate: prevEnd, daysInRange: days };
+}
+
+function getQuarterIndex(date) {
+    return Math.floor(date.getMonth() / 3);
+}
+
+function getQuarterStartDate(year, quarterIndex) {
+    return toDateStr(new Date(year, quarterIndex * 3, 1));
+}
+
+function getQuarterEndDate(year, quarterIndex) {
+    return toDateStr(new Date(year, quarterIndex * 3 + 3, 0));
+}
+
+function isPeriodIncomplete(startDate, endDate, naturalEndDate) {
+    const todayStr = toDateStr(getStatsReferenceDate());
+    if (endDate < todayStr) return false;
+    if (naturalEndDate && endDate < naturalEndDate) return true;
+    return endDate === todayStr && naturalEndDate && todayStr < naturalEndDate;
+}
+
+function formatComparePeriodLabel(bounds, { partial = false } = {}) {
+    const startLabel = formatDate(bounds.startDate);
+    const endLabel = formatDate(bounds.endDate);
+    const base = `${startLabel} – ${endLabel}`;
+    return partial ? `${base}, partial period` : base;
+}
+
+function resolveComparePeriodPair(preset = statsComparePreset, data = appData) {
+    const today = getStatsReferenceDate();
+    const todayStr = toDateStr(today);
+    const key = COMPARE_PERIOD_PRESET_LABELS[preset] ? preset : 'past-30';
+
+    const finish = (current, previous, meta = {}) => ({
+        preset: key,
+        label: COMPARE_PERIOD_PRESET_LABELS[key],
+        current: {
+            ...current,
+            daysInRange: countDaysInRange(current.startDate, current.endDate),
+            partial: !!current.partial,
+            label: formatComparePeriodLabel(current, { partial: !!current.partial })
+        },
+        previous: {
+            ...previous,
+            daysInRange: countDaysInRange(previous.startDate, previous.endDate),
+            partial: !!previous.partial,
+            label: formatComparePeriodLabel(previous, { partial: !!previous.partial })
+        },
+        ...meta
+    });
+
+    if (key === 'past-30') {
+        const currentEnd = todayStr;
+        const currentStart = addDaysYYYYMMDD(currentEnd, -29);
+        const previous = getEqualLengthPreviousBounds(currentStart, currentEnd);
+        return finish(
+            { startDate: currentStart, endDate: currentEnd, partial: false },
+            { startDate: previous.startDate, endDate: previous.endDate, partial: false }
+        );
+    }
+
+    if (key === 'past-3m' || key === 'past-6m' || key === 'past-12m') {
+        const months = key === 'past-3m' ? 3 : key === 'past-6m' ? 6 : 12;
+        const currentEnd = todayStr;
+        const currentStart = addDaysYYYYMMDD(shiftLocalDateByMonths(currentEnd, -months), 1);
+        const previous = getEqualLengthPreviousBounds(currentStart, currentEnd);
+        return finish(
+            { startDate: currentStart, endDate: currentEnd, partial: false },
+            { startDate: previous.startDate, endDate: previous.endDate, partial: false }
+        );
+    }
+
+    if (key === 'this-month') {
+        const monthStart = toDateStr(new Date(today.getFullYear(), today.getMonth(), 1));
+        const naturalEnd = toDateStr(new Date(today.getFullYear(), today.getMonth() + 1, 0));
+        const currentStart = monthStart;
+        const currentEnd = todayStr;
+        const days = countDaysInRange(currentStart, currentEnd);
+        const prevMonthStart = toDateStr(new Date(today.getFullYear(), today.getMonth() - 1, 1));
+        const prevMonthNaturalEnd = toDateStr(new Date(today.getFullYear(), today.getMonth(), 0));
+        const prevEnd = addDaysYYYYMMDD(prevMonthStart, days - 1);
+        const previousEnd = prevEnd > prevMonthNaturalEnd ? prevMonthNaturalEnd : prevEnd;
+        return finish(
+            {
+                startDate: currentStart,
+                endDate: currentEnd,
+                partial: isPeriodIncomplete(currentStart, currentEnd, naturalEnd)
+            },
+            {
+                startDate: prevMonthStart,
+                endDate: previousEnd,
+                partial: previousEnd < prevMonthNaturalEnd
+            }
+        );
+    }
+
+    if (key === 'this-quarter') {
+        const q = getQuarterIndex(today);
+        const currentStart = getQuarterStartDate(today.getFullYear(), q);
+        const naturalEnd = getQuarterEndDate(today.getFullYear(), q);
+        const currentEnd = todayStr;
+        const days = countDaysInRange(currentStart, currentEnd);
+        let prevYear = today.getFullYear();
+        let prevQ = q - 1;
+        if (prevQ < 0) {
+            prevQ = 3;
+            prevYear -= 1;
+        }
+        const prevStart = getQuarterStartDate(prevYear, prevQ);
+        const prevNaturalEnd = getQuarterEndDate(prevYear, prevQ);
+        const prevEndCandidate = addDaysYYYYMMDD(prevStart, days - 1);
+        const previousEnd = prevEndCandidate > prevNaturalEnd ? prevNaturalEnd : prevEndCandidate;
+        return finish(
+            {
+                startDate: currentStart,
+                endDate: currentEnd,
+                partial: isPeriodIncomplete(currentStart, currentEnd, naturalEnd)
+            },
+            {
+                startDate: prevStart,
+                endDate: previousEnd,
+                partial: previousEnd < prevNaturalEnd
+            }
+        );
+    }
+
+    if (key === 'this-year') {
+        const currentStart = `${today.getFullYear()}-01-01`;
+        const naturalEnd = `${today.getFullYear()}-12-31`;
+        const currentEnd = todayStr;
+        const days = countDaysInRange(currentStart, currentEnd);
+        const prevStart = `${today.getFullYear() - 1}-01-01`;
+        const prevNaturalEnd = `${today.getFullYear() - 1}-12-31`;
+        const prevEndCandidate = addDaysYYYYMMDD(prevStart, days - 1);
+        const previousEnd = prevEndCandidate > prevNaturalEnd ? prevNaturalEnd : prevEndCandidate;
+        return finish(
+            {
+                startDate: currentStart,
+                endDate: currentEnd,
+                partial: isPeriodIncomplete(currentStart, currentEnd, naturalEnd)
+            },
+            {
+                startDate: prevStart,
+                endDate: previousEnd,
+                partial: previousEnd < prevNaturalEnd
+            }
+        );
+    }
+
+    // custom vs previous equal-length
+    let start = statsCompareCustomStart || ensureComparePeriodsPrefs(data).customStart;
+    let end = statsCompareCustomEnd || ensureComparePeriodsPrefs(data).customEnd;
+    if (!start || !end) {
+        start = addDaysYYYYMMDD(todayStr, -29);
+        end = todayStr;
+    }
+    if (start > end) {
+        const swap = start;
+        start = end;
+        end = swap;
+    }
+    const previous = getEqualLengthPreviousBounds(start, end);
+    return finish(
+        { startDate: start, endDate: end, partial: end === todayStr },
+        { startDate: previous.startDate, endDate: previous.endDate, partial: false }
+    );
+}
+
+function getLongestNoUseStreakDays(substanceId, startDate, endDate, data = appData) {
+    if (!substanceId || !startDate || !endDate || startDate > endDate) return 0;
+    let longest = 0;
+    let run = 0;
+    let cursor = startDate;
+    while (cursor <= endDate) {
+        if (!isUseDay(substanceId, cursor, data)) {
+            run += 1;
+            if (run > longest) longest = run;
+        } else {
+            run = 0;
+        }
+        cursor = addDaysYYYYMMDD(cursor, 1);
+    }
+    return longest;
+}
+
+function getSharedAmountInBounds(substanceId, bounds, data = appData) {
+    let logs = getUseEntries(data).filter(l => logMatchesSubstance(l, substanceId, data) && isSharedUseLog(l));
+    logs = filterLogsByDateRange(logs, bounds.startDate, bounds.endDate);
+    return logs.reduce((sum, log) => sum + (getLogSharedAmount(log) || 0), 0);
+}
+
+function extractComparePeriodMetrics(substanceId, bounds, data = appData) {
+    const range = {
+        startDate: bounds.startDate,
+        endDate: bounds.endDate,
+        preset: 'compare'
+    };
+    const dataset = buildInsightsDataset(substanceId, data, range);
+    const gift = getGiftMetrics(substanceId, bounds, data);
+    const avgBetweenPurchases = dataset.supplyStats?.avgDaysBetweenPurchases
+        ?? (dataset.buyBreakMetrics?.average != null ? dataset.buyBreakMetrics.average / 24 : null);
+    return {
+        substanceId,
+        bounds: dataset.bounds,
+        daysInRange: dataset.daysInRange,
+        unit: dataset.displayUnit,
+        cur: dataset.cur,
+        totalUse: dataset.useStats?.totalAmount ?? 0,
+        avgUsePerDay: dataset.useStats?.avgPerCalendarDay
+            ?? (dataset.daysInRange > 0 ? (dataset.useStats?.totalAmount || 0) / dataset.daysInRange : 0),
+        useDays: dataset.useStats?.useDays ?? 0,
+        sessions: dataset.useStats?.sessionCount ?? 0,
+        avgPerUseDay: dataset.useStats?.avgPerUseDay,
+        longestNoUseStreak: getLongestNoUseStreakDays(substanceId, bounds.startDate, bounds.endDate, data),
+        totalPurchased: dataset.buyTotals?.purchased ?? 0,
+        totalSpent: dataset.buyTotals?.cost ?? 0,
+        avgCostPerUnit: dataset.buyTotals?.avgCostPerUnit,
+        purchaseCount: dataset.buyTotals?.count ?? 0,
+        avgTimeBetweenPurchases: avgBetweenPurchases,
+        giftGiven: gift.given ?? 0,
+        giftReceived: gift.received ?? 0,
+        sharedAmount: getSharedAmountInBounds(substanceId, bounds, data),
+        dataset
+    };
+}
+
+function getCompareMetricDefinitions(unit, cur) {
+    return [
+        { id: 'totalUse', label: 'Total personal use', higherIsBetter: false, unit, kind: 'amount' },
+        { id: 'avgUsePerDay', label: 'Average use per day', higherIsBetter: false, unit, kind: 'amount' },
+        { id: 'useDays', label: 'Use days', higherIsBetter: false, unit: 'days', kind: 'count' },
+        { id: 'sessions', label: 'Sessions', higherIsBetter: false, unit: '', kind: 'count' },
+        { id: 'avgPerUseDay', label: 'Average amount per use day', higherIsBetter: false, unit, kind: 'amount' },
+        { id: 'longestNoUseStreak', label: 'Longest no-use streak', higherIsBetter: true, unit: 'days', kind: 'count' },
+        { id: 'totalPurchased', label: 'Total purchased', higherIsBetter: false, unit, kind: 'amount' },
+        { id: 'totalSpent', label: 'Total spent', higherIsBetter: false, unit: cur, kind: 'money' },
+        { id: 'avgCostPerUnit', label: 'Average cost per unit', higherIsBetter: false, unit: cur, kind: 'money-per-unit' },
+        { id: 'purchaseCount', label: 'Purchase count', higherIsBetter: false, unit: '', kind: 'count' },
+        { id: 'avgTimeBetweenPurchases', label: 'Average time between purchases', higherIsBetter: true, unit: 'days', kind: 'days' },
+        { id: 'giftGiven', label: 'Gift Given', higherIsBetter: null, unit, kind: 'amount' },
+        { id: 'giftReceived', label: 'Gift Received', higherIsBetter: null, unit, kind: 'amount' },
+        { id: 'sharedAmount', label: 'Shared amount', higherIsBetter: null, unit, kind: 'amount' }
+    ];
+}
+
+function computeCompareDelta(currentValue, previousValue, { higherIsBetter = false } = {}) {
+    const current = currentValue == null || !Number.isFinite(Number(currentValue))
+        ? null
+        : Number(currentValue);
+    const previous = previousValue == null || !Number.isFinite(Number(previousValue))
+        ? null
+        : Number(previousValue);
+    const abs = (current == null || previous == null) ? null : current - previous;
+    let pct = null;
+    if (current != null && previous != null) {
+        if (Math.abs(previous) <= INVENTORY_EPS) {
+            pct = Math.abs(current) <= INVENTORY_EPS ? 0 : (current > previous ? 100 : -100);
+        } else {
+            pct = (abs / Math.abs(previous)) * 100;
+        }
+    }
+    let status = 'No meaningful change';
+    if (higherIsBetter == null) {
+        status = 'No meaningful change';
+    } else if (abs != null) {
+        const meaningful = Math.abs(abs) > INVENTORY_EPS && (pct == null || Math.abs(pct) >= 1);
+        if (meaningful) {
+            const improved = higherIsBetter ? abs > 0 : abs < 0;
+            status = improved ? 'Improved' : 'Worsened';
+        }
+    }
+    return { current, previous, abs, pct, status };
+}
+
+function formatCompareMetricValue(value, def, unit, cur) {
+    if (value == null || !Number.isFinite(Number(value))) return '—';
+    const n = Number(value);
+    if (def.kind === 'money') return `${cur}${n.toFixed(2)}`;
+    if (def.kind === 'money-per-unit') return `${cur}${n.toFixed(2)}/${unit || 'unit'}`;
+    if (def.kind === 'count') {
+        if (def.unit === 'days') return `${formatAmount(n)} days`;
+        return formatAmount(n);
+    }
+    if (def.kind === 'days') return `${formatAmount(n)} days`;
+    const displayUnit = unit || def.unit || '';
+    return displayUnit ? `${formatAmount(n)} ${displayUnit}` : formatAmount(n);
+}
+
+function formatCompareChange(abs, pct, def, unit, cur) {
+    if (abs == null) return '—';
+    const sign = abs > 0 ? '+' : abs < 0 ? '−' : '';
+    const absText = formatCompareMetricValue(Math.abs(abs), def, unit, cur).replace(/^[^\d-]*/, '');
+    // Keep unit/currency readable for abs change
+    let absFormatted;
+    if (def.kind === 'money' || def.kind === 'money-per-unit') {
+        absFormatted = `${sign}${cur}${Math.abs(abs).toFixed(2)}${def.kind === 'money-per-unit' ? `/${unit || 'unit'}` : ''}`;
+    } else if (def.unit === 'days' || def.kind === 'days') {
+        absFormatted = `${sign}${formatAmount(Math.abs(abs))} days`;
+    } else if (def.kind === 'count' && !def.unit) {
+        absFormatted = `${sign}${formatAmount(Math.abs(abs))}`;
+    } else {
+        absFormatted = `${sign}${formatAmount(Math.abs(abs))}${unit ? ` ${unit}` : ''}`;
+    }
+    const pctText = pct == null ? '—' : `${sign}${Math.abs(pct).toFixed(1)}%`;
+    return `${absFormatted} / ${pctText}`;
+}
+
+function buildComparePeriodResult(substanceId, data = appData, preset = statsComparePreset) {
+    const pair = resolveComparePeriodPair(preset, data);
+    const current = extractComparePeriodMetrics(substanceId, pair.current, data);
+    const previous = extractComparePeriodMetrics(substanceId, pair.previous, data);
+    const unit = current.unit;
+    const cur = current.cur;
+    const defs = getCompareMetricDefinitions(unit, cur);
+    const metrics = defs.map(def => {
+        const delta = computeCompareDelta(current[def.id], previous[def.id], {
+            higherIsBetter: def.higherIsBetter
+        });
+        return {
+            ...def,
+            ...delta,
+            currentDisplay: formatCompareMetricValue(delta.current, def, unit, cur),
+            previousDisplay: formatCompareMetricValue(delta.previous, def, unit, cur),
+            changeDisplay: formatCompareChange(delta.abs, delta.pct, def, unit, cur)
+        };
+    });
+    return {
+        substanceId,
+        substance: getSubstance(substanceId, data),
+        pair,
+        current,
+        previous,
+        metrics,
+        unit,
+        cur
+    };
+}
+
+function buildComparePeriodSummaryChips(result) {
+    const byId = Object.fromEntries(result.metrics.map(m => [m.id, m]));
+    const chip = (id, label) => {
+        const m = byId[id];
+        if (!m || m.abs == null) return { label, text: `${label} —`, status: 'neutral' };
+        const down = m.abs < 0;
+        const up = m.abs > 0;
+        const arrow = down ? '↓' : up ? '↑' : '→';
+        let text;
+        if (id === 'totalUse' || id === 'totalSpent') {
+            text = `${label} ${arrow} ${m.pct == null ? '—' : `${Math.abs(m.pct).toFixed(0)}%`}`;
+        } else if (id === 'useDays' || id === 'longestNoUseStreak') {
+            text = `${label} ${arrow} ${formatAmount(Math.abs(m.abs))} days`;
+        } else {
+            text = `${label} ${arrow} ${m.changeDisplay}`;
+        }
+        return { label, text, status: m.status === 'Improved' ? 'improved' : m.status === 'Worsened' ? 'worsened' : 'neutral' };
+    };
+    return [
+        chip('totalUse', 'Use'),
+        chip('totalSpent', 'Spending'),
+        chip('useDays', 'Use days'),
+        chip('longestNoUseStreak', 'Longest break')
+    ];
+}
+
+function iterateDateRangeDays(startDate, endDate, fn) {
+    let cursor = startDate;
+    while (cursor <= endDate) {
+        fn(cursor);
+        cursor = addDaysYYYYMMDD(cursor, 1);
+    }
+}
+
+function buildCompareChartSeries(substanceId, bounds, view, data = appData) {
+    const series = [];
+    if (!bounds?.startDate || !bounds?.endDate) return series;
+
+    if (view === 'weekly') {
+        let cursor = parseLocalDate(bounds.startDate);
+        if (cursor) cursor.setDate(cursor.getDate() - cursor.getDay());
+        const end = parseLocalDate(bounds.endDate);
+        while (cursor && end && cursor <= end) {
+            const weekStart = toDateStr(cursor);
+            const weekEnd = addDaysYYYYMMDD(weekStart, 6);
+            const clampedStart = weekStart < bounds.startDate ? bounds.startDate : weekStart;
+            const clampedEnd = weekEnd > bounds.endDate ? bounds.endDate : weekEnd;
+            if (clampedStart <= clampedEnd) {
+                series.push({
+                    label: formatDate(clampedStart),
+                    use: sumPersonalUseAmountInRange(substanceId, clampedStart, clampedEnd, data),
+                    spent: filterPurchasesByStatsBounds(
+                        getPurchasesForInsightMetrics(substanceId, data),
+                        { startDate: clampedStart, endDate: clampedEnd }
+                    ).reduce((s, p) => s + getPurchaseSpendAmount(p), 0),
+                    useDays: getUseDayCountFromSegments(substanceId, clampedStart, clampedEnd, data),
+                    purchases: filterPurchasesByStatsBounds(
+                        getPurchasesForInsightMetrics(substanceId, data),
+                        { startDate: clampedStart, endDate: clampedEnd }
+                    ).length,
+                    days: countDaysInRange(clampedStart, clampedEnd)
+                });
+            }
+            cursor.setDate(cursor.getDate() + 7);
+        }
+        return series;
+    }
+
+    if (view === 'rolling-30') {
+        const spanDays = countDaysInRange(bounds.startDate, bounds.endDate);
+        const step = Math.max(1, Math.ceil(spanDays / 12));
+        const points = [];
+        for (let offset = 0; offset < spanDays; offset += step) {
+            points.push(addDaysYYYYMMDD(bounds.startDate, offset));
+        }
+        if (points[points.length - 1] !== bounds.endDate) points.push(bounds.endDate);
+        points.forEach(cursor => {
+            const windowStart = addDaysYYYYMMDD(cursor, -29);
+            const start = windowStart < bounds.startDate ? bounds.startDate : windowStart;
+            series.push({
+                label: formatDate(cursor),
+                use: sumPersonalUseAmountInRange(substanceId, start, cursor, data),
+                spent: filterPurchasesByStatsBounds(
+                    getPurchasesForInsightMetrics(substanceId, data),
+                    { startDate: start, endDate: cursor }
+                ).reduce((s, p) => s + getPurchaseSpendAmount(p), 0),
+                useDays: getUseDayCountFromSegments(substanceId, start, cursor, data),
+                purchases: filterPurchasesByStatsBounds(
+                    getPurchasesForInsightMetrics(substanceId, data),
+                    { startDate: start, endDate: cursor }
+                ).length,
+                days: countDaysInRange(start, cursor)
+            });
+        });
+        return series;
+    }
+
+    // monthly
+    let cursor = parseLocalDate(`${bounds.startDate.slice(0, 7)}-01`);
+    const endMonth = parseLocalDate(`${bounds.endDate.slice(0, 7)}-01`);
+    while (cursor && endMonth && cursor <= endMonth) {
+        const monthKey = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
+        const monthStart = `${monthKey}-01`;
+        const monthEnd = toDateStr(new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0));
+        const clampedStart = monthStart < bounds.startDate ? bounds.startDate : monthStart;
+        const clampedEnd = monthEnd > bounds.endDate ? bounds.endDate : monthEnd;
+        series.push({
+            label: cursor.toLocaleDateString('en-US', { month: 'short', year: '2-digit' }),
+            use: sumPersonalUseAmountInRange(substanceId, clampedStart, clampedEnd, data),
+            spent: filterPurchasesByStatsBounds(
+                getPurchasesForInsightMetrics(substanceId, data),
+                { startDate: clampedStart, endDate: clampedEnd }
+            ).reduce((s, p) => s + getPurchaseSpendAmount(p), 0),
+            useDays: getUseDayCountFromSegments(substanceId, clampedStart, clampedEnd, data),
+            purchases: filterPurchasesByStatsBounds(
+                getPurchasesForInsightMetrics(substanceId, data),
+                { startDate: clampedStart, endDate: clampedEnd }
+            ).length,
+            days: countDaysInRange(clampedStart, clampedEnd)
+        });
+        cursor.setMonth(cursor.getMonth() + 1);
+    }
+    return series;
+}
+
+function renderCompareChartBlock(title, currentSeries, previousSeries, valueKey, { unit = '', isMoney = false, cur = '$' } = {}) {
+    const maxBuckets = Math.max(currentSeries.length, previousSeries.length, 1);
+    const rows = [];
+    for (let i = 0; i < maxBuckets; i++) {
+        const curPoint = currentSeries[i];
+        const prevPoint = previousSeries[i];
+        const curVal = curPoint?.[valueKey] ?? 0;
+        const prevVal = prevPoint?.[valueKey] ?? 0;
+        let avgCur = curVal;
+        let avgPrev = prevVal;
+        if (valueKey === 'avgDaily') {
+            avgCur = curPoint && curPoint.days > 0 ? curPoint.use / curPoint.days : 0;
+            avgPrev = prevPoint && prevPoint.days > 0 ? prevPoint.use / prevPoint.days : 0;
+        }
+        const valueCurrent = valueKey === 'avgDaily' ? avgCur : curVal;
+        const valuePrevious = valueKey === 'avgDaily' ? avgPrev : prevVal;
+        rows.push({
+            label: curPoint?.label || prevPoint?.label || `#${i + 1}`,
+            current: valueCurrent,
+            previous: valuePrevious
+        });
+    }
+    const max = Math.max(...rows.flatMap(r => [r.current, r.previous]), 1);
+    const fmt = (v) => {
+        if (isMoney) return `${cur}${Number(v).toFixed(2)}`;
+        if (unit) return `${formatAmount(v)} ${unit}`;
+        return formatAmount(v);
+    };
+    return `<div class="stats-compare-chart">
+        <h5>${title}</h5>
+        <div class="stats-compare-chart-rows">
+            ${rows.map(r => `
+                <div class="stats-compare-chart-row">
+                    <span class="stats-compare-chart-label">${r.label}</span>
+                    <div class="stats-compare-chart-bars">
+                        <div class="stats-compare-bar current" style="width:${Math.max((r.current / max) * 100, r.current > 0 ? 4 : 0)}%" title="Current: ${fmt(r.current)}"></div>
+                        <div class="stats-compare-bar previous" style="width:${Math.max((r.previous / max) * 100, r.previous > 0 ? 4 : 0)}%" title="Previous: ${fmt(r.previous)}"></div>
+                    </div>
+                    <span class="stats-compare-chart-values">${fmt(r.current)} / ${fmt(r.previous)}</span>
+                </div>
+            `).join('')}
+        </div>
+    </div>`;
+}
+
+function renderComparePeriodResultHtml(result, { showSubstanceHeading = false } = {}) {
+    const chips = buildComparePeriodSummaryChips(result);
+    const view = statsCompareChartView;
+    const currentSeries = buildCompareChartSeries(result.substanceId, result.pair.current, view);
+    const previousSeries = buildCompareChartSeries(result.substanceId, result.pair.previous, view);
+    const unit = result.unit;
+    const cur = result.cur;
+    const heading = showSubstanceHeading
+        ? `<h4 class="stats-compare-substance-title">${result.substance?.icon || ''} ${escapeHtml(result.substance?.name || result.substanceId)}</h4>`
+        : '';
+    const metricsHtml = result.metrics.map(m => `
+        <article class="stats-compare-metric status-${m.status === 'Improved' ? 'improved' : m.status === 'Worsened' ? 'worsened' : 'neutral'}">
+            <h5>${escapeHtml(m.label)}</h5>
+            <p>Current: <strong>${escapeHtml(m.currentDisplay)}</strong></p>
+            <p>Previous: <strong>${escapeHtml(m.previousDisplay)}</strong></p>
+            <p>Change: <strong>${escapeHtml(m.changeDisplay)}</strong></p>
+            <p class="stats-compare-status">Status: ${escapeHtml(m.status)}</p>
+        </article>
+    `).join('');
+    return `
+        <div class="stats-compare-block" data-substance-id="${escapeAttr(result.substanceId)}">
+            ${heading}
+            <div class="stats-compare-summary-chips">
+                ${chips.map(c => `<span class="stats-compare-chip ${c.status}">${escapeHtml(c.text)}</span>`).join('')}
+            </div>
+            <div class="stats-compare-metrics-grid">${metricsHtml}</div>
+            <div class="stats-compare-charts">
+                ${renderCompareChartBlock('Monthly use totals'.replace('Monthly', view === 'weekly' ? 'Weekly' : view === 'rolling-30' ? 'Rolling 30-day' : 'Monthly'), currentSeries, previousSeries, 'use', { unit })}
+                ${renderCompareChartBlock('Spending', currentSeries, previousSeries, 'spent', { isMoney: true, cur })}
+                ${renderCompareChartBlock('Use days', currentSeries, previousSeries, 'useDays')}
+                ${renderCompareChartBlock('Average daily use', currentSeries, previousSeries, 'avgDaily', { unit })}
+                ${renderCompareChartBlock('Purchases', currentSeries, previousSeries, 'purchases')}
+            </div>
+        </div>
+    `;
+}
+
+function setupStatsComparePeriods() {
+    loadComparePeriodsPrefsIntoState(appData);
+    const presetEl = document.getElementById('stats-compare-preset');
+    const viewEl = document.getElementById('stats-compare-chart-view');
+    const startEl = document.getElementById('stats-compare-custom-start');
+    const endEl = document.getElementById('stats-compare-custom-end');
+    if (presetEl) presetEl.value = statsComparePreset;
+    if (viewEl) viewEl.value = statsCompareChartView;
+    if (startEl) startEl.value = statsCompareCustomStart;
+    if (endEl) endEl.value = statsCompareCustomEnd;
+    document.getElementById('stats-compare-custom-wrap')?.classList.toggle('hidden', statsComparePreset !== 'custom');
+}
+
+function onStatsComparePresetChange() {
+    statsComparePreset = document.getElementById('stats-compare-preset')?.value || 'past-30';
+    document.getElementById('stats-compare-custom-wrap')?.classList.toggle('hidden', statsComparePreset !== 'custom');
+    persistComparePeriodsPrefs();
+    if (statsComparePreset !== 'custom') renderStatsComparePeriods();
+}
+
+function onStatsCompareChartViewChange() {
+    statsCompareChartView = document.getElementById('stats-compare-chart-view')?.value || 'monthly';
+    persistComparePeriodsPrefs();
+    renderStatsComparePeriods();
+}
+
+function applyStatsCompareCustomRange() {
+    statsCompareCustomStart = document.getElementById('stats-compare-custom-start')?.value || '';
+    statsCompareCustomEnd = document.getElementById('stats-compare-custom-end')?.value || '';
+    if (!statsCompareCustomStart || !statsCompareCustomEnd) {
+        alert('Select both a start and end date for the custom comparison period.');
+        return;
+    }
+    statsComparePreset = 'custom';
+    const select = document.getElementById('stats-compare-preset');
+    if (select) select.value = 'custom';
+    document.getElementById('stats-compare-custom-wrap')?.classList.remove('hidden');
+    persistComparePeriodsPrefs();
+    renderStatsComparePeriods();
+}
+
+function renderStatsComparePeriods() {
+    const resultsEl = document.getElementById('stats-compare-results');
+    const summaryEl = document.getElementById('stats-compare-summary');
+    const rangeEl = document.getElementById('stats-compare-range-summary');
+    if (!resultsEl) return;
+
+    const pair = resolveComparePeriodPair(statsComparePreset);
+    if (rangeEl) {
+        rangeEl.textContent = `${pair.label}: Current ${pair.current.label} · Previous ${pair.previous.label}`;
+    }
+
+    if (isAllSubstancesView()) {
+        const substances = getActiveSubstances();
+        const results = substances.map(sub => buildComparePeriodResult(sub.id));
+        if (summaryEl) {
+            summaryEl.innerHTML = '<p class="settings-hint">All Substances: metrics are grouped by substance (units are not combined).</p>';
+        }
+        resultsEl.innerHTML = results.map(r => renderComparePeriodResultHtml(r, { showSubstanceHeading: true })).join('')
+            || '<p class="empty-hint">No substances to compare.</p>';
+        return;
+    }
+
+    if (!currentSubstanceId || currentSubstanceId === DASHBOARD_ALL) {
+        resultsEl.innerHTML = '<p class="empty-hint">Select a substance to compare periods.</p>';
+        if (summaryEl) summaryEl.innerHTML = '';
+        return;
+    }
+
+    const result = buildComparePeriodResult(currentSubstanceId);
+    const chips = buildComparePeriodSummaryChips(result);
+    if (summaryEl) {
+        summaryEl.innerHTML = chips.map(c => `<span class="stats-compare-chip ${c.status}">${escapeHtml(c.text)}</span>`).join('');
+    }
+    resultsEl.innerHTML = renderComparePeriodResultHtml(result);
+}
+
+function buildStatsComparePeriodsCsvRows(substanceId = null, data = appData) {
+    const ids = substanceId
+        ? [substanceId]
+        : (isAllSubstancesView() ? getActiveSubstances(data).map(s => s.id) : [currentSubstanceId]).filter(Boolean);
+    const header = [
+        'Substance', 'Comparison', 'Metric',
+        'Current start', 'Current end', 'Current partial', 'Current value',
+        'Previous start', 'Previous end', 'Previous partial', 'Previous value',
+        'Absolute change', 'Percent change', 'Status', 'Unit'
+    ];
+    const rows = [header];
+    ids.forEach(id => {
+        const result = buildComparePeriodResult(id, data);
+        const subName = result.substance?.name || id;
+        result.metrics.forEach(m => {
+            rows.push([
+                subName,
+                result.pair.label,
+                m.label,
+                result.pair.current.startDate,
+                result.pair.current.endDate,
+                result.pair.current.partial ? 'yes' : 'no',
+                m.current ?? '',
+                result.pair.previous.startDate,
+                result.pair.previous.endDate,
+                result.pair.previous.partial ? 'yes' : 'no',
+                m.previous ?? '',
+                m.abs ?? '',
+                m.pct == null ? '' : Number(m.pct.toFixed(2)),
+                m.status,
+                m.kind === 'money' || m.kind === 'money-per-unit' ? result.cur : (result.unit || m.unit || '')
+            ]);
+        });
+    });
+    return rows;
+}
+
+function exportStatsComparePeriodsCsv() {
+    const substanceId = isAllSubstancesView() ? null : currentSubstanceId;
+    if (!substanceId && !isAllSubstancesView()) {
+        alert('Select a substance to export comparison results.');
+        return;
+    }
+    const matrix = buildStatsComparePeriodsCsvRows(substanceId);
+    if (matrix.length <= 1) {
+        alert('No comparison data to export.');
+        return;
+    }
+    const csvRows = matrix.map(row => row.map(csvEscape).join(','));
+    const safeName = substanceId
+        ? getSubstanceDisplayName(getSubstance(substanceId)).replace(/[^\w.-]+/g, '_')
+        : 'all-substances';
+    downloadBlob(
+        new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8' }),
+        `recovery-tracker-compare-periods-${safeName}-${getLocalDateString()}.csv`
+    );
 }
 
 function countDaysInRange(startDate, endDate) {
@@ -25263,6 +26023,7 @@ function updateStats() {
         renderSubstanceStatsBreakdown();
         document.getElementById('stats-single-view')?.classList.add('hidden');
         document.getElementById('stats-all-view')?.classList.remove('hidden');
+        renderStatsComparePeriods();
         applyCollapsedSections();
         return;
     }
@@ -25287,6 +26048,7 @@ function updateStats() {
     renderBuyInsights(currentSubstanceId, insights);
     renderGiftAnalytics(insights.bounds);
     updateRecoveryStreakDisplay(currentSubstanceId);
+    renderStatsComparePeriods();
     applyCollapsedSections();
 }
 
@@ -32697,7 +33459,13 @@ if (typeof window !== 'undefined') {
         openUseLogSession,
         openBuyTrackerModal,
         undoLastUse,
-        cancelUseEdit
+        cancelUseEdit,
+        onStatsComparePresetChange,
+        onStatsCompareChartViewChange,
+        applyStatsCompareCustomRange,
+        exportStatsComparePeriodsCsv,
+        onStatsDateRangeChange,
+        applyStatsCustomRange
     });
 }
 
@@ -32706,6 +33474,8 @@ function __setTestAppData(data) {
     appDataLoadedFromStorage = true;
     invalidateInsightsDatasetCache();
     ensureAppDataSubstancesReady(appData);
+    ensureComparePeriodsPrefs(appData);
+    loadComparePeriodsPrefsIntoState(appData);
 }
 
 function __getTestAppData() {
@@ -33167,6 +33937,26 @@ function __getRecoveryTrackerTestExports() {
         invalidateInsightsDatasetCache,
         enrichMonthlySummaryWithBuyData,
         fmtAvgCostPerGram,
+        resolveComparePeriodPair,
+        extractComparePeriodMetrics,
+        buildComparePeriodResult,
+        buildComparePeriodSummaryChips,
+        computeCompareDelta,
+        getLongestNoUseStreakDays,
+        buildStatsComparePeriodsCsvRows,
+        ensureComparePeriodsPrefs,
+        loadComparePeriodsPrefsIntoState,
+        persistComparePeriodsPrefs,
+        get statsComparePreset() { return statsComparePreset; },
+        set statsComparePreset(v) { statsComparePreset = v; },
+        get statsCompareChartView() { return statsCompareChartView; },
+        set statsCompareChartView(v) { statsCompareChartView = v; },
+        get statsCompareCustomStart() { return statsCompareCustomStart; },
+        set statsCompareCustomStart(v) { statsCompareCustomStart = v; },
+        get statsCompareCustomEnd() { return statsCompareCustomEnd; },
+        set statsCompareCustomEnd(v) { statsCompareCustomEnd = v; },
+        get currentSubstanceId() { return currentSubstanceId; },
+        set currentSubstanceId(v) { currentSubstanceId = v; },
         get document() { return document; },
         get localStorage() { return localStorage; },
         get matchMedia() { return window.matchMedia; },
