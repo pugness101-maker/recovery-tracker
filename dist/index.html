@@ -958,6 +958,136 @@
                 </div>
             </section>
 
+            <!-- Calendar Tab -->
+            <section id="calendar-tab" class="tab calendar-page">
+                <div class="page-header-row calendar-page-header">
+                    <h2>Calendar</h2>
+                    <p class="settings-hint">Review use, inventory, plans, goals, and milestones in one place.</p>
+                </div>
+
+                <div class="cal-toolbar">
+                    <div class="cal-toolbar-row">
+                        <div class="cal-view-btns" role="group" aria-label="Calendar view">
+                            <button type="button" class="cal-view-btn active" data-cal-view="month" onclick="setCalendarViewMode('month')">Month</button>
+                            <button type="button" class="cal-view-btn" data-cal-view="week" onclick="setCalendarViewMode('week')">Week</button>
+                            <button type="button" class="cal-view-btn" data-cal-view="day" onclick="setCalendarViewMode('day')">Day</button>
+                            <button type="button" class="cal-view-btn" data-cal-view="agenda" onclick="setCalendarViewMode('agenda')">Agenda</button>
+                        </div>
+                        <div class="cal-nav-btns">
+                            <button type="button" class="secondary-btn btn-sm" onclick="shiftCalendarPeriod(-1)" aria-label="Previous period">‹</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="goCalendarToday()">Today</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="shiftCalendarPeriod(1)" aria-label="Next period">›</button>
+                            <input type="date" id="calendar-date-picker" class="cal-date-picker" onchange="onCalendarDatePickerChange()" aria-label="Jump to date">
+                        </div>
+                    </div>
+                    <p class="cal-period-label" id="calendar-period-label"></p>
+                    <div class="cal-toolbar-row cal-search-row">
+                        <input type="search" id="calendar-search" class="cal-search-input" placeholder="Search notes, inventory, contact, store, plan…" oninput="onCalendarSearchInput()">
+                        <button type="button" class="secondary-btn btn-sm" onclick="toggleCalendarFiltersPanel()">Filters</button>
+                        <button type="button" class="secondary-btn btn-sm" onclick="toggleCalendarSettingsPanel()">Display</button>
+                        <button type="button" class="secondary-btn btn-sm" onclick="exportCalendarCsv()">CSV</button>
+                        <button type="button" class="secondary-btn btn-sm" onclick="exportCalendarIcs()">ICS</button>
+                        <button type="button" class="secondary-btn btn-sm" onclick="printCalendarView()">Print</button>
+                    </div>
+                </div>
+
+                <div id="calendar-filters-panel" class="cal-side-panel collapsible-section collapsed" data-section="calendarFilters">
+                    <button type="button" class="section-toggle" onclick="toggleSection('calendarFilters')">
+                        <span>Filters</span>
+                        <span class="chevron">›</span>
+                    </button>
+                    <div class="section-content cal-filters-grid">
+                        <label class="form-group">
+                            <span>Substance</span>
+                            <select id="calendar-filter-substance" onchange="onCalendarFilterChange()"></select>
+                        </label>
+                        <label class="form-group">
+                            <span>Product type</span>
+                            <select id="calendar-filter-product-type" onchange="onCalendarFilterChange()">
+                                <option value="">All product types</option>
+                                <option value="bud">Bud</option>
+                                <option value="cart">Cart</option>
+                                <option value="edibles">Edibles</option>
+                                <option value="pre-roll">Pre-roll</option>
+                                <option value="vape">Vape</option>
+                            </select>
+                        </label>
+                        <label class="form-group">
+                            <span>Transaction type</span>
+                            <select id="calendar-filter-transaction" onchange="onCalendarFilterChange()">
+                                <option value="">All transactions</option>
+                                <option value="use">Personal use</option>
+                                <option value="session">Session</option>
+                                <option value="shared_use">Shared use</option>
+                                <option value="gift_given">Gift given</option>
+                                <option value="gift_received">Gift received</option>
+                                <option value="purchase">Purchase</option>
+                                <option value="purchased_as_gift">Purchased as gift</option>
+                                <option value="inventory_adjustment">Adjustment</option>
+                            </select>
+                        </label>
+                        <div class="cal-filter-chips" role="group" aria-label="Quick filters">
+                            <label><input type="checkbox" id="cal-filter-personal-only" onchange="onCalendarFilterChange()"> Personal use only</label>
+                            <label><input type="checkbox" id="cal-filter-purchases-only" onchange="onCalendarFilterChange()"> Purchases only</label>
+                            <label><input type="checkbox" id="cal-filter-gifts-only" onchange="onCalendarFilterChange()"> Gifts only</label>
+                            <label><input type="checkbox" id="cal-filter-plans-only" onchange="onCalendarFilterChange()"> Plans only</label>
+                            <label><input type="checkbox" id="cal-filter-goals-only" onchange="onCalendarFilterChange()"> Goals only</label>
+                            <label><input type="checkbox" id="cal-filter-milestones-only" onchange="onCalendarFilterChange()"> Milestones only</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="calendar-settings-panel" class="cal-side-panel collapsible-section collapsed" data-section="calendarDisplaySettings">
+                    <button type="button" class="section-toggle" onclick="toggleSection('calendarDisplaySettings')">
+                        <span>Display settings</span>
+                        <span class="chevron">›</span>
+                    </button>
+                    <div class="section-content cal-settings-grid">
+                        <label><input type="checkbox" id="cal-show-amounts" onchange="onCalendarDisplaySettingChange()" checked> Show amounts</label>
+                        <label><input type="checkbox" id="cal-show-costs" onchange="onCalendarDisplaySettingChange()" checked> Show costs</label>
+                        <label><input type="checkbox" id="cal-show-contacts" onchange="onCalendarDisplaySettingChange()"> Show contacts</label>
+                        <label><input type="checkbox" id="cal-show-notes" onchange="onCalendarDisplaySettingChange()"> Show notes</label>
+                        <label><input type="checkbox" id="cal-show-day-summaries" onchange="onCalendarDisplaySettingChange()" checked> Show daily summaries</label>
+                        <label class="form-group">
+                            <span>Week starts</span>
+                            <select id="cal-week-starts" onchange="onCalendarDisplaySettingChange()">
+                                <option value="sunday">Sunday</option>
+                                <option value="monday">Monday</option>
+                            </select>
+                        </label>
+                        <label class="form-group">
+                            <span>Time format</span>
+                            <select id="cal-time-format" onchange="onCalendarDisplaySettingChange()">
+                                <option value="12">12-hour</option>
+                                <option value="24">24-hour</option>
+                            </select>
+                        </label>
+                        <label class="form-group">
+                            <span>Event display</span>
+                            <select id="cal-event-density" onchange="onCalendarDisplaySettingChange()">
+                                <option value="compact">Compact</option>
+                                <option value="detailed">Detailed</option>
+                            </select>
+                        </label>
+                        <fieldset class="cal-type-toggles">
+                            <legend>Show event types</legend>
+                            <div id="calendar-type-toggles" class="cal-filter-chips"></div>
+                        </fieldset>
+                        <label><input type="checkbox" id="cal-export-include-notes" onchange="onCalendarDisplaySettingChange()"> Include notes in exports</label>
+                    </div>
+                </div>
+
+                <div id="calendar-loading" class="rd-state rd-loading hidden">Loading calendar…</div>
+                <div id="calendar-error" class="rd-state rd-error hidden">
+                    <p id="calendar-error-message">Could not load calendar.</p>
+                    <button type="button" class="secondary-btn btn-sm" onclick="renderCalendarView()">Retry</button>
+                </div>
+                <div id="calendar-empty" class="rd-state rd-empty hidden">No events match the current filters.</div>
+
+                <div id="calendar-summary-panel" class="cal-summary-panel"></div>
+                <div id="calendar-root" class="cal-root" aria-live="polite"></div>
+            </section>
+
             <!-- Insights Tab -->
             <section id="stats-tab" class="tab insights-page">
                 <div class="page-header-row insights-page-header">
@@ -2488,6 +2618,10 @@
             <span>📝</span>
             <span>Log</span>
         </button>
+        <button class="nav-btn" data-tab="calendar-tab" onclick="switchTab('calendar-tab')">
+            <span>📅</span>
+            <span>Calendar</span>
+        </button>
         <button class="nav-btn" data-tab="buy-tracker-tab" onclick="switchTab('buy-tracker-tab')">
             <span>📦</span>
             <span>Inventory</span>
@@ -2662,6 +2796,16 @@
             <div class="modal-actions">
                 <button type="button" class="secondary-btn" onclick="closeManageTaperPlansModal()">Close</button>
             </div>
+        </div>
+    </div>
+
+    <div id="calendar-event-sheet" class="modal cal-sheet-modal hidden" onclick="if(event.target===this)closeCalendarEventSheet()">
+        <div class="modal-content cal-sheet-content" role="dialog" aria-modal="true" aria-labelledby="calendar-event-sheet-title">
+            <div class="cal-sheet-handle" aria-hidden="true"></div>
+            <h3 id="calendar-event-sheet-title">Event</h3>
+            <div id="calendar-event-sheet-body" class="cal-sheet-body"></div>
+            <div class="modal-actions cal-sheet-actions" id="calendar-event-sheet-actions"></div>
+            <button type="button" class="secondary-btn" onclick="closeCalendarEventSheet()">Close</button>
         </div>
     </div>
 

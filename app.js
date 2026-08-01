@@ -29,6 +29,25 @@ const RECOVERY_SCORE_FACTORS = Object.freeze([
     { key: 'spending', label: 'Spending improvement', weight: 0.12 },
     { key: 'logging', label: 'Logging consistency', weight: 0.12 }
 ]);
+const CALENDAR_EVENT_TYPE_META = Object.freeze({
+    personal_use: { label: 'Personal Use', className: 'cal-ev-personal-use', movable: false },
+    session: { label: 'Session', className: 'cal-ev-session', movable: false },
+    shared_use: { label: 'Shared Use', className: 'cal-ev-shared-use', movable: false },
+    gift_given: { label: 'Gift Given', className: 'cal-ev-gift-given', movable: false },
+    gift_received: { label: 'Gift Received', className: 'cal-ev-gift-received', movable: false },
+    purchase: { label: 'Purchase', className: 'cal-ev-purchase', movable: false },
+    purchased_as_gift: { label: 'Purchased as Gift', className: 'cal-ev-purchased-as-gift', movable: false },
+    inventory_adjustment: { label: 'Inventory Adjustment', className: 'cal-ev-adjustment', movable: false },
+    inventory_depletion: { label: 'Inventory Depletion', className: 'cal-ev-depletion', movable: false },
+    expected_depletion: { label: 'Expected Depletion', className: 'cal-ev-forecast', movable: false, forecast: true },
+    plan_target: { label: 'Plan Target', className: 'cal-ev-plan', movable: true },
+    goal_deadline: { label: 'Goal Deadline', className: 'cal-ev-goal', movable: true },
+    goal_completion: { label: 'Goal Completion', className: 'cal-ev-goal-done', movable: false },
+    recovery_milestone: { label: 'Recovery Milestone', className: 'cal-ev-milestone', movable: true },
+    craving: { label: 'Craving', className: 'cal-ev-craving', movable: false },
+    note: { label: 'Notes', className: 'cal-ev-note', movable: false }
+});
+
 const RECOVERY_DASHBOARD_SECTION_DEFAULTS = Object.freeze({
     score: true,
     summary: true,
@@ -7001,11 +7020,11 @@ function ensureAppDataSettings(data) {
     ensureInsightPrefs(data);
     ensureComparePeriodsPrefs(data);
     ensureRecoveryDashboardPrefs(data);
+    ensureCalendarViewPrefs(data);
     ensureTableColumnSettings(data);
     ensureUseStatsConfig(data);
     ensureCollapsedSections(data);
-    if (data.settings.activeTab === 'calendar-tab'
-        || data.settings.activeTab === 'history-tab'
+    if (data.settings.activeTab === 'history-tab'
         || data.settings.activeTab === 'history') {
         data.settings.activeTab = 'use-log-tab';
     }
@@ -7043,7 +7062,9 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     settingsStores: true,
     settingsVape: false,
     settingsBackup: true,
-    settingsDangerZone: true
+    settingsDangerZone: true,
+    calendarFilters: true,
+    calendarDisplaySettings: true
 };
 
 function ensureCollapsedSections(data) {
@@ -10679,7 +10700,6 @@ function deleteSubstance(id) {
 
 // ——— Tabs & events ———
 const REMOVED_TAB_ALIASES = {
-    'calendar-tab': 'use-log-tab',
     'history-tab': 'use-log-tab',
     history: 'use-log-tab'
 };
@@ -10724,6 +10744,8 @@ function switchTab(tabId) {
     } else if (tabId === 'use-log-tab') {
         syncUseLogFormFromSelectedSubstance();
         renderUseLogTab();
+    } else if (tabId === 'calendar-tab') {
+        renderCalendarView();
     } else if (tabId === 'taper-tab') {
         applyMainSubstanceToViewSelectors();
         populatePageSubstanceDropdowns();
@@ -35284,6 +35306,1342 @@ function __getUseHistoryEntryCount(substanceId = undefined) {
     return buildUseHistoryRows(substanceId).length;
 }
 
+// ——— Calendar View ———
+
+let calendarViewState = {
+    viewMode: 'month',
+    anchorDate: null,
+    searchQuery: '',
+    openEventId: null
+};
+let calendarEventsCache = null;
+let calendarEventsCacheKey = null;
+let calendarTouchStartX = null;
+
+function getDefaultCalendarViewPrefs() {
+    const visibleTypes = {};
+    Object.keys(CALENDAR_EVENT_TYPE_META).forEach(key => { visibleTypes[key] = true; });
+    return {
+        viewMode: 'month',
+        anchorDate: '',
+        substanceId: 'all',
+        productType: '',
+        transactionType: '',
+        personalUseOnly: false,
+        purchasesOnly: false,
+        giftsOnly: false,
+        plansOnly: false,
+        goalsOnly: false,
+        milestonesOnly: false,
+        showAmounts: true,
+        showCosts: true,
+        showContacts: false,
+        showNotes: false,
+        showDaySummaries: true,
+        weekStarts: 'sunday',
+        timeFormat: '12',
+        eventDensity: 'compact',
+        exportIncludeNotes: false,
+        visibleTypes,
+        eventColors: {}
+    };
+}
+
+function ensureCalendarViewPrefs(data = appData) {
+    if (!data.settings) data.settings = {};
+    const defaults = getDefaultCalendarViewPrefs();
+    if (!data.settings.calendarView || typeof data.settings.calendarView !== 'object') {
+        data.settings.calendarView = { ...defaults, visibleTypes: { ...defaults.visibleTypes } };
+    }
+    const prefs = data.settings.calendarView;
+    Object.keys(defaults).forEach(key => {
+        if (prefs[key] === undefined) {
+            prefs[key] = key === 'visibleTypes'
+                ? { ...defaults.visibleTypes }
+                : defaults[key];
+        }
+    });
+    if (!prefs.visibleTypes || typeof prefs.visibleTypes !== 'object') {
+        prefs.visibleTypes = { ...defaults.visibleTypes };
+    }
+    Object.keys(CALENDAR_EVENT_TYPE_META).forEach(key => {
+        if (prefs.visibleTypes[key] === undefined) prefs.visibleTypes[key] = true;
+    });
+    if (!['month', 'week', 'day', 'agenda'].includes(prefs.viewMode)) prefs.viewMode = 'month';
+    if (!prefs.weekStarts) prefs.weekStarts = 'sunday';
+    if (!prefs.timeFormat) prefs.timeFormat = '12';
+    return prefs;
+}
+
+function getCalendarViewPrefs(data = appData) {
+    return ensureCalendarViewPrefs(data);
+}
+
+function persistCalendarViewPrefs(patch = {}, data = appData) {
+    const prefs = ensureCalendarViewPrefs(data);
+    Object.assign(prefs, patch);
+    if (patch.visibleTypes) prefs.visibleTypes = { ...prefs.visibleTypes, ...patch.visibleTypes };
+    saveData(data);
+    return prefs;
+}
+
+function invalidateCalendarEventsCache() {
+    calendarEventsCache = null;
+    calendarEventsCacheKey = null;
+}
+
+function getCalendarAnchorDate(prefs = null) {
+    const p = prefs || getCalendarViewPrefs();
+    return calendarViewState.anchorDate || p.anchorDate || getLocalDateString();
+}
+
+function setCalendarAnchorDate(dateStr, { persist = true, render = true } = {}) {
+    const next = dateStr || getLocalDateString();
+    calendarViewState.anchorDate = next;
+    if (persist) persistCalendarViewPrefs({ anchorDate: next });
+    if (render) renderCalendarView();
+}
+
+function resolveCalendarPeriodBounds(viewMode, anchorDate, weekStarts = 'sunday') {
+    const anchor = parseLocalDate(anchorDate) || new Date();
+    const todayStr = getLocalDateString(anchor);
+    if (viewMode === 'day') {
+        return { startDate: todayStr, endDate: todayStr, label: formatDate(todayStr) };
+    }
+    if (viewMode === 'week' || viewMode === 'agenda') {
+        const dow = anchor.getDay();
+        const startOffset = weekStarts === 'monday' ? ((dow + 6) % 7) : dow;
+        const start = new Date(anchor);
+        start.setDate(start.getDate() - startOffset);
+        const end = new Date(start);
+        end.setDate(end.getDate() + 6);
+        const startDate = formatYYYYMMDD(start);
+        const endDate = formatYYYYMMDD(end);
+        return {
+            startDate,
+            endDate,
+            label: viewMode === 'agenda'
+                ? `Agenda · ${formatDate(startDate)} – ${formatDate(endDate)}`
+                : `Week · ${formatDate(startDate)} – ${formatDate(endDate)}`
+        };
+    }
+    const year = anchor.getFullYear();
+    const month = anchor.getMonth();
+    const startDate = `${year}-${String(month + 1).padStart(2, '0')}-01`;
+    const lastDay = new Date(year, month + 1, 0).getDate();
+    const endDate = `${year}-${String(month + 1).padStart(2, '0')}-${String(lastDay).padStart(2, '0')}`;
+    const label = anchor.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+    return { startDate, endDate, label };
+}
+
+function getCalendarMonthGridDates(year, monthIndex, weekStarts = 'sunday') {
+    const monthStart = `${year}-${String(monthIndex + 1).padStart(2, '0')}-01`;
+    const daysInMonth = new Date(year, monthIndex + 1, 0).getDate();
+    const firstDow = new Date(year, monthIndex, 1).getDay();
+    const startPad = weekStarts === 'monday' ? ((firstDow + 6) % 7) : firstDow;
+    const dates = [];
+    for (let i = startPad - 1; i >= 0; i--) {
+        dates.push({ date: addDaysYYYYMMDD(monthStart, -(i + 1)), inMonth: false });
+    }
+    for (let d = 1; d <= daysInMonth; d++) {
+        dates.push({
+            date: `${year}-${String(monthIndex + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`,
+            inMonth: true
+        });
+    }
+    while (dates.length % 7 !== 0) {
+        const last = dates[dates.length - 1].date;
+        dates.push({ date: addDaysYYYYMMDD(last, 1), inMonth: false });
+    }
+    return dates;
+}
+
+function formatCalendarTime(timeStr, timeFormat = '12') {
+    if (!timeStr) return '';
+    const parts = String(timeStr).split(':');
+    const h = parseInt(parts[0], 10);
+    const m = parts[1] || '00';
+    if (!Number.isFinite(h)) return timeStr;
+    if (timeFormat === '24') return `${String(h).padStart(2, '0')}:${m}`;
+    const suffix = h >= 12 ? 'PM' : 'AM';
+    const hour12 = ((h + 11) % 12) + 1;
+    return `${hour12}:${m} ${suffix}`;
+}
+
+function calendarEventSpansDate(event, dateStr) {
+    if (!event) return false;
+    if (event.endDate && event.startDate) {
+        return dateStr >= event.startDate && dateStr <= event.endDate;
+    }
+    return event.date === dateStr;
+}
+
+function makeCalendarEvent(partial) {
+    const type = partial.type || 'note';
+    const meta = CALENDAR_EVENT_TYPE_META[type] || CALENDAR_EVENT_TYPE_META.note;
+    return {
+        id: partial.id || `cal-${type}-${partial.recordId || partial.date}-${Math.random().toString(36).slice(2, 7)}`,
+        type,
+        label: partial.label || meta.label,
+        className: meta.className,
+        movable: !!meta.movable && !!partial.movable,
+        forecast: !!meta.forecast || !!partial.forecast,
+        status: partial.status || null,
+        date: partial.date,
+        startDate: partial.startDate || partial.date,
+        endDate: partial.endDate || partial.date,
+        startTime: partial.startTime || '',
+        endTime: partial.endTime || '',
+        substanceId: partial.substanceId || null,
+        substanceName: partial.substanceName || '',
+        productType: partial.productType || '',
+        transactionType: partial.transactionType || type,
+        amount: partial.amount ?? null,
+        unit: partial.unit || '',
+        personalAmount: partial.personalAmount ?? null,
+        sharedAmount: partial.sharedAmount ?? null,
+        thcMgUsed: partial.thcMgUsed ?? null,
+        cartPercentUsed: partial.cartPercentUsed ?? null,
+        cost: partial.cost ?? null,
+        contact: partial.contact || '',
+        notes: partial.notes || '',
+        linkedInventoryId: partial.linkedInventoryId || null,
+        linkedPlanId: partial.linkedPlanId || null,
+        linkedGoalId: partial.linkedGoalId || null,
+        recordKind: partial.recordKind || null,
+        recordId: partial.recordId || null,
+        title: partial.title || partial.label || meta.label,
+        searchable: partial.searchable || ''
+    };
+}
+
+function mapLogToCalendarEvents(log, data = appData) {
+    if (!log || log.isDistributedChild) return [];
+    const substanceId = getUseSubstanceId(log);
+    const sub = getSubstance(substanceId, data);
+    const tx = getLogTransactionType(log);
+    const isSession = log.type === 'session' || log.legacyTransactionType === 'session';
+    let type = 'personal_use';
+    if (tx === 'shared_use') type = 'shared_use';
+    else if (tx === 'gift_given') type = 'gift_given';
+    else if (tx === 'gift_received') type = 'gift_received';
+    else if (tx === 'inventory_adjustment') type = 'inventory_adjustment';
+    else if (isSession) type = 'session';
+
+    const startDt = getLogStartDateTime(log);
+    const endDt = getLogEndDateTime(log) || startDt;
+    const startDate = getLogDateStr(log) || (startDt ? getLocalDateString(startDt) : '');
+    let endDate = log.endDate || startDate;
+    if (endDt && startDt && endDt.getTime() > startDt.getTime()) {
+        endDate = getLocalDateString(endDt);
+    }
+    const productType = log.weedProductType || log.nicotineProductType || log.productType || '';
+    const amount = getLogStatsAmount(log);
+    const events = [makeCalendarEvent({
+        id: `log-${log.id}`,
+        type,
+        recordKind: 'log',
+        recordId: log.id,
+        date: startDate,
+        startDate,
+        endDate,
+        startTime: log.startTime || log.time || '',
+        endTime: log.endTime || '',
+        substanceId,
+        substanceName: getSubstanceDisplayName(sub, data),
+        productType,
+        transactionType: tx,
+        amount,
+        unit: getSubstanceDisplayUnit(substanceId, data),
+        personalAmount: getLogPersonalAmount(log),
+        sharedAmount: getLogSharedAmount(log),
+        thcMgUsed: isWeedEdiblesLog(log) ? getWeedEdibleLogThcUsed(log) : null,
+        cartPercentUsed: isWeedCartPercentLog(log)
+            ? (parseFloat(log.estimatedPercentUsed ?? log.amount) || null)
+            : null,
+        cost: parseFloat(log.cost) || null,
+        contact: log.recipientName || log.giverName || log.giftPartyName || log.sharedWithName || '',
+        notes: log.notes || '',
+        linkedInventoryId: getLogPurchaseId(log) || null,
+        title: `${getSubstanceDisplayName(sub, data) || 'Use'} · ${(CALENDAR_EVENT_TYPE_META[type] || {}).label}`,
+        searchable: [log.notes, log.store, productType, log.recipientName, log.giverName, log.sharedWithName].filter(Boolean).join(' ')
+    })];
+
+    if (log.notes && String(log.notes).trim()) {
+        // notes remain on the primary event; no duplicate note event unless notes-only
+    }
+    return events;
+}
+
+function mapPurchaseToCalendarEvents(purchase, data = appData) {
+    if (!purchase) return [];
+    const substanceId = getPurchaseSubstanceId(purchase);
+    const sub = getSubstance(substanceId, data);
+    const acq = getPurchaseAcquisitionType(purchase);
+    let type = 'purchase';
+    if (acq === 'purchased_as_gift') type = 'purchased_as_gift';
+    else if (acq === 'gift_received') type = 'gift_received';
+    else if (acq === 'other_adjustment') type = 'inventory_adjustment';
+
+    const date = getPurchaseDateStr(purchase);
+    const events = [makeCalendarEvent({
+        id: `purchase-${purchase.id}`,
+        type,
+        recordKind: 'purchase',
+        recordId: purchase.id,
+        date,
+        startDate: date,
+        endDate: date,
+        startTime: purchase.time || '',
+        substanceId,
+        substanceName: getSubstanceDisplayName(sub, data),
+        productType: purchase.weedProductType || purchase.nicotineProductType || purchase.productType || '',
+        transactionType: acq,
+        amount: parseFloat(getPurchaseQuantity(purchase)) || null,
+        unit: purchase.unit || getSubstanceDisplayUnit(substanceId, data),
+        cost: purchaseCountsTowardSpend(purchase) ? getPurchaseSpendAmount(purchase) : 0,
+        contact: getPurchaseGiftRecipient(purchase) || getPurchaseGiftSource(purchase) || '',
+        notes: purchase.notes || '',
+        linkedInventoryId: purchase.id,
+        title: `${getSubstanceDisplayName(sub, data) || 'Inventory'} · ${(CALENDAR_EVENT_TYPE_META[type] || {}).label}`,
+        searchable: [purchase.notes, purchase.store, purchase.location, purchase.name, purchase.flavor].filter(Boolean).join(' ')
+    })];
+
+    if (purchase.isDepleted || getPurchaseInventoryTab(purchase) === 'depleted') {
+        const depletionTs = typeof getVapeDepletionTimestampFromLogs === 'function'
+            ? getVapeDepletionTimestampFromLogs(purchase, data)
+            : null;
+        const depletionDate = depletionTs
+            ? getLocalDateString(new Date(depletionTs))
+            : (purchase.depletedDate || purchase.depletionDate || date);
+        events.push(makeCalendarEvent({
+            id: `depletion-${purchase.id}`,
+            type: 'inventory_depletion',
+            recordKind: 'purchase',
+            recordId: purchase.id,
+            date: depletionDate,
+            substanceId,
+            substanceName: getSubstanceDisplayName(sub, data),
+            productType: purchase.weedProductType || purchase.nicotineProductType || '',
+            linkedInventoryId: purchase.id,
+            title: `${getSubstanceDisplayName(sub, data) || 'Item'} depleted`,
+            searchable: purchase.name || purchase.store || ''
+        }));
+    }
+
+    const rem = getPurchaseRemainingAmount(purchase);
+    if (rem > INVENTORY_EPS && getPurchaseInventoryTab(purchase) === 'active') {
+        const avg = getCanonicalUsageInRange(
+            substanceId,
+            addDaysYYYYMMDD(getLocalDateString(), -6),
+            getLocalDateString(),
+            data
+        ) / 7;
+        if (avg > 0) {
+            const daysLeft = rem / avg;
+            if (daysLeft <= 60) {
+                const forecastDate = addDaysYYYYMMDD(getLocalDateString(), Math.max(0, Math.floor(daysLeft)));
+                events.push(makeCalendarEvent({
+                    id: `forecast-${purchase.id}`,
+                    type: 'expected_depletion',
+                    forecast: true,
+                    recordKind: 'purchase',
+                    recordId: purchase.id,
+                    date: forecastDate,
+                    substanceId,
+                    substanceName: getSubstanceDisplayName(sub, data),
+                    linkedInventoryId: purchase.id,
+                    title: `Expected depletion · ${getSubstanceDisplayName(sub, data) || 'item'}`,
+                    notes: 'Forecast based on recent average use'
+                }));
+            }
+        }
+    }
+    return events;
+}
+
+function mapPlanGoalMilestoneEvents(bounds, data = appData) {
+    const events = [];
+    ensureTaperPlansV2(data);
+    (data.taperPlansV2 || []).filter(p => p.status === 'active' || p.status === 'paused').forEach(plan => {
+        const sub = getSubstance(plan.substanceId, data);
+        const name = getSubstanceDisplayName(sub, data);
+        if (plan.endDate && plan.endDate >= bounds.startDate && plan.endDate <= bounds.endDate) {
+            events.push(makeCalendarEvent({
+                id: `plan-end-${plan.id}`,
+                type: 'plan_target',
+                movable: true,
+                recordKind: 'plan',
+                recordId: plan.id,
+                linkedPlanId: plan.id,
+                date: plan.endDate,
+                substanceId: plan.substanceId,
+                substanceName: name,
+                title: `Plan end · ${plan.name || name}`,
+                status: 'planned',
+                searchable: plan.name || ''
+            }));
+        }
+        (plan.weeklyTargets || []).forEach((week, idx) => {
+            if (!week?.weekStart) return;
+            if (week.weekStart > bounds.endDate || (week.weekEnd || week.weekStart) < bounds.startDate) return;
+            const daily = week.dailyTarget ?? week.targetPuffsPerDay;
+            if (daily != null) {
+                iterateDatesInRange(
+                    week.weekStart < bounds.startDate ? bounds.startDate : week.weekStart,
+                    (week.weekEnd || week.weekStart) > bounds.endDate ? bounds.endDate : (week.weekEnd || week.weekStart)
+                ).forEach(dateStr => {
+                    const used = getCanonicalUsageOnDate(plan.substanceId, dateStr, data);
+                    let status = 'planned';
+                    if (dateStr < getLocalDateString()) {
+                        status = used <= daily ? 'completed' : 'missed';
+                    } else if (dateStr === getLocalDateString()) {
+                        status = used > daily ? 'missed' : 'actual';
+                    }
+                    events.push(makeCalendarEvent({
+                        id: `plan-daily-${plan.id}-${dateStr}`,
+                        type: 'plan_target',
+                        movable: false,
+                        recordKind: 'plan',
+                        recordId: plan.id,
+                        linkedPlanId: plan.id,
+                        date: dateStr,
+                        substanceId: plan.substanceId,
+                        substanceName: name,
+                        amount: daily,
+                        unit: getSubstanceDisplayUnit(plan.substanceId, data),
+                        title: `Daily max · ${name}`,
+                        status,
+                        searchable: plan.name || ''
+                    }));
+                });
+            }
+            if (week.noUseDay || plan.optionalNoUseDays) {
+                // optional markers handled via status on daily targets
+            }
+            if (week.purchaseSpendTarget != null && week.weekEnd) {
+                events.push(makeCalendarEvent({
+                    id: `plan-spend-${plan.id}-${idx}`,
+                    type: 'plan_target',
+                    movable: true,
+                    recordKind: 'plan',
+                    recordId: plan.id,
+                    linkedPlanId: plan.id,
+                    date: week.weekEnd,
+                    substanceId: plan.substanceId,
+                    substanceName: name,
+                    cost: week.purchaseSpendTarget,
+                    title: `Spend limit · ${name}`,
+                    status: 'planned',
+                    searchable: plan.name || ''
+                }));
+            }
+        });
+
+        // Goal deadlines from plan goal fields
+        const goalDate = plan.goalDate || plan.quitDate || plan.endDate;
+        if (goalDate && goalDate >= bounds.startDate && goalDate <= bounds.endDate) {
+            events.push(makeCalendarEvent({
+                id: `goal-${plan.id}`,
+                type: 'goal_deadline',
+                movable: true,
+                recordKind: 'goal',
+                recordId: plan.id,
+                linkedGoalId: plan.id,
+                linkedPlanId: plan.id,
+                date: goalDate,
+                substanceId: plan.substanceId,
+                substanceName: name,
+                title: `Goal deadline · ${plan.name || name}`,
+                status: goalDate < getLocalDateString() ? 'missed' : 'planned',
+                searchable: plan.name || ''
+            }));
+        }
+    });
+
+    const milestones = buildRecoveryMilestones(
+        buildRecoveryStatusCards(bounds, data, { substanceId: DASHBOARD_ALL }),
+        buildRecoveryActivePlans(data, { substanceId: DASHBOARD_ALL }),
+        bounds,
+        data,
+        { substanceId: DASHBOARD_ALL }
+    );
+    milestones.forEach(m => {
+        const date = m.targetDate || null;
+        if (!date || date < bounds.startDate || date > bounds.endDate) return;
+        const achieved = (m.progressPct || 0) >= 100;
+        events.push(makeCalendarEvent({
+            id: `milestone-${m.id}`,
+            type: 'recovery_milestone',
+            movable: !achieved,
+            recordKind: 'milestone',
+            recordId: m.id,
+            date,
+            substanceId: m.substanceId,
+            substanceName: m.substance || '',
+            title: m.name,
+            status: achieved ? 'completed' : 'planned',
+            amount: m.current,
+            unit: String(m.target),
+            searchable: `${m.name} ${m.substance || ''}`
+        }));
+    });
+
+    (data.cravings || []).forEach(craving => {
+        const date = craving.date || getLocalDateString(craving.timestamp ? new Date(craving.timestamp) : null);
+        if (!date || date < bounds.startDate || date > bounds.endDate) return;
+        events.push(makeCalendarEvent({
+            id: `craving-${craving.id || date}`,
+            type: 'craving',
+            recordKind: 'craving',
+            recordId: craving.id,
+            date,
+            startTime: craving.time || '',
+            substanceId: craving.substanceId || null,
+            notes: craving.notes || '',
+            title: 'Craving',
+            searchable: craving.notes || ''
+        }));
+    });
+
+    return events;
+}
+
+function getCalendarFilterSnapshot(prefs = null) {
+    const p = prefs || getCalendarViewPrefs();
+    return {
+        substanceId: p.substanceId || 'all',
+        productType: p.productType || '',
+        transactionType: p.transactionType || '',
+        personalUseOnly: !!p.personalUseOnly,
+        purchasesOnly: !!p.purchasesOnly,
+        giftsOnly: !!p.giftsOnly,
+        plansOnly: !!p.plansOnly,
+        goalsOnly: !!p.goalsOnly,
+        milestonesOnly: !!p.milestonesOnly,
+        searchQuery: calendarViewState.searchQuery || '',
+        visibleTypes: { ...(p.visibleTypes || {}) }
+    };
+}
+
+function calendarEventMatchesFilters(event, filters) {
+    if (!event) return false;
+    if (filters.visibleTypes && filters.visibleTypes[event.type] === false) return false;
+    if (filters.substanceId && filters.substanceId !== 'all' && filters.substanceId !== DASHBOARD_ALL) {
+        if (!recoveryDashboardMatchesSubstance(event.substanceId, filters.substanceId)) return false;
+    }
+    if (filters.productType) {
+        const pt = normalizeWeedProductType(event.productType, { allowEmpty: true }) || event.productType;
+        if (String(pt) !== String(filters.productType)) return false;
+    }
+    if (filters.transactionType) {
+        if (filters.transactionType === 'session' && event.type !== 'session') return false;
+        else if (filters.transactionType !== 'session' && event.transactionType !== filters.transactionType && event.type !== filters.transactionType) {
+            return false;
+        }
+    }
+    const exclusive = [
+        filters.personalUseOnly && !['personal_use', 'session', 'shared_use'].includes(event.type),
+        filters.purchasesOnly && !['purchase', 'purchased_as_gift'].includes(event.type),
+        filters.giftsOnly && !['gift_given', 'gift_received', 'purchased_as_gift'].includes(event.type),
+        filters.plansOnly && event.type !== 'plan_target',
+        filters.goalsOnly && !['goal_deadline', 'goal_completion'].includes(event.type),
+        filters.milestonesOnly && event.type !== 'recovery_milestone'
+    ];
+    if (exclusive.some(Boolean)) {
+        // If any exclusive chip is on, event must satisfy at least one active exclusive chip
+        const activeChips = [];
+        if (filters.personalUseOnly) activeChips.push(['personal_use', 'session', 'shared_use'].includes(event.type));
+        if (filters.purchasesOnly) activeChips.push(['purchase', 'purchased_as_gift'].includes(event.type));
+        if (filters.giftsOnly) activeChips.push(['gift_given', 'gift_received', 'purchased_as_gift'].includes(event.type));
+        if (filters.plansOnly) activeChips.push(event.type === 'plan_target');
+        if (filters.goalsOnly) activeChips.push(['goal_deadline', 'goal_completion'].includes(event.type));
+        if (filters.milestonesOnly) activeChips.push(event.type === 'recovery_milestone');
+        if (activeChips.length && !activeChips.some(Boolean)) return false;
+    }
+    if (filters.searchQuery) {
+        const q = filters.searchQuery.toLowerCase();
+        const hay = [
+            event.title, event.notes, event.contact, event.productType, event.substanceName,
+            event.searchable, event.label, event.linkedInventoryId, event.linkedPlanId
+        ].join(' ').toLowerCase();
+        if (!hay.includes(q)) return false;
+    }
+    return true;
+}
+
+function buildCalendarEvents(bounds, filters = null, data = appData) {
+    const filterSnap = filters || getCalendarFilterSnapshot();
+    const cacheKey = JSON.stringify({
+        bounds,
+        filterSnap,
+        logs: (data.logs || []).length,
+        purchases: (data.purchases || []).length,
+        plans: (data.taperPlansV2 || []).length,
+        cravings: (data.cravings || []).length
+    });
+    if (calendarEventsCache && calendarEventsCacheKey === cacheKey) return calendarEventsCache;
+
+    const events = [];
+    (data.logs || []).forEach(log => {
+        mapLogToCalendarEvents(log, data).forEach(ev => {
+            if (ev.startDate <= bounds.endDate && ev.endDate >= bounds.startDate) events.push(ev);
+        });
+    });
+    (data.purchases || []).forEach(purchase => {
+        mapPurchaseToCalendarEvents(purchase, data).forEach(ev => {
+            if (ev.date >= bounds.startDate && ev.date <= bounds.endDate) events.push(ev);
+        });
+    });
+    mapPlanGoalMilestoneEvents(bounds, data).forEach(ev => events.push(ev));
+
+    const filtered = events
+        .filter(ev => calendarEventMatchesFilters(ev, filterSnap))
+        .sort((a, b) => {
+            const d = String(a.date).localeCompare(String(b.date));
+            if (d) return d;
+            return String(a.startTime || '').localeCompare(String(b.startTime || ''));
+        });
+
+    calendarEventsCache = filtered;
+    calendarEventsCacheKey = cacheKey;
+    return filtered;
+}
+
+function buildCalendarDaySummary(dateStr, events, data = appData) {
+    const dayEvents = events.filter(ev => calendarEventSpansDate(ev, dateStr));
+    const useBySubstance = {};
+    let spending = 0;
+    let purchaseCount = 0;
+    let useEventCount = 0;
+    let giftCount = 0;
+    let goalStatus = '—';
+    let planStatus = '—';
+
+    dayEvents.forEach(ev => {
+        if (['personal_use', 'session', 'shared_use'].includes(ev.type)) {
+            useEventCount += 1;
+            const sid = ev.substanceId || 'unknown';
+            if (!useBySubstance[sid]) {
+                useBySubstance[sid] = {
+                    substanceId: sid,
+                    name: ev.substanceName || sid,
+                    lines: []
+                };
+            }
+            let label;
+            if (ev.cartPercentUsed != null) label = `${formatAmount(ev.cartPercentUsed)}%`;
+            else if (ev.thcMgUsed != null) label = `${formatAmount(ev.thcMgUsed)} mg THC`;
+            else label = formatAmountWithUnit(ev.personalAmount ?? ev.amount ?? 0, ev.unit || '');
+            useBySubstance[sid].lines.push(label);
+        }
+        if (['purchase', 'purchased_as_gift'].includes(ev.type)) {
+            purchaseCount += 1;
+            spending += ev.cost || 0;
+        }
+        if (['gift_given', 'gift_received', 'purchased_as_gift'].includes(ev.type)) giftCount += 1;
+        if (ev.type === 'goal_deadline' || ev.type === 'goal_completion') {
+            goalStatus = ev.status || goalStatus;
+        }
+        if (ev.type === 'plan_target') {
+            planStatus = ev.status || planStatus;
+        }
+    });
+
+    const groupedUse = Object.values(useBySubstance).map(group => {
+        // Prefer a single rolled amount via canonical helper when possible
+        const amount = getCanonicalUsageOnDate(group.substanceId, dateStr, data);
+        const display = isWeedTrackingMode(group.substanceId, data)
+            ? (getWeedProductTypeUsageInRange(group.substanceId, dateStr, dateStr, data)
+                .map(w => w.display).join(' · ') || group.lines.join(' · '))
+            : formatRecoveryUsageAmount(group.substanceId, amount, data);
+        return { substanceId: group.substanceId, name: group.name, display };
+    });
+
+    return {
+        date: dateStr,
+        groupedUse,
+        spending,
+        purchaseCount,
+        useEventCount,
+        giftCount,
+        goalStatus,
+        planStatus,
+        events: dayEvents
+    };
+}
+
+function buildCalendarPeriodSummary(bounds, events, data = appData) {
+    const prefs = getCalendarViewPrefs(data);
+    const substanceFilter = prefs.substanceId;
+    const substances = substanceFilter && substanceFilter !== 'all' && substanceFilter !== DASHBOARD_ALL
+        ? getRecoveryDashboardSubstances(data, substanceFilter)
+        : getActiveSubstances(data);
+
+    const personalUse = substances.map(sub => {
+        const amount = getCanonicalUsageInRange(sub.id, bounds.startDate, bounds.endDate, data);
+        return {
+            substanceId: sub.id,
+            name: getSubstanceDisplayName(sub, data),
+            display: formatRecoveryUsageAmount(sub.id, amount, data),
+            amount
+        };
+    }).filter(row => row.amount > 0);
+
+    let spending = 0;
+    let purchases = 0;
+    let giftsGiven = 0;
+    let giftsReceived = 0;
+    let goalsCompleted = 0;
+    let goalsMissed = 0;
+    let planHits = 0;
+    let planMisses = 0;
+
+    events.forEach(ev => {
+        if (['purchase', 'purchased_as_gift'].includes(ev.type)) {
+            purchases += 1;
+            spending += ev.cost || 0;
+        }
+        if (ev.type === 'gift_given' || ev.type === 'purchased_as_gift') giftsGiven += 1;
+        if (ev.type === 'gift_received') giftsReceived += 1;
+        if (ev.type === 'goal_completion' || (ev.type === 'goal_deadline' && ev.status === 'completed')) goalsCompleted += 1;
+        if (ev.type === 'goal_deadline' && ev.status === 'missed') goalsMissed += 1;
+        if (ev.type === 'plan_target' && ev.status === 'completed') planHits += 1;
+        if (ev.type === 'plan_target' && ev.status === 'missed') planMisses += 1;
+    });
+
+    let useDays = 0;
+    let noUseDays = 0;
+    let longestBreak = 0;
+    let run = 0;
+    iterateDatesInRange(bounds.startDate, bounds.endDate).forEach(dateStr => {
+        const used = substances.some(sub => getCanonicalUsageOnDate(sub.id, dateStr, data) > 0);
+        if (used) {
+            useDays += 1;
+            run = 0;
+        } else {
+            noUseDays += 1;
+            run += 1;
+            if (run > longestBreak) longestBreak = run;
+        }
+    });
+
+    const planTotal = planHits + planMisses;
+    return {
+        personalUse,
+        spending,
+        purchases,
+        useDays,
+        noUseDays,
+        goalsCompleted,
+        goalsMissed,
+        planAdherence: planTotal ? Math.round((planHits / planTotal) * 100) : null,
+        giftsGiven,
+        giftsReceived,
+        longestBreak
+    };
+}
+
+function syncCalendarControlsFromPrefs() {
+    const prefs = getCalendarViewPrefs();
+    calendarViewState.viewMode = prefs.viewMode || 'month';
+    calendarViewState.anchorDate = prefs.anchorDate || getLocalDateString();
+
+    document.querySelectorAll('.cal-view-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.calView === calendarViewState.viewMode);
+    });
+
+    const subSel = document.getElementById('calendar-filter-substance');
+    if (subSel) {
+        const active = getActiveSubstances();
+        const prev = prefs.substanceId || 'all';
+        subSel.innerHTML = '';
+        const all = document.createElement('option');
+        all.value = 'all';
+        all.textContent = 'All Substances';
+        subSel.appendChild(all);
+        active.forEach(sub => subSel.appendChild(buildSubstanceOption(sub)));
+        subSel.value = [...subSel.options].some(o => o.value === prev) ? prev : 'all';
+    }
+
+    const setVal = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.value = value;
+    };
+    const setChecked = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.checked = !!value;
+    };
+    setVal('calendar-filter-product-type', prefs.productType || '');
+    setVal('calendar-filter-transaction', prefs.transactionType || '');
+    setChecked('cal-filter-personal-only', prefs.personalUseOnly);
+    setChecked('cal-filter-purchases-only', prefs.purchasesOnly);
+    setChecked('cal-filter-gifts-only', prefs.giftsOnly);
+    setChecked('cal-filter-plans-only', prefs.plansOnly);
+    setChecked('cal-filter-goals-only', prefs.goalsOnly);
+    setChecked('cal-filter-milestones-only', prefs.milestonesOnly);
+    setChecked('cal-show-amounts', prefs.showAmounts);
+    setChecked('cal-show-costs', prefs.showCosts);
+    setChecked('cal-show-contacts', prefs.showContacts);
+    setChecked('cal-show-notes', prefs.showNotes);
+    setChecked('cal-show-day-summaries', prefs.showDaySummaries);
+    setChecked('cal-export-include-notes', prefs.exportIncludeNotes);
+    setVal('cal-week-starts', prefs.weekStarts || 'sunday');
+    setVal('cal-time-format', prefs.timeFormat || '12');
+    setVal('cal-event-density', prefs.eventDensity || 'compact');
+    setVal('calendar-date-picker', getCalendarAnchorDate(prefs));
+
+    const toggles = document.getElementById('calendar-type-toggles');
+    if (toggles) {
+        toggles.innerHTML = Object.entries(CALENDAR_EVENT_TYPE_META).map(([key, meta]) => `
+            <label><input type="checkbox" data-cal-type="${key}" ${prefs.visibleTypes[key] !== false ? 'checked' : ''} onchange="onCalendarTypeToggle('${key}', this.checked)"> ${escapeHtml(meta.label)}</label>
+        `).join('');
+    }
+}
+
+function readCalendarFiltersFromDom() {
+    return {
+        substanceId: document.getElementById('calendar-filter-substance')?.value || 'all',
+        productType: document.getElementById('calendar-filter-product-type')?.value || '',
+        transactionType: document.getElementById('calendar-filter-transaction')?.value || '',
+        personalUseOnly: !!document.getElementById('cal-filter-personal-only')?.checked,
+        purchasesOnly: !!document.getElementById('cal-filter-purchases-only')?.checked,
+        giftsOnly: !!document.getElementById('cal-filter-gifts-only')?.checked,
+        plansOnly: !!document.getElementById('cal-filter-plans-only')?.checked,
+        goalsOnly: !!document.getElementById('cal-filter-goals-only')?.checked,
+        milestonesOnly: !!document.getElementById('cal-filter-milestones-only')?.checked
+    };
+}
+
+function readCalendarDisplayFromDom() {
+    return {
+        showAmounts: !!document.getElementById('cal-show-amounts')?.checked,
+        showCosts: !!document.getElementById('cal-show-costs')?.checked,
+        showContacts: !!document.getElementById('cal-show-contacts')?.checked,
+        showNotes: !!document.getElementById('cal-show-notes')?.checked,
+        showDaySummaries: !!document.getElementById('cal-show-day-summaries')?.checked,
+        weekStarts: document.getElementById('cal-week-starts')?.value || 'sunday',
+        timeFormat: document.getElementById('cal-time-format')?.value || '12',
+        eventDensity: document.getElementById('cal-event-density')?.value || 'compact',
+        exportIncludeNotes: !!document.getElementById('cal-export-include-notes')?.checked
+    };
+}
+
+function setCalendarViewMode(mode) {
+    if (!['month', 'week', 'day', 'agenda'].includes(mode)) return;
+    calendarViewState.viewMode = mode;
+    persistCalendarViewPrefs({ viewMode: mode });
+    renderCalendarView();
+}
+
+function shiftCalendarPeriod(delta) {
+    const prefs = getCalendarViewPrefs();
+    const anchor = parseLocalDate(getCalendarAnchorDate(prefs)) || new Date();
+    if (prefs.viewMode === 'day') anchor.setDate(anchor.getDate() + delta);
+    else if (prefs.viewMode === 'week' || prefs.viewMode === 'agenda') anchor.setDate(anchor.getDate() + (delta * 7));
+    else anchor.setMonth(anchor.getMonth() + delta);
+    setCalendarAnchorDate(formatYYYYMMDD(anchor));
+}
+
+function goCalendarToday() {
+    setCalendarAnchorDate(getLocalDateString());
+}
+
+function onCalendarDatePickerChange() {
+    const value = document.getElementById('calendar-date-picker')?.value;
+    if (value) setCalendarAnchorDate(value);
+}
+
+function onCalendarFilterChange() {
+    persistCalendarViewPrefs(readCalendarFiltersFromDom());
+    invalidateCalendarEventsCache();
+    renderCalendarView();
+}
+
+function onCalendarDisplaySettingChange() {
+    persistCalendarViewPrefs(readCalendarDisplayFromDom());
+    invalidateCalendarEventsCache();
+    renderCalendarView();
+}
+
+function onCalendarTypeToggle(type, enabled) {
+    const prefs = getCalendarViewPrefs();
+    prefs.visibleTypes[type] = !!enabled;
+    persistCalendarViewPrefs({ visibleTypes: prefs.visibleTypes });
+    invalidateCalendarEventsCache();
+    renderCalendarView();
+}
+
+function onCalendarSearchInput() {
+    calendarViewState.searchQuery = document.getElementById('calendar-search')?.value || '';
+    invalidateCalendarEventsCache();
+    renderCalendarView();
+}
+
+function toggleCalendarFiltersPanel() {
+    const section = document.querySelector('[data-section="calendarFilters"]');
+    if (!section) return;
+    const collapsed = section.classList.contains('collapsed');
+    ensureCollapsedSections(appData);
+    appData.settings.collapsedSections.calendarFilters = collapsed ? false : true;
+    saveData(appData);
+    applyCollapsedSections();
+}
+
+function toggleCalendarSettingsPanel() {
+    const section = document.querySelector('[data-section="calendarDisplaySettings"]');
+    if (!section) return;
+    const collapsed = section.classList.contains('collapsed');
+    ensureCollapsedSections(appData);
+    appData.settings.collapsedSections.calendarDisplaySettings = collapsed ? false : true;
+    saveData(appData);
+    applyCollapsedSections();
+}
+
+function setCalendarUiState({ loading = false, error = null, empty = false } = {}) {
+    document.getElementById('calendar-loading')?.classList.toggle('hidden', !loading);
+    document.getElementById('calendar-error')?.classList.toggle('hidden', !error);
+    document.getElementById('calendar-empty')?.classList.toggle('hidden', !empty);
+    document.getElementById('calendar-root')?.classList.toggle('hidden', loading || !!error);
+    if (error) {
+        const msg = document.getElementById('calendar-error-message');
+        if (msg) msg.textContent = error;
+    }
+}
+
+function renderCalendarEventChip(event, prefs) {
+    const meta = CALENDAR_EVENT_TYPE_META[event.type] || CALENDAR_EVENT_TYPE_META.note;
+    const bits = [event.title || meta.label];
+    if (prefs.showAmounts) {
+        if (event.cartPercentUsed != null) bits.push(`${formatAmount(event.cartPercentUsed)}%`);
+        else if (event.thcMgUsed != null) bits.push(`${formatAmount(event.thcMgUsed)} mg`);
+        else if (event.amount != null) bits.push(formatAmountWithUnit(event.amount, event.unit || ''));
+    }
+    if (prefs.showCosts && event.cost) bits.push(`${getCurrencySymbol()}${Number(event.cost).toFixed(2)}`);
+    if (prefs.showContacts && event.contact) bits.push(event.contact);
+    if (prefs.showNotes && event.notes) bits.push(event.notes);
+    const statusClass = event.status ? ` cal-status-${event.status}` : '';
+    const forecastClass = event.forecast ? ' cal-forecast' : '';
+    const draggable = event.movable ? 'true' : 'false';
+    return `<button type="button" class="cal-event-chip ${meta.className}${statusClass}${forecastClass}"
+        data-cal-event-id="${escapeHtml(event.id)}"
+        draggable="${draggable}"
+        ondragstart="onCalendarEventDragStart(event, '${escapeHtml(event.id)}')"
+        onclick="openCalendarEventSheet('${escapeHtml(event.id)}')">
+        ${escapeHtml(bits.join(' · '))}
+    </button>`;
+}
+
+function renderCalendarDaySummaryHtml(summary, prefs) {
+    if (!prefs.showDaySummaries || !summary) return '';
+    const lines = summary.groupedUse.map(g => `${escapeHtml(g.name)}: ${escapeHtml(g.display)}`);
+    if (summary.spending > 0) lines.push(`Spent: ${getCurrencySymbol()}${summary.spending.toFixed(2)}`);
+    if (!lines.length && !summary.useEventCount && !summary.purchaseCount) return '';
+    return `<div class="cal-day-summary">${lines.map(l => `<div>${l}</div>`).join('')}</div>`;
+}
+
+function renderCalendarPeriodSummaryPanel(summary) {
+    const el = document.getElementById('calendar-summary-panel');
+    if (!el) return;
+    const cur = getCurrencySymbol();
+    const useLines = summary.personalUse.length
+        ? summary.personalUse.map(r => `<li><strong>${escapeHtml(r.name)}</strong> ${escapeHtml(r.display)}</li>`).join('')
+        : '<li>No personal use</li>';
+    el.innerHTML = `
+        <div class="cal-period-summary">
+            <div>
+                <h4>Personal use</h4>
+                <ul>${useLines}</ul>
+            </div>
+            <div>
+                <h4>Activity</h4>
+                <ul>
+                    <li>Spending: ${cur}${summary.spending.toFixed(2)}</li>
+                    <li>Purchases: ${summary.purchases}</li>
+                    <li>Use days: ${summary.useDays}</li>
+                    <li>No-use days: ${summary.noUseDays}</li>
+                    <li>Longest break: ${summary.longestBreak}d</li>
+                </ul>
+            </div>
+            <div>
+                <h4>Goals &amp; plans</h4>
+                <ul>
+                    <li>Goals completed: ${summary.goalsCompleted}</li>
+                    <li>Goals missed: ${summary.goalsMissed}</li>
+                    <li>Plan adherence: ${summary.planAdherence != null ? `${summary.planAdherence}%` : '—'}</li>
+                    <li>Gifts given: ${summary.giftsGiven}</li>
+                    <li>Gifts received: ${summary.giftsReceived}</li>
+                </ul>
+            </div>
+        </div>
+    `;
+}
+
+function renderCalendarMonthView(bounds, events, prefs) {
+    const anchor = parseLocalDate(getCalendarAnchorDate(prefs));
+    const year = anchor.getFullYear();
+    const month = anchor.getMonth();
+    const grid = getCalendarMonthGridDates(year, month, prefs.weekStarts);
+    const weekdays = prefs.weekStarts === 'monday'
+        ? ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
+        : ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+    const today = getLocalDateString();
+    const head = weekdays.map(d => `<div class="cal-weekday">${d}</div>`).join('');
+    const cells = grid.map(cell => {
+        const dayEvents = events.filter(ev => calendarEventSpansDate(ev, cell.date));
+        const summary = buildCalendarDaySummary(cell.date, dayEvents, appData);
+        const visible = dayEvents.slice(0, prefs.eventDensity === 'detailed' ? 8 : 3);
+        const more = dayEvents.length - visible.length;
+        return `<div class="cal-day-cell ${cell.inMonth ? '' : 'cal-outside'} ${cell.date === today ? 'cal-today' : ''}"
+            data-cal-date="${cell.date}"
+            ondragover="onCalendarDayDragOver(event)"
+            ondrop="onCalendarDayDrop(event, '${cell.date}')"
+            onclick="if(event.target===this||event.target.classList.contains('cal-day-number'))openCalendarDay('${cell.date}')">
+            <div class="cal-day-number">${parseInt(cell.date.slice(8), 10)}</div>
+            ${renderCalendarDaySummaryHtml(summary, prefs)}
+            <div class="cal-day-events">${visible.map(ev => renderCalendarEventChip(ev, prefs)).join('')}</div>
+            ${more > 0 ? `<button type="button" class="cal-more-btn" onclick="openCalendarDay('${cell.date}')">+${more} more</button>` : ''}
+        </div>`;
+    }).join('');
+    return `<div class="cal-month-grid"><div class="cal-weekday-row">${head}</div><div class="cal-day-grid">${cells}</div></div>`;
+}
+
+function renderCalendarWeekView(bounds, events, prefs) {
+    const days = iterateDatesInRange(bounds.startDate, bounds.endDate);
+    const today = getLocalDateString();
+    return `<div class="cal-week-grid">${days.map(dateStr => {
+        const dayEvents = events.filter(ev => calendarEventSpansDate(ev, dateStr));
+        const summary = buildCalendarDaySummary(dateStr, dayEvents, appData);
+        return `<section class="cal-week-day ${dateStr === today ? 'cal-today' : ''}" data-cal-date="${dateStr}"
+            ondragover="onCalendarDayDragOver(event)" ondrop="onCalendarDayDrop(event, '${dateStr}')">
+            <header onclick="openCalendarDay('${dateStr}')">
+                <strong>${escapeHtml(formatDate(dateStr))}</strong>
+                <span>${dayEvents.length} event${dayEvents.length === 1 ? '' : 's'}</span>
+            </header>
+            ${renderCalendarDaySummaryHtml(summary, prefs)}
+            <div class="cal-day-events">${dayEvents.map(ev => renderCalendarEventChip(ev, prefs)).join('') || '<p class="empty-hint">No events</p>'}</div>
+        </section>`;
+    }).join('')}</div>`;
+}
+
+function renderCalendarDayView(bounds, events, prefs) {
+    const dateStr = bounds.startDate;
+    const dayEvents = events.filter(ev => calendarEventSpansDate(ev, dateStr));
+    const summary = buildCalendarDaySummary(dateStr, dayEvents, appData);
+    return `<div class="cal-day-view" data-cal-date="${dateStr}" ondragover="onCalendarDayDragOver(event)" ondrop="onCalendarDayDrop(event, '${dateStr}')">
+        <header class="cal-day-view-head">
+            <h3>${escapeHtml(formatDate(dateStr))}</h3>
+            <button type="button" class="secondary-btn btn-sm" onclick="addLogForCalendarDate('${dateStr}')">Add log</button>
+        </header>
+        ${renderCalendarDaySummaryHtml(summary, prefs)}
+        <div class="cal-agenda-list">
+            ${dayEvents.map(ev => `
+                <article class="cal-agenda-item ${ev.className}">
+                    <div class="cal-agenda-time">${escapeHtml(formatCalendarTime(ev.startTime, prefs.timeFormat) || 'All day')}</div>
+                    <div class="cal-agenda-main">
+                        ${renderCalendarEventChip(ev, prefs)}
+                        ${ev.notes && prefs.showNotes ? `<p class="cal-agenda-notes">${escapeHtml(ev.notes)}</p>` : ''}
+                    </div>
+                </article>
+            `).join('') || '<p class="empty-hint">No events for this day.</p>'}
+        </div>
+    </div>`;
+}
+
+function renderCalendarAgendaView(bounds, events, prefs) {
+    const days = iterateDatesInRange(bounds.startDate, bounds.endDate);
+    return `<div class="cal-agenda-view">${days.map(dateStr => {
+        const dayEvents = events.filter(ev => calendarEventSpansDate(ev, dateStr));
+        if (!dayEvents.length) return '';
+        const summary = buildCalendarDaySummary(dateStr, dayEvents, appData);
+        return `<section class="cal-agenda-day">
+            <h3 onclick="openCalendarDay('${dateStr}')">${escapeHtml(formatDate(dateStr))}</h3>
+            ${renderCalendarDaySummaryHtml(summary, prefs)}
+            <div class="cal-agenda-list">
+                ${dayEvents.map(ev => `
+                    <article class="cal-agenda-item ${ev.className}">
+                        <div class="cal-agenda-time">${escapeHtml(formatCalendarTime(ev.startTime, prefs.timeFormat) || 'All day')}</div>
+                        <div class="cal-agenda-main">${renderCalendarEventChip(ev, prefs)}</div>
+                    </article>
+                `).join('')}
+            </div>
+        </section>`;
+    }).join('') || '<p class="empty-hint">No events in this agenda range.</p>'}</div>`;
+}
+
+function findCalendarEventById(eventId, events = null) {
+    const list = events || calendarEventsCache || [];
+    return list.find(ev => ev.id === eventId) || null;
+}
+
+function openCalendarDay(dateStr) {
+    setCalendarViewMode('day');
+    setCalendarAnchorDate(dateStr);
+}
+
+function openCalendarEventSheet(eventId) {
+    const prefs = getCalendarViewPrefs();
+    const bounds = resolveCalendarPeriodBounds(prefs.viewMode, getCalendarAnchorDate(prefs), prefs.weekStarts);
+    const events = buildCalendarEvents(bounds, getCalendarFilterSnapshot(prefs));
+    const event = findCalendarEventById(eventId, events);
+    const sheet = document.getElementById('calendar-event-sheet');
+    const body = document.getElementById('calendar-event-sheet-body');
+    const actions = document.getElementById('calendar-event-sheet-actions');
+    const title = document.getElementById('calendar-event-sheet-title');
+    if (!event || !sheet || !body || !actions) return;
+    calendarViewState.openEventId = eventId;
+    if (title) title.textContent = event.title || (CALENDAR_EVENT_TYPE_META[event.type]?.label || 'Event');
+    const rows = [
+        ['Date', event.startDate === event.endDate ? formatDate(event.date) : `${formatDate(event.startDate)} – ${formatDate(event.endDate)}`],
+        ['Start time', formatCalendarTime(event.startTime, prefs.timeFormat) || '—'],
+        ['End time', formatCalendarTime(event.endTime, prefs.timeFormat) || '—'],
+        ['Substance', event.substanceName || '—'],
+        ['Product type', event.productType || '—'],
+        ['Transaction type', event.transactionType || event.type],
+        ['Amount', event.amount != null ? formatAmountWithUnit(event.amount, event.unit || '') : '—'],
+        ['Unit', event.unit || '—'],
+        ['Personal amount', event.personalAmount != null ? formatAmount(event.personalAmount) : '—'],
+        ['Shared amount', event.sharedAmount != null ? formatAmount(event.sharedAmount) : '—'],
+        ['THC mg used', event.thcMgUsed != null ? formatAmount(event.thcMgUsed) : '—'],
+        ['Cart % used', event.cartPercentUsed != null ? `${formatAmount(event.cartPercentUsed)}%` : '—'],
+        ['Linked inventory', event.linkedInventoryId || '—'],
+        ['Cost', event.cost != null ? `${getCurrencySymbol()}${Number(event.cost).toFixed(2)}` : '—'],
+        ['Contact', event.contact || '—'],
+        ['Notes', event.notes || '—'],
+        ['Plan / goal', event.linkedPlanId || event.linkedGoalId || '—'],
+        ['Status', event.status || (event.forecast ? 'forecast' : '—')]
+    ];
+    body.innerHTML = `<dl class="cal-detail-list">${rows.map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd></div>`).join('')}</dl>`;
+    const actionBtns = [];
+    if (event.recordKind === 'log' && event.recordId) {
+        actionBtns.push(`<button type="button" class="primary-btn" onclick="calendarEditEvent('${escapeHtml(event.id)}')">Edit</button>`);
+        actionBtns.push(`<button type="button" class="danger-btn" onclick="calendarDeleteEvent('${escapeHtml(event.id)}')">Delete</button>`);
+        actionBtns.push(`<button type="button" class="secondary-btn" onclick="calendarDuplicateEvent('${escapeHtml(event.id)}')">Duplicate</button>`);
+    }
+    if (event.recordKind === 'purchase' && event.recordId) {
+        actionBtns.push(`<button type="button" class="primary-btn" onclick="calendarEditEvent('${escapeHtml(event.id)}')">Edit</button>`);
+        actionBtns.push(`<button type="button" class="danger-btn" onclick="calendarDeleteEvent('${escapeHtml(event.id)}')">Delete</button>`);
+        actionBtns.push(`<button type="button" class="secondary-btn" onclick="calendarDuplicateEvent('${escapeHtml(event.id)}')">Duplicate</button>`);
+        actionBtns.push(`<button type="button" class="secondary-btn" onclick="calendarOpenLinkedInventory('${escapeHtml(event.id)}')">Open inventory</button>`);
+    }
+    if (event.linkedPlanId) {
+        actionBtns.push(`<button type="button" class="secondary-btn" onclick="calendarOpenLinkedPlan('${escapeHtml(event.id)}')">Open plan</button>`);
+    }
+    if (event.linkedGoalId) {
+        actionBtns.push(`<button type="button" class="secondary-btn" onclick="calendarOpenLinkedGoal('${escapeHtml(event.id)}')">Open goal</button>`);
+    }
+    if (event.linkedInventoryId && event.recordKind !== 'purchase') {
+        actionBtns.push(`<button type="button" class="secondary-btn" onclick="calendarOpenLinkedInventory('${escapeHtml(event.id)}')">Open linked inventory</button>`);
+    }
+    actions.innerHTML = actionBtns.join('');
+    sheet.classList.remove('hidden');
+}
+
+function closeCalendarEventSheet() {
+    document.getElementById('calendar-event-sheet')?.classList.add('hidden');
+    calendarViewState.openEventId = null;
+}
+
+function calendarEditEvent(eventId) {
+    const event = findCalendarEventById(eventId);
+    if (!event) return;
+    closeCalendarEventSheet();
+    if (event.recordKind === 'log') {
+        editUseEntry(event.recordId);
+    } else if (event.recordKind === 'purchase') {
+        editPurchase(event.recordId);
+    } else if (event.linkedPlanId) {
+        switchTab('taper-tab');
+        openTaperPlanFromManage(event.linkedPlanId);
+    }
+}
+
+function calendarDeleteEvent(eventId) {
+    const event = findCalendarEventById(eventId);
+    if (!event) return;
+    closeCalendarEventSheet();
+    if (event.recordKind === 'log') deleteUseEntry(event.recordId);
+    else if (event.recordKind === 'purchase') deletePurchase(event.recordId);
+    invalidateCalendarEventsCache();
+    renderCalendarView();
+}
+
+function calendarDuplicateEvent(eventId) {
+    const event = findCalendarEventById(eventId);
+    if (!event) return;
+    closeCalendarEventSheet();
+    if (event.recordKind === 'purchase') {
+        duplicatePurchase(event.recordId);
+    } else if (event.recordKind === 'log') {
+        editUseEntry(event.recordId);
+        alert('Review the log form and save to create a duplicate entry.');
+    }
+}
+
+function calendarOpenLinkedInventory(eventId) {
+    const event = findCalendarEventById(eventId);
+    if (!event?.linkedInventoryId) return;
+    closeCalendarEventSheet();
+    switchTab('buy-tracker-tab');
+    if (typeof editPurchase === 'function') editPurchase(event.linkedInventoryId);
+}
+
+function calendarOpenLinkedPlan(eventId) {
+    const event = findCalendarEventById(eventId);
+    if (!event?.linkedPlanId) return;
+    closeCalendarEventSheet();
+    switchTab('taper-tab');
+    openTaperPlanFromManage(event.linkedPlanId);
+}
+
+function calendarOpenLinkedGoal(eventId) {
+    calendarOpenLinkedPlan(eventId);
+}
+
+function onCalendarEventDragStart(domEvent, eventId) {
+    const event = findCalendarEventById(eventId);
+    if (!event?.movable) {
+        domEvent.preventDefault();
+        return;
+    }
+    domEvent.dataTransfer?.setData('text/cal-event-id', eventId);
+    domEvent.dataTransfer.effectAllowed = 'move';
+}
+
+function onCalendarDayDragOver(domEvent) {
+    domEvent.preventDefault();
+    if (domEvent.dataTransfer) domEvent.dataTransfer.dropEffect = 'move';
+}
+
+function onCalendarDayDrop(domEvent, dateStr) {
+    domEvent.preventDefault();
+    const eventId = domEvent.dataTransfer?.getData('text/cal-event-id');
+    const event = findCalendarEventById(eventId);
+    if (!event?.movable) return;
+    if (['personal_use', 'session', 'shared_use', 'gift_given', 'gift_received', 'purchase', 'purchased_as_gift', 'inventory_adjustment', 'inventory_depletion'].includes(event.type)) {
+        return;
+    }
+    if (event.recordKind === 'plan' && event.linkedPlanId) {
+        const plan = getTaperPlanById(event.linkedPlanId);
+        if (plan) {
+            if (event.id.startsWith('plan-end-') || event.type === 'goal_deadline') {
+                plan.endDate = dateStr;
+                if (event.type === 'goal_deadline') plan.goalDate = dateStr;
+            } else if (event.id.includes('plan-spend-')) {
+                const week = (plan.weeklyTargets || []).find(w => event.id.endsWith(String((plan.weeklyTargets || []).indexOf(w))) || w.weekEnd === event.date);
+                if (week) week.weekEnd = dateStr;
+            }
+            plan.updatedAt = new Date().toISOString();
+            saveData(appData);
+        }
+    }
+    invalidateCalendarEventsCache();
+    renderCalendarView();
+}
+
+function exportCalendarCsv() {
+    const prefs = getCalendarViewPrefs();
+    const bounds = resolveCalendarPeriodBounds(prefs.viewMode, getCalendarAnchorDate(prefs), prefs.weekStarts);
+    const events = buildCalendarEvents(bounds, getCalendarFilterSnapshot(prefs));
+    const includeNotes = !!prefs.exportIncludeNotes;
+    const headers = ['date', 'startTime', 'endTime', 'type', 'substance', 'productType', 'transactionType', 'amount', 'unit', 'cost', 'contact', 'status'];
+    if (includeNotes) headers.push('notes');
+    const rows = [headers];
+    events.forEach(ev => {
+        const row = [
+            ev.date, ev.startTime, ev.endTime, ev.type, ev.substanceName, ev.productType,
+            ev.transactionType, ev.amount ?? '', ev.unit, ev.cost ?? '', ev.contact, ev.status || ''
+        ];
+        if (includeNotes) row.push(ev.notes || '');
+        rows.push(row);
+    });
+    const csv = rows.map(r => r.map(csvEscape).join(',')).join('\n');
+    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `recovery-calendar-${bounds.startDate}-${bounds.endDate}.csv`);
+}
+
+function exportCalendarIcs() {
+    const prefs = getCalendarViewPrefs();
+    const bounds = resolveCalendarPeriodBounds(prefs.viewMode, getCalendarAnchorDate(prefs), prefs.weekStarts);
+    const events = buildCalendarEvents(bounds, getCalendarFilterSnapshot(prefs));
+    const includeNotes = !!prefs.exportIncludeNotes;
+    const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//Recovery Tracker//Calendar//EN'];
+    events.forEach(ev => {
+        const dt = String(ev.date || '').replace(/-/g, '');
+        if (!dt) return;
+        const summary = (ev.title || ev.label || ev.type).replace(/\n/g, ' ');
+        lines.push('BEGIN:VEVENT');
+        lines.push(`UID:${ev.id}@recovery-tracker`);
+        lines.push(`DTSTART;VALUE=DATE:${dt}`);
+        lines.push(`SUMMARY:${summary}`);
+        if (includeNotes && ev.notes) lines.push(`DESCRIPTION:${String(ev.notes).replace(/\n/g, '\\n')}`);
+        else if (ev.forecast) lines.push('DESCRIPTION:Forecast event');
+        lines.push('END:VEVENT');
+    });
+    lines.push('END:VCALENDAR');
+    downloadBlob(new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' }), `recovery-calendar-${bounds.startDate}.ics`);
+}
+
+function printCalendarView() {
+    window.print();
+}
+
+function setupCalendarSwipeHandlers() {
+    const root = document.getElementById('calendar-root');
+    if (!root || root.dataset.swipeBound === '1') return;
+    root.dataset.swipeBound = '1';
+    root.addEventListener('touchstart', (e) => {
+        calendarTouchStartX = e.changedTouches?.[0]?.clientX ?? null;
+    }, { passive: true });
+    root.addEventListener('touchend', (e) => {
+        if (calendarTouchStartX == null) return;
+        const endX = e.changedTouches?.[0]?.clientX ?? calendarTouchStartX;
+        const delta = endX - calendarTouchStartX;
+        calendarTouchStartX = null;
+        if (Math.abs(delta) < 60) return;
+        shiftCalendarPeriod(delta < 0 ? 1 : -1);
+    }, { passive: true });
+}
+
+function renderCalendarView() {
+    const root = document.getElementById('calendar-root');
+    if (!root) return;
+    setCalendarUiState({ loading: true });
+    try {
+        ensureCalendarViewPrefs();
+        syncCalendarControlsFromPrefs();
+        const prefs = getCalendarViewPrefs();
+        const anchor = getCalendarAnchorDate(prefs);
+        const bounds = resolveCalendarPeriodBounds(prefs.viewMode, anchor, prefs.weekStarts);
+        const label = document.getElementById('calendar-period-label');
+        if (label) label.textContent = bounds.label;
+        invalidateCalendarEventsCache();
+        const events = buildCalendarEvents(bounds, getCalendarFilterSnapshot(prefs));
+        const summary = buildCalendarPeriodSummary(bounds, events);
+        renderCalendarPeriodSummaryPanel(summary);
+
+        let html = '';
+        if (prefs.viewMode === 'week') html = renderCalendarWeekView(bounds, events, prefs);
+        else if (prefs.viewMode === 'day') html = renderCalendarDayView(bounds, events, prefs);
+        else if (prefs.viewMode === 'agenda') html = renderCalendarAgendaView(bounds, events, prefs);
+        else html = renderCalendarMonthView(bounds, events, prefs);
+
+        root.innerHTML = html;
+        root.classList.toggle('cal-density-detailed', prefs.eventDensity === 'detailed');
+        root.classList.toggle('cal-density-compact', prefs.eventDensity !== 'detailed');
+        setupCalendarSwipeHandlers();
+        setCalendarUiState({ empty: events.length === 0 && prefs.viewMode === 'agenda' });
+        if (events.length === 0 && prefs.viewMode === 'agenda') {
+            // empty state already toggled
+        } else {
+            setCalendarUiState({});
+        }
+    } catch (err) {
+        console.error('Calendar view failed', err);
+        setCalendarUiState({ error: err?.message || 'Failed to render calendar.' });
+    }
+}
+
+
 function __getRecoveryTrackerTestExports() {
     return {
         __setTestAppData,
@@ -35752,6 +37110,33 @@ function __getRecoveryTrackerTestExports() {
         loadComparePeriodsPrefsIntoState,
         persistComparePeriodsPrefs,
         ensureRecoveryDashboardPrefs,
+        ensureCalendarViewPrefs,
+        getCalendarViewPrefs,
+        persistCalendarViewPrefs,
+        buildCalendarEvents,
+        mapLogToCalendarEvents,
+        mapPurchaseToCalendarEvents,
+        buildCalendarDaySummary,
+        buildCalendarPeriodSummary,
+        calendarEventMatchesFilters,
+        calendarEventSpansDate,
+        resolveCalendarPeriodBounds,
+        getCalendarFilterSnapshot,
+        calendarEditEvent,
+        calendarDeleteEvent,
+        calendarDuplicateEvent,
+        onCalendarDayDrop,
+        makeCalendarEvent,
+        setCalendarViewMode,
+        setCalendarAnchorDate,
+        getCalendarAnchorDate,
+        renderCalendarView,
+        openCalendarEventSheet,
+        closeCalendarEventSheet,
+        exportCalendarCsv,
+        exportCalendarIcs,
+        CALENDAR_EVENT_TYPE_META,
+        invalidateCalendarEventsCache,
         getRecoveryDashboardPrefs,
         persistRecoveryDashboardPrefs,
         resolveRecoveryDashboardBounds,
