@@ -221,12 +221,17 @@ test('Bud / Edibles / Pre-rolls keep amount or count logging; Cart uses percent'
     rt.__setTestAppData(rt.normalizeAppDataSafe(makeWeedData(purchases)));
 
     for (const type of ['bud', 'edibles', 'pre-rolls']) {
-        installWeedDom(rt, { productType: type, amount: type === 'bud' ? '0.25' : '2', unit: type === 'bud' ? 'grams' : 'units' });
+        installWeedDom(rt, {
+            productType: type,
+            amount: type === 'bud' ? '0.25' : '2',
+            unit: type === 'bud' ? 'grams' : (type === 'edibles' ? 'edible' : 'units')
+        });
         const entry = rt.buildUseEntryFromForm(null, null, null, null, null, null);
         assert.equal(entry.weedProductType, type);
         assert.notEqual(entry.logMode, 'weed_cart_percent');
         assert.ok(entry.amount > 0);
         if (type === 'bud') assert.equal(entry.unit, 'grams');
+        else if (type === 'edibles') assert.equal(entry.unit, 'edible');
         else assert.equal(entry.unit, 'units');
     }
 

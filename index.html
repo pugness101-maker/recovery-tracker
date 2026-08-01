@@ -576,6 +576,15 @@
                             <p id="use-weed-cart-estimated-preview" class="use-supply-preview">Estimated percent used: —</p>
                         </div>
 
+                        <div id="use-weed-edibles-fields-group" class="use-weed-edibles-fields-group hidden">
+                            <div class="form-group use-log-compact">
+                                <label for="use-weed-edible-mg-per">THC mg per edible</label>
+                                <input type="number" id="use-weed-edible-mg-per" min="0" step="0.1" placeholder="From linked inventory" oninput="updateWeedEdibleUsePreview()">
+                                <p id="use-weed-edible-strength-hint" class="use-supply-preview hidden">Strength missing — needs review</p>
+                            </div>
+                            <p id="use-weed-edible-thc-preview" class="use-supply-preview">Estimated THC mg used: —</p>
+                        </div>
+
                         <div class="form-group use-log-compact hidden" id="use-nicotine-product-type-group">
                             <label for="use-nicotine-product-type">Product type</label>
                             <select id="use-nicotine-product-type" onchange="updateUseNicotineProductTypeUI()">
@@ -1885,8 +1894,9 @@
                             <input type="number" id="buy-cart-grams" min="0" step="0.01">
                         </div>
                         <div class="form-group hidden" id="buy-weed-edibles-group">
-                            <label for="buy-edibles-mg">Edibles mg</label>
-                            <input type="number" id="buy-edibles-mg" min="0" step="0.1">
+                            <label for="buy-edibles-mg">THC mg per edible</label>
+                            <input type="number" id="buy-edibles-mg" min="0" step="0.1" placeholder="e.g. 20" oninput="updateBuyWeedEdiblesPreview()">
+                            <p id="buy-edibles-preview" class="buy-preview">—</p>
                         </div>
                         <div class="hidden" id="buy-weed-prerolls-group">
                             <div class="form-row">
