@@ -7197,6 +7197,8 @@ const TABLE_COLUMNS_REQUIRED = {
 };
 
 const COLUMN_SETTINGS_STORAGE_KEY = 'recoveryTracker.columnSettings.v1';
+/** Dedicated Purchase History column presentation store (never used as row filters). */
+const PURCHASE_HISTORY_COLUMNS_STORAGE_KEY = 'recoveryTracker.purchaseHistoryColumns';
 
 const USE_HISTORY_COLUMN_ALIASES = {
     supply: 'inventory',
@@ -7348,6 +7350,76 @@ function saveColumnSettingsStore(store) {
     localStorage.setItem(COLUMN_SETTINGS_STORAGE_KEY, JSON.stringify(store));
 }
 
+function isValidPurchaseHistoryColumnSettings(stored) {
+    if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return false;
+    if (!Array.isArray(stored.order) || !stored.order.length) return false;
+    if (stored.visible != null && (typeof stored.visible !== 'object' || Array.isArray(stored.visible))) {
+        return false;
+    }
+    if (stored.widths != null && (typeof stored.widths !== 'object' || Array.isArray(stored.widths))) {
+        return false;
+    }
+    const allowed = new Set(TABLE_COLUMN_DEFAULTS.purchaseHistory?.order || []);
+    return stored.order.some(id => allowed.has(id));
+}
+
+function loadPurchaseHistoryColumnSettingsRaw() {
+    try {
+        const raw = localStorage.getItem(PURCHASE_HISTORY_COLUMNS_STORAGE_KEY);
+        if (!raw) return null;
+        return JSON.parse(raw);
+    } catch {
+        return null;
+    }
+}
+
+function savePurchaseHistoryColumnSettings(config) {
+    const normalized = normalizeStoredColumnSettings('purchaseHistory', config);
+    try {
+        localStorage.setItem(PURCHASE_HISTORY_COLUMNS_STORAGE_KEY, JSON.stringify(normalized));
+    } catch (_) { /* ignore quota */ }
+    // Keep legacy shared-store mirror for older builds; never treat it as filter state.
+    try {
+        const store = loadColumnSettingsStore();
+        store.purchaseHistory = normalized;
+        saveColumnSettingsStore(store);
+    } catch (_) { /* ignore */ }
+    return normalized;
+}
+
+/**
+ * Load Purchase History column presentation settings only.
+ * Corrupted values fall back to defaults without touching purchases or inventory filters.
+ */
+function loadPurchaseHistoryColumnSettings() {
+    const dedicated = loadPurchaseHistoryColumnSettingsRaw();
+    if (isValidPurchaseHistoryColumnSettings(dedicated)) {
+        return normalizeStoredColumnSettings('purchaseHistory', dedicated);
+    }
+    if (dedicated != null) {
+        // Corrupt dedicated key — replace with defaults.
+        const defaults = getDefaultColumnSettings('purchaseHistory');
+        try {
+            localStorage.setItem(PURCHASE_HISTORY_COLUMNS_STORAGE_KEY, JSON.stringify(defaults));
+        } catch (_) { /* ignore */ }
+        return defaults;
+    }
+    // Migrate once from shared columnSettings store when dedicated key is missing.
+    try {
+        const store = loadColumnSettingsStore();
+        if (isValidPurchaseHistoryColumnSettings(store.purchaseHistory)) {
+            return savePurchaseHistoryColumnSettings(store.purchaseHistory);
+        }
+    } catch (_) { /* ignore */ }
+    return savePurchaseHistoryColumnSettings(getDefaultColumnSettings('purchaseHistory'));
+}
+
+function migratePurchaseHistoryColumnSettingsIfNeeded() {
+    const dedicated = loadPurchaseHistoryColumnSettingsRaw();
+    if (isValidPurchaseHistoryColumnSettings(dedicated)) return;
+    loadPurchaseHistoryColumnSettings();
+}
+
 function getDefaultColumnSettings(tableKey) {
     const defaults = TABLE_COLUMN_DEFAULTS[tableKey];
     if (!defaults) return { order: [], visible: {}, widths: {} };
@@ -7428,8 +7500,14 @@ function migrateLegacyTableColumnsToLocalStorageIfNeeded(data = appData) {
 
 function ensureTableColumnSettings(data) {
     migrateLegacyTableColumnsToLocalStorageIfNeeded(data);
+    migratePurchaseHistoryColumnSettingsIfNeeded();
     const store = loadColumnSettingsStore();
     Object.keys(TABLE_COLUMN_DEFAULTS).forEach(tableKey => {
+        if (tableKey === 'purchaseHistory') {
+            // Purchase History columns live in a dedicated key; mirror for compatibility only.
+            store.purchaseHistory = loadPurchaseHistoryColumnSettings();
+            return;
+        }
         if (!store[tableKey]) {
             store[tableKey] = getDefaultColumnSettings(tableKey);
         } else {
@@ -7696,6 +7774,9 @@ function getTaperByWeekColumnLabel(colId, plan, substanceId) {
 
 function getTableColumnConfig(tableKey, variantKey = null) {
     ensureTableColumnSettings(appData);
+    if (tableKey === 'purchaseHistory') {
+        return loadPurchaseHistoryColumnSettings();
+    }
     const store = loadColumnSettingsStore();
     const storageKey = resolveColumnStorageKey(tableKey, variantKey);
     if (store[storageKey]) {
@@ -7785,6 +7866,10 @@ function getEffectiveColumnOrder(tableKey, variantKey = null) {
 }
 
 function saveTableColumnConfig(tableKey, config, variantKey = null) {
+    if (tableKey === 'purchaseHistory') {
+        savePurchaseHistoryColumnSettings(config);
+        return;
+    }
     const store = loadColumnSettingsStore();
     const storageKey = resolveColumnStorageKey(tableKey, variantKey);
     store[storageKey] = normalizeStoredColumnSettings(tableKey, config);
@@ -8315,7 +8400,8 @@ function refreshTableAfterColumnChange(tableKey) {
             renderUseHistoryTable();
             break;
         case 'purchaseHistory':
-            renderPurchaseHistory(substanceId);
+            // Presentation-only: never override inventory filters/search/status/substance.
+            renderPurchaseHistory(null);
             break;
         case 'statsWeekly':
             renderStatsWeeklySummary(currentSubstanceId);
@@ -8409,6 +8495,7 @@ function applyColumnSettingsFromModal() {
             config.visible.runningSpent = false;
         }
     }
+    // Column settings control presentation only — never mutate inventory filters or purchases.
     saveTableColumnConfig(tableKey, config, variantKey);
     closeColumnSettingsModal();
     refreshTableAfterColumnChange(tableKey);
@@ -19632,10 +19719,17 @@ function renderBuyTrackerTab() {
     applyCollapsedSections();
 }
 
+function getFilteredPurchasesForPurchaseHistory() {
+    // Row filtering state only — never derived from column visibility/order/width.
+    syncInventorySubstanceFilterState();
+    return getInventoryFilteredPurchases(getSelectedSubstanceFilterId());
+}
+
 function renderPurchaseHistory(substanceId, containerId = null) {
-    const filterId = substanceId !== undefined
-        ? substanceId
-        : getSelectedSubstanceFilterId();
+    // Column customization must not change which substance/filter drives the rows.
+    // Ignore dashboard substance overrides from presentation-only callers.
+    void substanceId;
+    const filterId = getSelectedSubstanceFilterId();
     const container = document.getElementById(containerId || 'purchase-history-list')
         || document.getElementById('buy-history-table-wrap')
         || document.getElementById('purchase-history');
@@ -19648,7 +19742,7 @@ function renderPurchaseHistory(substanceId, containerId = null) {
         return;
     }
 
-    const purchases = getInventoryFilteredPurchases(filterId);
+    const purchases = getFilteredPurchasesForPurchaseHistory();
 
     if (!purchases.length) {
         container.innerHTML = '<p class="empty-hint">No purchases match this filter.</p>';
@@ -31867,6 +31961,30 @@ function __getRecoveryTrackerTestExports() {
         substanceShowsPurchaseFlavor,
         getInventorySearchPlaceholder,
         getPurchaseHistoryVisibleColumns,
+        getFilteredPurchasesForPurchaseHistory,
+        getInventoryFilteredPurchases,
+        loadPurchaseHistoryColumnSettings,
+        savePurchaseHistoryColumnSettings,
+        isValidPurchaseHistoryColumnSettings,
+        PURCHASE_HISTORY_COLUMNS_STORAGE_KEY,
+        COLUMN_SETTINGS_STORAGE_KEY,
+        applyColumnSettingsFromModal,
+        readColumnSettingsFromModal,
+        resetColumnSettingsFromModal,
+        refreshTableAfterColumnChange,
+        renderPurchaseHistory,
+        getTableColumnConfig,
+        resetTableColumnConfig,
+        getDefaultColumnSettings,
+        inventoryTabFilterRef: {
+            get value() { return inventoryTabFilter; },
+            set value(v) { inventoryTabFilter = v; }
+        },
+        inventorySearchQueryRef: {
+            get value() { return inventorySearchQuery; },
+            set value(v) { inventorySearchQuery = v; }
+        },
+        inventoryListFilters,
         syncInventorySearchPlaceholder,
         formatVapePurchaseTitleLine,
         formatVapePurchaseDetailLine,
@@ -32144,6 +32262,7 @@ function __getRecoveryTrackerTestExports() {
         enrichMonthlySummaryWithBuyData,
         fmtAvgCostPerGram,
         get document() { return document; },
+        get localStorage() { return localStorage; },
         get matchMedia() { return window.matchMedia; },
         set matchMedia(fn) { window.matchMedia = fn; }
     };
