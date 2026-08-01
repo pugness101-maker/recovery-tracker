@@ -8159,11 +8159,31 @@ function saveTableColumnConfig(tableKey, config, variantKey = null) {
     saveColumnSettingsStore(store);
 }
 
-function getTableColumnMinWidth(tableKey, colId) {
+function estimateColumnMinWidthFromLabel(label) {
+    const text = String(label || '').trim();
+    if (!text) return 72;
+    // Approximate 0.82rem tabular header glyphs + cell padding/resize gutter.
+    return Math.min(220, Math.max(72, Math.ceil(text.length * 7.2) + 28));
+}
+
+function getTableColumnMinWidth(tableKey, colId, variantKey = null) {
     if (colId === 'actions') return 150;
     if (colId === 'select') return 40;
     if (colId === 'notes') return 120;
+    if (tableKey === 'taperByWeek') {
+        const label = TABLE_COLUMN_LABELS.taperByWeek?.[colId] || colId;
+        return estimateColumnMinWidthFromLabel(label);
+    }
     return 60;
+}
+
+function getCustomizableTableColumnLayout(tableKey, columnIds, variantKey = null) {
+    return (columnIds || []).map(colId => {
+        const minWidthPx = getTableColumnMinWidth(tableKey, colId, variantKey);
+        const savedWidth = getTableColumnWidthPx(tableKey, colId, variantKey);
+        const widthPx = Math.max(minWidthPx, savedWidth);
+        return { id: colId, widthPx, minWidthPx };
+    });
 }
 
 function getTableColumnWidthPx(tableKey, colId, variantKey = null) {
@@ -8188,21 +8208,46 @@ function saveTableColumnWidth(tableKey, colId, px, variantKey = null) {
 }
 
 function buildTableColgroup(tableKey, columnIds, variantKey = null) {
+    const layout = getCustomizableTableColumnLayout(tableKey, columnIds, variantKey);
     let html = '<colgroup>';
-    columnIds.forEach(colId => {
-        const px = getTableColumnWidthPx(tableKey, colId, variantKey);
-        html += `<col data-col="${colId}" style="width:${px}px;min-width:${px}px">`;
+    layout.forEach(col => {
+        html += `<col data-col="${col.id}" style="width:${col.widthPx}px;min-width:${col.minWidthPx}px">`;
     });
     html += '</colgroup>';
     return html;
 }
 
 function getTableMinWidth(tableKey, columnIds, variantKey = null) {
-    let min = 0;
-    columnIds.forEach(colId => {
-        min += getTableColumnWidthPx(tableKey, colId, variantKey);
+    const layout = getCustomizableTableColumnLayout(tableKey, columnIds, variantKey);
+    const total = layout.reduce((sum, col) => sum + col.widthPx, 0);
+    return Math.max(total, 320);
+}
+
+/** Rebuild full order: remove dragged id, then insert at target (before/after). No duplicates. */
+function computeReorderedColumnOrder(order, draggedColId, targetColId, placeAfter = false) {
+    const next = (order || []).filter(id => id !== draggedColId);
+    const targetIdx = next.indexOf(targetColId);
+    if (targetIdx < 0) {
+        next.push(draggedColId);
+        return next;
+    }
+    next.splice(placeAfter ? targetIdx + 1 : targetIdx, 0, draggedColId);
+    return next;
+}
+
+function reorderTableColumnOrder(tableKey, draggedColId, targetColId, placeAfter = false, variantKey = null) {
+    if (!tableKey || !draggedColId || !targetColId || draggedColId === targetColId) return null;
+    const config = getTableColumnConfig(tableKey, variantKey);
+    const order = computeReorderedColumnOrder(config.order || [], draggedColId, targetColId, placeAfter);
+    const nextConfig = { ...config, order };
+    saveTableColumnConfig(tableKey, nextConfig, variantKey);
+    return order;
+}
+
+function clearCustomizableTableColumnDropIndicators(table) {
+    table?.querySelectorAll('thead th.column-drop-before, thead th.column-drop-after').forEach(th => {
+        th.classList.remove('column-drop-before', 'column-drop-after');
     });
-    return Math.max(min, 320);
 }
 
 function renderColumnResizeHandle(tableKey, colId, label) {
@@ -8758,6 +8803,91 @@ function setupCustomizableTableColumnResize() {
     });
 }
 
+function setupCustomizableTableColumnDrag() {
+    if (document.documentElement.dataset.tableColDragBound === '1') return;
+    document.documentElement.dataset.tableColDragBound = '1';
+
+    let dragState = null;
+
+    document.addEventListener('dragstart', e => {
+        if (e.target.closest?.('.column-resize-handle')) {
+            e.preventDefault();
+            return;
+        }
+        const th = e.target.closest?.('table.customizable-table.column-reorderable thead th[data-col]');
+        if (!th || th.draggable === false) return;
+        const table = th.closest('table.customizable-table');
+        const tableKey = table?.dataset?.tableKey;
+        const colId = th.dataset.col;
+        if (!table || !tableKey || !colId) return;
+        dragState = {
+            table,
+            tableKey,
+            variantKey: table.dataset.tableVariant || null,
+            colId
+        };
+        th.classList.add('column-dragging');
+        table.classList.add('is-column-reordering');
+        try {
+            e.dataTransfer.effectAllowed = 'move';
+            e.dataTransfer.setData('text/plain', colId);
+        } catch {
+            /* ignore */
+        }
+    });
+
+    document.addEventListener('dragend', () => {
+        if (!dragState) return;
+        clearCustomizableTableColumnDropIndicators(dragState.table);
+        dragState.table.querySelectorAll('thead th.column-dragging').forEach(th => {
+            th.classList.remove('column-dragging');
+        });
+        dragState.table.classList.remove('is-column-reordering');
+        dragState = null;
+    });
+
+    document.addEventListener('dragover', e => {
+        if (!dragState) return;
+        const th = e.target.closest?.('table.customizable-table.column-reorderable thead th[data-col]');
+        if (!th || th.closest('table') !== dragState.table) return;
+        const targetColId = th.dataset.col;
+        if (!targetColId || targetColId === dragState.colId) return;
+        e.preventDefault();
+        try { e.dataTransfer.dropEffect = 'move'; } catch { /* ignore */ }
+        const rect = th.getBoundingClientRect?.();
+        const placeAfter = rect ? e.clientX > rect.left + rect.width / 2 : false;
+        clearCustomizableTableColumnDropIndicators(dragState.table);
+        th.classList.add(placeAfter ? 'column-drop-after' : 'column-drop-before');
+        dragState.placeAfter = placeAfter;
+        dragState.targetColId = targetColId;
+    });
+
+    document.addEventListener('drop', e => {
+        if (!dragState) return;
+        const th = e.target.closest?.('table.customizable-table.column-reorderable thead th[data-col]');
+        const table = dragState.table;
+        const tableKey = dragState.tableKey;
+        const variantKey = dragState.variantKey;
+        const draggedColId = dragState.colId;
+        let targetColId = dragState.targetColId;
+        let placeAfter = !!dragState.placeAfter;
+        if (th && th.closest('table') === table) {
+            targetColId = th.dataset.col || targetColId;
+            const rect = th.getBoundingClientRect?.();
+            if (rect) placeAfter = e.clientX > rect.left + rect.width / 2;
+        }
+        e.preventDefault();
+        clearCustomizableTableColumnDropIndicators(table);
+        table.querySelectorAll('thead th.column-dragging').forEach(el => el.classList.remove('column-dragging'));
+        table.classList.remove('is-column-reordering');
+        dragState = null;
+        if (!targetColId || targetColId === draggedColId) return;
+        // Persist new order, then fully re-render so old position is gone before new layout paints.
+        reorderTableColumnOrder(tableKey, draggedColId, targetColId, placeAfter, variantKey);
+        refreshTableAfterColumnChange(tableKey);
+    });
+}
+
 function applyColumnSettingsFromModal() {
     if (!columnSettingsTableKey) return;
     const tableKey = columnSettingsTableKey;
@@ -8870,12 +9000,15 @@ function setupColumnSettingsModal() {
         const items = [...list.querySelectorAll('.column-settings-item')];
         const dragIdx = items.indexOf(dragItem);
         const targetIdx = items.indexOf(target);
+        // Remove from old position first, then insert at the drop target (no duplicate nodes).
+        dragItem.remove();
         if (dragIdx < targetIdx) target.after(dragItem);
         else target.before(dragItem);
         target.classList.remove('column-settings-drop-target');
     });
 
     setupCustomizableTableColumnResize();
+    setupCustomizableTableColumnDrag();
 }
 
 function formatUseHistoryVapeAmountHtml(entry) {
@@ -31542,23 +31675,28 @@ function renderTaperWeeklyTable(substanceId) {
         ? 'puffs'
         : (sub.defaultUnit || unit);
     const variantKey = getTaperByWeekColumnVariantKey(substanceId, plan);
+    // One shared column definition drives order, widths, headers, and body cells.
     const columnOrder = getEffectiveColumnOrder('taperByWeek', variantKey);
+    const columnLayout = getCustomizableTableColumnLayout('taperByWeek', columnOrder, variantKey);
+    const tableMinWidth = getTableMinWidth('taperByWeek', columnOrder, variantKey);
 
-    let html = `<div class="table-scroll"><table class="taper-preview-table taper-by-week-table customizable-table" data-table-key="taperByWeek" data-table-variant="${escapeAttr(variantKey)}" style="min-width:${getTableMinWidth('taperByWeek', columnOrder, variantKey)}px;table-layout:fixed">`;
+    let html = `<div class="table-scroll taper-weekly-table-scroll"><table class="taper-preview-table taper-by-week-table customizable-table column-reorderable" data-table-key="taperByWeek" data-table-variant="${escapeAttr(variantKey)}" style="min-width:${tableMinWidth}px;width:${tableMinWidth}px;table-layout:fixed">`;
     html += buildTableColgroup('taperByWeek', columnOrder, variantKey);
     html += '<thead><tr>';
-    columnOrder.forEach(colId => {
-        const label = getTaperByWeekColumnLabel(colId, plan, substanceId);
-        html += `<th data-col="${colId}"><span class="customizable-th-label">${label}</span>${renderColumnResizeHandle('taperByWeek', colId, label)}</th>`;
+    columnLayout.forEach(col => {
+        const label = getTaperByWeekColumnLabel(col.id, plan, substanceId);
+        html += `<th data-col="${col.id}" draggable="true" title="${escapeAttr(label)}" style="width:${col.widthPx}px;min-width:${col.minWidthPx}px;max-width:${col.widthPx}px"><span class="customizable-th-label">${label}</span>${renderColumnResizeHandle('taperByWeek', col.id, label)}</th>`;
     });
     html += '</tr></thead><tbody>';
 
     data.rows.forEach(row => {
         const cells = buildTaperByWeekCellValues(row, plan, substanceId, unit, displayUnit);
         html += `<tr class="taper-by-week-row taper-by-week-${row.status}${row.isCurrent ? ' taper-by-week-current' : ''}">`;
-        columnOrder.forEach(colId => {
-            const label = getTaperByWeekColumnLabel(colId, plan, substanceId);
-            html += `<td data-col="${colId}" data-label="${escapeAttr(label)}"${colId === 'dates' ? ' class="taper-by-week-dates"' : ''}>${cells[colId] ?? '—'}</td>`;
+        columnLayout.forEach(col => {
+            const label = getTaperByWeekColumnLabel(col.id, plan, substanceId);
+            const raw = cells[col.id] ?? '—';
+            const titleText = String(raw).replace(/<[^>]*>/g, '').trim();
+            html += `<td data-col="${col.id}" data-label="${escapeAttr(label)}" title="${escapeAttr(titleText)}" style="width:${col.widthPx}px;min-width:${col.minWidthPx}px;max-width:${col.widthPx}px"${col.id === 'dates' ? ' class="taper-by-week-dates"' : ''}>${raw}</td>`;
         });
         html += '</tr>';
     });
@@ -32900,6 +33038,14 @@ function __getRecoveryTrackerTestExports() {
         getTableColumnConfig,
         getEffectiveColumnOrder,
         saveTableColumnConfig,
+        getTableColumnMinWidth,
+        getTableColumnWidthPx,
+        getCustomizableTableColumnLayout,
+        computeReorderedColumnOrder,
+        reorderTableColumnOrder,
+        buildTableColgroup,
+        getTableMinWidth,
+        renderTaperWeeklyTable,
         resolveColumnStorageKey,
         openColumnSettingsModal,
         renderColumnSettingsList,

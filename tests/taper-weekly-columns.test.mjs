@@ -1,7 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { loadRecoveryTrackerApp } from './harness.mjs';
 
+const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const COKE_ID = 'coke';
 const WEED_ID = 'weed-thc';
 const NICOTINE_ID = 'nicotine';
@@ -440,4 +444,154 @@ test('nicotine vape plan counts running vapes bought', () => {
         rt.formatTaperRunningAmountBought(data.rows[1].cumulativePurchaseTotals, plan, NICOTINE_ID, 'puffs'),
         /2 vapes/
     );
+});
+
+test('computeReorderedColumnOrder removes old position before insert (no duplicates)', () => {
+    const rt = setup(makeData({ substance: makeSubstance('coke'), taperPlansV2: [makeCokeTaperPlan()] }));
+    const base = ['week', 'dates', 'status', 'difference', 'bought', 'runningAmountBought', 'spent', 'runningAmountSpent'];
+
+    let next = rt.computeReorderedColumnOrder(base, 'status', 'bought', true);
+    assert.deepEqual(next, ['week', 'dates', 'difference', 'bought', 'status', 'runningAmountBought', 'spent', 'runningAmountSpent']);
+    assert.equal(next.filter(id => id === 'status').length, 1);
+
+    next = rt.computeReorderedColumnOrder(next, 'difference', 'week', false);
+    assert.equal(next[0], 'difference');
+    assert.equal(next.filter(id => id === 'difference').length, 1);
+
+    next = rt.computeReorderedColumnOrder(next, 'runningAmountBought', 'spent', false);
+    assert.ok(next.indexOf('runningAmountBought') < next.indexOf('spent'));
+    assert.equal(next.filter(id => id === 'runningAmountBought').length, 1);
+});
+
+test('reordering Status/Difference/Bought/Running/Spending persists and keeps shared layout', () => {
+    const plan = makeCokeTaperPlan();
+    const rt = setup(makeData({ substance: makeSubstance('coke'), taperPlansV2: [plan] }));
+    const variantKey = rt.getTaperByWeekColumnVariantKey(COKE_ID, plan);
+
+    const visibleCols = {
+        week: true,
+        dates: true,
+        planned: true,
+        used: true,
+        difference: true,
+        status: true,
+        bought: true,
+        runningAmountBought: true,
+        spent: true,
+        runningAmountSpent: true
+    };
+    rt.saveTableColumnConfig('taperByWeek', {
+        order: ['week', 'dates', 'planned', 'used', 'difference', 'status', 'bought', 'runningAmountBought', 'spent', 'runningAmountSpent'],
+        visible: visibleCols,
+        widths: {
+            status: 80,
+            difference: 70,
+            bought: 70,
+            runningAmountBought: 90,
+            spent: 70,
+            runningAmountSpent: 90
+        }
+    }, variantKey);
+
+    // Move the columns named in the bug report through several reorder passes.
+    rt.reorderTableColumnOrder('taperByWeek', 'status', 'runningAmountSpent', true, variantKey);
+    rt.reorderTableColumnOrder('taperByWeek', 'difference', 'bought', false, variantKey);
+    rt.reorderTableColumnOrder('taperByWeek', 'bought', 'spent', true, variantKey);
+    rt.reorderTableColumnOrder('taperByWeek', 'runningAmountBought', 'status', false, variantKey);
+    rt.reorderTableColumnOrder('taperByWeek', 'spent', 'week', true, variantKey);
+    rt.reorderTableColumnOrder('taperByWeek', 'runningAmountSpent', 'difference', true, variantKey);
+
+    const order = rt.getEffectiveColumnOrder('taperByWeek', variantKey);
+    const focus = ['status', 'difference', 'bought', 'runningAmountBought', 'spent', 'runningAmountSpent'];
+    focus.forEach(id => assert.ok(order.includes(id), `${id} still visible`));
+    assert.equal(new Set(order).size, order.length, 'no duplicate columns after reorder');
+
+    const layout = rt.getCustomizableTableColumnLayout('taperByWeek', order, variantKey);
+    assert.deepEqual(layout.map(c => c.id), order);
+    layout.forEach(col => {
+        const minW = rt.getTableColumnMinWidth('taperByWeek', col.id, variantKey);
+        assert.ok(col.minWidthPx >= minW);
+        assert.ok(col.widthPx >= col.minWidthPx, `${col.id} width respects min-width`);
+    });
+
+    // Long header labels get content-based minimums wider than a tiny saved width.
+    const runningBought = layout.find(c => c.id === 'runningAmountBought');
+    assert.ok(runningBought.minWidthPx >= 140);
+    assert.ok(runningBought.widthPx >= runningBought.minWidthPx);
+
+    const colgroup = rt.buildTableColgroup('taperByWeek', order, variantKey);
+    order.forEach(id => {
+        assert.match(colgroup, new RegExp(`data-col="${id}"[^>]*min-width:`));
+        assert.equal((colgroup.match(new RegExp(`data-col="${id}"`, 'g')) || []).length, 1);
+    });
+
+    // Persist across reload of the column settings store.
+    const stored = rt.loadColumnSettingsStore()[rt.resolveColumnStorageKey('taperByWeek', variantKey)];
+    const storedFocus = (stored.order || []).filter(id => focus.includes(id)).join(',');
+    const effectiveFocus = order.filter(id => focus.includes(id)).join(',');
+    assert.equal(storedFocus, effectiveFocus);
+    assert.equal(stored.widths.runningAmountBought, 90);
+});
+
+test('Weekly Table render shares header/body column order and widths without duplicates', () => {
+    const plan = makeCokeTaperPlan();
+    const rt = setup(makeData({
+        substance: makeSubstance('coke'),
+        purchases: [makeCokePurchase()],
+        taperPlansV2: [plan]
+    }));
+    const variantKey = rt.getTaperByWeekColumnVariantKey(COKE_ID, plan);
+    rt.saveTableColumnConfig('taperByWeek', {
+        order: ['week', 'status', 'difference', 'bought', 'runningAmountBought', 'spent', 'runningAmountSpent', 'dates', 'planned', 'used'],
+        visible: {
+            week: true, status: true, difference: true, bought: true, runningAmountBought: true,
+            spent: true, runningAmountSpent: true, dates: true, planned: true, used: true
+        },
+        widths: { status: 88, difference: 96, bought: 84, runningAmountBought: 150, spent: 90, runningAmountSpent: 150 }
+    }, variantKey);
+
+    const tableHost = { id: 'taper-weekly-table', innerHTML: '' };
+    const substanceSelect = { id: 'taper-substance', value: COKE_ID };
+    const nodes = new Map([
+        ['taper-weekly-table', tableHost],
+        ['taper-substance', substanceSelect],
+        ['taper-weekly-customize-columns', { classList: { remove() {}, add() {} } }]
+    ]);
+    rt.document.getElementById = (id) => nodes.get(id) || null;
+
+    rt.reorderTableColumnOrder('taperByWeek', 'status', 'bought', true, variantKey);
+    rt.reorderTableColumnOrder('taperByWeek', 'difference', 'runningAmountSpent', false, variantKey);
+    rt.renderTaperWeeklyTable(COKE_ID);
+
+    const html = tableHost.innerHTML;
+    assert.match(html, /column-reorderable/);
+    assert.match(html, /taper-weekly-table-scroll/);
+    assert.match(html, /table-layout:fixed/);
+
+    const thCols = [...html.matchAll(/<th[^>]*data-col="([^"]+)"/g)].map(m => m[1]);
+    const tdFirstRow = html.match(/<tbody><tr[^>]*>([\s\S]*?)<\/tr>/);
+    assert.ok(tdFirstRow);
+    const tdCols = [...tdFirstRow[1].matchAll(/<td[^>]*data-col="([^"]+)"/g)].map(m => m[1]);
+    const colCols = [...html.matchAll(/<col data-col="([^"]+)"/g)].map(m => m[1]);
+
+    assert.deepEqual(thCols, colCols, 'header order matches colgroup');
+    assert.deepEqual(tdCols, colCols, 'body order matches colgroup');
+    assert.equal(new Set(thCols).size, thCols.length, 'no duplicate headers');
+
+    ['status', 'difference', 'bought', 'runningAmountBought', 'spent', 'runningAmountSpent'].forEach(id => {
+        assert.ok(thCols.includes(id));
+        assert.match(html, new RegExp(`<th[^>]*data-col="${id}"[^>]*draggable="true"`));
+        assert.match(html, new RegExp(`<th[^>]*data-col="${id}"[^>]*min-width:\\d+px`));
+        assert.match(html, new RegExp(`<td[^>]*data-col="${id}"[^>]*min-width:\\d+px`));
+    });
+});
+
+test('weekly table CSS prevents cell overlap and keeps sticky headers', () => {
+    const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
+    assert.match(css, /\.customizable-table th,\s*\.customizable-table td\s*\{[^}]*overflow:\s*hidden/s);
+    assert.match(css, /text-overflow:\s*ellipsis/);
+    assert.match(css, /\.taper-by-week-table thead th\s*\{[^}]*position:\s*sticky/s);
+    assert.match(css, /column-drop-before/);
+    assert.match(css, /column-drop-after/);
+    assert.match(css, /#taper-weekly-table\.taper-table-wrap\s*\{[^}]*overflow:\s*visible/s);
 });

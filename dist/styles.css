@@ -2448,6 +2448,20 @@ input[type="range"]::-webkit-slider-thumb {
     border: 1px solid var(--border);
 }
 
+/* Single horizontal scroller for weekly table so sticky headers stay aligned */
+#taper-weekly-table.taper-table-wrap {
+    overflow: visible;
+    border: 1px solid var(--border);
+}
+
+#taper-weekly-table .taper-weekly-table-scroll {
+    overflow-x: auto;
+    overflow-y: visible;
+    max-width: 100%;
+    -webkit-overflow-scrolling: touch;
+    border-radius: 8px;
+}
+
 .taper-monthly-tracking {
     display: flex;
     flex-direction: column;
@@ -2549,16 +2563,29 @@ input[type="range"]::-webkit-slider-thumb {
 
 .taper-by-week-table {
     min-width: 720px;
+    border-collapse: separate;
+    border-spacing: 0;
 }
 
 .taper-by-week-table th,
 .taper-by-week-table td {
+    overflow: hidden;
+    text-overflow: ellipsis;
     white-space: nowrap;
     font-size: 0.82rem;
+    vertical-align: middle;
+    position: static;
+}
+
+.taper-by-week-table thead th {
+    position: sticky;
+    top: 0;
+    z-index: 3;
+    background: var(--bg-card, var(--bg-secondary));
+    box-shadow: inset 0 -1px 0 var(--border);
 }
 
 .taper-by-week-dates {
-    white-space: normal;
     min-width: 9rem;
 }
 
@@ -4413,14 +4440,61 @@ body.locked .bottom-nav {
     table-layout: fixed;
 }
 
+.customizable-table th,
+.customizable-table td {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    box-sizing: border-box;
+}
+
 .customizable-table th {
     position: relative;
     white-space: nowrap;
 }
 
 .customizable-th-label {
-    display: inline-block;
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
     padding-right: 10px;
+    pointer-events: none;
+}
+
+.customizable-table.column-reorderable thead th[draggable="true"] {
+    cursor: grab;
+}
+
+.customizable-table.column-reorderable thead th.column-dragging {
+    opacity: 0.35;
+    cursor: grabbing;
+}
+
+.customizable-table.column-reorderable.is-column-reordering thead th {
+    cursor: grabbing;
+}
+
+/* Drop placeholder indicator — no duplicate header cells during drag */
+.customizable-table.column-reorderable thead th.column-drop-before::before,
+.customizable-table.column-reorderable thead th.column-drop-after::after {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 3px;
+    background: var(--accent);
+    z-index: 4;
+    pointer-events: none;
+}
+
+.customizable-table.column-reorderable thead th.column-drop-before::before {
+    left: 0;
+}
+
+.customizable-table.column-reorderable thead th.column-drop-after::after {
+    right: 0;
 }
 
 .column-resize-handle {
@@ -4432,6 +4506,7 @@ body.locked .bottom-nav {
     cursor: col-resize;
     touch-action: none;
     user-select: none;
+    z-index: 2;
 }
 
 .column-resize-handle::after {
