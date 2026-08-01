@@ -1862,6 +1862,26 @@
                     <select id="stats-substance" onchange="switchStatsSubstance(this.value)"></select>
                 </div>
 
+                <div class="form-group hidden" id="stats-product-type-wrap">
+                    <label for="stats-product-type">Product type</label>
+                    <select id="stats-product-type" onchange="onInsightsProductTypeChange()">
+                        <option value="">All Weed products</option>
+                        <option value="bud">Bud</option>
+                        <option value="cart">Cart</option>
+                        <option value="edibles">Edibles</option>
+                        <option value="pre-rolls">Pre-rolls</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="stats-transaction-type">Transaction type</label>
+                    <select id="stats-transaction-type" onchange="onInsightsTransactionTypeChange()">
+                        <option value="">Use + Shared Use</option>
+                        <option value="use">Personal Use</option>
+                        <option value="shared_use">Shared Use</option>
+                    </select>
+                </div>
+
                 <div class="stats-date-range-toolbar">
                     <div class="form-group">
                         <label for="stats-date-range">Date Range</label>

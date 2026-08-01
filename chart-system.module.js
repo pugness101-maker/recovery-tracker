@@ -304,12 +304,36 @@ function chartIncompatibleMix(seriesList) {
 
 function resolveChartBounds(filters = null, data = appData) {
     const f = { ...getDefaultChartFilters(), ...(filters || {}) };
+    // Explicit custom window on the filter object always wins (tests + synced Insights bounds)
+    if (f.customStart && f.customEnd) {
+        return {
+            startDate: f.customStart,
+            endDate: f.customEnd,
+            label: f.dateRangePreset || 'custom',
+            incomplete: false
+        };
+    }
     if (typeof resolveFinancialBounds === 'function') {
-        return resolveFinancialBounds({
+        const bounds = resolveFinancialBounds({
             dateRangePreset: f.dateRangePreset,
             customStart: f.customStart,
             customEnd: f.customEnd
         }, data);
+        if (bounds && (bounds.startDate || bounds.endDate)) return bounds;
+    }
+    // Fall back to Insights toolbar engine when filter preset has no custom dates yet
+    if (typeof getStatsDateRange === 'function') {
+        try {
+            const range = getStatsDateRange();
+            if (range && (range.startDate || range.endDate)) {
+                return {
+                    startDate: range.startDate || '',
+                    endDate: range.endDate || chToday(),
+                    label: range.label || f.dateRangePreset,
+                    incomplete: !!range.incomplete
+                };
+            }
+        } catch (_) { /* fall through */ }
     }
     const today = chToday();
     return { startDate: f.customStart || today, endDate: f.customEnd || today, label: f.dateRangePreset, incomplete: false };
@@ -1118,6 +1142,9 @@ function buildChartDatasetForMetric(metricId, filters, data = appData, options =
 }
 
 function buildChartDashboardDataset(data = appData, options = {}) {
+    // Do not auto-sync Insights here — callers (render/export) sync first so
+    // tests can set chart prefs or pass options.filters without being overwritten.
+    if (options.syncInsights) applySharedInsightsFiltersToCharts(data);
     const prefs = ensureChartSystemPrefs(data);
     const filters = { ...prefs.filters, ...(options.filters || {}) };
     const cacheKey = JSON.stringify({
@@ -1492,26 +1519,41 @@ function renderChartBuilderHtml(prefs) {
     </div>`;
 }
 
+function applySharedInsightsFiltersToCharts(data = appData) {
+    if (typeof syncSectionFiltersFromInsights === 'function') {
+        syncSectionFiltersFromInsights(data);
+        return ensureChartSystemPrefs(data).filters;
+    }
+    if (typeof getInsightsFilters === 'function') {
+        const prefs = ensureChartSystemPrefs(data);
+        const inf = getInsightsFilters(data);
+        prefs.filters.substanceId = inf.substanceId;
+        prefs.filters.productType = inf.productType || '';
+        prefs.filters.dateRangePreset = inf.dateRangePreset || prefs.filters.dateRangePreset;
+        prefs.filters.customStart = inf.customStart || '';
+        prefs.filters.customEnd = inf.customEnd || '';
+        prefs.filters.transactionType = inf.transactionType || '';
+        return prefs.filters;
+    }
+    return ensureChartSystemPrefs(data).filters;
+}
+
 function renderChartDashboardView() {
     const root = typeof document !== 'undefined' ? document.getElementById('chart-dashboard-root') : null;
     if (!root) return;
     root.innerHTML = '<div class="ch-loading" role="status">Loading charts…</div>';
     try {
         const prefs = ensureChartSystemPrefs(appData);
-        // Sync substance/date from Insights when available
-        const statsSub = document.getElementById('stats-substance')?.value;
-        const statsRange = document.getElementById('stats-date-range')?.value;
-        if (statsSub) prefs.filters.substanceId = statsSub;
-        if (statsRange && statsRange !== 'custom') prefs.filters.dateRangePreset = statsRange === 'last-7' || statsRange === 'last-30' || CHART_DATE_PRESETS.some(p => p.id === statsRange) ? statsRange : prefs.filters.dateRangePreset;
+        applySharedInsightsFiltersToCharts(appData);
 
         const dataset = buildChartDashboardDataset(appData, { bypassCache: true });
         const f = dataset.filters;
-        const substanceOptions = [
-            `<option value="${chEsc(chAllId())}"${chIsAll(f.substanceId) ? ' selected' : ''}>All substances</option>`,
-            ...(appData.substances || []).filter(s => s && s.active !== false).map(s =>
-                `<option value="${chEsc(s.id)}"${String(f.substanceId) === String(s.id) ? ' selected' : ''}>${chEsc(s.name || s.id)}</option>`
-            )
-        ].join('');
+        const substanceLabel = chIsAll(f.substanceId)
+            ? 'All Substances (separate series)'
+            : (typeof getSubstanceDisplayName === 'function'
+                ? getSubstanceDisplayName(f.substanceId, appData)
+                : f.substanceId);
+        const productLabel = f.productType || 'All product types';
         const presetOpts = Object.entries(CHART_PRESETS).map(([id, p]) =>
             `<option value="${id}"${prefs.activePreset === id ? ' selected' : ''}>${chEsc(p.name)}</option>`
         ).join('');
@@ -1519,7 +1561,8 @@ function renderChartDashboardView() {
         root.innerHTML = `
             <div class="ch-dashboard ${chartSystemUi.fullscreenId ? 'ch-has-fullscreen' : ''}">
                 <div class="ch-toolbar">
-                    <p class="settings-hint">Charts use the same personal-use and spending rules as Insights. Incompatible units are never combined.</p>
+                    <p class="settings-hint">Charts inherit Insights substance, product type, date range, and transaction filters. Incompatible units are never combined.</p>
+                    <p class="settings-hint">Using Insights filters: <strong>${chEsc(substanceLabel)}</strong> · ${chEsc(productLabel)} · ${chEsc(f.dateRangePreset || 'range')}</p>
                     <div class="ch-toolbar-actions">
                         <button type="button" class="secondary-btn btn-sm" onclick="exportChartDashboardCsv()">Export dashboard CSV</button>
                         <button type="button" class="secondary-btn btn-sm" onclick="resetChartDashboard()">Reset dashboard</button>
@@ -1529,13 +1572,10 @@ function renderChartDashboardView() {
 
                 <div class="ch-filters collapsible-section ${prefs.filtersCollapsed ? 'collapsed' : ''}" data-section="chartFilters">
                     <button type="button" class="section-toggle" onclick="toggleSection('chartFilters'); persistChartSystemPrefs({ filtersCollapsed: !getChartSystemPrefs().filtersCollapsed });">
-                        <span>Chart filters</span><span class="chevron">⌄</span>
+                        <span>Chart display options</span><span class="chevron">⌄</span>
                     </button>
                     <div class="section-content ch-filters-grid">
-                        <label>Substance<select id="ch-filter-substance" onchange="onChartFilterChange()">${substanceOptions}</select></label>
-                        <label>Date range<select id="ch-filter-range" onchange="onChartFilterChange()">${CHART_DATE_PRESETS.map(p => `<option value="${p.id}"${f.dateRangePreset === p.id ? ' selected' : ''}>${chEsc(p.label)}</option>`).join('')}</select></label>
                         <label>Interval<select id="ch-filter-interval" onchange="onChartFilterChange()">${CHART_INTERVALS.map(i => `<option value="${i}"${f.interval === i ? ' selected' : ''}>${i}</option>`).join('')}</select></label>
-                        <label>Product type<input id="ch-filter-product" value="${chEsc(f.productType || '')}" onchange="onChartFilterChange()"></label>
                         <label>Compare<select id="ch-filter-compare" onchange="onChartFilterChange()">
                             <option value="none"${f.comparePeriod === 'none' ? ' selected' : ''}>None</option>
                             <option value="previous-period"${f.comparePeriod === 'previous-period' ? ' selected' : ''}>Previous period</option>
@@ -1544,8 +1584,6 @@ function renderChartDashboardView() {
                         <label class="ch-check"><input type="checkbox" id="ch-filter-shared" ${f.includeSharedUse ? 'checked' : ''} onchange="onChartFilterChange()"> Include shared use</label>
                         <label class="ch-check"><input type="checkbox" id="ch-filter-gifts" ${f.includeGifts ? 'checked' : ''} onchange="onChartFilterChange()"> Include gifts in use charts</label>
                         <label>Preset<select id="ch-filter-preset" onchange="applyChartPreset(this.value)">${presetOpts}</select></label>
-                        <label class="ch-custom-dates ${f.dateRangePreset === 'custom' ? '' : 'hidden'}">Start<input type="date" id="ch-filter-start" value="${chEsc(f.customStart || '')}" onchange="onChartFilterChange()"></label>
-                        <label class="ch-custom-dates ${f.dateRangePreset === 'custom' ? '' : 'hidden'}">End<input type="date" id="ch-filter-end" value="${chEsc(f.customEnd || '')}" onchange="onChartFilterChange()"></label>
                     </div>
                 </div>
 
@@ -1567,18 +1605,14 @@ function renderChartDashboardView() {
 
 function onChartFilterChange() {
     const g = id => document.getElementById(id);
+    // Display-only chart prefs — substance/date/product/tx come from shared Insights filters
     persistChartSystemPrefs({
         filters: {
-            substanceId: g('ch-filter-substance')?.value || chAllId(),
-            dateRangePreset: g('ch-filter-range')?.value || 'last-30',
             interval: g('ch-filter-interval')?.value || 'daily',
-            productType: g('ch-filter-product')?.value || '',
             comparePeriod: g('ch-filter-compare')?.value || 'none',
             personalUseOnly: !!g('ch-filter-personal')?.checked,
             includeSharedUse: !!g('ch-filter-shared')?.checked,
-            includeGifts: !!g('ch-filter-gifts')?.checked,
-            customStart: g('ch-filter-start')?.value || '',
-            customEnd: g('ch-filter-end')?.value || ''
+            includeGifts: !!g('ch-filter-gifts')?.checked
         }
     });
     renderChartDashboardView();
@@ -1687,7 +1721,8 @@ function exportChartWidgetCsv(widgetId) {
 }
 
 function exportChartDashboardCsv() {
-    const dataset = buildChartDashboardDataset(appData, { bypassCache: true });
+    applySharedInsightsFiltersToCharts(appData);
+    const dataset = buildChartDashboardDataset(appData, { bypassCache: true, syncInsights: true });
     const rows = [['widget', 'metric', 'series', 'period', 'value', 'unit', 'count']];
     dataset.widgets.forEach(entry => {
         (entry.dataset.series || []).forEach(series => {

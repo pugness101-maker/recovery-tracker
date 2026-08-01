@@ -316,6 +316,16 @@ test('applyChartPreset swaps widgets and csv export includes series rows', () =>
     const prefs = rt.getChartSystemPrefs(data);
     assert.equal(prefs.activePreset, 'spending');
     assert.ok(prefs.widgets.some(w => String(w.metricId).includes('spend')));
+    // Align shared Insights filters so export (which syncs from Insights) sees July data
+    if (typeof rt.setSelectedInsightsDateRange === 'function') {
+        rt.setSelectedInsightsDateRange('custom', '2026-07-01', '2026-07-31', { render: false, save: false });
+        rt.setSelectedInsightsSubstance(COKE_ID, { render: false, save: false });
+    } else {
+        prefs.filters.dateRangePreset = 'custom';
+        prefs.filters.customStart = '2026-07-01';
+        prefs.filters.customEnd = '2026-07-31';
+        prefs.filters.substanceId = COKE_ID;
+    }
     const csv = rt.exportChartDashboardCsv();
     assert.ok(csv.includes('widget'));
     assert.ok(csv.includes('metric'));

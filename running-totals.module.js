@@ -42,6 +42,8 @@ function rtIsAll(substanceId) {
 function getDefaultRunningTotalsPrefs() {
     return {
         filters: {
+            // Shared Insights filters are applied at dataset build time.
+            // These fields remain for backward compatibility / tests.
             substanceId: 'all',
             productType: '',
             dateRangePreset: 'last-30',
@@ -57,6 +59,22 @@ function getDefaultRunningTotalsPrefs() {
             showCbdRunning: true
         }
     };
+}
+
+/** Merge shared Insights filters over Running Totals local display prefs. */
+function resolveRunningTotalsFilters(options = {}, data = appData) {
+    const prefs = ensureRunningTotalsPrefs(data);
+    const local = { ...prefs.filters, ...(options.filters || {}) };
+    if (typeof getInsightsFilters === 'function') {
+        const inf = getInsightsFilters(data);
+        local.substanceId = inf.substanceId;
+        local.productType = inf.productType || '';
+        local.dateRangePreset = inf.dateRangePreset || local.dateRangePreset;
+        local.customStart = inf.customStart || '';
+        local.customEnd = inf.customEnd || '';
+        local.transactionType = inf.transactionType || '';
+    }
+    return local;
 }
 
 function ensureRunningTotalsPrefs(data = appData) {
@@ -88,12 +106,35 @@ function persistRunningTotalsPrefs(patch = {}, data = appData) {
 
 function resolveRunningTotalsBounds(filters, data = appData) {
     const f = { ...getDefaultRunningTotalsPrefs().filters, ...(filters || {}) };
+    // Explicit custom window wins (tests + synced Insights bounds)
+    if (f.customStart && f.customEnd) {
+        return {
+            startDate: f.customStart,
+            endDate: f.customEnd,
+            label: f.dateRangePreset || 'custom',
+            incomplete: false
+        };
+    }
     if (typeof resolveFinancialBounds === 'function') {
-        return resolveFinancialBounds({
+        const bounds = resolveFinancialBounds({
             dateRangePreset: f.dateRangePreset,
             customStart: f.customStart,
             customEnd: f.customEnd
         }, data);
+        if (bounds && (bounds.startDate || bounds.endDate)) return bounds;
+    }
+    if (typeof getStatsDateRange === 'function') {
+        try {
+            const range = getStatsDateRange();
+            if (range && (range.startDate || range.endDate)) {
+                return {
+                    startDate: range.startDate || '',
+                    endDate: range.endDate || rtToday(),
+                    label: range.label || f.dateRangePreset,
+                    incomplete: !!range.incomplete
+                };
+            }
+        } catch (_) { /* fall through */ }
     }
     return {
         startDate: f.customStart || '',
@@ -488,8 +529,11 @@ function groupRunningTotalsRows(rows, groupBy) {
 }
 
 function buildRunningTotalsDataset(data = appData, options = {}) {
-    const prefs = ensureRunningTotalsPrefs(data);
-    const filters = { ...prefs.filters, ...(options.filters || {}) };
+    const filters = resolveRunningTotalsFilters(options, data);
+    // Allow explicit test overrides to win over Insights shared state
+    if (options.filters) {
+        Object.assign(filters, options.filters);
+    }
     const built = buildRunningTotalsRows(filters, data);
     let rows = groupRunningTotalsRows(built.rows, filters.groupBy);
     const bySubstance = new Map();
@@ -629,18 +673,24 @@ function renderRunningTotalsView() {
     if (!root) return;
     root.innerHTML = '<div class="rt-loading" role="status">Loading running totals…</div>';
     try {
+        if (typeof syncSectionFiltersFromInsights === 'function') syncSectionFiltersFromInsights(appData);
         const prefs = ensureRunningTotalsPrefs(appData);
         const dataset = buildRunningTotalsDataset(appData);
         const f = dataset.filters;
-        const substanceOptions = (typeof getActiveSubstances === 'function' ? getActiveSubstances() : (appData.substances || []))
-            .map(s => `<option value="${rtEsc(s.id)}"${String(f.substanceId) === String(s.id) ? ' selected' : ''}>${rtEsc(s.name)}</option>`)
-            .join('');
         const resetOptions = RUNNING_TOTALS_RESET_MODES.map(m =>
             `<option value="${m}"${f.resetMode === m ? ' selected' : ''}>${m.replace(/-/g, ' ')}</option>`
         ).join('');
         const groupOptions = RUNNING_TOTALS_GROUP_BY.map(m =>
             `<option value="${m}"${f.groupBy === m ? ' selected' : ''}>${m}</option>`
         ).join('');
+        const substanceLabel = rtIsAll(f.substanceId)
+            ? 'All Substances (separate series)'
+            : (typeof getSubstanceDisplayName === 'function'
+                ? getSubstanceDisplayName(f.substanceId, appData)
+                : f.substanceId);
+        const productLabel = f.productType
+            ? (typeof getWeedProductTypeLabel === 'function' ? getWeedProductTypeLabel(f.productType) : f.productType)
+            : 'All product types';
 
         const charts = dataset.incompatible
             ? dataset.series.map(s => `<section class="rt-chart-block"><h4>${rtEsc(s.label)} (${rtEsc(s.unit)})</h4>${renderRunningTotalsChartSvg([s], { showTarget: f.showTargetLine, resetMode: f.resetMode })}</section>`).join('')
@@ -648,54 +698,20 @@ function renderRunningTotalsView() {
 
         const tables = dataset.incompatible
             ? dataset.series.map(s => {
-                const subset = { ...dataset, rows: dataset.rows.filter(r => r.substanceId === s.substanceId), empty: false };
+                const subset = { ...dataset, rows: dataset.rows.filter(r => r.substanceId === s.substanceId), empty: !dataset.rows.some(r => r.substanceId === s.substanceId) };
                 return `<section class="rt-table-block"><h4>${rtEsc(s.label)}</h4>${renderRunningTotalsTableHtml(subset)}</section>`;
             }).join('')
             : renderRunningTotalsTableHtml(dataset);
 
         root.innerHTML = `
             <div class="rt-dashboard">
+                <p class="settings-hint rt-inherits">
+                    Using Insights filters: <strong>${rtEsc(substanceLabel)}</strong>
+                    · ${rtEsc(productLabel)}
+                    · ${rtEsc(f.dateRangePreset || 'range')}
+                    ${f.transactionType ? ` · ${rtEsc(f.transactionType)}` : ''}
+                </p>
                 <div class="rt-filters">
-                    <label>Substance
-                        <select id="rt-filter-substance" onchange="onRunningTotalsFilterChange()">
-                            <option value="all"${rtIsAll(f.substanceId) ? ' selected' : ''}>All Substances</option>
-                            ${substanceOptions}
-                        </select>
-                    </label>
-                    <label>Product type
-                        <select id="rt-filter-product" onchange="onRunningTotalsFilterChange()">
-                            <option value="">All</option>
-                            <option value="bud"${f.productType === 'bud' ? ' selected' : ''}>Bud</option>
-                            <option value="cart"${f.productType === 'cart' ? ' selected' : ''}>Cart</option>
-                            <option value="edibles"${f.productType === 'edibles' ? ' selected' : ''}>Edibles</option>
-                            <option value="pre-rolls"${f.productType === 'pre-rolls' ? ' selected' : ''}>Pre-rolls</option>
-                        </select>
-                    </label>
-                    <label>Date range
-                        <select id="rt-filter-range" onchange="onRunningTotalsFilterChange()">
-                            <option value="last-7"${f.dateRangePreset === 'last-7' ? ' selected' : ''}>Last 7 days</option>
-                            <option value="last-30"${f.dateRangePreset === 'last-30' ? ' selected' : ''}>Last 30 days</option>
-                            <option value="this-week"${f.dateRangePreset === 'this-week' ? ' selected' : ''}>This week</option>
-                            <option value="this-month"${f.dateRangePreset === 'this-month' ? ' selected' : ''}>This month</option>
-                            <option value="past-3-months"${f.dateRangePreset === 'past-3-months' ? ' selected' : ''}>Past 3 months</option>
-                            <option value="this-year"${f.dateRangePreset === 'this-year' ? ' selected' : ''}>This year</option>
-                            <option value="all-time"${f.dateRangePreset === 'all-time' ? ' selected' : ''}>All time</option>
-                            <option value="custom"${f.dateRangePreset === 'custom' ? ' selected' : ''}>Custom</option>
-                        </select>
-                    </label>
-                    <label class="${f.dateRangePreset === 'custom' ? '' : 'hidden'}">From
-                        <input type="date" id="rt-filter-start" value="${rtEsc(f.customStart || '')}" onchange="onRunningTotalsFilterChange()">
-                    </label>
-                    <label class="${f.dateRangePreset === 'custom' ? '' : 'hidden'}">To
-                        <input type="date" id="rt-filter-end" value="${rtEsc(f.customEnd || '')}" onchange="onRunningTotalsFilterChange()">
-                    </label>
-                    <label>Transaction type
-                        <select id="rt-filter-tx" onchange="onRunningTotalsFilterChange()">
-                            <option value="">Use + Shared Use</option>
-                            <option value="use"${f.transactionType === 'use' ? ' selected' : ''}>Personal Use</option>
-                            <option value="shared_use"${f.transactionType === 'shared_use' ? ' selected' : ''}>Shared Use</option>
-                        </select>
-                    </label>
                     <label>Reset mode
                         <select id="rt-filter-reset" onchange="onRunningTotalsFilterChange()">${resetOptions}</select>
                     </label>
@@ -727,14 +743,9 @@ function renderRunningTotalsView() {
 
 function onRunningTotalsFilterChange() {
     const g = id => (typeof document !== 'undefined' ? document.getElementById(id) : null);
+    // Only local display prefs — substance/date/product/tx come from shared Insights filters
     persistRunningTotalsPrefs({
         filters: {
-            substanceId: g('rt-filter-substance')?.value || 'all',
-            productType: g('rt-filter-product')?.value || '',
-            dateRangePreset: g('rt-filter-range')?.value || 'last-30',
-            customStart: g('rt-filter-start')?.value || '',
-            customEnd: g('rt-filter-end')?.value || '',
-            transactionType: g('rt-filter-tx')?.value || '',
             resetMode: g('rt-filter-reset')?.value || 'daily',
             groupBy: g('rt-filter-group')?.value || 'session',
             personalUseOnly: !!g('rt-filter-personal')?.checked,
@@ -747,6 +758,7 @@ function onRunningTotalsFilterChange() {
 }
 
 function exportRunningTotalsCsv() {
+    if (typeof syncSectionFiltersFromInsights === 'function') syncSectionFiltersFromInsights(appData);
     const dataset = buildRunningTotalsDataset(appData);
     const headers = [
         'date', 'time', 'substance', 'productType', 'sessionAmount', 'sessionUnit',

@@ -9846,3 +9846,7 @@ body > .app-container {
     .rt-filters { grid-template-columns: 1fr 1fr; }
     .rt-svg { max-height: 200px; }
 }
+
+/* Shared Insights filter hints */
+.rt-inherits, .ch-toolbar .settings-hint strong { font-weight: 600; }
+#stats-product-type-wrap.hidden { display: none; }

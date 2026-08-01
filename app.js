@@ -16560,11 +16560,7 @@ const CHART_METRICS = Object.freeze([
     { id: 'no_use_streak', label: 'No-use streak', category: 'recovery', defaultType: 'line', unitFamily: 'days' },
     { id: 'no_purchase_streak', label: 'No-purchase streak', category: 'recovery', defaultType: 'line', unitFamily: 'days' },
     { id: 'recovery_score', label: 'Recovery score history', category: 'recovery', defaultType: 'area', unitFamily: 'score' },
-    { id: 'milestone_timeline', label: 'Achievement timeline', category: 'recovery', defaultType: 'scatter', unitFamily: 'count' },
-    { id: 'weed_thc_mg_used', label: 'THC mg used', category: 'use', defaultType: 'line', unitFamily: 'thc_mg' },
-    { id: 'weed_cart_percent_used', label: 'Cart percent used', category: 'use', defaultType: 'bar', unitFamily: 'percent' },
-    { id: 'weed_cart_depletion', label: 'Cart percent remaining', category: 'inventory', defaultType: 'area', unitFamily: 'percent' },
-    { id: 'weed_preroll_count_used', label: 'Pre-rolls used', category: 'use', defaultType: 'bar', unitFamily: 'count' }
+    { id: 'milestone_timeline', label: 'Achievement timeline', category: 'recovery', defaultType: 'scatter', unitFamily: 'count' }
 ]);
 
 const CHART_PRESETS = Object.freeze({
@@ -16782,12 +16778,36 @@ function chartIncompatibleMix(seriesList) {
 
 function resolveChartBounds(filters = null, data = appData) {
     const f = { ...getDefaultChartFilters(), ...(filters || {}) };
+    // Explicit custom window on the filter object always wins (tests + synced Insights bounds)
+    if (f.customStart && f.customEnd) {
+        return {
+            startDate: f.customStart,
+            endDate: f.customEnd,
+            label: f.dateRangePreset || 'custom',
+            incomplete: false
+        };
+    }
     if (typeof resolveFinancialBounds === 'function') {
-        return resolveFinancialBounds({
+        const bounds = resolveFinancialBounds({
             dateRangePreset: f.dateRangePreset,
             customStart: f.customStart,
             customEnd: f.customEnd
         }, data);
+        if (bounds && (bounds.startDate || bounds.endDate)) return bounds;
+    }
+    // Fall back to Insights toolbar engine when filter preset has no custom dates yet
+    if (typeof getStatsDateRange === 'function') {
+        try {
+            const range = getStatsDateRange();
+            if (range && (range.startDate || range.endDate)) {
+                return {
+                    startDate: range.startDate || '',
+                    endDate: range.endDate || chToday(),
+                    label: range.label || f.dateRangePreset,
+                    incomplete: !!range.incomplete
+                };
+            }
+        } catch (_) { /* fall through */ }
     }
     const today = chToday();
     return { startDate: f.customStart || today, endDate: f.customEnd || today, label: f.dateRangePreset, incomplete: false };
@@ -17596,6 +17616,9 @@ function buildChartDatasetForMetric(metricId, filters, data = appData, options =
 }
 
 function buildChartDashboardDataset(data = appData, options = {}) {
+    // Do not auto-sync Insights here — callers (render/export) sync first so
+    // tests can set chart prefs or pass options.filters without being overwritten.
+    if (options.syncInsights) applySharedInsightsFiltersToCharts(data);
     const prefs = ensureChartSystemPrefs(data);
     const filters = { ...prefs.filters, ...(options.filters || {}) };
     const cacheKey = JSON.stringify({
@@ -17970,26 +17993,41 @@ function renderChartBuilderHtml(prefs) {
     </div>`;
 }
 
+function applySharedInsightsFiltersToCharts(data = appData) {
+    if (typeof syncSectionFiltersFromInsights === 'function') {
+        syncSectionFiltersFromInsights(data);
+        return ensureChartSystemPrefs(data).filters;
+    }
+    if (typeof getInsightsFilters === 'function') {
+        const prefs = ensureChartSystemPrefs(data);
+        const inf = getInsightsFilters(data);
+        prefs.filters.substanceId = inf.substanceId;
+        prefs.filters.productType = inf.productType || '';
+        prefs.filters.dateRangePreset = inf.dateRangePreset || prefs.filters.dateRangePreset;
+        prefs.filters.customStart = inf.customStart || '';
+        prefs.filters.customEnd = inf.customEnd || '';
+        prefs.filters.transactionType = inf.transactionType || '';
+        return prefs.filters;
+    }
+    return ensureChartSystemPrefs(data).filters;
+}
+
 function renderChartDashboardView() {
     const root = typeof document !== 'undefined' ? document.getElementById('chart-dashboard-root') : null;
     if (!root) return;
     root.innerHTML = '<div class="ch-loading" role="status">Loading charts…</div>';
     try {
         const prefs = ensureChartSystemPrefs(appData);
-        // Sync substance/date from Insights when available
-        const statsSub = document.getElementById('stats-substance')?.value;
-        const statsRange = document.getElementById('stats-date-range')?.value;
-        if (statsSub) prefs.filters.substanceId = statsSub;
-        if (statsRange && statsRange !== 'custom') prefs.filters.dateRangePreset = statsRange === 'last-7' || statsRange === 'last-30' || CHART_DATE_PRESETS.some(p => p.id === statsRange) ? statsRange : prefs.filters.dateRangePreset;
+        applySharedInsightsFiltersToCharts(appData);
 
         const dataset = buildChartDashboardDataset(appData, { bypassCache: true });
         const f = dataset.filters;
-        const substanceOptions = [
-            `<option value="${chEsc(chAllId())}"${chIsAll(f.substanceId) ? ' selected' : ''}>All substances</option>`,
-            ...(appData.substances || []).filter(s => s && s.active !== false).map(s =>
-                `<option value="${chEsc(s.id)}"${String(f.substanceId) === String(s.id) ? ' selected' : ''}>${chEsc(s.name || s.id)}</option>`
-            )
-        ].join('');
+        const substanceLabel = chIsAll(f.substanceId)
+            ? 'All Substances (separate series)'
+            : (typeof getSubstanceDisplayName === 'function'
+                ? getSubstanceDisplayName(f.substanceId, appData)
+                : f.substanceId);
+        const productLabel = f.productType || 'All product types';
         const presetOpts = Object.entries(CHART_PRESETS).map(([id, p]) =>
             `<option value="${id}"${prefs.activePreset === id ? ' selected' : ''}>${chEsc(p.name)}</option>`
         ).join('');
@@ -17997,7 +18035,8 @@ function renderChartDashboardView() {
         root.innerHTML = `
             <div class="ch-dashboard ${chartSystemUi.fullscreenId ? 'ch-has-fullscreen' : ''}">
                 <div class="ch-toolbar">
-                    <p class="settings-hint">Charts use the same personal-use and spending rules as Insights. Incompatible units are never combined.</p>
+                    <p class="settings-hint">Charts inherit Insights substance, product type, date range, and transaction filters. Incompatible units are never combined.</p>
+                    <p class="settings-hint">Using Insights filters: <strong>${chEsc(substanceLabel)}</strong> · ${chEsc(productLabel)} · ${chEsc(f.dateRangePreset || 'range')}</p>
                     <div class="ch-toolbar-actions">
                         <button type="button" class="secondary-btn btn-sm" onclick="exportChartDashboardCsv()">Export dashboard CSV</button>
                         <button type="button" class="secondary-btn btn-sm" onclick="resetChartDashboard()">Reset dashboard</button>
@@ -18007,13 +18046,10 @@ function renderChartDashboardView() {
 
                 <div class="ch-filters collapsible-section ${prefs.filtersCollapsed ? 'collapsed' : ''}" data-section="chartFilters">
                     <button type="button" class="section-toggle" onclick="toggleSection('chartFilters'); persistChartSystemPrefs({ filtersCollapsed: !getChartSystemPrefs().filtersCollapsed });">
-                        <span>Chart filters</span><span class="chevron">⌄</span>
+                        <span>Chart display options</span><span class="chevron">⌄</span>
                     </button>
                     <div class="section-content ch-filters-grid">
-                        <label>Substance<select id="ch-filter-substance" onchange="onChartFilterChange()">${substanceOptions}</select></label>
-                        <label>Date range<select id="ch-filter-range" onchange="onChartFilterChange()">${CHART_DATE_PRESETS.map(p => `<option value="${p.id}"${f.dateRangePreset === p.id ? ' selected' : ''}>${chEsc(p.label)}</option>`).join('')}</select></label>
                         <label>Interval<select id="ch-filter-interval" onchange="onChartFilterChange()">${CHART_INTERVALS.map(i => `<option value="${i}"${f.interval === i ? ' selected' : ''}>${i}</option>`).join('')}</select></label>
-                        <label>Product type<input id="ch-filter-product" value="${chEsc(f.productType || '')}" onchange="onChartFilterChange()"></label>
                         <label>Compare<select id="ch-filter-compare" onchange="onChartFilterChange()">
                             <option value="none"${f.comparePeriod === 'none' ? ' selected' : ''}>None</option>
                             <option value="previous-period"${f.comparePeriod === 'previous-period' ? ' selected' : ''}>Previous period</option>
@@ -18022,8 +18058,6 @@ function renderChartDashboardView() {
                         <label class="ch-check"><input type="checkbox" id="ch-filter-shared" ${f.includeSharedUse ? 'checked' : ''} onchange="onChartFilterChange()"> Include shared use</label>
                         <label class="ch-check"><input type="checkbox" id="ch-filter-gifts" ${f.includeGifts ? 'checked' : ''} onchange="onChartFilterChange()"> Include gifts in use charts</label>
                         <label>Preset<select id="ch-filter-preset" onchange="applyChartPreset(this.value)">${presetOpts}</select></label>
-                        <label class="ch-custom-dates ${f.dateRangePreset === 'custom' ? '' : 'hidden'}">Start<input type="date" id="ch-filter-start" value="${chEsc(f.customStart || '')}" onchange="onChartFilterChange()"></label>
-                        <label class="ch-custom-dates ${f.dateRangePreset === 'custom' ? '' : 'hidden'}">End<input type="date" id="ch-filter-end" value="${chEsc(f.customEnd || '')}" onchange="onChartFilterChange()"></label>
                     </div>
                 </div>
 
@@ -18045,18 +18079,14 @@ function renderChartDashboardView() {
 
 function onChartFilterChange() {
     const g = id => document.getElementById(id);
+    // Display-only chart prefs — substance/date/product/tx come from shared Insights filters
     persistChartSystemPrefs({
         filters: {
-            substanceId: g('ch-filter-substance')?.value || chAllId(),
-            dateRangePreset: g('ch-filter-range')?.value || 'last-30',
             interval: g('ch-filter-interval')?.value || 'daily',
-            productType: g('ch-filter-product')?.value || '',
             comparePeriod: g('ch-filter-compare')?.value || 'none',
             personalUseOnly: !!g('ch-filter-personal')?.checked,
             includeSharedUse: !!g('ch-filter-shared')?.checked,
-            includeGifts: !!g('ch-filter-gifts')?.checked,
-            customStart: g('ch-filter-start')?.value || '',
-            customEnd: g('ch-filter-end')?.value || ''
+            includeGifts: !!g('ch-filter-gifts')?.checked
         }
     });
     renderChartDashboardView();
@@ -18165,7 +18195,8 @@ function exportChartWidgetCsv(widgetId) {
 }
 
 function exportChartDashboardCsv() {
-    const dataset = buildChartDashboardDataset(appData, { bypassCache: true });
+    applySharedInsightsFiltersToCharts(appData);
+    const dataset = buildChartDashboardDataset(appData, { bypassCache: true, syncInsights: true });
     const rows = [['widget', 'metric', 'series', 'period', 'value', 'unit', 'count']];
     dataset.widgets.forEach(entry => {
         (entry.dataset.series || []).forEach(series => {
@@ -19651,6 +19682,322 @@ function initContactsIntegrationUi() {
 }
 
 
+// ——— Shared Insights filter state (source of truth) ———
+// Every Insights section must consume these filters. Display settings
+// (columns, chart widgets, reset mode) stay separate.
+
+const INSIGHTS_FILTERS_KEY = 'insightsFilters';
+
+function getDefaultInsightsFilters() {
+    return {
+        substanceId: typeof DASHBOARD_ALL !== 'undefined' ? DASHBOARD_ALL : 'all',
+        productType: '',
+        dateRangePreset: 'last-7',
+        customStart: '',
+        customEnd: '',
+        transactionType: ''
+    };
+}
+
+function ensureInsightsFilters(data = appData) {
+    if (!data || typeof data !== 'object') return getDefaultInsightsFilters();
+    if (!data.settings || typeof data.settings !== 'object') data.settings = {};
+    const defaults = getDefaultInsightsFilters();
+    if (!data.settings[INSIGHTS_FILTERS_KEY] || typeof data.settings[INSIGHTS_FILTERS_KEY] !== 'object') {
+        // Seed from existing globals / dashboard substance when available
+        const seeded = { ...defaults };
+        try {
+            const dash = data.settings.dashboardSubstanceId
+                || data.settings.recoveryDashboard?.selectedDashboardSubstance;
+            if (dash) seeded.substanceId = dash;
+            if (typeof statsDateRangePreset === 'string' && statsDateRangePreset) {
+                seeded.dateRangePreset = statsDateRangePreset;
+            }
+            if (typeof statsCustomStartDate === 'string') seeded.customStart = statsCustomStartDate;
+            if (typeof statsCustomEndDate === 'string') seeded.customEnd = statsCustomEndDate;
+        } catch (_) { /* optional */ }
+        data.settings[INSIGHTS_FILTERS_KEY] = seeded;
+    }
+    const prefs = data.settings[INSIGHTS_FILTERS_KEY];
+    Object.keys(defaults).forEach(key => {
+        if (prefs[key] === undefined) prefs[key] = defaults[key];
+    });
+    if (!prefs.substanceId) prefs.substanceId = defaults.substanceId;
+    if (!prefs.dateRangePreset) prefs.dateRangePreset = defaults.dateRangePreset;
+    // Non-weed substances cannot keep a weed product-type filter
+    if (prefs.productType && !insightsFiltersIsWeedSubstance(prefs.substanceId, data)) {
+        prefs.productType = '';
+    }
+    return prefs;
+}
+
+function getInsightsFilters(data = appData) {
+    return ensureInsightsFilters(data);
+}
+
+/** Named accessors matching product requirements */
+function getSelectedInsightsSubstance(data = appData) {
+    return getInsightsFilters(data).substanceId;
+}
+function getSelectedInsightsProductType(data = appData) {
+    return getInsightsFilters(data).productType || '';
+}
+function getSelectedInsightsDateRange(data = appData) {
+    const f = getInsightsFilters(data);
+    return {
+        preset: f.dateRangePreset,
+        customStart: f.customStart || '',
+        customEnd: f.customEnd || ''
+    };
+}
+function getSelectedInsightsTransactionType(data = appData) {
+    return getInsightsFilters(data).transactionType || '';
+}
+
+function insightsFiltersIsAll(substanceId) {
+    const id = String(substanceId ?? '').trim();
+    return !id || id === 'all' || (typeof DASHBOARD_ALL !== 'undefined' && id === DASHBOARD_ALL);
+}
+
+function insightsFiltersIsWeedSubstance(substanceId, data = appData) {
+    if (insightsFiltersIsAll(substanceId)) return false;
+    if (typeof isWeedTrackingMode === 'function') return !!isWeedTrackingMode(substanceId, data);
+    const sub = (data?.substances || []).find(s => String(s.id) === String(substanceId));
+    return String(sub?.trackingMode || '').toLowerCase() === 'weed';
+}
+
+function loadInsightsFiltersIntoState(data = appData) {
+    const f = ensureInsightsFilters(data);
+    // Keep in-memory Insights globals aligned with persisted shared filters.
+    // These lets are declared later in app.js — assignment throws in TDZ and is ignored.
+    try {
+        currentSubstanceId = f.substanceId;
+        selectedDashboardSubstance = f.substanceId;
+        statsDateRangePreset = f.dateRangePreset || 'last-7';
+        statsCustomStartDate = f.customStart || '';
+        statsCustomEndDate = f.customEnd || '';
+    } catch (_) { /* Temporal Dead Zone / early init */ }
+    return f;
+}
+
+function syncInsightsFilterUi(data = appData) {
+    const f = ensureInsightsFilters(data);
+    const setVal = (id, value) => {
+        const el = typeof document !== 'undefined' ? document.getElementById(id) : null;
+        if (el && value != null) el.value = value;
+    };
+    setVal('stats-substance', f.substanceId);
+    setVal('stats-date-range', f.dateRangePreset);
+    setVal('stats-custom-start', f.customStart || '');
+    setVal('stats-custom-end', f.customEnd || '');
+    setVal('stats-product-type', f.productType || '');
+    setVal('stats-transaction-type', f.transactionType || '');
+    const customWrap = typeof document !== 'undefined' ? document.getElementById('stats-custom-range-wrap') : null;
+    if (customWrap) customWrap.classList.toggle('hidden', f.dateRangePreset !== 'custom');
+    const productWrap = typeof document !== 'undefined' ? document.getElementById('stats-product-type-wrap') : null;
+    if (productWrap) {
+        const show = insightsFiltersIsWeedSubstance(f.substanceId, data);
+        productWrap.classList.toggle('hidden', !show);
+        if (!show) {
+            const sel = document.getElementById('stats-product-type');
+            if (sel) sel.value = '';
+        }
+    }
+}
+
+/**
+ * Push shared Insights filters into section-specific prefs (without saveData loops).
+ * Section-local display prefs (reset mode, chart interval, etc.) are preserved.
+ */
+function syncSectionFiltersFromInsights(data = appData) {
+    const f = ensureInsightsFilters(data);
+    const substanceId = f.substanceId || 'all';
+    const datePatch = {
+        substanceId,
+        productType: f.productType || '',
+        dateRangePreset: f.dateRangePreset || 'last-7',
+        customStart: f.customStart || '',
+        customEnd: f.customEnd || '',
+        transactionType: f.transactionType || ''
+    };
+
+    // Materialize Insights date range into concrete custom bounds so every
+    // section resolver (financial, charts, running totals) sees the same window.
+    if (typeof getStatsDateRange === 'function') {
+        try {
+            const bounds = getStatsDateRange();
+            if (bounds?.startDate && bounds?.endDate) {
+                datePatch.customStart = bounds.startDate;
+                datePatch.customEnd = bounds.endDate;
+                datePatch.dateRangePreset = 'custom';
+            }
+        } catch (_) { /* optional */ }
+    }
+
+    if (typeof ensureRunningTotalsPrefs === 'function') {
+        const rt = ensureRunningTotalsPrefs(data);
+        rt.filters = { ...rt.filters, ...datePatch };
+    }
+    if (typeof ensureChartSystemPrefs === 'function') {
+        const ch = ensureChartSystemPrefs(data);
+        ch.filters = { ...ch.filters, ...datePatch };
+    }
+    if (typeof ensureFinancialAnalyticsPrefs === 'function') {
+        const fin = ensureFinancialAnalyticsPrefs(data);
+        fin.filters = { ...(fin.filters || {}), ...datePatch };
+    }
+    if (typeof ensurePurchaseAnalyticsPrefs === 'function') {
+        const pa = ensurePurchaseAnalyticsPrefs(data);
+        pa.filters = { ...(pa.filters || {}), ...datePatch };
+    }
+    return f;
+}
+
+function invalidateInsightsSectionCaches() {
+    if (typeof invalidateInsightsDatasetCache === 'function') invalidateInsightsDatasetCache();
+    if (typeof invalidateChartSystemCache === 'function') invalidateChartSystemCache();
+    if (typeof invalidateFinancialAnalyticsCache === 'function') invalidateFinancialAnalyticsCache();
+    if (typeof invalidatePurchaseAnalyticsCache === 'function') invalidatePurchaseAnalyticsCache();
+}
+
+/**
+ * Persist shared Insights filters, sync globals + section prefs, optionally re-render.
+ */
+function persistInsightsFilters(patch = {}, options = {}) {
+    const {
+        data = appData,
+        render = false,
+        save = true,
+        syncSections = true
+    } = options;
+    const prefs = ensureInsightsFilters(data);
+    Object.assign(prefs, patch || {});
+
+    if (prefs.productType && !insightsFiltersIsWeedSubstance(prefs.substanceId, data)) {
+        prefs.productType = '';
+    }
+
+    // Keep in-memory globals in sync (core Insights dataset uses these)
+    try {
+        currentSubstanceId = prefs.substanceId;
+        selectedDashboardSubstance = prefs.substanceId;
+        statsDateRangePreset = prefs.dateRangePreset || 'last-7';
+        statsCustomStartDate = prefs.customStart || '';
+        statsCustomEndDate = prefs.customEnd || '';
+    } catch (_) { /* ignore */ }
+
+    if (typeof saveDashboardViewSubstanceId === 'function') {
+        try { saveDashboardViewSubstanceId(prefs.substanceId); } catch (_) { /* ignore */ }
+    }
+    if (typeof persistRecoveryDashboardPrefs === 'function') {
+        try {
+            persistRecoveryDashboardPrefs({ selectedDashboardSubstance: prefs.substanceId }, data);
+        } catch (_) { /* ignore */ }
+    }
+
+    if (syncSections) syncSectionFiltersFromInsights(data);
+    invalidateInsightsSectionCaches();
+    syncInsightsFilterUi(data);
+
+    if (save && typeof saveData === 'function') saveData(data);
+    if (render && typeof updateStats === 'function') updateStats();
+    return prefs;
+}
+
+function setSelectedInsightsSubstance(substanceId, options = {}) {
+    let next = substanceId || (typeof DASHBOARD_ALL !== 'undefined' ? DASHBOARD_ALL : 'all');
+    if (!insightsFiltersIsAll(next) && typeof normalizeSubstanceRef === 'function') {
+        next = normalizeSubstanceRef(next, options.data || appData) || next;
+    }
+    const patch = { substanceId: next };
+    // Clear weed product type when leaving Weed
+    if (!insightsFiltersIsWeedSubstance(next, options.data || appData)) {
+        patch.productType = '';
+    }
+    return persistInsightsFilters(patch, { render: true, ...options });
+}
+
+function setSelectedInsightsProductType(productType, options = {}) {
+    const data = options.data || appData;
+    const f = ensureInsightsFilters(data);
+    if (!insightsFiltersIsWeedSubstance(f.substanceId, data)) {
+        return persistInsightsFilters({ productType: '' }, { render: true, ...options, data });
+    }
+    return persistInsightsFilters({ productType: productType || '' }, { render: true, ...options, data });
+}
+
+function setSelectedInsightsDateRange(preset, customStart = '', customEnd = '', options = {}) {
+    return persistInsightsFilters({
+        dateRangePreset: preset || 'last-7',
+        customStart: customStart || '',
+        customEnd: customEnd || ''
+    }, { render: true, ...options });
+}
+
+function setSelectedInsightsTransactionType(transactionType, options = {}) {
+    return persistInsightsFilters({ transactionType: transactionType || '' }, { render: true, ...options });
+}
+
+/** Clear visible section roots so stale substance data never flashes under a new label. */
+function clearInsightsSectionOutputs() {
+    if (typeof document === 'undefined') return;
+    const ids = [
+        'running-totals-root',
+        'chart-dashboard-root',
+        'financial-analytics-root',
+        'purchase-analytics-root',
+        'insights-contacts-root',
+        'goal-insights-panel',
+        'stats-weekly-summary',
+        'stats-monthly-summary'
+    ];
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.innerHTML = '<div class="settings-hint" role="status">Updating filters…</div>';
+    });
+}
+
+/**
+ * Render Insights module sections that must always follow shared filters,
+ * including when All Substances is selected.
+ */
+function renderInsightsFilteredSections() {
+    syncSectionFiltersFromInsights(appData);
+    try {
+        if (typeof renderFinancialAnalyticsView === 'function') renderFinancialAnalyticsView();
+    } catch (err) { console.error('Financial analytics render failed', err); }
+    try {
+        if (typeof renderPurchaseAnalyticsView === 'function') renderPurchaseAnalyticsView();
+    } catch (err) { console.error('Purchase analytics render failed', err); }
+    try {
+        if (typeof renderChartDashboardView === 'function') renderChartDashboardView();
+    } catch (err) { console.error('Chart dashboard render failed', err); }
+    try {
+        if (typeof renderInsightsContactAnalytics === 'function') renderInsightsContactAnalytics();
+    } catch (err) { console.error('Contact insights render failed', err); }
+    try {
+        if (typeof renderRunningTotalsView === 'function') renderRunningTotalsView();
+    } catch (err) { console.error('Running totals render failed', err); }
+    try {
+        if (typeof renderPlanAnalyticsPanel === 'function') renderPlanAnalyticsPanel();
+    } catch (err) { console.error('Plan analytics render failed', err); }
+}
+
+function onInsightsProductTypeChange() {
+    const value = typeof document !== 'undefined'
+        ? (document.getElementById('stats-product-type')?.value || '')
+        : '';
+    setSelectedInsightsProductType(value);
+}
+
+function onInsightsTransactionTypeChange() {
+    const value = typeof document !== 'undefined'
+        ? (document.getElementById('stats-transaction-type')?.value || '')
+        : '';
+    setSelectedInsightsTransactionType(value);
+}
+
+
 // ——— Running Totals (Insights → Use Analytics) ———
 // Cumulative personal-use sessions with product-specific units.
 // Spliced into app.js ahead of `const defaultData`. Never mutates source records.
@@ -19695,6 +20042,8 @@ function rtIsAll(substanceId) {
 function getDefaultRunningTotalsPrefs() {
     return {
         filters: {
+            // Shared Insights filters are applied at dataset build time.
+            // These fields remain for backward compatibility / tests.
             substanceId: 'all',
             productType: '',
             dateRangePreset: 'last-30',
@@ -19710,6 +20059,22 @@ function getDefaultRunningTotalsPrefs() {
             showCbdRunning: true
         }
     };
+}
+
+/** Merge shared Insights filters over Running Totals local display prefs. */
+function resolveRunningTotalsFilters(options = {}, data = appData) {
+    const prefs = ensureRunningTotalsPrefs(data);
+    const local = { ...prefs.filters, ...(options.filters || {}) };
+    if (typeof getInsightsFilters === 'function') {
+        const inf = getInsightsFilters(data);
+        local.substanceId = inf.substanceId;
+        local.productType = inf.productType || '';
+        local.dateRangePreset = inf.dateRangePreset || local.dateRangePreset;
+        local.customStart = inf.customStart || '';
+        local.customEnd = inf.customEnd || '';
+        local.transactionType = inf.transactionType || '';
+    }
+    return local;
 }
 
 function ensureRunningTotalsPrefs(data = appData) {
@@ -19741,12 +20106,35 @@ function persistRunningTotalsPrefs(patch = {}, data = appData) {
 
 function resolveRunningTotalsBounds(filters, data = appData) {
     const f = { ...getDefaultRunningTotalsPrefs().filters, ...(filters || {}) };
+    // Explicit custom window wins (tests + synced Insights bounds)
+    if (f.customStart && f.customEnd) {
+        return {
+            startDate: f.customStart,
+            endDate: f.customEnd,
+            label: f.dateRangePreset || 'custom',
+            incomplete: false
+        };
+    }
     if (typeof resolveFinancialBounds === 'function') {
-        return resolveFinancialBounds({
+        const bounds = resolveFinancialBounds({
             dateRangePreset: f.dateRangePreset,
             customStart: f.customStart,
             customEnd: f.customEnd
         }, data);
+        if (bounds && (bounds.startDate || bounds.endDate)) return bounds;
+    }
+    if (typeof getStatsDateRange === 'function') {
+        try {
+            const range = getStatsDateRange();
+            if (range && (range.startDate || range.endDate)) {
+                return {
+                    startDate: range.startDate || '',
+                    endDate: range.endDate || rtToday(),
+                    label: range.label || f.dateRangePreset,
+                    incomplete: !!range.incomplete
+                };
+            }
+        } catch (_) { /* fall through */ }
     }
     return {
         startDate: f.customStart || '',
@@ -20141,8 +20529,11 @@ function groupRunningTotalsRows(rows, groupBy) {
 }
 
 function buildRunningTotalsDataset(data = appData, options = {}) {
-    const prefs = ensureRunningTotalsPrefs(data);
-    const filters = { ...prefs.filters, ...(options.filters || {}) };
+    const filters = resolveRunningTotalsFilters(options, data);
+    // Allow explicit test overrides to win over Insights shared state
+    if (options.filters) {
+        Object.assign(filters, options.filters);
+    }
     const built = buildRunningTotalsRows(filters, data);
     let rows = groupRunningTotalsRows(built.rows, filters.groupBy);
     const bySubstance = new Map();
@@ -20282,18 +20673,24 @@ function renderRunningTotalsView() {
     if (!root) return;
     root.innerHTML = '<div class="rt-loading" role="status">Loading running totals…</div>';
     try {
+        if (typeof syncSectionFiltersFromInsights === 'function') syncSectionFiltersFromInsights(appData);
         const prefs = ensureRunningTotalsPrefs(appData);
         const dataset = buildRunningTotalsDataset(appData);
         const f = dataset.filters;
-        const substanceOptions = (typeof getActiveSubstances === 'function' ? getActiveSubstances() : (appData.substances || []))
-            .map(s => `<option value="${rtEsc(s.id)}"${String(f.substanceId) === String(s.id) ? ' selected' : ''}>${rtEsc(s.name)}</option>`)
-            .join('');
         const resetOptions = RUNNING_TOTALS_RESET_MODES.map(m =>
             `<option value="${m}"${f.resetMode === m ? ' selected' : ''}>${m.replace(/-/g, ' ')}</option>`
         ).join('');
         const groupOptions = RUNNING_TOTALS_GROUP_BY.map(m =>
             `<option value="${m}"${f.groupBy === m ? ' selected' : ''}>${m}</option>`
         ).join('');
+        const substanceLabel = rtIsAll(f.substanceId)
+            ? 'All Substances (separate series)'
+            : (typeof getSubstanceDisplayName === 'function'
+                ? getSubstanceDisplayName(f.substanceId, appData)
+                : f.substanceId);
+        const productLabel = f.productType
+            ? (typeof getWeedProductTypeLabel === 'function' ? getWeedProductTypeLabel(f.productType) : f.productType)
+            : 'All product types';
 
         const charts = dataset.incompatible
             ? dataset.series.map(s => `<section class="rt-chart-block"><h4>${rtEsc(s.label)} (${rtEsc(s.unit)})</h4>${renderRunningTotalsChartSvg([s], { showTarget: f.showTargetLine, resetMode: f.resetMode })}</section>`).join('')
@@ -20301,54 +20698,20 @@ function renderRunningTotalsView() {
 
         const tables = dataset.incompatible
             ? dataset.series.map(s => {
-                const subset = { ...dataset, rows: dataset.rows.filter(r => r.substanceId === s.substanceId), empty: false };
+                const subset = { ...dataset, rows: dataset.rows.filter(r => r.substanceId === s.substanceId), empty: !dataset.rows.some(r => r.substanceId === s.substanceId) };
                 return `<section class="rt-table-block"><h4>${rtEsc(s.label)}</h4>${renderRunningTotalsTableHtml(subset)}</section>`;
             }).join('')
             : renderRunningTotalsTableHtml(dataset);
 
         root.innerHTML = `
             <div class="rt-dashboard">
+                <p class="settings-hint rt-inherits">
+                    Using Insights filters: <strong>${rtEsc(substanceLabel)}</strong>
+                    · ${rtEsc(productLabel)}
+                    · ${rtEsc(f.dateRangePreset || 'range')}
+                    ${f.transactionType ? ` · ${rtEsc(f.transactionType)}` : ''}
+                </p>
                 <div class="rt-filters">
-                    <label>Substance
-                        <select id="rt-filter-substance" onchange="onRunningTotalsFilterChange()">
-                            <option value="all"${rtIsAll(f.substanceId) ? ' selected' : ''}>All Substances</option>
-                            ${substanceOptions}
-                        </select>
-                    </label>
-                    <label>Product type
-                        <select id="rt-filter-product" onchange="onRunningTotalsFilterChange()">
-                            <option value="">All</option>
-                            <option value="bud"${f.productType === 'bud' ? ' selected' : ''}>Bud</option>
-                            <option value="cart"${f.productType === 'cart' ? ' selected' : ''}>Cart</option>
-                            <option value="edibles"${f.productType === 'edibles' ? ' selected' : ''}>Edibles</option>
-                            <option value="pre-rolls"${f.productType === 'pre-rolls' ? ' selected' : ''}>Pre-rolls</option>
-                        </select>
-                    </label>
-                    <label>Date range
-                        <select id="rt-filter-range" onchange="onRunningTotalsFilterChange()">
-                            <option value="last-7"${f.dateRangePreset === 'last-7' ? ' selected' : ''}>Last 7 days</option>
-                            <option value="last-30"${f.dateRangePreset === 'last-30' ? ' selected' : ''}>Last 30 days</option>
-                            <option value="this-week"${f.dateRangePreset === 'this-week' ? ' selected' : ''}>This week</option>
-                            <option value="this-month"${f.dateRangePreset === 'this-month' ? ' selected' : ''}>This month</option>
-                            <option value="past-3-months"${f.dateRangePreset === 'past-3-months' ? ' selected' : ''}>Past 3 months</option>
-                            <option value="this-year"${f.dateRangePreset === 'this-year' ? ' selected' : ''}>This year</option>
-                            <option value="all-time"${f.dateRangePreset === 'all-time' ? ' selected' : ''}>All time</option>
-                            <option value="custom"${f.dateRangePreset === 'custom' ? ' selected' : ''}>Custom</option>
-                        </select>
-                    </label>
-                    <label class="${f.dateRangePreset === 'custom' ? '' : 'hidden'}">From
-                        <input type="date" id="rt-filter-start" value="${rtEsc(f.customStart || '')}" onchange="onRunningTotalsFilterChange()">
-                    </label>
-                    <label class="${f.dateRangePreset === 'custom' ? '' : 'hidden'}">To
-                        <input type="date" id="rt-filter-end" value="${rtEsc(f.customEnd || '')}" onchange="onRunningTotalsFilterChange()">
-                    </label>
-                    <label>Transaction type
-                        <select id="rt-filter-tx" onchange="onRunningTotalsFilterChange()">
-                            <option value="">Use + Shared Use</option>
-                            <option value="use"${f.transactionType === 'use' ? ' selected' : ''}>Personal Use</option>
-                            <option value="shared_use"${f.transactionType === 'shared_use' ? ' selected' : ''}>Shared Use</option>
-                        </select>
-                    </label>
                     <label>Reset mode
                         <select id="rt-filter-reset" onchange="onRunningTotalsFilterChange()">${resetOptions}</select>
                     </label>
@@ -20380,14 +20743,9 @@ function renderRunningTotalsView() {
 
 function onRunningTotalsFilterChange() {
     const g = id => (typeof document !== 'undefined' ? document.getElementById(id) : null);
+    // Only local display prefs — substance/date/product/tx come from shared Insights filters
     persistRunningTotalsPrefs({
         filters: {
-            substanceId: g('rt-filter-substance')?.value || 'all',
-            productType: g('rt-filter-product')?.value || '',
-            dateRangePreset: g('rt-filter-range')?.value || 'last-30',
-            customStart: g('rt-filter-start')?.value || '',
-            customEnd: g('rt-filter-end')?.value || '',
-            transactionType: g('rt-filter-tx')?.value || '',
             resetMode: g('rt-filter-reset')?.value || 'daily',
             groupBy: g('rt-filter-group')?.value || 'session',
             personalUseOnly: !!g('rt-filter-personal')?.checked,
@@ -20400,6 +20758,7 @@ function onRunningTotalsFilterChange() {
 }
 
 function exportRunningTotalsCsv() {
+    if (typeof syncSectionFiltersFromInsights === 'function') syncSectionFiltersFromInsights(appData);
     const dataset = buildRunningTotalsDataset(appData);
     const headers = [
         'date', 'time', 'substance', 'productType', 'sessionAmount', 'sessionUnit',
@@ -20962,6 +21321,8 @@ function ensureAppDataSettings(data) {
     ensureChartSystemPrefs(data);
     ensureWeedCompletePrefs(data);
     ensureRunningTotalsPrefs(data);
+    ensureInsightsFilters(data);
+    loadInsightsFiltersIntoState(data);
     ensureTableColumnSettings(data);
     ensureUseStatsConfig(data);
     ensureCollapsedSections(data);
@@ -23929,6 +24290,11 @@ let insightsDatasetCache = null;
 let insightsDatasetCacheKey = null;
 let testReferenceDateStr = null;
 
+// Apply persisted shared Insights filters after globals exist
+if (typeof loadInsightsFiltersIntoState === 'function') {
+    loadInsightsFiltersIntoState(appData);
+}
+
 const STATS_CALENDAR_STORAGE_KEY = 'recoveryTracker.statsCalendar.v1';
 let statsCalendarViewMode = 'month';
 let statsCalendarAnchorDate = getLocalDateString();
@@ -24366,7 +24732,12 @@ function switchSubstance(substanceId) {
 }
 
 function switchStatsSubstance(substanceId) {
-    setSelectedDashboardSubstance(substanceId, { persist: true, render: false, syncStats: false });
+    clearInsightsSectionOutputs();
+    if (typeof setSelectedInsightsSubstance === 'function') {
+        setSelectedInsightsSubstance(substanceId, { render: false, save: true });
+    } else {
+        setSelectedDashboardSubstance(substanceId, { persist: true, render: false, syncStats: false });
+    }
     const dash = document.getElementById('dashboard-substance');
     if (dash) dash.value = selectedDashboardSubstance;
     const statsSelect = document.getElementById('stats-substance');
@@ -24375,6 +24746,7 @@ function switchStatsSubstance(substanceId) {
     if (calSel && [...calSel.options].some(o => o.value === selectedDashboardSubstance)) {
         calSel.value = selectedDashboardSubstance;
     }
+    syncInsightsFilterUi();
     updateStats();
 }
 
@@ -39501,6 +39873,8 @@ function getStatsRangeLabel(preset, startDate, endDate) {
 }
 
 function setupStatsDateRange() {
+    if (typeof loadInsightsFiltersIntoState === 'function') loadInsightsFiltersIntoState(appData);
+    if (typeof syncInsightsFilterUi === 'function') syncInsightsFilterUi(appData);
     const today = new Date();
     const start = new Date(today);
     start.setDate(start.getDate() - 6);
@@ -39518,24 +39892,39 @@ function setupStatsDateRange() {
 
 function onStatsDateRangeChange() {
     const select = document.getElementById('stats-date-range');
-    statsDateRangePreset = select?.value || 'last-7';
-    document.getElementById('stats-custom-range-wrap')?.classList.toggle('hidden', statsDateRangePreset !== 'custom');
-    invalidateInsightsDatasetCache();
-    if (statsDateRangePreset !== 'custom') updateStats();
+    const preset = select?.value || 'last-7';
+    clearInsightsSectionOutputs();
+    if (typeof setSelectedInsightsDateRange === 'function') {
+        setSelectedInsightsDateRange(preset, statsCustomStartDate, statsCustomEndDate, { render: false, save: true });
+    } else {
+        statsDateRangePreset = preset;
+        invalidateInsightsDatasetCache();
+    }
+    document.getElementById('stats-custom-range-wrap')?.classList.toggle('hidden', preset !== 'custom');
+    syncInsightsFilterUi();
+    if (preset !== 'custom') updateStats();
 }
 
 function applyStatsCustomRange() {
-    statsCustomStartDate = document.getElementById('stats-custom-start')?.value || '';
-    statsCustomEndDate = document.getElementById('stats-custom-end')?.value || '';
-    if (!statsCustomStartDate || !statsCustomEndDate) {
+    const start = document.getElementById('stats-custom-start')?.value || '';
+    const end = document.getElementById('stats-custom-end')?.value || '';
+    if (!start || !end) {
         alert('Select both a start and end date.');
         return;
     }
-    statsDateRangePreset = 'custom';
+    clearInsightsSectionOutputs();
+    if (typeof setSelectedInsightsDateRange === 'function') {
+        setSelectedInsightsDateRange('custom', start, end, { render: false, save: true });
+    } else {
+        statsCustomStartDate = start;
+        statsCustomEndDate = end;
+        statsDateRangePreset = 'custom';
+        invalidateInsightsDatasetCache();
+    }
     const select = document.getElementById('stats-date-range');
     if (select) select.value = 'custom';
     document.getElementById('stats-custom-range-wrap')?.classList.remove('hidden');
-    invalidateInsightsDatasetCache();
+    syncInsightsFilterUi();
     updateStats();
 }
 
@@ -42216,13 +42605,34 @@ function setupStatsCalendarControls() {
 function renderGoalInsightsPanel() {
     const el = document.getElementById('goal-insights-panel');
     if (!el || typeof buildGoalInsightsAnalytics !== 'function') return;
+    const substanceId = typeof getSelectedInsightsSubstance === 'function'
+        ? getSelectedInsightsSubstance(appData)
+        : currentSubstanceId;
     const analytics = buildGoalInsightsAnalytics({ data: appData });
-    const best = analytics.streaks[0];
+    const filterGoal = (row) => {
+        if (!substanceId || substanceId === DASHBOARD_ALL) return true;
+        const sid = row?.substanceId || row?.goal?.substanceId;
+        if (!sid) return true;
+        return typeof logMatchesSubstance === 'function'
+            ? logMatchesSubstance({ substanceId: sid }, substanceId, appData)
+            : String(sid) === String(substanceId);
+    };
+    const streaks = (analytics.streaks || []).filter(filterGoal);
+    const worstGoals = (analytics.worstGoals || []).filter(filterGoal);
+    const totalGoals = substanceId && substanceId !== DASHBOARD_ALL
+        ? (analytics.rows || analytics.evaluations || []).filter?.(filterGoal)?.length
+            ?? streaks.length
+        : analytics.totalGoals;
+    const best = streaks[0];
     const topCat = analytics.categories[0];
-    const hardest = analytics.worstGoals[0];
+    const hardest = worstGoals[0];
+    const label = substanceId && substanceId !== DASHBOARD_ALL
+        ? (getSubstanceDisplayName(substanceId) || substanceId)
+        : 'All Substances';
     el.innerHTML =
+        '<p class="settings-hint">Filtered by Insights substance: <strong>' + escapeHtml(label) + '</strong></p>' +
         '<div class="goal-insights-grid">' +
-        '<div><span>Goals tracked</span><strong>' + analytics.totalGoals + '</strong></div>' +
+        '<div><span>Goals tracked</span><strong>' + (totalGoals ?? analytics.totalGoals) + '</strong></div>' +
         '<div><span>Best streak</span><strong>' + (best ? best.current + ' · ' + escapeHtml(best.name) : '—') + '</strong></div>' +
         '<div><span>Top category</span><strong>' + (topCat ? escapeHtml(topCat.category) + (topCat.successRate != null ? ' · ' + topCat.successRate + '%' : '') : '—') + '</strong></div>' +
         '<div><span>Hardest goal</span><strong>' + (hardest ? escapeHtml(hardest.name) : '—') + '</strong></div>' +
@@ -42231,14 +42641,30 @@ function renderGoalInsightsPanel() {
 }
 
 function updateStats() {
+    if (typeof ensureInsightsFilters === 'function') {
+        ensureInsightsFilters(appData);
+        loadInsightsFiltersIntoState(appData);
+        syncSectionFiltersFromInsights(appData);
+    }
     try { renderGoalInsightsPanel(); } catch (_) { /* ignore */ }
     if (isAllSubstancesView()) {
-        document.querySelector('.stats-date-range-toolbar')?.classList.add('hidden');
+        document.querySelector('.stats-date-range-toolbar')?.classList.remove('hidden');
         renderSubstanceStatsBreakdown();
         document.getElementById('stats-single-view')?.classList.add('hidden');
         document.getElementById('stats-all-view')?.classList.remove('hidden');
+        // Still sync/render shared-filter sections for All Substances
+        try {
+            const insightsAll = buildInsightsDataset(DASHBOARD_ALL);
+            renderGiftAnalytics(insightsAll.bounds);
+        } catch (_) { /* ignore */ }
+        if (typeof renderInsightsFilteredSections === 'function') renderInsightsFilteredSections();
+        else {
+            try { if (typeof renderRunningTotalsView === 'function') renderRunningTotalsView(); } catch (_) {}
+            try { if (typeof renderChartDashboardView === 'function') renderChartDashboardView(); } catch (_) {}
+        }
         renderStatsComparePeriods();
         applyCollapsedSections();
+        syncInsightsFilterUi();
         return;
     }
 
@@ -42260,55 +42686,47 @@ function updateStats() {
     renderStatsWeeklySummary(currentSubstanceId, insights);
 
     renderBuyInsights(currentSubstanceId, insights);
-    try {
-        if (typeof ensureFinancialAnalyticsPrefs === 'function') {
-            const finPrefs = ensureFinancialAnalyticsPrefs(appData);
-            finPrefs.filters = finPrefs.filters || {};
-            finPrefs.filters.substanceId = currentSubstanceId || 'all';
-            if (insights.bounds?.startDate && insights.bounds?.endDate) {
-                finPrefs.filters.customStart = insights.bounds.startDate;
-                finPrefs.filters.customEnd = insights.bounds.endDate;
+    if (typeof renderInsightsFilteredSections === 'function') renderInsightsFilteredSections();
+    else {
+        try {
+            if (typeof ensureFinancialAnalyticsPrefs === 'function') {
+                const finPrefs = ensureFinancialAnalyticsPrefs(appData);
+                finPrefs.filters = finPrefs.filters || {};
+                finPrefs.filters.substanceId = currentSubstanceId || 'all';
             }
-        }
-        if (typeof invalidateFinancialAnalyticsCache === 'function') invalidateFinancialAnalyticsCache();
-        if (typeof renderFinancialAnalyticsView === 'function') renderFinancialAnalyticsView();
-    } catch (err) { console.error('Financial analytics render failed', err); }
-    try {
-        if (typeof ensurePurchaseAnalyticsPrefs === 'function') {
-            const paPrefs = ensurePurchaseAnalyticsPrefs(appData);
-            paPrefs.filters = paPrefs.filters || {};
-            paPrefs.filters.substanceId = currentSubstanceId || 'all';
-            if (insights.bounds?.startDate && insights.bounds?.endDate) {
-                paPrefs.filters.customStart = insights.bounds.startDate;
-                paPrefs.filters.customEnd = insights.bounds.endDate;
+            if (typeof invalidateFinancialAnalyticsCache === 'function') invalidateFinancialAnalyticsCache();
+            if (typeof renderFinancialAnalyticsView === 'function') renderFinancialAnalyticsView();
+        } catch (err) { console.error('Financial analytics render failed', err); }
+        try {
+            if (typeof ensurePurchaseAnalyticsPrefs === 'function') {
+                const paPrefs = ensurePurchaseAnalyticsPrefs(appData);
+                paPrefs.filters = paPrefs.filters || {};
+                paPrefs.filters.substanceId = currentSubstanceId || 'all';
             }
-        }
-        if (typeof invalidatePurchaseAnalyticsCache === 'function') invalidatePurchaseAnalyticsCache();
-        if (typeof renderPurchaseAnalyticsView === 'function') renderPurchaseAnalyticsView();
-    } catch (err) { console.error('Purchase analytics render failed', err); }
-    try {
-        if (typeof ensureChartSystemPrefs === 'function') {
-            const chPrefs = ensureChartSystemPrefs(appData);
-            chPrefs.filters = chPrefs.filters || {};
-            chPrefs.filters.substanceId = currentSubstanceId || 'all';
-            if (insights.bounds?.startDate && insights.bounds?.endDate) {
-                chPrefs.filters.customStart = insights.bounds.startDate;
-                chPrefs.filters.customEnd = insights.bounds.endDate;
+            if (typeof invalidatePurchaseAnalyticsCache === 'function') invalidatePurchaseAnalyticsCache();
+            if (typeof renderPurchaseAnalyticsView === 'function') renderPurchaseAnalyticsView();
+        } catch (err) { console.error('Purchase analytics render failed', err); }
+        try {
+            if (typeof ensureChartSystemPrefs === 'function') {
+                const chPrefs = ensureChartSystemPrefs(appData);
+                chPrefs.filters = chPrefs.filters || {};
+                chPrefs.filters.substanceId = currentSubstanceId || 'all';
             }
-        }
-        if (typeof invalidateChartSystemCache === 'function') invalidateChartSystemCache();
-        if (typeof renderChartDashboardView === 'function') renderChartDashboardView();
-    } catch (err) { console.error('Chart dashboard render failed', err); }
-    try {
-        if (typeof renderInsightsContactAnalytics === 'function') renderInsightsContactAnalytics();
-    } catch (err) { console.error('Contact insights render failed', err); }
-    try {
-        if (typeof renderRunningTotalsView === 'function') renderRunningTotalsView();
-    } catch (err) { console.error('Running totals render failed', err); }
+            if (typeof invalidateChartSystemCache === 'function') invalidateChartSystemCache();
+            if (typeof renderChartDashboardView === 'function') renderChartDashboardView();
+        } catch (err) { console.error('Chart dashboard render failed', err); }
+        try {
+            if (typeof renderInsightsContactAnalytics === 'function') renderInsightsContactAnalytics();
+        } catch (err) { console.error('Contact insights render failed', err); }
+        try {
+            if (typeof renderRunningTotalsView === 'function') renderRunningTotalsView();
+        } catch (err) { console.error('Running totals render failed', err); }
+    }
     renderGiftAnalytics(insights.bounds);
     updateRecoveryStreakDisplay(currentSubstanceId);
     renderStatsComparePeriods();
     applyCollapsedSections();
+    syncInsightsFilterUi();
 }
 
 function renderSubstanceStatsBreakdown() {
@@ -51782,6 +52200,20 @@ function __getRecoveryTrackerTestExports() {
         ensureChartSystemPrefs,
         ensureWeedCompletePrefs,
         ensureWeedCompleteMigrated,
+        ensureInsightsFilters,
+        getInsightsFilters,
+        persistInsightsFilters,
+        getSelectedInsightsSubstance,
+        getSelectedInsightsProductType,
+        getSelectedInsightsDateRange,
+        getSelectedInsightsTransactionType,
+        setSelectedInsightsSubstance,
+        setSelectedInsightsProductType,
+        setSelectedInsightsDateRange,
+        setSelectedInsightsTransactionType,
+        syncSectionFiltersFromInsights,
+        loadInsightsFiltersIntoState,
+        renderInsightsFilteredSections,
         ensureRunningTotalsPrefs,
         getRunningTotalsPrefs,
         persistRunningTotalsPrefs,
