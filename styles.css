@@ -9654,3 +9654,54 @@ body > .app-container {
     .pa-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     .pa-bar-row { grid-template-columns: 64px 1fr 52px; }
 }
+
+
+/* Friends & Contacts */
+.contacts-root { min-height: 200px; }
+.ct-page { display: flex; flex-direction: column; gap: 14px; }
+.ct-page-head h2 { margin: 0 0 4px; }
+.ct-subnav { display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; margin-top: 10px; }
+.ct-subnav-btn {
+    flex: 0 0 auto; border: 1px solid var(--border); background: var(--panel, #fff);
+    color: var(--text-secondary); border-radius: 999px; padding: 8px 12px; font-size: 0.82rem; cursor: pointer;
+}
+.ct-subnav-btn.active { color: var(--accent); border-color: var(--accent); font-weight: 600; }
+.ct-summary-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; }
+.ct-card { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: var(--panel, var(--bg-card, #fff)); }
+.ct-card span { display: block; font-size: 0.78rem; color: var(--text-secondary); }
+.ct-card strong { display: block; margin-top: 4px; font-size: 1.05rem; }
+.ct-text { font-size: 0.95rem !important; }
+.ct-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.ct-panel { border: 1px solid var(--border); border-radius: 12px; padding: 12px; background: var(--surface, transparent); }
+.ct-panel h3, .ct-panel h4 { margin: 0 0 8px; }
+.ct-toolbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.ct-search, .ct-toolbar select, .ct-form input, .ct-form textarea, .ct-inline-select {
+    min-height: 40px; border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px;
+    background: var(--bg, #fff); color: var(--text);
+}
+.ct-search { flex: 1 1 180px; }
+.ct-card-list { display: flex; flex-direction: column; gap: 8px; }
+.ct-contact-card {
+    text-align: left; border: 1px solid var(--border); border-radius: 12px; padding: 12px;
+    background: var(--panel, #fff); cursor: pointer; color: inherit;
+}
+.ct-contact-card-head { display: flex; justify-content: space-between; gap: 8px; }
+.ct-role-row { display: flex; flex-wrap: wrap; gap: 4px; margin: 6px 0; }
+.ct-role-chip {
+    font-size: 0.72rem; border-radius: 999px; padding: 2px 8px;
+    background: rgba(127,127,127,0.12); color: var(--text-secondary);
+}
+.ct-form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 8px; }
+.ct-span-2 { grid-column: 1 / -1; }
+.ct-roles-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 6px; }
+.ct-role-check { font-size: 0.85rem; }
+.ct-form-toggles { display: flex; flex-wrap: wrap; gap: 10px; margin: 10px 0; font-size: 0.85rem; }
+.ct-suggestion-list, .ct-timeline { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.ct-suggestion { border-left: 3px solid var(--accent); padding: 8px 10px; background: rgba(127,127,127,0.08); border-radius: 0 8px 8px 0; }
+.ct-suggestion.ct-warn { border-left-color: #ef6c00; }
+.ct-empty, .ct-loading, .ct-error { color: var(--text-secondary); font-size: 0.9rem; }
+.ct-detail-head { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.ct-detail-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 720px) {
+    .ct-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
