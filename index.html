@@ -1937,17 +1937,30 @@
                         </div>
                         <p id="buy-xanax-preview" class="buy-preview">—</p>
                     </div>
+                    <div class="use-log-field-block" id="buy-acquisition-type-block">
+                        <span class="use-log-field-label">How Acquired</span>
+                        <div class="use-tx-pills" role="group" aria-label="How acquired">
+                            <button type="button" class="use-tx-pill buy-acq-pill active" data-acq="purchased" onclick="setBuyAcquisitionType('purchased')">Purchased</button>
+                            <button type="button" class="use-tx-pill buy-acq-pill" data-acq="gift_received" onclick="setBuyAcquisitionType('gift_received')">Gift Received</button>
+                            <button type="button" class="use-tx-pill buy-acq-pill" data-acq="other_adjustment" onclick="setBuyAcquisitionType('other_adjustment')">Other / Adjustment</button>
+                        </div>
+                        <input type="hidden" id="buy-acquisition-type" value="purchased" required>
+                    </div>
+                    <div class="form-group hidden" id="buy-gift-source-group">
+                        <label for="buy-gift-source">Gift From (optional)</label>
+                        <input type="text" id="buy-gift-source" placeholder="Who gave this to you?" autocomplete="off">
+                    </div>
                     <div class="form-row">
                         <div class="form-group" id="buy-unit-group">
                             <label for="buy-unit">Unit</label>
                             <select id="buy-unit" required></select>
                         </div>
-                        <div class="form-group">
+                        <div class="form-group" id="buy-total-cost-group">
                             <label for="buy-total-cost">Total Cost ($)</label>
                             <input type="number" id="buy-total-cost" step="0.01" min="0" required>
                         </div>
                     </div>
-                    <div class="form-row">
+                    <div class="form-row" id="buy-cost-per-unit-group">
                         <div class="form-group">
                             <label>Cost Per Unit</label>
                             <p id="buy-cost-per-unit-preview" class="buy-preview">—</p>
@@ -1961,7 +1974,7 @@
                             <input type="text" id="buy-store-new" placeholder="Enter store or location name" autocomplete="off">
                         </div>
                     </div>
-                    <div class="form-group">
+                    <div class="form-group" id="buy-payment-group">
                         <label for="buy-payment">Payment Method (optional)</label>
                         <select id="buy-payment">
                             <option value="">—</option>

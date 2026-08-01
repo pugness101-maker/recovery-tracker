@@ -4362,6 +4362,8 @@ function duplicatePurchaseNow(id) {
     const pctBought = isVape ? getVapePercentBoughtAt(purchase) : 100;
     const startingPuffs = isVape ? computeVapeStartingPuffsFromForm(fullPuffs, pctBought) : qty;
     const newId = `purchase-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const acquisitionType = getPurchaseAcquisitionType(purchase);
+    const giftSource = getPurchaseGiftSource(purchase);
     const record = {
         substanceId: getPurchaseSubstanceId(purchase),
         substanceName: purchase.substanceName || getSubstance(getPurchaseSubstanceId(purchase))?.name || '',
@@ -4376,6 +4378,9 @@ function duplicatePurchaseNow(id) {
         store: purchase.store || purchase.location || '',
         paymentMethod: purchase.paymentMethod || '',
         notes: purchase.notes || '',
+        acquisitionType,
+        giftSource,
+        isGiftReceived: acquisitionType === 'gift_received',
         remainingAmount: isVape ? startingPuffs : qty,
         isDepleted: false,
         inventoryStatus: 'active',
@@ -4389,6 +4394,11 @@ function duplicatePurchaseNow(id) {
         updatedAt: now,
         id: newId
     };
+    if (acquisitionType !== 'purchased') record.source = acquisitionType;
+    if (acquisitionType === 'gift_received' && giftSource) {
+        record.giverName = giftSource;
+        record.giftPartyName = giftSource;
+    }
     if (isVape) {
         record.fullPuffCount = fullPuffs;
         record.percentBoughtAt = pctBought;
@@ -4422,6 +4432,7 @@ function duplicatePurchaseNow(id) {
         record.needsStrengthInfo = xanaxPurchaseNeedsStrengthInfo(purchase);
         syncXanaxPurchaseFields(record, record.totalCost);
     }
+    syncPurchaseAcquisitionFields(record);
     stripIrrelevantPurchaseFields(record);
     appData.purchases.push(record);
     saveData(appData);
@@ -6407,6 +6418,7 @@ function normalizeAppData(data) {
     data.purchases.forEach(p => {
         if (!p.substanceId && p.substance) p.substanceId = p.substance;
         if (!p.costPerUnit && p.quantity > 0) p.costPerUnit = p.totalCost / p.quantity;
+        syncPurchaseAcquisitionFields(p);
     });
 
     migrateInventoryLinkedV1(data);
@@ -8644,7 +8656,10 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
         case 'date':
             return phTd('date', formatDate(purchase.date || ''));
         case 'substance':
-            return phTd('substance', `${sub?.icon || ''} ${getSubstanceDisplayName(sub)}`);
+            return phTd(
+                'substance',
+                `${sub?.icon || ''} ${getSubstanceDisplayName(sub)}${renderPurchaseAcquisitionBadge(purchase)}`
+            );
         case 'bought':
             if (isVapePuffPurchase(purchase)) {
                 return renderPurchaseVapeBoughtCell(purchase);
@@ -9240,7 +9255,9 @@ function getTaperSubstances() {
 }
 
 function getAveragePurchaseCostPerUnit(substanceId, data = appData) {
-    const purchases = (data.purchases || []).filter(p => getPurchaseSubstanceId(p) === substanceId);
+    const purchases = (data.purchases || []).filter(p =>
+        getPurchaseSubstanceId(p) === substanceId && purchaseCountsAsBuySpend(p)
+    );
     const withCpu = purchases.filter(p => {
         const cpu = parseFloat(p.costPerUnit);
         return Number.isFinite(cpu) && cpu > 0;
@@ -17371,8 +17388,137 @@ function getPurchaseTotalCost(purchase) {
     return c != null && c !== '' ? c : '';
 }
 
+const PURCHASE_ACQUISITION_TYPES = ['purchased', 'gift_received', 'other_adjustment'];
+
+function normalizePurchaseAcquisitionType(value, purchase = null) {
+    const raw = String(value || '').trim().toLowerCase();
+    if (raw === 'gift_received' || raw === 'gift-received' || raw === 'gift') return 'gift_received';
+    if (
+        raw === 'other_adjustment'
+        || raw === 'other'
+        || raw === 'adjustment'
+        || raw === 'inventory_adjustment'
+        || raw === 'correction'
+    ) return 'other_adjustment';
+    if (raw === 'purchased' || raw === 'purchase' || raw === 'bought') return 'purchased';
+    if (purchase?.isGiftReceived || purchase?.source === 'gift_received' || purchase?.transactionType === 'gift_received') {
+        return 'gift_received';
+    }
+    return 'purchased';
+}
+
+function getPurchaseAcquisitionType(purchase) {
+    if (!purchase) return 'purchased';
+    return normalizePurchaseAcquisitionType(purchase.acquisitionType, purchase);
+}
+
+function purchaseCountsAsBuySpend(purchase) {
+    return getPurchaseAcquisitionType(purchase) === 'purchased';
+}
+
+function purchaseIsNonPurchasedAcquisition(purchase) {
+    return !purchaseCountsAsBuySpend(purchase);
+}
+
+function getPurchaseGiftSource(purchase) {
+    if (!purchase) return '';
+    return String(purchase.giftSource || purchase.giverName || purchase.giftPartyName || '').trim();
+}
+
+function syncPurchaseAcquisitionFields(purchase) {
+    if (!purchase || typeof purchase !== 'object') return purchase;
+    const acquisitionType = getPurchaseAcquisitionType(purchase);
+    purchase.acquisitionType = acquisitionType;
+    if (acquisitionType === 'gift_received') {
+        purchase.isGiftReceived = true;
+        purchase.source = 'gift_received';
+        const giftSource = getPurchaseGiftSource(purchase);
+        purchase.giftSource = giftSource;
+        if (giftSource) {
+            purchase.giverName = giftSource;
+            purchase.giftPartyName = giftSource;
+        } else {
+            delete purchase.giverName;
+            delete purchase.giftPartyName;
+        }
+        purchase.totalCost = 0;
+        purchase.costPerUnit = 0;
+        purchase.paymentMethod = '';
+    } else if (acquisitionType === 'other_adjustment') {
+        purchase.isGiftReceived = false;
+        purchase.source = 'other_adjustment';
+        purchase.giftSource = '';
+        delete purchase.giverName;
+        delete purchase.giftPartyName;
+        purchase.totalCost = 0;
+        purchase.costPerUnit = 0;
+        purchase.paymentMethod = '';
+    } else {
+        purchase.isGiftReceived = false;
+        if (purchase.source === 'gift_received' || purchase.source === 'other_adjustment') {
+            delete purchase.source;
+        }
+        purchase.giftSource = '';
+        delete purchase.giverName;
+        delete purchase.giftPartyName;
+    }
+    return purchase;
+}
+
+function getPurchaseAcquisitionBadgeInfo(purchase) {
+    const type = getPurchaseAcquisitionType(purchase);
+    if (type === 'gift_received') return { label: 'Gift Received', className: 'badge-gift-received' };
+    if (type === 'other_adjustment') return { label: 'Adjustment', className: 'badge-inventory' };
+    return null;
+}
+
+function renderPurchaseAcquisitionBadge(purchase) {
+    const info = getPurchaseAcquisitionBadgeInfo(purchase);
+    if (!info) return '';
+    return ` <span class="use-log-badge ${info.className}">${info.label}</span>`;
+}
+
+function getBuyFormAcquisitionType() {
+    return normalizePurchaseAcquisitionType(document.getElementById('buy-acquisition-type')?.value || 'purchased');
+}
+
+function setBuyAcquisitionType(type) {
+    const normalized = normalizePurchaseAcquisitionType(type);
+    const hidden = document.getElementById('buy-acquisition-type');
+    if (hidden) hidden.value = normalized;
+    document.querySelectorAll('.buy-acq-pill').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.acq === normalized);
+    });
+    updateBuyAcquisitionTypeUI();
+}
+
+function updateBuyAcquisitionTypeUI() {
+    const type = getBuyFormAcquisitionType();
+    const isGift = type === 'gift_received';
+    const isNonPurchase = type === 'gift_received' || type === 'other_adjustment';
+    const costInput = document.getElementById('buy-total-cost');
+    document.getElementById('buy-gift-source-group')?.classList.toggle('hidden', !isGift);
+    document.getElementById('buy-total-cost-group')?.classList.toggle('hidden', isNonPurchase);
+    document.getElementById('buy-cost-per-unit-group')?.classList.toggle('hidden', isNonPurchase);
+    document.getElementById('buy-payment-group')?.classList.toggle('hidden', isNonPurchase);
+    if (costInput) {
+        costInput.required = !isNonPurchase;
+        if (isNonPurchase) {
+            costInput.value = '0';
+            const payment = document.getElementById('buy-payment');
+            if (payment) payment.value = '';
+        }
+    }
+    if (!isGift) {
+        const giftSource = document.getElementById('buy-gift-source');
+        if (giftSource && type !== 'gift_received') giftSource.value = '';
+    }
+    updateBuyCostPerUnitPreview();
+}
+
 function getPurchaseSpendAmount(purchase) {
     if (!purchase) return 0;
+    if (purchaseIsNonPurchasedAcquisition(purchase)) return 0;
     const direct = purchase.totalCost ?? purchase.cost ?? purchase.price;
     if (direct != null && direct !== '') {
         const parsed = parseFloat(direct);
@@ -17399,7 +17545,7 @@ function getPurchasesForBuyMetrics(substanceId, data = appData) {
 }
 
 function getPurchasesForInsightMetrics(substanceId, data = appData) {
-    return getPurchasesForBuyMetrics(substanceId, data);
+    return getPurchasesForBuyMetrics(substanceId, data).filter(purchaseCountsAsBuySpend);
 }
 
 function getPurchaseDateStr(purchase) {
@@ -17772,6 +17918,7 @@ function setupBuyTrackerForm() {
     setDefaultBuyDateTime();
     populateBuyStoreDropdown();
     updateBuyVapeFieldsVisibility();
+    setBuyAcquisitionType('purchased');
     ['buy-quantity', 'buy-total-cost'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', () => {
             updateBuyCostPerUnitPreview();
@@ -17825,7 +17972,10 @@ function setupBuyTrackerForm() {
 
 function buildPurchaseFromForm() {
     const quantity = parseFloat(document.getElementById('buy-quantity')?.value);
-    const totalCost = parseFloat(document.getElementById('buy-total-cost')?.value);
+    const acquisitionType = getBuyFormAcquisitionType();
+    const isNonPurchase = acquisitionType === 'gift_received' || acquisitionType === 'other_adjustment';
+    const totalCostRaw = parseFloat(document.getElementById('buy-total-cost')?.value);
+    const totalCost = isNonPurchase ? 0 : (Number.isFinite(totalCostRaw) ? totalCostRaw : 0);
     const substanceId = document.getElementById('buy-substance')?.value;
     const sub = getSubstance(substanceId);
     const qty = Number.isFinite(quantity) ? quantity : 0;
@@ -17833,6 +17983,9 @@ function buildPurchaseFromForm() {
     const productType = isNicotineTrackingMode(substanceId) ? getBuyFormNicotineProductType() : null;
     const isVape = productType === 'vape'
         || (!isNicotineTrackingMode(substanceId) && isVapeTrackingMode(substanceId) && isVapePuffUnit(unit));
+    const giftSource = acquisitionType === 'gift_received'
+        ? (document.getElementById('buy-gift-source')?.value || '').trim()
+        : '';
     const payload = {
         substanceId,
         substanceName: sub?.name || '',
@@ -17842,12 +17995,20 @@ function buildPurchaseFromForm() {
         quantityBought: qty,
         quantity: qty,
         unit,
-        totalCost: Number.isFinite(totalCost) ? totalCost : 0,
-        costPerUnit: qty > 0 ? (Number.isFinite(totalCost) ? totalCost : 0) / qty : 0,
+        totalCost,
+        costPerUnit: qty > 0 ? totalCost / qty : 0,
         store: getBuyFormStoreValue(),
-        paymentMethod: document.getElementById('buy-payment')?.value || '',
-        notes: document.getElementById('buy-notes')?.value || ''
+        paymentMethod: isNonPurchase ? '' : (document.getElementById('buy-payment')?.value || ''),
+        notes: document.getElementById('buy-notes')?.value || '',
+        acquisitionType,
+        giftSource,
+        isGiftReceived: acquisitionType === 'gift_received'
     };
+    if (acquisitionType !== 'purchased') payload.source = acquisitionType;
+    if (acquisitionType === 'gift_received' && giftSource) {
+        payload.giverName = giftSource;
+        payload.giftPartyName = giftSource;
+    }
     if (isVape) {
         const percentRaw = parseFloat(document.getElementById('buy-percent-bought')?.value);
         const percentBoughtAt = Number.isFinite(percentRaw) ? Math.max(0, Math.min(100, percentRaw)) : 100;
@@ -17865,7 +18026,7 @@ function buildPurchaseFromForm() {
         payload.supplyStartedAt = null;
         payload.startedAt = null;
         payload.finishedAt = null;
-        payload.costPerUnit = Number.isFinite(totalCost) ? totalCost : 0;
+        payload.costPerUnit = totalCost;
     }
     if (isAlcoholTrackingMode(substanceId)) {
         applyAlcoholFieldsToPayload(payload, parseAlcoholFieldsFromForm());
@@ -17923,6 +18084,7 @@ function buildPurchaseFromForm() {
     if (isVape) {
         payload.nicotineProductType = 'vape';
     }
+    syncPurchaseAcquisitionFields(payload);
     stripIrrelevantPurchaseFields(payload);
     return payload;
 }
@@ -17960,6 +18122,7 @@ function finalizeNewPurchaseRecord(payload) {
     }
     record.inventoryStatus = 'active';
     record.inventoryHidden = false;
+    syncPurchaseAcquisitionFields(record);
     stripIrrelevantPurchaseFields(record);
     return record;
 }
@@ -18063,6 +18226,8 @@ function resetBuyFormAfterSave() {
     setInputValue('buy-strength-per-pill', '');
     setInputValue('buy-strength-unit', 'mg');
     setInputValue('buy-vape-flavor', '');
+    setBuyAcquisitionType('purchased');
+    setInputValue('buy-gift-source', '');
     setBuyFormSubmitLabel('Save Purchase');
     document.getElementById('cancel-buy-edit-btn')?.classList.add('hidden');
     clearBuyFormFeedback();
@@ -18195,6 +18360,8 @@ function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
     setBuyStoreFieldValue(purchase.store || purchase.location || '');
     setInputValue('buy-payment', purchase.paymentMethod || '');
     setInputValue('buy-notes', purchase.notes || '');
+    setBuyAcquisitionType(getPurchaseAcquisitionType(purchase));
+    setInputValue('buy-gift-source', getPurchaseGiftSource(purchase));
 
     updateBuyCostPerUnitPreview();
     updateBuyVapeFieldsPreview();
@@ -18203,6 +18370,7 @@ function fillBuyFormFromPurchase(purchase, { asDuplicate = false } = {}) {
     updateBuyNicotineProductTypeUI();
     updateBuyLsdPreview();
     updateBuyXanaxPreview();
+    updateBuyAcquisitionTypeUI();
     return true;
 }
 
@@ -18253,6 +18421,8 @@ function cancelBuyEdit() {
     clearBuyFormFeedback();
     applyMainSubstanceToForms();
     updateBuyUnitDropdown();
+    setBuyAcquisitionType('purchased');
+    setInputValue('buy-gift-source', '');
     updateBuyCostPerUnitPreview();
     updateBuyVapeFieldsVisibility();
 }
@@ -18347,6 +18517,7 @@ function handleBuySubmit(e) {
             reconcileVapePurchaseLifecycle(appData.purchases[idx]);
         }
         syncAlcoholPurchaseFields(appData.purchases[idx]);
+        syncPurchaseAcquisitionFields(appData.purchases[idx]);
         stripIrrelevantPurchaseFields(appData.purchases[idx]);
         delete appData.purchases[idx].substance;
         delete appData.purchases[idx].item;
@@ -18893,6 +19064,7 @@ function togglePurchaseLinkedLogs(purchaseId) {
 
 function getBuyStats(substanceId) {
     const purchasesForMetrics = getPurchasesForBuyMetrics(substanceId);
+    const spendPurchases = purchasesForMetrics.filter(purchaseCountsAsBuySpend);
     console.log('Buy metrics purchases used:', purchasesForMetrics);
 
     const today = getLocalDateString();
@@ -18900,10 +19072,10 @@ function getBuyStats(substanceId) {
     const monthStart = getMonthStartDateStr(today);
     const cur = getCurrencySymbol();
 
-    const weekPurchases = purchasesForMetrics.filter(p => purchaseInDateRange(p, weekStart, today));
-    const monthPurchases = purchasesForMetrics.filter(p => purchaseInDateRange(p, monthStart, today));
+    const weekPurchases = spendPurchases.filter(p => purchaseInDateRange(p, weekStart, today));
+    const monthPurchases = spendPurchases.filter(p => purchaseInDateRange(p, monthStart, today));
 
-    const spentToday = purchasesForMetrics
+    const spentToday = spendPurchases
         .filter(p => purchaseOnDate(p, today))
         .reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
     const spentWeek = weekPurchases.reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
@@ -18911,11 +19083,11 @@ function getBuyStats(substanceId) {
     const countWeek = weekPurchases.length;
     const countMonth = monthPurchases.length;
 
-    const totalSpent = purchasesForMetrics.reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
-    const totalQty = purchasesForMetrics.reduce((s, p) => s + getPurchaseQuantityBought(p), 0);
+    const totalSpent = spendPurchases.reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
+    const totalQty = spendPurchases.reduce((s, p) => s + getPurchaseQuantityBought(p), 0);
     const avgCostUnit = totalQty > INVENTORY_EPS ? totalSpent / totalQty : null;
 
-    const sorted = [...purchasesForMetrics].sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
+    const sorted = [...spendPurchases].sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
     const lastPurchase = sorted[0] || null;
 
     let daysSupply = null;
@@ -19162,13 +19334,18 @@ function getMonthSpent(substanceId, dateStr = getLocalDateString()) {
     const monthStart = getMonthStartDateStr(dateStr);
     return (appData.purchases || [])
         .filter(p => getPurchaseSubstanceId(p) === substanceId && p.date >= monthStart && p.date <= dateStr)
-        .reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
+        .reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
 }
 
 function getMonthPurchaseTotal(substanceId, dateStr = getLocalDateString()) {
     const monthStart = getMonthStartDateStr(dateStr);
     return (appData.purchases || [])
-        .filter(p => getPurchaseSubstanceId(p) === substanceId && p.date >= monthStart && p.date <= dateStr)
+        .filter(p =>
+            getPurchaseSubstanceId(p) === substanceId
+            && p.date >= monthStart
+            && p.date <= dateStr
+            && purchaseCountsAsBuySpend(p)
+        )
         .reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
 }
 
@@ -24052,6 +24229,7 @@ function sumPurchaseCostForRange(purchases, substanceId, startDate, endDate) {
 
 function purchaseQualifiesForTaperPlan(purchase, plan, substanceId, data = appData) {
     if (!purchase || purchase.archivedAt) return false;
+    if (!purchaseCountsAsBuySpend(purchase)) return false;
     if (getPurchaseSubstanceId(purchase) !== substanceId) return false;
     if (isNicotineTrackingMode(substanceId, data)) {
         if (isNicotineVapePurchasePlan(plan) || isReduceBuyingPlan(plan)) {
@@ -24277,7 +24455,7 @@ function isAutoSpendFromCostPerGramEnabled(plan) {
 function purchaseQualifiesForCostPerGram(purchase, substanceId, data = appData) {
     if (!purchase || purchase.archivedAt || purchase.inventoryHidden || purchase.deletedAt) return false;
     if (purchase.isDeleted || purchase.deleted) return false;
-    if (purchase.isGiftReceived || purchase.source === 'gift_received' || purchase.transactionType === 'gift_received') {
+    if (purchaseIsNonPurchasedAcquisition(purchase)) {
         return false;
     }
     if (substanceId && !purchaseMatchesSubstance(purchase, substanceId, data)) return false;
@@ -30472,6 +30650,8 @@ function cleanExportData(data) {
         })),
 
         purchases: (data.purchases || []).map(p => {
+            const acquisitionType = getPurchaseAcquisitionType(p);
+            const giftSource = getPurchaseGiftSource(p);
             const base = {
             id: p.id,
             substanceId: p.substanceId || '',
@@ -30485,6 +30665,11 @@ function cleanExportData(data) {
             store: p.store || '',
             paymentMethod: p.paymentMethod || '',
             notes: p.notes || '',
+            acquisitionType,
+            giftSource,
+            isGiftReceived: acquisitionType === 'gift_received',
+            ...(acquisitionType !== 'purchased' ? { source: acquisitionType } : {}),
+            ...(acquisitionType === 'gift_received' && giftSource ? { giverName: giftSource, giftPartyName: giftSource } : {}),
             remainingAmount: Number(p.remainingAmount ?? p.quantityBought ?? p.quantity ?? 0),
             isDepleted: !!p.isDepleted,
             fullPuffCount: p.fullPuffCount != null ? Number(p.fullPuffCount) : null,
@@ -30664,7 +30849,7 @@ function exportDataCsv() {
         ].map(csvEscape).join(','));
     });
     rows.push('');
-    rows.push(['Record Type', 'Substance', 'Date', 'Time', 'Quantity', 'Unit', 'Pill Qty', 'Strength/Pill', 'Strength Unit', 'Total Mg', 'Total Cost', 'Store', 'Flavor', 'Notes'].map(csvEscape).join(','));
+    rows.push(['Record Type', 'Substance', 'Date', 'Time', 'Quantity', 'Unit', 'Pill Qty', 'Strength/Pill', 'Strength Unit', 'Total Mg', 'Total Cost', 'How Acquired', 'Gift From', 'Store', 'Flavor', 'Notes'].map(csvEscape).join(','));
     (appData.purchases || []).forEach(p => {
         rows.push([
             'Purchase',
@@ -30678,6 +30863,8 @@ function exportDataCsv() {
             p.strengthUnit ?? '',
             p.totalMg ?? '',
             p.totalCost ?? '',
+            getPurchaseAcquisitionType(p),
+            getPurchaseGiftSource(p),
             p.store || '',
             purchaseSupportsFlavor(p) ? getVapePurchaseFlavor(p) : '',
             p.notes || ''
@@ -31169,10 +31356,25 @@ function __getRecoveryTrackerTestExports() {
         formatVapePurchaseDetailLine,
         parseVapeFlavorFromForm,
         buildPurchaseFromForm,
+        getPurchaseAcquisitionType,
+        getPurchaseGiftSource,
+        purchaseCountsAsBuySpend,
+        purchaseIsNonPurchasedAcquisition,
+        syncPurchaseAcquisitionFields,
+        normalizePurchaseAcquisitionType,
+        getPurchaseSpendAmount,
+        getPurchasesForInsightMetrics,
+        getPurchasesForBuyMetrics,
+        getBuyStats,
+        setBuyAcquisitionType,
+        getBuyFormAcquisitionType,
+        updateBuyAcquisitionTypeUI,
+        renderPurchaseAcquisitionBadge,
+        finalizeNewPurchaseRecord,
+        duplicatePurchaseNow,
         cleanExportData,
         purchaseMatchesInventorySearch,
         comparePurchaseHistoryByFlavor,
-        duplicatePurchaseNow,
         isVapePuffPurchase,
         applyVapeUseLogEdit,
         resolveVapeLogEditInputMode,
