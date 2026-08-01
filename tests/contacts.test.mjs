@@ -39,11 +39,15 @@ function setup({ purchases = [], logs = [], contacts = [] } = {}) {
     return rt;
 }
 
-test('markup includes Friends & Contacts tab and nav button', () => {
+test('markup keeps contacts in Settings without a Friends main nav tab', () => {
     const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-    assert.match(html, /id="contacts-tab"/);
-    assert.match(html, /data-tab="contacts-tab"/);
+    assert.doesNotMatch(html, /data-tab="contacts-tab"/);
+    assert.match(html, /data-section="settingsContacts"/);
     assert.match(html, /id="contacts-root"/);
+    assert.match(html, /id="contact-detail-panel"/);
+    assert.match(html, /id="dash-contacts-root"/);
+    assert.match(html, /id="insights-contacts-root"/);
+    assert.match(html, /data-tab="goals-plans-tab"/);
 });
 
 test('normalize and save contact preserves permanent id and multi-roles', () => {

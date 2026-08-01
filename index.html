@@ -185,6 +185,7 @@
         <main>
             <!-- Dashboard Tab -->
             <section id="dashboard-tab" class="tab active dashboard-page">
+                <div id="dash-contacts-root" class="dash-contacts-root" aria-live="polite"></div>
                 <div class="safety-notice dash-safety">
                     <strong>Safety Note:</strong> If you feel unsafe, may overdose, or have severe withdrawal symptoms, call emergency services or a medical professional immediately.
                 </div>
@@ -2056,6 +2057,17 @@
                     </div>
                 </div>
 
+                <div class="collapsible-section" data-section="statsContactAnalytics" data-ic-panels="overview financial purchase use" id="insights-contacts-section">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsContactAnalytics')">
+                        <span>Contact Analytics</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <p class="settings-hint">Spending, gifts, and shared use by linked contacts and suppliers.</p>
+                        <div id="insights-contacts-root" class="insights-contacts-root" aria-live="polite"></div>
+                    </div>
+                </div>
+
                 <div class="collapsible-section" data-section="statsChartDashboard" data-ic-panels="charts overview" id="chart-dashboard-section">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsChartDashboard')">
                         <span>Charts</span>
@@ -2620,11 +2632,6 @@
             </section>
 
 
-            <!-- Friends & Contacts Tab -->
-            <section id="contacts-tab" class="tab contacts-page">
-                <div id="contacts-root" class="contacts-root" aria-live="polite"></div>
-            </section>
-
             <!-- Settings Tab -->
             <section id="settings-tab" class="tab">
                 <h2>Settings</h2>
@@ -2805,6 +2812,20 @@
                     </div>
                 </div>
 
+                <div class="collapsible-section" data-section="settingsContacts">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsContacts')">
+                        <span>Data &amp; Contacts</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="settings-section">
+                            <h3>Manage Contacts</h3>
+                            <p class="settings-hint">Shared contacts for Log, Inventory, Goals &amp; Plans, Insights, and Home. Archiving never deletes history.</p>
+                            <div id="contacts-root" class="contacts-root" aria-live="polite"></div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="collapsible-section" data-section="settingsBackup">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsBackup')">
                         <span>Data Backup</span>
@@ -2861,11 +2882,6 @@
             <span>📦</span>
             <span>Inventory</span>
         </button>
-        <button class="nav-btn" data-tab="contacts-tab" onclick="switchTab('contacts-tab')">
-            <span>👥</span>
-            <span class="nav-btn-label-full">Friends &amp; Contacts</span>
-            <span class="nav-btn-label-short">Friends</span>
-        </button>
         <button class="nav-btn" data-tab="goals-plans-tab" onclick="switchTab('goals-plans-tab')">
             <span>🎯</span>
             <span class="nav-btn-label-full">Goals &amp; Plans</span>
@@ -2881,6 +2897,35 @@
             <span>Settings</span>
         </button>
     </nav>
+
+    <!-- Contact detail panel (global) -->
+    <div id="contact-detail-panel" class="ct-detail-panel hidden" aria-hidden="true" role="dialog" aria-label="Contact details">
+        <div class="ct-detail-panel-backdrop" onclick="closeContactDetailPanel()"></div>
+        <aside class="ct-detail-panel-sheet" id="contact-detail-panel-body"></aside>
+    </div>
+
+    <!-- Quick add contact modal -->
+    <div id="contact-quick-modal" class="modal hidden" aria-hidden="true">
+        <div class="modal-content">
+            <h2>Add contact</h2>
+            <form onsubmit="submitContactQuickCreate(event)">
+                <div class="form-group">
+                    <label for="ct-quick-name">Name</label>
+                    <input id="ct-quick-name" required placeholder="Name" autocomplete="off">
+                </div>
+                <div class="form-group">
+                    <label for="ct-quick-nickname">Nickname</label>
+                    <input id="ct-quick-nickname" placeholder="Optional" autocomplete="off">
+                </div>
+                <fieldset class="ct-roles-fieldset"><legend>Roles</legend><div id="ct-quick-roles" class="ct-roles-grid"></div></fieldset>
+                <label class="settings-toggle-row"><input type="checkbox" id="ct-quick-favorite"> <span>Favorite</span></label>
+                <div class="form-actions">
+                    <button type="submit" class="btn-primary">Save</button>
+                    <button type="button" class="secondary-btn" onclick="closeContactCreateModal()">Cancel</button>
+                </div>
+            </form>
+        </div>
+    </div>
 
     <!-- Substance Editor Modal -->
     <div id="substance-modal" class="modal hidden">

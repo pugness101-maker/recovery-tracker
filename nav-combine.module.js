@@ -11,7 +11,9 @@ const COMBINED_NAV_ROUTE_REDIRECTS = {
     '/home': { tab: 'dashboard-tab', view: null },
     '/log': { tab: 'use-log-tab', view: null },
     '/inventory': { tab: 'buy-tracker-tab', view: null },
-    '/settings': { tab: 'settings-tab', view: null }
+    '/settings': { tab: 'settings-tab', view: null },
+    '/contacts': { tab: 'settings-tab', view: 'contacts' },
+    '/friends': { tab: 'settings-tab', view: 'contacts' }
 };
 
 const GOALS_PLANS_VIEWS = [

@@ -1347,8 +1347,8 @@ function renderContactsView() {
             <div class="ct-page">
                 <header class="ct-page-head">
                     <div>
-                        <h2>Friends &amp; Contacts</h2>
-                        <p class="settings-hint">Linked people, suppliers, and recovery support. Free-text history stays intact.</p>
+                        <h2>Manage Contacts</h2>
+                        <p class="settings-hint">Shared across Log, Inventory, Goals &amp; Plans, Insights, and Home. Free-text history stays intact.</p>
                     </div>
                     <nav class="ct-subnav" aria-label="Contacts sections">
                         <button type="button" class="ct-subnav-btn${view === 'dashboard' ? ' active' : ''}" onclick="setContactsView('dashboard')">Dashboard</button>
@@ -1399,6 +1399,11 @@ function closeContactForm() {
 }
 
 function openContactDetail(contactId) {
+    if (typeof openContactDetailPanel === 'function' && typeof document !== 'undefined'
+        && document.getElementById('contact-detail-panel')) {
+        openContactDetailPanel(contactId);
+        return;
+    }
     contactsUiState.detailId = contactId;
     contactsUiState.formDraft = null;
     contactsUiState.view = 'detail';
@@ -1406,6 +1411,13 @@ function openContactDetail(contactId) {
 }
 
 function closeContactDetail() {
+    if (typeof closeContactDetailPanel === 'function' && typeof document !== 'undefined') {
+        const panel = document.getElementById('contact-detail-panel');
+        if (panel && !panel.classList.contains('hidden')) {
+            closeContactDetailPanel();
+            return;
+        }
+    }
     contactsUiState.detailId = '';
     contactsUiState.view = 'list';
     renderContactsView();

@@ -9151,6 +9151,12 @@ function readGoalFormFromDom() {
         endDate: val('goal-form-end'),
         recurring: checked('goal-form-recurring'),
         priority: val('goal-form-priority') || 'normal',
+        accountabilityPartnerContactId: (typeof getContactPickerSelection === 'function' ? getContactPickerSelection('goal-accountability-partner').contactId : '') || '',
+        supportContactId: (typeof getContactPickerSelection === 'function' ? getContactPickerSelection('goal-support-contact').contactId : '') || '',
+        checkInContactId: (typeof getContactPickerSelection === 'function' ? getContactPickerSelection('goal-checkin-contact').contactId : '') || '',
+        accountabilityPartnerName: (typeof getContactPickerSelection === 'function' ? getContactPickerSelection('goal-accountability-partner').name : '') || '',
+        supportContactName: (typeof getContactPickerSelection === 'function' ? getContactPickerSelection('goal-support-contact').name : '') || '',
+        checkInContactName: (typeof getContactPickerSelection === 'function' ? getContactPickerSelection('goal-checkin-contact').name : '') || '',
         status: val('goal-form-status') || draft.status,
         baselineMode: valOr('goal-form-baseline-mode', draft.baselineMode) || 'auto',
         baselineValue: valOr('goal-form-baseline-value', draft.baselineValue),
@@ -9366,6 +9372,9 @@ function renderGoalFormHtml(data = appData) {
                         <span>Linked taper plan</span>
                         <select id="goal-form-plan">${planOptions}</select>
                     </label>
+                    <div class="goal-field goal-field-span">
+                        ${typeof renderGoalPlanContactFieldsHtml === 'function' ? renderGoalPlanContactFieldsHtml('goal', draft) : ''}
+                    </div>
                     <label class="goal-field goal-field-check">
                         <input type="checkbox" id="goal-form-recurring" ${draft.recurring ? 'checked' : ''} ${draft.period === 'entire' ? 'disabled' : ''}>
                         <span>Repeat every period</span>
@@ -12898,8 +12907,8 @@ const COMBINED_NAV_ROUTE_REDIRECTS = {
     '/home': { tab: 'dashboard-tab', view: null },
     '/log': { tab: 'use-log-tab', view: null },
     '/inventory': { tab: 'buy-tracker-tab', view: null },
-    '/contacts': { tab: 'contacts-tab', view: null },
-    '/friends': { tab: 'contacts-tab', view: null },
+    '/contacts': { tab: 'settings-tab', view: 'contacts' },
+    '/friends': { tab: 'settings-tab', view: 'contacts' },
     '/settings': { tab: 'settings-tab', view: null }
 };
 
@@ -13069,7 +13078,7 @@ function buildAppRouteHash(tabId, view = null) {
         'dashboard-tab': '/home',
         'use-log-tab': '/log',
         'buy-tracker-tab': '/inventory',
-        'contacts-tab': '/contacts',
+        'settings-tab': '/settings',
         'goals-plans-tab': '/goals-plans',
         'insights-calendar-tab': '/insights-calendar',
         'settings-tab': '/settings'
@@ -16283,8 +16292,8 @@ function renderContactsView() {
             <div class="ct-page">
                 <header class="ct-page-head">
                     <div>
-                        <h2>Friends &amp; Contacts</h2>
-                        <p class="settings-hint">Linked people, suppliers, and recovery support. Free-text history stays intact.</p>
+                        <h2>Manage Contacts</h2>
+                        <p class="settings-hint">Shared across Log, Inventory, Goals &amp; Plans, Insights, and Home. Free-text history stays intact.</p>
                     </div>
                     <nav class="ct-subnav" aria-label="Contacts sections">
                         <button type="button" class="ct-subnav-btn${view === 'dashboard' ? ' active' : ''}" onclick="setContactsView('dashboard')">Dashboard</button>
@@ -16335,6 +16344,11 @@ function closeContactForm() {
 }
 
 function openContactDetail(contactId) {
+    if (typeof openContactDetailPanel === 'function' && typeof document !== 'undefined'
+        && document.getElementById('contact-detail-panel')) {
+        openContactDetailPanel(contactId);
+        return;
+    }
     contactsUiState.detailId = contactId;
     contactsUiState.formDraft = null;
     contactsUiState.view = 'detail';
@@ -16342,6 +16356,13 @@ function openContactDetail(contactId) {
 }
 
 function closeContactDetail() {
+    if (typeof closeContactDetailPanel === 'function' && typeof document !== 'undefined') {
+        const panel = document.getElementById('contact-detail-panel');
+        if (panel && !panel.classList.contains('hidden')) {
+            closeContactDetailPanel();
+            return;
+        }
+    }
     contactsUiState.detailId = '';
     contactsUiState.view = 'list';
     renderContactsView();
@@ -18990,6 +19011,646 @@ function ensureWeedCompleteMigrated(data = appData) {
 }
 
 
+// ——— Contacts Cross-Tab Integration ———
+// Contacts stay a shared data system; UI lives in Log, Inventory, Goals,
+// Insights, Home, and Settings — not a separate main nav tab.
+// Spliced into app.js ahead of `const defaultData`. Overrides panel openers.
+
+const CONTACT_PICKER_STATE = {
+    activeFieldId: '',
+    query: '',
+    createForFieldId: '',
+    createRoles: []
+};
+
+function ctEscAttr(value) {
+    return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/"/g, '&quot;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
+}
+
+function getContactDisplayName(contactOrId, data = appData) {
+    if (!contactOrId) return '';
+    if (typeof contactOrId === 'object') {
+        return contactOrId.nickname ? `${contactOrId.name} (${contactOrId.nickname})` : (contactOrId.name || '');
+    }
+    const c = typeof getContactById === 'function' ? getContactById(contactOrId, data) : null;
+    return c ? getContactDisplayName(c, data) : '';
+}
+
+function rankContactsForPicker(contacts, query = '', roleFilter = null) {
+    const q = String(query || '').trim().toLowerCase();
+    let list = [...(contacts || [])];
+    if (roleFilter) {
+        list = list.filter(c => {
+            if (roleFilter === 'supplier') return typeof isSupplierContact === 'function' && isSupplierContact(c);
+            if (roleFilter === 'support') return typeof isSupportContact === 'function' && isSupportContact(c);
+            if (roleFilter === 'friend') return (c.roles || []).includes('friend');
+            if (roleFilter === 'gift') {
+                return (c.roles || []).some(r => ['gift_giver', 'gift_recipient', 'friend', 'family', 'partner'].includes(r));
+            }
+            if (roleFilter === 'shared') {
+                return (c.roles || []).some(r => ['shared_use_contact', 'friend', 'partner', 'family'].includes(r));
+            }
+            return (c.roles || []).includes(roleFilter);
+        });
+    }
+    if (q) {
+        list = list.filter(c => {
+            const hay = [
+                c.name, c.nickname, c.phone, c.email,
+                ...(c.roles || []).map(r => CONTACT_ROLE_LABELS?.[r] || r),
+                ...(c.tags || [])
+            ].join(' ').toLowerCase();
+            return hay.includes(q);
+        });
+    }
+    return list.sort((a, b) => {
+        if (!!b.favorite - !!a.favorite) return !!b.favorite - !!a.favorite;
+        const aLast = a.lastLinkedDate || a.updatedAt || '';
+        const bLast = b.lastLinkedDate || b.updatedAt || '';
+        if (aLast !== bLast) return String(bLast).localeCompare(String(aLast));
+        return String(a.name || '').localeCompare(String(b.name || ''));
+    });
+}
+
+function buildContactPickerHtml({
+    fieldId,
+    selectedId = '',
+    freeTextValue = '',
+    roleFilter = null,
+    label = 'Contact',
+    required = false,
+    allowFreeText = true
+} = {}) {
+    const contacts = typeof getContacts === 'function'
+        ? getContacts(appData, { includeArchived: false, includeHidden: false })
+        : [];
+    const ranked = rankContactsForPicker(contacts, '', roleFilter);
+    const favorites = ranked.filter(c => c.favorite).slice(0, 8);
+    const recent = ranked.filter(c => !c.favorite).slice(0, 12);
+    const selected = selectedId && typeof getContactById === 'function' ? getContactById(selectedId) : null;
+    const display = selected ? getContactDisplayName(selected) : (freeTextValue || '');
+    return `
+        <div class="ct-picker" data-ct-picker="${ctEscAttr(fieldId)}" data-role-filter="${ctEscAttr(roleFilter || '')}">
+            <label class="ct-picker-label" for="${ctEscAttr(fieldId)}-search">${ctEscAttr(label)}${required ? ' *' : ''}</label>
+            <div class="ct-picker-row">
+                <input type="search" id="${ctEscAttr(fieldId)}-search" class="ct-picker-search" placeholder="Search contacts…" autocomplete="off"
+                    value="${ctEscAttr(display)}"
+                    oninput="onContactPickerSearch('${ctEscAttr(fieldId)}', this.value)"
+                    onfocus="openContactPickerMenu('${ctEscAttr(fieldId)}')">
+                <button type="button" class="btn-small secondary-btn" onclick="openContactPickerCreate('${ctEscAttr(fieldId)}', '${ctEscAttr(roleFilter || '')}')" title="Add contact">+</button>
+                <button type="button" class="btn-small secondary-btn" onclick="clearContactPicker('${ctEscAttr(fieldId)}')" title="Clear">×</button>
+            </div>
+            <input type="hidden" id="${ctEscAttr(fieldId)}-contact-id" value="${ctEscAttr(selectedId || '')}">
+            ${allowFreeText ? `<input type="hidden" id="${ctEscAttr(fieldId)}" value="${ctEscAttr(freeTextValue || (selected ? selected.name : ''))}">` : ''}
+            <div id="${ctEscAttr(fieldId)}-menu" class="ct-picker-menu hidden" role="listbox">
+                ${favorites.length ? `<div class="ct-picker-group"><span>Favorites</span>${favorites.map(c =>
+                    `<button type="button" class="ct-picker-option" onclick="selectContactPickerValue('${ctEscAttr(fieldId)}','${ctEscAttr(c.id)}')">${escapeHtml(getContactDisplayName(c))}${c.favorite ? ' ★' : ''}</button>`
+                ).join('')}</div>` : ''}
+                ${recent.length ? `<div class="ct-picker-group"><span>Recent</span>${recent.map(c =>
+                    `<button type="button" class="ct-picker-option" onclick="selectContactPickerValue('${ctEscAttr(fieldId)}','${ctEscAttr(c.id)}')">${escapeHtml(getContactDisplayName(c))}</button>`
+                ).join('')}</div>` : ''}
+                ${!favorites.length && !recent.length ? '<p class="settings-hint ct-picker-empty">No contacts yet. Use + to add one.</p>' : ''}
+                <button type="button" class="ct-picker-option ct-picker-add" onclick="openContactPickerCreate('${ctEscAttr(fieldId)}', '${ctEscAttr(roleFilter || '')}')">Add new contact…</button>
+            </div>
+            ${selectedId ? `<p class="ct-picker-selected settings-hint">Linked: <button type="button" class="link-btn" onclick="openContactDetailPanel('${ctEscAttr(selectedId)}')">${escapeHtml(getContactDisplayName(selected))}</button>${typeof openContactEditForm === 'function' ? ` · <button type="button" class="link-btn" onclick="openContactEditInPanel('${ctEscAttr(selectedId)}')">Edit</button>` : ''}</p>` : (freeTextValue ? `<p class="ct-picker-selected settings-hint weed-needs-review">Unlinked text: ${escapeHtml(freeTextValue)}</p>` : '')}
+        </div>`;
+}
+
+function refreshContactPickerMenu(fieldId, query = '') {
+    const menu = document.getElementById(`${fieldId}-menu`);
+    const wrap = document.querySelector(`[data-ct-picker="${fieldId}"]`);
+    if (!menu || !wrap) return;
+    const roleFilter = wrap.getAttribute('data-role-filter') || null;
+    const contacts = typeof getContacts === 'function'
+        ? getContacts(appData, { includeArchived: false, includeHidden: false })
+        : [];
+    const ranked = rankContactsForPicker(contacts, query, roleFilter || null);
+    const favorites = ranked.filter(c => c.favorite).slice(0, 8);
+    const rest = ranked.filter(c => !c.favorite).slice(0, 20);
+    menu.innerHTML = `
+        ${favorites.length ? `<div class="ct-picker-group"><span>Favorites</span>${favorites.map(c =>
+            `<button type="button" class="ct-picker-option" onclick="selectContactPickerValue('${ctEscAttr(fieldId)}','${ctEscAttr(c.id)}')">${escapeHtml(getContactDisplayName(c))} ★</button>`
+        ).join('')}</div>` : ''}
+        ${rest.length ? `<div class="ct-picker-group"><span>${query ? 'Matches' : 'Contacts'}</span>${rest.map(c =>
+            `<button type="button" class="ct-picker-option" onclick="selectContactPickerValue('${ctEscAttr(fieldId)}','${ctEscAttr(c.id)}')">${escapeHtml(getContactDisplayName(c))}</button>`
+        ).join('')}</div>` : ''}
+        ${!ranked.length ? '<p class="settings-hint ct-picker-empty">No matches.</p>' : ''}
+        <button type="button" class="ct-picker-option ct-picker-add" onclick="openContactPickerCreate('${ctEscAttr(fieldId)}', '${ctEscAttr(roleFilter || '')}')">Add new contact…</button>`;
+}
+
+function openContactPickerMenu(fieldId) {
+    CONTACT_PICKER_STATE.activeFieldId = fieldId;
+    document.querySelectorAll('.ct-picker-menu').forEach(el => {
+        if (el.id !== `${fieldId}-menu`) el.classList.add('hidden');
+    });
+    const menu = document.getElementById(`${fieldId}-menu`);
+    menu?.classList.remove('hidden');
+    refreshContactPickerMenu(fieldId, document.getElementById(`${fieldId}-search`)?.value || '');
+}
+
+function onContactPickerSearch(fieldId, value) {
+    CONTACT_PICKER_STATE.query = value || '';
+    openContactPickerMenu(fieldId);
+    refreshContactPickerMenu(fieldId, value);
+    const free = document.getElementById(fieldId);
+    if (free && !document.getElementById(`${fieldId}-contact-id`)?.value) {
+        free.value = value || '';
+    }
+}
+
+function selectContactPickerValue(fieldId, contactId) {
+    const contact = typeof getContactById === 'function' ? getContactById(contactId) : null;
+    const idEl = document.getElementById(`${fieldId}-contact-id`);
+    const freeEl = document.getElementById(fieldId);
+    const searchEl = document.getElementById(`${fieldId}-search`);
+    if (idEl) idEl.value = contactId || '';
+    if (freeEl) freeEl.value = contact?.name || '';
+    if (searchEl) searchEl.value = contact ? getContactDisplayName(contact) : '';
+    document.getElementById(`${fieldId}-menu`)?.classList.add('hidden');
+    const selectedLine = document.querySelector(`[data-ct-picker="${fieldId}"] .ct-picker-selected`);
+    if (selectedLine && contact) {
+        selectedLine.className = 'ct-picker-selected settings-hint';
+        selectedLine.innerHTML = `Linked: <button type="button" class="link-btn" onclick="openContactDetailPanel('${ctEscAttr(contact.id)}')">${escapeHtml(getContactDisplayName(contact))}</button>`;
+    }
+}
+
+function clearContactPicker(fieldId) {
+    const idEl = document.getElementById(`${fieldId}-contact-id`);
+    const freeEl = document.getElementById(fieldId);
+    const searchEl = document.getElementById(`${fieldId}-search`);
+    if (idEl) idEl.value = '';
+    if (freeEl) freeEl.value = '';
+    if (searchEl) searchEl.value = '';
+    document.getElementById(`${fieldId}-menu`)?.classList.add('hidden');
+    const selectedLine = document.querySelector(`[data-ct-picker="${fieldId}"] .ct-picker-selected`);
+    if (selectedLine) selectedLine.textContent = '';
+}
+
+function getContactPickerSelection(fieldId) {
+    const contactId = document.getElementById(`${fieldId}-contact-id`)?.value || '';
+    const freeText = document.getElementById(fieldId)?.value
+        || document.getElementById(`${fieldId}-search`)?.value
+        || '';
+    const contact = contactId && typeof getContactById === 'function' ? getContactById(contactId) : null;
+    return {
+        contactId: contact?.id || '',
+        name: contact?.name || String(freeText || '').trim()
+    };
+}
+
+function openContactPickerCreate(fieldId, roleFilter = '') {
+    CONTACT_PICKER_STATE.createForFieldId = fieldId;
+    const roles = [];
+    if (roleFilter === 'supplier') roles.push('dealer_supplier');
+    else if (roleFilter === 'shared') roles.push('shared_use_contact', 'friend');
+    else if (roleFilter === 'gift') roles.push('gift_recipient', 'friend');
+    else if (roleFilter === 'support') roles.push('accountability_partner');
+    else if (roleFilter) roles.push(roleFilter);
+    else roles.push('friend');
+    CONTACT_PICKER_STATE.createRoles = roles;
+    const nameHint = document.getElementById(`${fieldId}-search`)?.value || '';
+    openContactCreateModal({
+        name: nameHint,
+        roles,
+        onSaved: (contact) => {
+            selectContactPickerValue(fieldId, contact.id);
+        }
+    });
+}
+
+function openContactCreateModal(options = {}) {
+    const modal = document.getElementById('contact-quick-modal');
+    if (!modal) {
+        if (typeof openContactCreateForm === 'function') openContactCreateForm();
+        return;
+    }
+    modal.classList.remove('hidden');
+    modal.setAttribute('aria-hidden', 'false');
+    const nameEl = document.getElementById('ct-quick-name');
+    if (nameEl) nameEl.value = options.name || '';
+    const rolesWrap = document.getElementById('ct-quick-roles');
+    if (rolesWrap && typeof CONTACT_ROLES !== 'undefined') {
+        const selected = new Set(options.roles || ['friend']);
+        rolesWrap.innerHTML = CONTACT_ROLES.map(role =>
+            `<label class="ct-role-check"><input type="checkbox" name="ct-quick-role" value="${role}"${selected.has(role) ? ' checked' : ''}> ${escapeHtml(CONTACT_ROLE_LABELS[role] || role)}</label>`
+        ).join('');
+    }
+    CONTACT_PICKER_STATE._onSaved = options.onSaved || null;
+    nameEl?.focus();
+}
+
+function closeContactCreateModal() {
+    const modal = document.getElementById('contact-quick-modal');
+    modal?.classList.add('hidden');
+    modal?.setAttribute('aria-hidden', 'true');
+    CONTACT_PICKER_STATE.createForFieldId = '';
+    CONTACT_PICKER_STATE._onSaved = null;
+}
+
+function submitContactQuickCreate(event) {
+    event?.preventDefault?.();
+    const name = document.getElementById('ct-quick-name')?.value?.trim();
+    if (!name) {
+        if (typeof showToast === 'function') showToast('Enter a contact name.', 'error');
+        return;
+    }
+    const roles = [...(document.querySelectorAll('input[name="ct-quick-role"]:checked') || [])].map(el => el.value);
+    const saved = saveContactRecord({
+        name,
+        nickname: document.getElementById('ct-quick-nickname')?.value || '',
+        roles: roles.length ? roles : ['friend'],
+        favorite: !!document.getElementById('ct-quick-favorite')?.checked,
+        source: 'quick-create'
+    });
+    const onSaved = CONTACT_PICKER_STATE._onSaved;
+    closeContactCreateModal();
+    if (typeof onSaved === 'function') onSaved(saved);
+    if (typeof showToast === 'function') showToast(`Saved ${saved.name}`, 'success');
+    if (document.getElementById('contacts-root')) renderContactsView();
+}
+
+function openContactDetailPanel(contactId) {
+    if (!contactId) return;
+    const panel = document.getElementById('contact-detail-panel');
+    const body = document.getElementById('contact-detail-panel-body');
+    if (!panel || !body) {
+        // Fallback: settings manage contacts
+        openManageContactsSettings(contactId);
+        return;
+    }
+    contactsUiState.detailId = contactId;
+    body.innerHTML = typeof renderContactDetailHtml === 'function'
+        ? renderContactDetailHtml(contactId, appData)
+        : '<p class="ct-error">Contact detail unavailable.</p>';
+    // Retarget close/edit to panel mode
+    body.querySelectorAll('[onclick*="closeContactDetail"]').forEach(btn => {
+        btn.setAttribute('onclick', 'closeContactDetailPanel()');
+    });
+    panel.classList.remove('hidden');
+    panel.setAttribute('aria-hidden', 'false');
+}
+
+function closeContactDetailPanel() {
+    const panel = document.getElementById('contact-detail-panel');
+    panel?.classList.add('hidden');
+    panel?.setAttribute('aria-hidden', 'true');
+}
+
+function openContactEditInPanel(contactId) {
+    openManageContactsSettings(contactId);
+    if (typeof openContactEditForm === 'function') openContactEditForm(contactId);
+}
+
+function openManageContactsSettings(detailId = '') {
+    if (typeof switchTab === 'function') switchTab('settings-tab');
+    const section = document.querySelector('[data-section="settingsContacts"]');
+    if (section?.classList.contains('collapsed')) {
+        if (typeof toggleSection === 'function') toggleSection('settingsContacts');
+    }
+    if (detailId) {
+        contactsUiState.detailId = detailId;
+        contactsUiState.view = 'detail';
+    } else if (!contactsUiState.view) {
+        contactsUiState.view = 'list';
+    }
+    if (typeof renderContactsView === 'function') renderContactsView();
+    section?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+}
+
+function mountLogContactPickers() {
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
+    try {
+        const giftGroup = document.getElementById('use-gift-party-group');
+        const sharedEl = document.getElementById('use-shared-with');
+        const sharedGroup = sharedEl && typeof sharedEl.closest === 'function' ? sharedEl.closest('.form-group') : null;
+        if (giftGroup && typeof giftGroup.querySelector === 'function' && !giftGroup.querySelector('[data-ct-picker="use-gift-party"]')) {
+            const label = document.getElementById('use-gift-party-label')?.textContent || 'Contact';
+            const existing = document.getElementById('use-gift-party');
+            const currentVal = existing?.value || '';
+            const wrap = document.createElement('div');
+            wrap.innerHTML = buildContactPickerHtml({
+                fieldId: 'use-gift-party',
+                freeTextValue: currentVal,
+                roleFilter: 'gift',
+                label,
+                allowFreeText: true
+            });
+            if (wrap.firstElementChild && typeof existing?.replaceWith === 'function') {
+                existing.replaceWith(wrap.firstElementChild);
+            }
+        }
+        if (sharedGroup && typeof sharedGroup.querySelector === 'function' && !sharedGroup.querySelector('[data-ct-picker="use-shared-with"]')) {
+            const existing = document.getElementById('use-shared-with');
+            const currentVal = existing?.value || '';
+            const wrap = document.createElement('div');
+            wrap.innerHTML = buildContactPickerHtml({
+                fieldId: 'use-shared-with',
+                freeTextValue: currentVal,
+                roleFilter: 'shared',
+                label: 'Shared with',
+                allowFreeText: true
+            });
+            if (wrap.firstElementChild && typeof sharedGroup.appendChild === 'function') {
+                sharedGroup.innerHTML = '';
+                sharedGroup.appendChild(wrap.firstElementChild);
+            }
+        }
+    } catch (err) {
+        console.warn('[contacts] mountLogContactPickers skipped', err?.message || err);
+    }
+}
+
+function mountBuyContactPickers() {
+    if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
+    try {
+        const mount = (groupId, fieldId, label, roleFilter, required = false) => {
+            const group = document.getElementById(groupId);
+            if (!group || typeof group.querySelector !== 'function' || group.querySelector(`[data-ct-picker="${fieldId}"]`)) return;
+            if (typeof group.appendChild !== 'function') return;
+            const existing = document.getElementById(fieldId);
+            const currentVal = existing?.value || '';
+            const wrap = document.createElement('div');
+            wrap.innerHTML = buildContactPickerHtml({
+                fieldId,
+                freeTextValue: currentVal,
+                roleFilter,
+                label,
+                required,
+                allowFreeText: true
+            });
+            if (!wrap.firstElementChild) return;
+            group.innerHTML = '';
+            group.appendChild(wrap.firstElementChild);
+        };
+        mount('buy-gift-source-group', 'buy-gift-source', 'Gift From', 'gift', false);
+        mount('buy-gift-recipient-group', 'buy-gift-recipient', 'Gift Recipient', 'gift', true);
+
+        const storeGroup = document.getElementById('buy-store-group');
+        if (storeGroup && typeof storeGroup.insertAdjacentElement === 'function'
+            && !document.getElementById('buy-supplier-contact-picker')) {
+            const holder = document.createElement('div');
+            holder.id = 'buy-supplier-contact-picker';
+            holder.className = 'form-group';
+            holder.innerHTML = buildContactPickerHtml({
+                fieldId: 'buy-supplier-contact',
+                roleFilter: 'supplier',
+                label: 'Supplier contact (optional)',
+                allowFreeText: true
+            });
+            storeGroup.insertAdjacentElement('afterend', holder);
+        }
+    } catch (err) {
+        console.warn('[contacts] mountBuyContactPickers skipped', err?.message || err);
+    }
+}
+
+function applyLogContactIdsToEntry(base) {
+    if (!base) return base;
+    const gift = getContactPickerSelection('use-gift-party');
+    const shared = getContactPickerSelection('use-shared-with');
+    if (base.transactionType === 'gift_given' || base.transactionType === 'gift_received') {
+        if (gift.contactId) base.giftPartyContactId = gift.contactId;
+        if (gift.name) {
+            base.giftPartyName = gift.name;
+            if (base.transactionType === 'gift_given') base.recipientName = gift.name;
+            if (base.transactionType === 'gift_received') base.giverName = gift.name;
+        }
+    }
+    if (base.transactionType === 'shared_use') {
+        if (shared.contactId) base.sharedWithContactId = shared.contactId;
+        if (shared.name) base.sharedWithName = shared.name;
+    }
+    return base;
+}
+
+function applyBuyContactIdsToPayload(payload) {
+    if (!payload) return payload;
+    const source = getContactPickerSelection('buy-gift-source');
+    const recipient = getContactPickerSelection('buy-gift-recipient');
+    const supplier = getContactPickerSelection('buy-supplier-contact');
+    if (source.contactId) payload.giftSourceContactId = source.contactId;
+    if (source.name) payload.giftSource = source.name;
+    if (recipient.contactId) payload.giftRecipientContactId = recipient.contactId;
+    if (recipient.name) payload.giftRecipient = recipient.name;
+    if (supplier.contactId) payload.supplierContactId = supplier.contactId;
+    if (supplier.name && !payload.store) payload.store = supplier.name;
+    return payload;
+}
+
+function resolveLogContactLabel(log, data = appData) {
+    if (!log) return '';
+    const tx = typeof getLogTransactionType === 'function' ? getLogTransactionType(log) : log.transactionType;
+    if (tx === 'shared_use') {
+        if (log.sharedWithContactId) return getContactDisplayName(log.sharedWithContactId, data);
+        return log.sharedWithName || '';
+    }
+    if (tx === 'gift_given' || tx === 'gift_received') {
+        if (log.giftPartyContactId) return getContactDisplayName(log.giftPartyContactId, data);
+        return log.giftPartyName || log.recipientName || log.giverName || '';
+    }
+    return '';
+}
+
+function buildHomeContactCardsHtml(data = appData) {
+    if (typeof buildContactAnalytics !== 'function' || typeof buildContactsDashboard !== 'function') return '';
+    const analytics = buildContactAnalytics(data);
+    const contacts = typeof getContacts === 'function' ? getContacts(data, { includeArchived: false }) : [];
+    const visible = contacts.filter(c => !c.hidden && !c.hideFromDashboard);
+    if (!visible.length && !(data.contacts || []).length) return '';
+
+    const cards = [];
+    const pushCard = (label, contact, meta = '') => {
+        if (!contact || contact.hideFromDashboard) return;
+        cards.push(`<article class="ct-home-card">
+            <span>${escapeHtml(label)}</span>
+            <strong><button type="button" class="link-btn" onclick="openContactDetailPanel('${ctEscAttr(contact.id)}')">${escapeHtml(contact.name)}</button></strong>
+            ${meta ? `<p class="settings-hint">${escapeHtml(meta)}</p>` : ''}
+        </article>`);
+    };
+
+    // Most recent shared-use contact
+    const sharedLogs = (data.logs || [])
+        .filter(l => (typeof getLogTransactionType === 'function' ? getLogTransactionType(l) : l.transactionType) === 'shared_use')
+        .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
+    if (sharedLogs[0]) {
+        const c = sharedLogs[0].sharedWithContactId
+            ? getContactById(sharedLogs[0].sharedWithContactId, data)
+            : findContactByName(sharedLogs[0].sharedWithName, data);
+        pushCard('Recent shared-use', c, sharedLogs[0].date || '');
+    }
+
+    pushCard('Top supplier this month', analytics.mostFrequentSupplier);
+    pushCard('Highest spending supplier', analytics.highestSpendingSupplier);
+
+    const support = visible.find(c => typeof isSupportContact === 'function' && isSupportContact(c) && c.supportProfile?.nextAppointment);
+    if (support) pushCard('Upcoming support', support, `Appt ${support.supportProfile.nextAppointment}`);
+
+    const giftRecv = (data.purchases || [])
+        .filter(p => (typeof getPurchaseAcquisitionType === 'function' ? getPurchaseAcquisitionType(p) : p.acquisitionType) === 'gift_received')
+        .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0];
+    if (giftRecv) {
+        const c = giftRecv.giftSourceContactId
+            ? getContactById(giftRecv.giftSourceContactId, data)
+            : findContactByName(giftRecv.giftSource, data);
+        pushCard('Recent gift giver', c, giftRecv.date || '');
+    }
+
+    if (!cards.length) return '';
+    return `<section class="ct-home-section collapsible-section" data-section="dashContacts">
+        <button type="button" class="section-toggle" onclick="toggleSection('dashContacts')">
+            <span>Contacts</span><span class="chevron">⌄</span>
+        </button>
+        <div class="section-content">
+            <div class="ct-home-grid">${cards.join('')}</div>
+            <p class="settings-hint"><button type="button" class="link-btn" onclick="openManageContactsSettings()">Manage contacts in Settings</button></p>
+        </div>
+    </section>`;
+}
+
+function renderHomeContactCards() {
+    const host = document.getElementById('dash-contacts-root');
+    if (!host) return;
+    try {
+        host.innerHTML = buildHomeContactCardsHtml(appData);
+        if (typeof applyCollapsedSections === 'function') applyCollapsedSections();
+    } catch (err) {
+        console.error('[contacts] home cards failed', err);
+        host.innerHTML = '';
+    }
+}
+
+function buildInsightsContactAnalyticsHtml(data = appData) {
+    if (typeof buildContactAnalytics !== 'function') return '';
+    const analytics = buildContactAnalytics(data);
+    const suppliers = (typeof getContacts === 'function' ? getContacts(data, { includeArchived: false }) : [])
+        .filter(c => typeof isSupplierContact === 'function' && isSupplierContact(c))
+        .map(c => ({ contact: c, profile: buildContactSupplierProfile(c.id, data) }))
+        .filter(row => (row.profile?.purchaseCount || 0) > 0)
+        .sort((a, b) => (b.profile.totalSpent || 0) - (a.profile.totalSpent || 0))
+        .slice(0, 8);
+    const label = c => c ? `<button type="button" class="link-btn" onclick="openContactDetailPanel('${ctEscAttr(c.id)}')">${escapeHtml(c.name)}</button>` : '—';
+    return `
+        <div class="ct-insights">
+            <div class="ct-toolbar">
+                <label>Filter contact
+                    <select id="ct-insights-contact-filter" onchange="onInsightsContactFilterChange(this.value)">
+                        <option value="">All contacts</option>
+                        ${(typeof getContacts === 'function' ? getContacts(data, { includeArchived: false }) : []).map(c =>
+                            `<option value="${ctEscAttr(c.id)}">${escapeHtml(c.name)}</option>`
+                        ).join('')}
+                    </select>
+                </label>
+                <button type="button" class="secondary-btn btn-sm" onclick="openManageContactsSettings()">Manage contacts</button>
+            </div>
+            <div class="ct-summary-grid">
+                <article class="ct-card"><span>Most frequent supplier</span><strong class="ct-text">${label(analytics.mostFrequentSupplier)}</strong></article>
+                <article class="ct-card"><span>Highest spending supplier</span><strong class="ct-text">${label(analytics.highestSpendingSupplier)}</strong></article>
+                <article class="ct-card"><span>Most shared sessions</span><strong class="ct-text">${label(analytics.mostSharedSessions)}</strong></article>
+                <article class="ct-card"><span>Most gifts exchanged</span><strong class="ct-text">${label(analytics.mostGiftsExchanged)}</strong></article>
+            </div>
+            ${suppliers.length ? `<div class="table-scroll"><table class="sheet-table"><thead><tr>
+                <th>Supplier</th><th>Purchases</th><th>Total spent</th><th>Avg cost</th><th>Avg days between</th>
+            </tr></thead><tbody>${suppliers.map(row => `<tr>
+                <td>${label(row.contact)}</td>
+                <td>${row.profile.purchaseCount || 0}</td>
+                <td>${typeof ctMoney === 'function' ? ctMoney(row.profile.totalSpent) : row.profile.totalSpent}</td>
+                <td>${row.profile.averagePrices == null ? '—' : (typeof ctMoney === 'function' ? ctMoney(row.profile.averagePrices) : row.profile.averagePrices)}</td>
+                <td>${row.profile.purchaseFrequencyDays ?? '—'}</td>
+            </tr>`).join('')}</tbody></table></div>` : '<p class="settings-hint">No supplier purchase history yet.</p>'}
+        </div>`;
+}
+
+function renderInsightsContactAnalytics() {
+    const root = document.getElementById('insights-contacts-root');
+    if (!root) return;
+    try {
+        root.innerHTML = buildInsightsContactAnalyticsHtml(appData);
+    } catch (err) {
+        console.error('[contacts] insights analytics failed', err);
+        root.innerHTML = `<div class="ct-error" role="alert">Could not load contact analytics.</div>`;
+    }
+}
+
+function onInsightsContactFilterChange(contactId) {
+    if (contactId) openContactDetailPanel(contactId);
+}
+
+function applyGoalContactFieldsToDraft(draft) {
+    if (!draft) return draft;
+    const partner = getContactPickerSelection('goal-accountability-partner');
+    const support = getContactPickerSelection('goal-support-contact');
+    const checkin = getContactPickerSelection('goal-checkin-contact');
+    draft.accountabilityPartnerContactId = partner.contactId || '';
+    draft.supportContactId = support.contactId || '';
+    draft.checkInContactId = checkin.contactId || '';
+    draft.accountabilityPartnerName = partner.name || '';
+    draft.supportContactName = support.name || '';
+    draft.checkInContactName = checkin.name || '';
+    return draft;
+}
+
+function applyPlanContactFieldsToDraft(draft) {
+    if (!draft) return draft;
+    const sponsor = getContactPickerSelection('plan-sponsor-contact');
+    const partner = getContactPickerSelection('plan-partner-contact');
+    const support = getContactPickerSelection('plan-support-contact');
+    draft.sponsorContactId = sponsor.contactId || '';
+    draft.planPartnerContactId = partner.contactId || '';
+    draft.supportContactId = support.contactId || '';
+    draft.sponsorName = sponsor.name || '';
+    draft.planPartnerName = partner.name || '';
+    draft.supportContactName = support.name || '';
+    return draft;
+}
+
+function renderGoalPlanContactFieldsHtml(kind = 'goal', record = null) {
+    if (kind === 'plan') {
+        return `
+            <div class="ct-goal-fields">
+                ${buildContactPickerHtml({ fieldId: 'plan-sponsor-contact', selectedId: record?.sponsorContactId || '', freeTextValue: record?.sponsorName || '', roleFilter: 'support', label: 'Sponsor (optional)' })}
+                ${buildContactPickerHtml({ fieldId: 'plan-partner-contact', selectedId: record?.planPartnerContactId || '', freeTextValue: record?.planPartnerName || '', roleFilter: 'support', label: 'Plan partner (optional)' })}
+                ${buildContactPickerHtml({ fieldId: 'plan-support-contact', selectedId: record?.supportContactId || '', freeTextValue: record?.supportContactName || '', roleFilter: 'support', label: 'Support contact (optional)' })}
+            </div>`;
+    }
+    return `
+        <div class="ct-goal-fields">
+            ${buildContactPickerHtml({ fieldId: 'goal-accountability-partner', selectedId: record?.accountabilityPartnerContactId || '', freeTextValue: record?.accountabilityPartnerName || '', roleFilter: 'support', label: 'Accountability partner (optional)' })}
+            ${buildContactPickerHtml({ fieldId: 'goal-support-contact', selectedId: record?.supportContactId || '', freeTextValue: record?.supportContactName || '', roleFilter: 'support', label: 'Support contact (optional)' })}
+            ${buildContactPickerHtml({ fieldId: 'goal-checkin-contact', selectedId: record?.checkInContactId || '', freeTextValue: record?.checkInContactName || '', roleFilter: 'support', label: 'Check-in contact (optional)' })}
+        </div>`;
+}
+
+function formatGoalLinkedContactsHtml(goal, data = appData) {
+    if (!goal) return '';
+    const parts = [];
+    const add = (label, id, name) => {
+        if (id) parts.push(`${label}: <button type="button" class="link-btn" onclick="openContactDetailPanel('${ctEscAttr(id)}')">${escapeHtml(getContactDisplayName(id, data) || name || 'Contact')}</button>`);
+        else if (name) parts.push(`${label}: ${escapeHtml(name)}`);
+    };
+    add('Accountability', goal.accountabilityPartnerContactId, goal.accountabilityPartnerName);
+    add('Support', goal.supportContactId, goal.supportContactName);
+    add('Check-in', goal.checkInContactId, goal.checkInContactName);
+    return parts.length ? `<p class="settings-hint ct-linked-line">${parts.join(' · ')}</p>` : '';
+}
+
+function initContactsIntegrationUi() {
+    mountLogContactPickers();
+    mountBuyContactPickers();
+    if (typeof document !== 'undefined') {
+        document.addEventListener('click', (event) => {
+            const t = event.target;
+            if (!(t instanceof Element)) return;
+            if (t.closest('.ct-picker')) return;
+            document.querySelectorAll('.ct-picker-menu').forEach(el => el.classList.add('hidden'));
+        });
+    }
+}
+
+
 const defaultData = {
     substances: getDefaultSubstances(),
     logs: [],
@@ -19529,6 +20190,11 @@ function ensureAppDataSettings(data) {
         || data.settings.activeTab === 'history') {
         data.settings.activeTab = 'use-log-tab';
     }
+    if (data.settings.activeTab === 'contacts-tab'
+        || data.settings.activeTab === 'contacts'
+        || data.settings.activeTab === 'friends') {
+        data.settings.activeTab = 'settings-tab';
+    }
 }
 
 const DEFAULT_COLLAPSED_SECTIONS = {
@@ -19571,7 +20237,10 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     settingsStores: true,
     settingsVape: false,
     settingsBackup: true,
+    settingsContacts: false,
     settingsDangerZone: true,
+    dashContacts: false,
+    statsContactAnalytics: true,
     calendarFilters: true,
     calendarDisplaySettings: true,
     goalsFilters: true,
@@ -19685,7 +20354,7 @@ const TABLE_COLUMN_DEFAULTS = {
             'select', 'date', 'start', 'end', 'duration', 'substance', 'productType',
             'transactionType', 'amount', 'unit', 'tabs', 'ug', 'pills', 'mg', 'thcUsed', 'cbdUsed', 'strength',
             'enteredAmount', 'normalizedAmount', 'percentBefore', 'percentAfter', 'percentUsed',
-            'cost', 'gPerHour', 'sharedAmount', 'multiDayRange', 'dailyBreakdown',
+            'contact', 'cost', 'gPerHour', 'sharedAmount', 'multiDayRange', 'dailyBreakdown',
             'count', 'rate', 'inventory', 'notes', 'actions'
         ],
         // Family-specific columns are gated by getUseHistoryColumnCatalog / getUseHistoryVisibleColumns.
@@ -19716,6 +20385,7 @@ const TABLE_COLUMN_DEFAULTS = {
             strength: 120,
             cost: 90,
             gPerHour: 80,
+            contact: 140,
             sharedAmount: 140,
             multiDayRange: 150,
             dailyBreakdown: 180,
@@ -19946,6 +20616,7 @@ const TABLE_COLUMN_LABELS = {
         strength: 'Strength',
         cost: 'Cost',
         gPerHour: 'g/hr',
+        contact: 'Contact',
         sharedAmount: 'Shared Amount',
         multiDayRange: 'Multi-Day Range',
         dailyBreakdown: 'Daily Breakdown',
@@ -21937,6 +22608,14 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
         }
         case 'gPerHour':
             return `<td data-col="${colId}"${dataLabel}>${formatUseHistoryGramsPerHour(entry)}</td>`;
+        case 'contact': {
+            const label = typeof resolveLogContactLabel === 'function' ? resolveLogContactLabel(entry) : (entry.sharedWithName || entry.giftPartyName || '');
+            const cid = entry.sharedWithContactId || entry.giftPartyContactId || '';
+            if (cid && label) {
+                return `<td data-col="${colId}"${dataLabel}><button type="button" class="link-btn" onclick="openContactDetailPanel('${escapeAttr(cid)}')">${escapeHtml(label)}</button></td>`;
+            }
+            return `<td data-col="${colId}"${dataLabel}>${label ? escapeHtml(label) : '—'}</td>`;
+        }
         case 'sharedAmount': {
             if (!isSharedUseLog(entry)) return `<td data-col="${colId}"${dataLabel}>—</td>`;
             return `<td data-col="${colId}"${dataLabel}>Me ${formatAmount(getLogPersonalAmount(entry))} · ${escapeHtml(entry.sharedWithName || 'Other')} ${formatAmount(getLogSharedAmount(entry))}</td>`;
@@ -23331,7 +24010,6 @@ const PRIMARY_TAB_IDS = new Set([
     'dashboard-tab',
     'use-log-tab',
     'buy-tracker-tab',
-    'contacts-tab',
     'goals-plans-tab',
     'insights-calendar-tab',
     'settings-tab'
@@ -23420,9 +24098,10 @@ function switchTab(tabId) {
         switchTab('insights-calendar-tab');
         return;
     } else if (tabId === 'contacts-tab') {
-        if (typeof ensureContactsMigrated === 'function') ensureContactsMigrated(appData);
-        if (typeof renderContactsView === 'function') renderContactsView();
-        if (typeof syncLocationToCombinedRoute === 'function') syncLocationToCombinedRoute(tabId);
+        // Legacy Friends tab removed — open Settings → Manage Contacts.
+        if (typeof openManageContactsSettings === 'function') openManageContactsSettings();
+        else switchTab('settings-tab');
+        return;
     } else if (tabId === 'goals-plans-tab') {
         if (typeof renderGoalsPlansCombinedView === 'function') renderGoalsPlansCombinedView();
         else if (typeof renderGoalsView === 'function') renderGoalsView();
@@ -23437,6 +24116,8 @@ function switchTab(tabId) {
         renderSubstancesList();
         syncRecoveryScoreSettingsToggle();
         syncUseCustomNamesInCsvToggle();
+        if (typeof ensureContactsMigrated === 'function') ensureContactsMigrated(appData);
+        if (typeof renderContactsView === 'function') renderContactsView();
         if (typeof syncLocationToCombinedRoute === 'function') syncLocationToCombinedRoute(tabId);
     }
     applyCollapsedSections();
@@ -25620,7 +26301,9 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
     }
 
     const giftParty = (isGiftGiven || isGiftReceived)
-        ? (document.getElementById('use-gift-party')?.value?.trim() || '')
+        ? ((typeof getContactPickerSelection === 'function' ? getContactPickerSelection('use-gift-party').name : '')
+            || document.getElementById('use-gift-party')?.value?.trim()
+            || '')
         : '';
 
     const base = {
@@ -25638,10 +26321,10 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         time: startTime,
         endTime: (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple) ? '' : ((isGift || isAdjustment || isSharedUse || type === 'session' || isAlcoholMultiDay) ? (endTime || '') : ''),
         count: (isGift || isAdjustment || isSharedUse || isWeedSimple || isLsdQuick || isXanaxSimple) ? 0 : (parseFloat(document.getElementById('use-count')?.value) || 0),
-        giftPartyName: giftParty,
+        giftPartyName: (typeof getContactPickerSelection === 'function' ? getContactPickerSelection('use-gift-party').name : '') || giftParty,
         recipientName: isGiftGiven ? giftParty : '',
         giverName: isGiftReceived ? giftParty : '',
-        sharedWithName: isSharedUse ? (document.getElementById('use-shared-with')?.value?.trim() || '') : '',
+        sharedWithName: isSharedUse ? (getContactPickerSelection?.('use-shared-with')?.name || document.getElementById('use-shared-with')?.value?.trim() || '') : '',
         adjustmentDirection: isAdjustment ? getUseAdjustmentDirection() : undefined,
         notes: document.getElementById('use-notes')?.value || '',
         purchaseId: inventoryAffects ? linkedPurchaseId : null,
@@ -25653,6 +26336,7 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
     };
 
     base.trackingMode = isNicotineTrackingMode(substanceId) ? 'nicotine' : getSubstanceTrackingMode(substanceId);
+    if (typeof applyLogContactIdsToEntry === 'function') applyLogContactIdsToEntry(base);
 
     if (isAlcohol && alcoholCalc && !alcoholCalc.error) {
         base.isMultiDay = !!alcoholCalc.isMultiDay;
@@ -26398,11 +27082,11 @@ function getPurchaseHistoryVisibleColumns(substanceId = getInventorySubstanceFil
 const USE_HISTORY_FAMILY_COLUMNS = {
     all: [
         'select', 'date', 'start', 'end', 'duration', 'substance', 'transactionType',
-        'amount', 'unit', 'inventory', 'notes', 'actions'
+        'amount', 'unit', 'contact', 'inventory', 'notes', 'actions'
     ],
     nicotine: [
         'select', 'date', 'start', 'end', 'duration', 'productType', 'transactionType',
-        'amount', 'unit', 'sharedAmount', 'inventory', 'notes', 'actions'
+        'amount', 'unit', 'contact', 'sharedAmount', 'inventory', 'notes', 'actions'
     ],
     cocaine: [
         'select', 'date', 'start', 'end', 'duration', 'transactionType',
@@ -26410,7 +27094,7 @@ const USE_HISTORY_FAMILY_COLUMNS = {
     ],
     cannabis: [
         'select', 'date', 'productType', 'transactionType', 'amount', 'unit',
-        'thcUsed', 'cbdUsed', 'strength', 'cost', 'sharedAmount', 'inventory', 'notes', 'actions'
+        'thcUsed', 'cbdUsed', 'strength', 'cost', 'contact', 'sharedAmount', 'inventory', 'notes', 'actions'
     ],
     ketamine: [
         'select', 'date', 'start', 'end', 'duration', 'transactionType',
@@ -30079,6 +30763,8 @@ function setupUseLogForm() {
         updateAlcoholUseFormUI();
         if (typeof updateWeedBudEstimateVisibility === 'function') updateWeedBudEstimateVisibility();
     });
+    if (typeof initContactsIntegrationUi === 'function') initContactsIntegrationUi();
+    if (typeof mountLogContactPickers === 'function') mountLogContactPickers();
     ['use-amount', 'use-date', 'use-end-date', 'use-percent-after', 'use-vape-puffs-used'].forEach(id => {
         document.getElementById(id)?.addEventListener('input', () => {
             if (id === 'use-date') syncCokeSessionEndDateDefault({ fromStartDateChange: true });
@@ -31807,6 +32493,8 @@ function updateBuyAcquisitionTypeUI() {
     document.getElementById('buy-gift-source-group')?.classList.toggle('hidden', !isGiftReceived);
     document.getElementById('buy-gift-recipient-group')?.classList.toggle('hidden', !isPurchasedAsGift);
     document.getElementById('buy-gift-date-group')?.classList.toggle('hidden', !isPurchasedAsGift);
+    document.getElementById('buy-supplier-contact-picker')?.classList.toggle('hidden', isGiftReceived);
+    if (typeof mountBuyContactPickers === 'function') mountBuyContactPickers();
     document.getElementById('buy-total-cost-group')?.classList.toggle('hidden', isNonPurchase);
     document.getElementById('buy-cost-per-unit-group')?.classList.toggle('hidden', isNonPurchase);
     document.getElementById('buy-store-group')?.classList.toggle('hidden', isGiftReceived);
@@ -32193,6 +32881,7 @@ function updateBuyWeedEdiblesPreview() {
 }
 
 function updateBuyWeedProductTypeUI() {
+    if (typeof mountBuyContactPickers === 'function') mountBuyContactPickers();
     const substanceId = document.getElementById('buy-substance')?.value;
     if (!isWeedTrackingMode(substanceId)) return;
     const productType = normalizeWeedProductType(document.getElementById('buy-weed-product-type')?.value || 'bud');
@@ -32377,12 +33066,17 @@ function buildPurchaseFromForm() {
     const productType = isNicotineTrackingMode(substanceId) ? getBuyFormNicotineProductType() : null;
     const isVape = productType === 'vape'
         || (!isNicotineTrackingMode(substanceId) && isVapeTrackingMode(substanceId) && isVapePuffUnit(unit));
-    const giftSource = acquisitionType === 'gift_received'
-        ? (document.getElementById('buy-gift-source')?.value || '').trim()
-        : '';
-    const giftRecipient = isPurchasedAsGift
-        ? (document.getElementById('buy-gift-recipient')?.value || '').trim()
-        : '';
+    const giftSourceSel = typeof getContactPickerSelection === 'function'
+        ? getContactPickerSelection('buy-gift-source')
+        : { contactId: '', name: (document.getElementById('buy-gift-source')?.value || '').trim() };
+    const giftRecipientSel = typeof getContactPickerSelection === 'function'
+        ? getContactPickerSelection('buy-gift-recipient')
+        : { contactId: '', name: (document.getElementById('buy-gift-recipient')?.value || '').trim() };
+    const supplierSel = typeof getContactPickerSelection === 'function'
+        ? getContactPickerSelection('buy-supplier-contact')
+        : { contactId: '', name: '' };
+    const giftSource = acquisitionType === 'gift_received' ? (giftSourceSel.name || '').trim() : '';
+    const giftRecipient = isPurchasedAsGift ? (giftRecipientSel.name || '').trim() : '';
     const giftDate = isPurchasedAsGift
         ? (document.getElementById('buy-gift-date')?.value || '').trim()
         : '';
@@ -32404,9 +33098,13 @@ function buildPurchaseFromForm() {
         giftSource,
         giftRecipient,
         giftDate,
+        giftSourceContactId: acquisitionType === 'gift_received' ? (giftSourceSel.contactId || '') : '',
+        giftRecipientContactId: isPurchasedAsGift ? (giftRecipientSel.contactId || '') : '',
+        supplierContactId: acquisitionType !== 'gift_received' && supplierSel.contactId ? supplierSel.contactId : '',
         isGiftReceived: acquisitionType === 'gift_received',
         isPurchasedAsGift
     };
+    if (typeof applyBuyContactIdsToPayload === 'function') applyBuyContactIdsToPayload(payload);
     if (acquisitionType !== 'purchased') payload.source = acquisitionType;
     if (acquisitionType === 'gift_received' && giftSource) {
         payload.giverName = giftSource;
@@ -36340,6 +37038,7 @@ function updateDashboard() {
     renderVapeDashboardSection(dashSubId);
     renderDashboardRecoveryInsights();
     renderRecoveryDashboard();
+    if (typeof renderHomeContactCards === 'function') renderHomeContactCards();
 }
 
 function formatBreakFromHours(hours) {
@@ -40820,6 +41519,9 @@ function updateStats() {
         if (typeof invalidateChartSystemCache === 'function') invalidateChartSystemCache();
         if (typeof renderChartDashboardView === 'function') renderChartDashboardView();
     } catch (err) { console.error('Chart dashboard render failed', err); }
+    try {
+        if (typeof renderInsightsContactAnalytics === 'function') renderInsightsContactAnalytics();
+    } catch (err) { console.error('Contact insights render failed', err); }
     renderGiftAnalytics(insights.bounds);
     updateRecoveryStreakDisplay(currentSubstanceId);
     renderStatsComparePeriods();
@@ -50297,6 +50999,24 @@ function __getRecoveryTrackerTestExports() {
         ensureChartSystemPrefs,
         ensureWeedCompletePrefs,
         ensureWeedCompleteMigrated,
+        buildContactPickerHtml,
+        getContactPickerSelection,
+        selectContactPickerValue,
+        clearContactPicker,
+        openContactDetailPanel,
+        closeContactDetailPanel,
+        openManageContactsSettings,
+        buildHomeContactCardsHtml,
+        buildInsightsContactAnalyticsHtml,
+        resolveLogContactLabel,
+        applyLogContactIdsToEntry,
+        applyBuyContactIdsToPayload,
+        applyGoalContactFieldsToDraft,
+        applyPlanContactFieldsToDraft,
+        renderGoalPlanContactFieldsHtml,
+        rankContactsForPicker,
+        mountLogContactPickers,
+        mountBuyContactPickers,
         migrateCompleteWeedSupport,
         computeWeedBudNormalizedGrams,
         computeWeedPreRollNormalized,
