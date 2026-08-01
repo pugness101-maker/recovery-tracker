@@ -970,466 +970,47 @@
             </section>
 
             <!-- Calendar Tab -->
-            <section id="calendar-tab" class="tab calendar-page">
-                <div class="page-header-row calendar-page-header">
-                    <h2>Calendar</h2>
-                    <p class="settings-hint">Review use, inventory, plans, goals, and milestones in one place.</p>
-                </div>
-
-                <div class="cal-toolbar">
-                    <div class="cal-toolbar-row">
-                        <div class="cal-view-btns" role="group" aria-label="Calendar view">
-                            <button type="button" class="cal-view-btn active" data-cal-view="month" onclick="setCalendarViewMode('month')">Month</button>
-                            <button type="button" class="cal-view-btn" data-cal-view="week" onclick="setCalendarViewMode('week')">Week</button>
-                            <button type="button" class="cal-view-btn" data-cal-view="day" onclick="setCalendarViewMode('day')">Day</button>
-                            <button type="button" class="cal-view-btn" data-cal-view="agenda" onclick="setCalendarViewMode('agenda')">Agenda</button>
-                        </div>
-                        <div class="cal-nav-btns">
-                            <button type="button" class="secondary-btn btn-sm" onclick="shiftCalendarPeriod(-1)" aria-label="Previous period">‹</button>
-                            <button type="button" class="secondary-btn btn-sm" onclick="goCalendarToday()">Today</button>
-                            <button type="button" class="secondary-btn btn-sm" onclick="shiftCalendarPeriod(1)" aria-label="Next period">›</button>
-                            <input type="date" id="calendar-date-picker" class="cal-date-picker" onchange="onCalendarDatePickerChange()" aria-label="Jump to date">
-                        </div>
-                    </div>
-                    <p class="cal-period-label" id="calendar-period-label"></p>
-                    <div class="cal-toolbar-row cal-search-row">
-                        <input type="search" id="calendar-search" class="cal-search-input" placeholder="Search notes, inventory, contact, store, plan…" oninput="onCalendarSearchInput()">
-                        <button type="button" class="secondary-btn btn-sm" onclick="toggleCalendarFiltersPanel()">Filters</button>
-                        <button type="button" class="secondary-btn btn-sm" onclick="toggleCalendarSettingsPanel()">Display</button>
-                        <button type="button" class="secondary-btn btn-sm" onclick="exportCalendarCsv()">CSV</button>
-                        <button type="button" class="secondary-btn btn-sm" onclick="exportCalendarIcs()">ICS</button>
-                        <button type="button" class="secondary-btn btn-sm" onclick="printCalendarView()">Print</button>
+            <!-- Goals & Plans Tab -->
+            <section id="goals-plans-tab" class="tab combined-page goals-plans-page">
+                <div class="page-header-row combined-page-header">
+                    <div>
+                        <h2>Goals &amp; Plans</h2>
+                        <p class="settings-hint">Goals define outcomes. Plans define the step-by-step method. Records stay separate and can be linked.</p>
                     </div>
                 </div>
 
-                <div id="calendar-filters-panel" class="cal-side-panel collapsible-section collapsed" data-section="calendarFilters">
-                    <button type="button" class="section-toggle" onclick="toggleSection('calendarFilters')">
-                        <span>Filters</span>
-                        <span class="chevron">›</span>
-                    </button>
-                    <div class="section-content cal-filters-grid">
-                        <label class="form-group">
-                            <span>Substance</span>
-                            <select id="calendar-filter-substance" onchange="onCalendarFilterChange()"></select>
-                        </label>
-                        <label class="form-group">
-                            <span>Product type</span>
-                            <select id="calendar-filter-product-type" onchange="onCalendarFilterChange()">
-                                <option value="">All product types</option>
-                                <option value="bud">Bud</option>
-                                <option value="cart">Cart</option>
-                                <option value="edibles">Edibles</option>
-                                <option value="pre-roll">Pre-roll</option>
-                                <option value="vape">Vape</option>
-                            </select>
-                        </label>
-                        <label class="form-group">
-                            <span>Transaction type</span>
-                            <select id="calendar-filter-transaction" onchange="onCalendarFilterChange()">
-                                <option value="">All transactions</option>
-                                <option value="use">Personal use</option>
-                                <option value="session">Session</option>
-                                <option value="shared_use">Shared use</option>
-                                <option value="gift_given">Gift given</option>
-                                <option value="gift_received">Gift received</option>
-                                <option value="purchase">Purchase</option>
-                                <option value="purchased_as_gift">Purchased as gift</option>
-                                <option value="inventory_adjustment">Adjustment</option>
-                            </select>
-                        </label>
-                        <div class="cal-filter-chips" role="group" aria-label="Quick filters">
-                            <label><input type="checkbox" id="cal-filter-personal-only" onchange="onCalendarFilterChange()"> Personal use only</label>
-                            <label><input type="checkbox" id="cal-filter-purchases-only" onchange="onCalendarFilterChange()"> Purchases only</label>
-                            <label><input type="checkbox" id="cal-filter-gifts-only" onchange="onCalendarFilterChange()"> Gifts only</label>
-                            <label><input type="checkbox" id="cal-filter-plans-only" onchange="onCalendarFilterChange()"> Plans only</label>
-                            <label><input type="checkbox" id="cal-filter-goals-only" onchange="onCalendarFilterChange()"> Goals only</label>
-                            <label><input type="checkbox" id="cal-filter-milestones-only" onchange="onCalendarFilterChange()"> Milestones only</label>
-                        </div>
-                    </div>
+                <div class="combined-subnav-wrap">
+                    <label class="combined-subnav-mobile-label" for="gp-subnav-select">View</label>
+                    <select id="gp-subnav-select" class="combined-subnav-select" aria-label="Goals and Plans view" onchange="setGoalsPlansView(this.value)">
+                        <option value="overview">Overview</option>
+                        <option value="active-goals">Active Goals</option>
+                        <option value="active-plans">Active Plans</option>
+                        <option value="goal-history">Goal History</option>
+                        <option value="plan-history">Plan History</option>
+                        <option value="templates">Templates</option>
+                        <option value="achievements">Achievements</option>
+                    </select>
+                    <nav class="combined-subnav" id="gp-subnav" aria-label="Goals and Plans sections" role="tablist">
+                        <button type="button" class="combined-subnav-btn active" data-gp-view="overview" onclick="setGoalsPlansView('overview')">Overview</button>
+                        <button type="button" class="combined-subnav-btn" data-gp-view="active-goals" onclick="setGoalsPlansView('active-goals')">Active Goals</button>
+                        <button type="button" class="combined-subnav-btn" data-gp-view="active-plans" onclick="setGoalsPlansView('active-plans')">Active Plans</button>
+                        <button type="button" class="combined-subnav-btn" data-gp-view="goal-history" onclick="setGoalsPlansView('goal-history')">Goal History</button>
+                        <button type="button" class="combined-subnav-btn" data-gp-view="plan-history" onclick="setGoalsPlansView('plan-history')">Plan History</button>
+                        <button type="button" class="combined-subnav-btn" data-gp-view="templates" onclick="setGoalsPlansView('templates')">Templates</button>
+                        <button type="button" class="combined-subnav-btn" data-gp-view="achievements" onclick="setGoalsPlansView('achievements')">Achievements</button>
+                    </nav>
                 </div>
 
-                <div id="calendar-settings-panel" class="cal-side-panel collapsible-section collapsed" data-section="calendarDisplaySettings">
-                    <button type="button" class="section-toggle" onclick="toggleSection('calendarDisplaySettings')">
-                        <span>Display settings</span>
-                        <span class="chevron">›</span>
-                    </button>
-                    <div class="section-content cal-settings-grid">
-                        <label><input type="checkbox" id="cal-show-amounts" onchange="onCalendarDisplaySettingChange()" checked> Show amounts</label>
-                        <label><input type="checkbox" id="cal-show-costs" onchange="onCalendarDisplaySettingChange()" checked> Show costs</label>
-                        <label><input type="checkbox" id="cal-show-contacts" onchange="onCalendarDisplaySettingChange()"> Show contacts</label>
-                        <label><input type="checkbox" id="cal-show-notes" onchange="onCalendarDisplaySettingChange()"> Show notes</label>
-                        <label><input type="checkbox" id="cal-show-day-summaries" onchange="onCalendarDisplaySettingChange()" checked> Show daily summaries</label>
-                        <label class="form-group">
-                            <span>Week starts</span>
-                            <select id="cal-week-starts" onchange="onCalendarDisplaySettingChange()">
-                                <option value="sunday">Sunday</option>
-                                <option value="monday">Monday</option>
-                            </select>
-                        </label>
-                        <label class="form-group">
-                            <span>Time format</span>
-                            <select id="cal-time-format" onchange="onCalendarDisplaySettingChange()">
-                                <option value="12">12-hour</option>
-                                <option value="24">24-hour</option>
-                            </select>
-                        </label>
-                        <label class="form-group">
-                            <span>Event display</span>
-                            <select id="cal-event-density" onchange="onCalendarDisplaySettingChange()">
-                                <option value="compact">Compact</option>
-                                <option value="detailed">Detailed</option>
-                            </select>
-                        </label>
-                        <fieldset class="cal-type-toggles">
-                            <legend>Show event types</legend>
-                            <div id="calendar-type-toggles" class="cal-filter-chips"></div>
-                        </fieldset>
-                        <label><input type="checkbox" id="cal-export-include-notes" onchange="onCalendarDisplaySettingChange()"> Include notes in exports</label>
-                    </div>
+                <div id="gp-overview" class="combined-subview active" data-gp-view="overview" role="tabpanel">
+                    <div id="gp-overview-root" class="combined-overview-root" aria-live="polite"></div>
                 </div>
 
-                <div id="calendar-loading" class="rd-state rd-loading hidden">Loading calendar…</div>
-                <div id="calendar-error" class="rd-state rd-error hidden">
-                    <p id="calendar-error-message">Could not load calendar.</p>
-                    <button type="button" class="secondary-btn btn-sm" onclick="renderCalendarView()">Retry</button>
-                </div>
-                <div id="calendar-empty" class="rd-state rd-empty hidden">No events match the current filters.</div>
-
-                <div id="calendar-summary-panel" class="cal-summary-panel"></div>
-                <div id="calendar-root" class="cal-root" aria-live="polite"></div>
-            </section>
-
-            <!-- Goals Tab -->
-            <section id="goals-tab" class="tab goals-page">
-                <div id="goals-root" class="goals-root" aria-live="polite"></div>
-            </section>
-
-            <!-- Insights Tab -->
-            <section id="stats-tab" class="tab insights-page">
-                <div class="page-header-row insights-page-header">
-                    <h2>Insights</h2>
-                    <p class="page-substance-hint settings-hint">Analytics for the substance selected in Date Range below.</p>
+                <div id="goals-tab" class="combined-subview goals-page" data-gp-view="active-goals goal-history templates achievements" role="tabpanel" hidden>
+                    <div id="goals-root" class="goals-root" aria-live="polite"></div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsDateRange">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsDateRange')">
-                        <span>Date Range &amp; Substance</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                <div class="form-group">
-                    <label for="stats-substance">Substance</label>
-                    <select id="stats-substance" onchange="switchStatsSubstance(this.value)"></select>
-                </div>
-
-                <div class="stats-date-range-toolbar">
-                    <div class="form-group">
-                        <label for="stats-date-range">Date Range</label>
-                        <select id="stats-date-range" onchange="onStatsDateRangeChange()">
-                            <option value="today">Today</option>
-                            <option value="yesterday">Yesterday</option>
-                            <option value="last-7">Last 7 Days</option>
-                            <option value="last-30">Last 30 Days</option>
-                            <option value="this-week">This Week</option>
-                            <option value="last-week">Last Week</option>
-                            <option value="this-month">This Month</option>
-                            <option value="last-month">Last Month</option>
-                            <option value="this-year">This Year</option>
-                            <option value="last-year">Last Year</option>
-                            <option value="all-time">All Time</option>
-                            <option value="custom">Custom Range</option>
-                        </select>
-                    </div>
-                    <div id="stats-custom-range-wrap" class="stats-custom-range hidden">
-                        <div class="form-group">
-                            <label for="stats-custom-start">Start Date</label>
-                            <input type="date" id="stats-custom-start">
-                        </div>
-                        <div class="form-group">
-                            <label for="stats-custom-end">End Date</label>
-                            <input type="date" id="stats-custom-end">
-                        </div>
-                        <button type="button" class="secondary-btn" onclick="applyStatsCustomRange()">Apply</button>
-                    </div>
-                    <p class="stats-range-summary" id="stats-range-summary"></p>
-                </div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="statsGoalAnalytics">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsGoalAnalytics')">
-                        <span>Goal Analytics</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                        <div id="goal-insights-panel" class="goal-insights-panel"></div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="statsComparePeriods">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsComparePeriods')">
-                        <span>Compare Periods</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                        <div class="stats-compare-toolbar">
-                            <div class="form-group">
-                                <label for="stats-compare-preset">Comparison</label>
-                                <select id="stats-compare-preset" onchange="onStatsComparePresetChange()">
-                                    <option value="past-30">Past 30 days vs previous 30 days</option>
-                                    <option value="past-3m">Past 3 months vs previous 3 months</option>
-                                    <option value="past-6m">Past 6 months vs previous 6 months</option>
-                                    <option value="past-12m">Past 12 months vs previous 12 months</option>
-                                    <option value="this-month">This month vs last month</option>
-                                    <option value="this-quarter">This quarter vs last quarter</option>
-                                    <option value="this-year">This year vs last year</option>
-                                    <option value="custom">Custom period vs previous equal-length period</option>
-                                </select>
-                            </div>
-                            <div id="stats-compare-custom-wrap" class="stats-custom-range hidden">
-                                <div class="form-group">
-                                    <label for="stats-compare-custom-start">Current start</label>
-                                    <input type="date" id="stats-compare-custom-start">
-                                </div>
-                                <div class="form-group">
-                                    <label for="stats-compare-custom-end">Current end</label>
-                                    <input type="date" id="stats-compare-custom-end">
-                                </div>
-                                <button type="button" class="secondary-btn" onclick="applyStatsCompareCustomRange()">Apply</button>
-                            </div>
-                            <div class="form-group">
-                                <label for="stats-compare-chart-view">Chart view</label>
-                                <select id="stats-compare-chart-view" onchange="onStatsCompareChartViewChange()">
-                                    <option value="monthly">Monthly view</option>
-                                    <option value="weekly">Weekly view</option>
-                                    <option value="rolling-30">Rolling 30-day view</option>
-                                </select>
-                            </div>
-                            <button type="button" class="secondary-btn" id="stats-compare-export-btn" onclick="exportStatsComparePeriodsCsv()">Export Comparison CSV</button>
-                        </div>
-                        <p class="stats-range-summary" id="stats-compare-range-summary"></p>
-                        <div id="stats-compare-summary" class="stats-compare-summary"></div>
-                        <div id="stats-compare-results" class="stats-compare-results"></div>
-                    </div>
-                </div>
-
-                <div id="stats-all-view" class="hidden">
-                    <div class="stats-section">
-                        <h3>By Substance</h3>
-                        <div id="stats-by-substance"></div>
-                    </div>
-                </div>
-
-                <div id="stats-single-view">
-
-                <div class="collapsible-section" data-section="statsSummaryDashboard">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsSummaryDashboard')">
-                        <span>Overview</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                        <div id="stats-summary-dashboard" class="sheet-summary-grid"></div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="statsCalendarView">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsCalendarView')">
-                        <span>Calendar View</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                        <div class="stats-calendar-toolbar">
-                            <div class="stats-calendar-toolbar-row">
-                                <div class="form-group stats-cal-mode-group">
-                                    <label>View mode</label>
-                                    <div class="stats-cal-mode-btns" id="stats-calendar-mode-btns">
-                                        <button type="button" class="secondary-btn stats-cal-mode-btn" data-mode="week">Week</button>
-                                        <button type="button" class="secondary-btn stats-cal-mode-btn active" data-mode="month">Month</button>
-                                        <button type="button" class="secondary-btn stats-cal-mode-btn" data-mode="year">Year</button>
-                                    </div>
-                                </div>
-                                <div class="form-group">
-                                    <label for="stats-calendar-substance">Substance</label>
-                                    <select id="stats-calendar-substance"></select>
-                                </div>
-                                <div class="form-group" id="stats-calendar-period-group">
-                                    <label for="stats-calendar-period" id="stats-calendar-period-label">Month</label>
-                                    <input type="month" id="stats-calendar-period" class="stats-calendar-period-input">
-                                </div>
-                                <div class="form-group stats-cal-actions-group">
-                                    <label>&nbsp;</label>
-                                    <div class="stats-cal-action-btns">
-                                        <button type="button" class="secondary-btn" id="stats-calendar-today-btn">Today</button>
-                                        <button type="button" class="secondary-btn" id="stats-calendar-export-btn">Export CSV</button>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="stats-calendar-toolbar-row stats-calendar-toggles-row">
-                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-amount" checked> Show use amount</label>
-                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-duration" checked> Show duration</label>
-                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-break" checked> Show break</label>
-                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-next" checked> Show next use</label>
-                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-cost"> Show cost</label>
-                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-taper" checked> Show taper status</label>
-                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-compact"> Compact</label>
-                            </div>
-                            <div class="stats-calendar-toolbar-row hidden" id="stats-calendar-year-type-row">
-                                <div class="form-group">
-                                    <label>Year layout</label>
-                                    <div class="stats-cal-mode-btns" id="stats-calendar-year-type-btns">
-                                        <button type="button" class="secondary-btn stats-cal-year-type-btn active" data-type="mini">Mini calendar</button>
-                                        <button type="button" class="secondary-btn stats-cal-year-type-btn" data-type="summary">Summary table</button>
-                                    </div>
-                                </div>
-                                <div class="sheet-table-toolbar hidden" id="stats-calendar-year-summary-toolbar">
-                                    <button type="button" class="secondary-btn table-columns-btn" id="stats-calendar-year-customize-columns">Customize Columns</button>
-                                </div>
-                            </div>
-                        </div>
-                        <div id="stats-calendar-container" class="stats-calendar-container"></div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="statsMonthlySummary">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsMonthlySummary')">
-                        <span>Monthly Use Summary</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                        <div class="sheet-table-toolbar">
-                            <button type="button" class="secondary-btn table-columns-btn" id="stats-monthly-customize-columns">Customize Columns</button>
-                        </div>
-                        <div id="stats-monthly-summary" class="sheet-table-wrap"></div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="statsWeeklySummary">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsWeeklySummary')">
-                        <span>Weekly Use Summary</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                        <div class="sheet-table-toolbar">
-                            <button type="button" class="secondary-btn table-columns-btn" id="stats-weekly-customize-columns">Customize Columns</button>
-                            <button type="button" class="secondary-btn" id="stats-weekly-export-btn">Export CSV</button>
-                        </div>
-                        <div id="stats-weekly-summary" class="sheet-table-wrap"></div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="statsBuyAnalytics">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsBuyAnalytics')">
-                        <span>Spending &amp; Purchases</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                        <div id="stats-buy-analytics-cards" class="sheet-summary-grid"></div>
-
-                        <div class="stats-section">
-                            <div class="stats-section-heading-row">
-                                <h4 class="stats-inline-heading">Week Summary</h4>
-                                <div class="stats-section-heading-actions">
-                                    <button type="button" class="secondary-btn btn-sm table-columns-btn" id="stats-buy-week-customize-columns">Customize Columns</button>
-                                    <button type="button" class="secondary-btn btn-sm" id="stats-buy-week-export-btn">Export CSV</button>
-                                </div>
-                            </div>
-                            <div id="stats-buy-week-summary" class="sheet-table-wrap"></div>
-                        </div>
-
-                        <div class="stats-section">
-                            <div class="stats-section-heading-row">
-                                <h4 class="stats-inline-heading">Month Summary</h4>
-                                <div class="stats-section-heading-actions">
-                                    <button type="button" class="secondary-btn btn-sm table-columns-btn" id="stats-buy-month-customize-columns">Customize Columns</button>
-                                    <button type="button" class="secondary-btn btn-sm" id="stats-buy-month-export-btn">Export CSV</button>
-                                </div>
-                            </div>
-                            <div id="stats-buy-month-summary" class="sheet-table-wrap stats-buy-month-summary-wrap"></div>
-                        </div>
-
-                        <div class="collapsible-section stats-buy-nested" data-section="statsBuyPurchaseDetails" id="stats-buy-purchase-details-section">
-                            <button type="button" class="section-toggle" onclick="toggleSection('statsBuyPurchaseDetails')">
-                                <span>Purchase Details</span>
-                                <span class="chevron">⌄</span>
-                            </button>
-                            <div class="section-content">
-                                <div class="sheet-table-toolbar">
-                                    <button type="button" class="secondary-btn table-columns-btn btn-sm" id="stats-buy-purchase-details-customize-columns">Customize Columns</button>
-                                </div>
-                                <div id="stats-buy-purchase-details" class="sheet-table-wrap"></div>
-                            </div>
-                        </div>
-
-                        <div class="collapsible-section stats-buy-nested" data-section="statsBuyStoreBreakdown">
-                            <button type="button" class="section-toggle" onclick="toggleSection('statsBuyStoreBreakdown')">
-                                <span>Store Breakdown</span>
-                                <span class="chevron">⌄</span>
-                            </button>
-                            <div class="section-content">
-                                <div id="stats-buy-store-summary" class="sheet-table-wrap"></div>
-                            </div>
-                        </div>
-
-                        <div class="collapsible-section stats-buy-nested" data-section="statsBuyAdvanced">
-                            <button type="button" class="section-toggle" onclick="toggleSection('statsBuyAdvanced')">
-                                <span>Advanced purchase metrics</span>
-                                <span class="chevron">⌄</span>
-                            </button>
-                            <div class="section-content">
-                                <div id="stats-buy-advanced-metrics" class="sheet-summary-grid"></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="statsFinancialAnalytics" id="financial-analytics-section">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsFinancialAnalytics')">
-                        <span>Financial Analytics</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                        <p class="settings-hint">Spending, budgets, savings estimates, and forecasts use the same purchase rules as Inventory. Gift Received is excluded; Purchased as Gift counts toward spending.</p>
-                        <div id="financial-analytics-root" class="financial-analytics-root" aria-live="polite"></div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="statsGiftAnalytics" id="gift-analytics-section">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsGiftAnalytics')">
-                        <span>Gift Analytics</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                        <div class="sheet-summary-grid">
-                            <div class="sheet-summary-card">
-                                <span class="sheet-summary-label">Gift Given</span>
-                                <strong id="stats-gift-given">—</strong>
-                            </div>
-                            <div class="sheet-summary-card">
-                                <span class="sheet-summary-label">Gift Received</span>
-                                <strong id="stats-gift-received">—</strong>
-                            </div>
-                            <div class="sheet-summary-card">
-                                <span class="sheet-summary-label">Net</span>
-                                <strong id="stats-gift-net">—</strong>
-                            </div>
-                        </div>
-                        <div class="stats-section">
-                            <h4 class="stats-inline-heading">Recipients</h4>
-                            <div id="stats-gift-recipients"></div>
-                        </div>
-                        <div class="stats-section">
-                            <h4 class="stats-inline-heading">Senders</h4>
-                            <div id="stats-gift-senders"></div>
-                        </div>
-                    </div>
-                </div>
-
-                </div>
-            </section>
-
-            <!-- Taper Tab -->
-            <section id="taper-tab" class="tab taper-page">
-                <div class="page-header-row taper-page-header">
+                <div id="taper-tab" class="combined-subview taper-page" data-gp-view="active-plans plan-history" role="tabpanel" hidden>
+                    <div class="page-header-row taper-page-header">
                     <h2>Plan</h2>
                     <div class="page-substance-selector substance-select-card taper-toolbar">
                         <label for="taper-substance" class="page-substance-label taper-toolbar-label">Substance</label>
@@ -1456,6 +1037,7 @@
                         <button type="button" class="taper-chip-btn" onclick="archiveSelectedTaperPlan()">Archive</button>
                         <button type="button" class="taper-chip-btn" onclick="setSelectedTaperPlanPrimary()">Set Primary</button>
                         <button type="button" class="taper-chip-btn" onclick="openManageTaperPlansModal()">Manage Plans</button>
+                        <button type="button" class="taper-chip-btn" onclick="(function(){ const id = (typeof selectedTaperPlanId !== 'undefined' && selectedTaperPlanId) || document.getElementById('taper-plan-select')?.value; if (id) createGoalsFromPlanAndOpen(id); })()">Create goals from plan</button>
                     </div>
                 </div>
 
@@ -2063,8 +1645,535 @@
                         </div>
                     </form>
                 </div>
+                </div>
 
+                <div id="gp-loading" class="rd-state rd-loading hidden">Loading Goals &amp; Plans…</div>
+                <div id="gp-error" class="rd-state rd-error hidden">
+                    <p id="gp-error-message">Could not load Goals &amp; Plans.</p>
+                    <button type="button" class="secondary-btn btn-sm" onclick="renderGoalsPlansCombinedView()">Retry</button>
+                </div>
             </section>
+
+            <!-- Insights & Calendar Tab -->
+            <section id="insights-calendar-tab" class="tab combined-page insights-calendar-page">
+                <div class="page-header-row combined-page-header">
+                    <div>
+                        <h2>Insights &amp; Calendar</h2>
+                        <p class="settings-hint">Analytics and calendar share the same filters and date context where possible.</p>
+                    </div>
+                </div>
+
+                <div class="combined-subnav-wrap">
+                    <label class="combined-subnav-mobile-label" for="ic-subnav-select">View</label>
+                    <select id="ic-subnav-select" class="combined-subnav-select" aria-label="Insights and Calendar view" onchange="setInsightsCalendarView(this.value)">
+                        <option value="overview">Overview</option>
+                        <option value="calendar">Calendar</option>
+                        <option value="trends">Trends</option>
+                        <option value="comparisons">Compare</option>
+                        <option value="financial">Financial</option>
+                        <option value="use">Use Analytics</option>
+                        <option value="purchase">Purchase Analytics</option>
+                        <option value="goal-analytics">Goal Analytics</option>
+                        <option value="plan-analytics">Plan Analytics</option>
+                        <option value="custom">Custom Metrics</option>
+                    </select>
+                    <nav class="combined-subnav" id="ic-subnav" aria-label="Insights and Calendar sections" role="tablist">
+                        <button type="button" class="combined-subnav-btn active" data-ic-view="overview" onclick="setInsightsCalendarView('overview')">Overview</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="calendar" onclick="setInsightsCalendarView('calendar')">Calendar</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="trends" onclick="setInsightsCalendarView('trends')">Trends</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="comparisons" onclick="setInsightsCalendarView('comparisons')">Compare</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="financial" onclick="setInsightsCalendarView('financial')">Financial</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="use" onclick="setInsightsCalendarView('use')">Use</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="purchase" onclick="setInsightsCalendarView('purchase')">Purchases</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="goal-analytics" onclick="setInsightsCalendarView('goal-analytics')">Goals</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="plan-analytics" onclick="setInsightsCalendarView('plan-analytics')">Plans</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="custom" onclick="setInsightsCalendarView('custom')">Custom</button>
+                    </nav>
+                </div>
+
+                <div id="ic-overview" class="combined-subview active" data-ic-view="overview" role="tabpanel">
+                    <div id="ic-overview-root" class="combined-overview-root" aria-live="polite"></div>
+                </div>
+
+                <div id="calendar-tab" class="combined-subview calendar-page" data-ic-view="calendar" role="tabpanel" hidden>
+                    <div class="page-header-row calendar-page-header">
+                    <h2>Calendar</h2>
+                    <p class="settings-hint">Review use, inventory, plans, goals, and milestones in one place.</p>
+                </div>
+
+                <div class="cal-toolbar">
+                    <div class="cal-toolbar-row">
+                        <div class="cal-view-btns" role="group" aria-label="Calendar view">
+                            <button type="button" class="cal-view-btn active" data-cal-view="month" onclick="setCalendarViewMode('month')">Month</button>
+                            <button type="button" class="cal-view-btn" data-cal-view="week" onclick="setCalendarViewMode('week')">Week</button>
+                            <button type="button" class="cal-view-btn" data-cal-view="day" onclick="setCalendarViewMode('day')">Day</button>
+                            <button type="button" class="cal-view-btn" data-cal-view="agenda" onclick="setCalendarViewMode('agenda')">Agenda</button>
+                        </div>
+                        <div class="cal-nav-btns">
+                            <button type="button" class="secondary-btn btn-sm" onclick="shiftCalendarPeriod(-1)" aria-label="Previous period">‹</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="goCalendarToday()">Today</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="shiftCalendarPeriod(1)" aria-label="Next period">›</button>
+                            <input type="date" id="calendar-date-picker" class="cal-date-picker" onchange="onCalendarDatePickerChange()" aria-label="Jump to date">
+                        </div>
+                    </div>
+                    <p class="cal-period-label" id="calendar-period-label"></p>
+                    <div class="cal-toolbar-row cal-search-row">
+                        <input type="search" id="calendar-search" class="cal-search-input" placeholder="Search notes, inventory, contact, store, plan…" oninput="onCalendarSearchInput()">
+                        <button type="button" class="secondary-btn btn-sm" onclick="toggleCalendarFiltersPanel()">Filters</button>
+                        <button type="button" class="secondary-btn btn-sm" onclick="toggleCalendarSettingsPanel()">Display</button>
+                        <button type="button" class="secondary-btn btn-sm" onclick="exportCalendarCsv()">CSV</button>
+                        <button type="button" class="secondary-btn btn-sm" onclick="exportCalendarIcs()">ICS</button>
+                        <button type="button" class="secondary-btn btn-sm" onclick="printCalendarView()">Print</button>
+                    </div>
+                </div>
+
+                <div id="calendar-filters-panel" class="cal-side-panel collapsible-section collapsed" data-section="calendarFilters">
+                    <button type="button" class="section-toggle" onclick="toggleSection('calendarFilters')">
+                        <span>Filters</span>
+                        <span class="chevron">›</span>
+                    </button>
+                    <div class="section-content cal-filters-grid">
+                        <label class="form-group">
+                            <span>Substance</span>
+                            <select id="calendar-filter-substance" onchange="onCalendarFilterChange()"></select>
+                        </label>
+                        <label class="form-group">
+                            <span>Product type</span>
+                            <select id="calendar-filter-product-type" onchange="onCalendarFilterChange()">
+                                <option value="">All product types</option>
+                                <option value="bud">Bud</option>
+                                <option value="cart">Cart</option>
+                                <option value="edibles">Edibles</option>
+                                <option value="pre-roll">Pre-roll</option>
+                                <option value="vape">Vape</option>
+                            </select>
+                        </label>
+                        <label class="form-group">
+                            <span>Transaction type</span>
+                            <select id="calendar-filter-transaction" onchange="onCalendarFilterChange()">
+                                <option value="">All transactions</option>
+                                <option value="use">Personal use</option>
+                                <option value="session">Session</option>
+                                <option value="shared_use">Shared use</option>
+                                <option value="gift_given">Gift given</option>
+                                <option value="gift_received">Gift received</option>
+                                <option value="purchase">Purchase</option>
+                                <option value="purchased_as_gift">Purchased as gift</option>
+                                <option value="inventory_adjustment">Adjustment</option>
+                            </select>
+                        </label>
+                        <div class="cal-filter-chips" role="group" aria-label="Quick filters">
+                            <label><input type="checkbox" id="cal-filter-personal-only" onchange="onCalendarFilterChange()"> Personal use only</label>
+                            <label><input type="checkbox" id="cal-filter-purchases-only" onchange="onCalendarFilterChange()"> Purchases only</label>
+                            <label><input type="checkbox" id="cal-filter-gifts-only" onchange="onCalendarFilterChange()"> Gifts only</label>
+                            <label><input type="checkbox" id="cal-filter-plans-only" onchange="onCalendarFilterChange()"> Plans only</label>
+                            <label><input type="checkbox" id="cal-filter-goals-only" onchange="onCalendarFilterChange()"> Goals only</label>
+                            <label><input type="checkbox" id="cal-filter-milestones-only" onchange="onCalendarFilterChange()"> Milestones only</label>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="calendar-settings-panel" class="cal-side-panel collapsible-section collapsed" data-section="calendarDisplaySettings">
+                    <button type="button" class="section-toggle" onclick="toggleSection('calendarDisplaySettings')">
+                        <span>Display settings</span>
+                        <span class="chevron">›</span>
+                    </button>
+                    <div class="section-content cal-settings-grid">
+                        <label><input type="checkbox" id="cal-show-amounts" onchange="onCalendarDisplaySettingChange()" checked> Show amounts</label>
+                        <label><input type="checkbox" id="cal-show-costs" onchange="onCalendarDisplaySettingChange()" checked> Show costs</label>
+                        <label><input type="checkbox" id="cal-show-contacts" onchange="onCalendarDisplaySettingChange()"> Show contacts</label>
+                        <label><input type="checkbox" id="cal-show-notes" onchange="onCalendarDisplaySettingChange()"> Show notes</label>
+                        <label><input type="checkbox" id="cal-show-day-summaries" onchange="onCalendarDisplaySettingChange()" checked> Show daily summaries</label>
+                        <label class="form-group">
+                            <span>Week starts</span>
+                            <select id="cal-week-starts" onchange="onCalendarDisplaySettingChange()">
+                                <option value="sunday">Sunday</option>
+                                <option value="monday">Monday</option>
+                            </select>
+                        </label>
+                        <label class="form-group">
+                            <span>Time format</span>
+                            <select id="cal-time-format" onchange="onCalendarDisplaySettingChange()">
+                                <option value="12">12-hour</option>
+                                <option value="24">24-hour</option>
+                            </select>
+                        </label>
+                        <label class="form-group">
+                            <span>Event display</span>
+                            <select id="cal-event-density" onchange="onCalendarDisplaySettingChange()">
+                                <option value="compact">Compact</option>
+                                <option value="detailed">Detailed</option>
+                            </select>
+                        </label>
+                        <fieldset class="cal-type-toggles">
+                            <legend>Show event types</legend>
+                            <div id="calendar-type-toggles" class="cal-filter-chips"></div>
+                        </fieldset>
+                        <label><input type="checkbox" id="cal-export-include-notes" onchange="onCalendarDisplaySettingChange()"> Include notes in exports</label>
+                    </div>
+                </div>
+
+                <div id="calendar-loading" class="rd-state rd-loading hidden">Loading calendar…</div>
+                <div id="calendar-error" class="rd-state rd-error hidden">
+                    <p id="calendar-error-message">Could not load calendar.</p>
+                    <button type="button" class="secondary-btn btn-sm" onclick="renderCalendarView()">Retry</button>
+                </div>
+                <div id="calendar-empty" class="rd-state rd-empty hidden">No events match the current filters.</div>
+
+                <div id="calendar-summary-panel" class="cal-summary-panel"></div>
+                <div id="calendar-root" class="cal-root" aria-live="polite"></div>
+                </div>
+
+                <div id="stats-tab" class="combined-subview insights-page" data-ic-view="trends comparisons financial use purchase goal-analytics plan-analytics custom" role="tabpanel" hidden>
+                    <div class="page-header-row insights-page-header">
+                    <h2>Insights</h2>
+                    <p class="page-substance-hint settings-hint">Analytics for the substance selected in Date Range below.</p>
+                </div>
+
+                <div class="collapsible-section" data-section="statsDateRange" data-ic-panels="trends comparisons financial use purchase goal-analytics plan-analytics custom overview">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsDateRange')">
+                        <span>Date Range &amp; Substance</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="form-group">
+                    <label for="stats-substance">Substance</label>
+                    <select id="stats-substance" onchange="switchStatsSubstance(this.value)"></select>
+                </div>
+
+                <div class="stats-date-range-toolbar">
+                    <div class="form-group">
+                        <label for="stats-date-range">Date Range</label>
+                        <select id="stats-date-range" onchange="onStatsDateRangeChange()">
+                            <option value="today">Today</option>
+                            <option value="yesterday">Yesterday</option>
+                            <option value="last-7">Last 7 Days</option>
+                            <option value="last-30">Last 30 Days</option>
+                            <option value="this-week">This Week</option>
+                            <option value="last-week">Last Week</option>
+                            <option value="this-month">This Month</option>
+                            <option value="last-month">Last Month</option>
+                            <option value="this-year">This Year</option>
+                            <option value="last-year">Last Year</option>
+                            <option value="all-time">All Time</option>
+                            <option value="custom">Custom Range</option>
+                        </select>
+                    </div>
+                    <div id="stats-custom-range-wrap" class="stats-custom-range hidden">
+                        <div class="form-group">
+                            <label for="stats-custom-start">Start Date</label>
+                            <input type="date" id="stats-custom-start">
+                        </div>
+                        <div class="form-group">
+                            <label for="stats-custom-end">End Date</label>
+                            <input type="date" id="stats-custom-end">
+                        </div>
+                        <button type="button" class="secondary-btn" onclick="applyStatsCustomRange()">Apply</button>
+                    </div>
+                    <p class="stats-range-summary" id="stats-range-summary"></p>
+                </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsGoalAnalytics" data-ic-panels="goal-analytics overview">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsGoalAnalytics')">
+                        <span>Goal Analytics</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="goal-insights-panel" class="goal-insights-panel"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsComparePeriods" data-ic-panels="comparisons">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsComparePeriods')">
+                        <span>Compare Periods</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="stats-compare-toolbar">
+                            <div class="form-group">
+                                <label for="stats-compare-preset">Comparison</label>
+                                <select id="stats-compare-preset" onchange="onStatsComparePresetChange()">
+                                    <option value="past-30">Past 30 days vs previous 30 days</option>
+                                    <option value="past-3m">Past 3 months vs previous 3 months</option>
+                                    <option value="past-6m">Past 6 months vs previous 6 months</option>
+                                    <option value="past-12m">Past 12 months vs previous 12 months</option>
+                                    <option value="this-month">This month vs last month</option>
+                                    <option value="this-quarter">This quarter vs last quarter</option>
+                                    <option value="this-year">This year vs last year</option>
+                                    <option value="custom">Custom period vs previous equal-length period</option>
+                                </select>
+                            </div>
+                            <div id="stats-compare-custom-wrap" class="stats-custom-range hidden">
+                                <div class="form-group">
+                                    <label for="stats-compare-custom-start">Current start</label>
+                                    <input type="date" id="stats-compare-custom-start">
+                                </div>
+                                <div class="form-group">
+                                    <label for="stats-compare-custom-end">Current end</label>
+                                    <input type="date" id="stats-compare-custom-end">
+                                </div>
+                                <button type="button" class="secondary-btn" onclick="applyStatsCompareCustomRange()">Apply</button>
+                            </div>
+                            <div class="form-group">
+                                <label for="stats-compare-chart-view">Chart view</label>
+                                <select id="stats-compare-chart-view" onchange="onStatsCompareChartViewChange()">
+                                    <option value="monthly">Monthly view</option>
+                                    <option value="weekly">Weekly view</option>
+                                    <option value="rolling-30">Rolling 30-day view</option>
+                                </select>
+                            </div>
+                            <button type="button" class="secondary-btn" id="stats-compare-export-btn" onclick="exportStatsComparePeriodsCsv()">Export Comparison CSV</button>
+                        </div>
+                        <p class="stats-range-summary" id="stats-compare-range-summary"></p>
+                        <div id="stats-compare-summary" class="stats-compare-summary"></div>
+                        <div id="stats-compare-results" class="stats-compare-results"></div>
+                    </div>
+                </div>
+
+                <div id="stats-all-view" class="hidden">
+                    <div class="stats-section">
+                        <h3>By Substance</h3>
+                        <div id="stats-by-substance"></div>
+                    </div>
+                </div>
+
+                <div id="stats-single-view">
+
+                <div class="collapsible-section" data-section="statsSummaryDashboard" data-ic-panels="trends use overview">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsSummaryDashboard')">
+                        <span>Overview</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="stats-summary-dashboard" class="sheet-summary-grid"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsCalendarView" data-ic-panels="trends overview">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsCalendarView')">
+                        <span>Calendar View</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="stats-calendar-toolbar">
+                            <div class="stats-calendar-toolbar-row">
+                                <div class="form-group stats-cal-mode-group">
+                                    <label>View mode</label>
+                                    <div class="stats-cal-mode-btns" id="stats-calendar-mode-btns">
+                                        <button type="button" class="secondary-btn stats-cal-mode-btn" data-mode="week">Week</button>
+                                        <button type="button" class="secondary-btn stats-cal-mode-btn active" data-mode="month">Month</button>
+                                        <button type="button" class="secondary-btn stats-cal-mode-btn" data-mode="year">Year</button>
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="stats-calendar-substance">Substance</label>
+                                    <select id="stats-calendar-substance"></select>
+                                </div>
+                                <div class="form-group" id="stats-calendar-period-group">
+                                    <label for="stats-calendar-period" id="stats-calendar-period-label">Month</label>
+                                    <input type="month" id="stats-calendar-period" class="stats-calendar-period-input">
+                                </div>
+                                <div class="form-group stats-cal-actions-group">
+                                    <label>&nbsp;</label>
+                                    <div class="stats-cal-action-btns">
+                                        <button type="button" class="secondary-btn" id="stats-calendar-today-btn">Today</button>
+                                        <button type="button" class="secondary-btn" id="stats-calendar-export-btn">Export CSV</button>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="stats-calendar-toolbar-row stats-calendar-toggles-row">
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-amount" checked> Show use amount</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-duration" checked> Show duration</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-break" checked> Show break</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-next" checked> Show next use</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-cost"> Show cost</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-show-taper" checked> Show taper status</label>
+                                <label class="stats-cal-toggle"><input type="checkbox" id="stats-cal-compact"> Compact</label>
+                            </div>
+                            <div class="stats-calendar-toolbar-row hidden" id="stats-calendar-year-type-row">
+                                <div class="form-group">
+                                    <label>Year layout</label>
+                                    <div class="stats-cal-mode-btns" id="stats-calendar-year-type-btns">
+                                        <button type="button" class="secondary-btn stats-cal-year-type-btn active" data-type="mini">Mini calendar</button>
+                                        <button type="button" class="secondary-btn stats-cal-year-type-btn" data-type="summary">Summary table</button>
+                                    </div>
+                                </div>
+                                <div class="sheet-table-toolbar hidden" id="stats-calendar-year-summary-toolbar">
+                                    <button type="button" class="secondary-btn table-columns-btn" id="stats-calendar-year-customize-columns">Customize Columns</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="stats-calendar-container" class="stats-calendar-container"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsMonthlySummary" data-ic-panels="trends use">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsMonthlySummary')">
+                        <span>Monthly Use Summary</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="sheet-table-toolbar">
+                            <button type="button" class="secondary-btn table-columns-btn" id="stats-monthly-customize-columns">Customize Columns</button>
+                        </div>
+                        <div id="stats-monthly-summary" class="sheet-table-wrap"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsWeeklySummary" data-ic-panels="trends use">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsWeeklySummary')">
+                        <span>Weekly Use Summary</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="sheet-table-toolbar">
+                            <button type="button" class="secondary-btn table-columns-btn" id="stats-weekly-customize-columns">Customize Columns</button>
+                            <button type="button" class="secondary-btn" id="stats-weekly-export-btn">Export CSV</button>
+                        </div>
+                        <div id="stats-weekly-summary" class="sheet-table-wrap"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsBuyAnalytics" data-ic-panels="purchase overview">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsBuyAnalytics')">
+                        <span>Spending &amp; Purchases</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="stats-buy-analytics-cards" class="sheet-summary-grid"></div>
+
+                        <div class="stats-section">
+                            <div class="stats-section-heading-row">
+                                <h4 class="stats-inline-heading">Week Summary</h4>
+                                <div class="stats-section-heading-actions">
+                                    <button type="button" class="secondary-btn btn-sm table-columns-btn" id="stats-buy-week-customize-columns">Customize Columns</button>
+                                    <button type="button" class="secondary-btn btn-sm" id="stats-buy-week-export-btn">Export CSV</button>
+                                </div>
+                            </div>
+                            <div id="stats-buy-week-summary" class="sheet-table-wrap"></div>
+                        </div>
+
+                        <div class="stats-section">
+                            <div class="stats-section-heading-row">
+                                <h4 class="stats-inline-heading">Month Summary</h4>
+                                <div class="stats-section-heading-actions">
+                                    <button type="button" class="secondary-btn btn-sm table-columns-btn" id="stats-buy-month-customize-columns">Customize Columns</button>
+                                    <button type="button" class="secondary-btn btn-sm" id="stats-buy-month-export-btn">Export CSV</button>
+                                </div>
+                            </div>
+                            <div id="stats-buy-month-summary" class="sheet-table-wrap stats-buy-month-summary-wrap"></div>
+                        </div>
+
+                        <div class="collapsible-section stats-buy-nested" data-section="statsBuyPurchaseDetails" id="stats-buy-purchase-details-section">
+                            <button type="button" class="section-toggle" onclick="toggleSection('statsBuyPurchaseDetails')">
+                                <span>Purchase Details</span>
+                                <span class="chevron">⌄</span>
+                            </button>
+                            <div class="section-content">
+                                <div class="sheet-table-toolbar">
+                                    <button type="button" class="secondary-btn table-columns-btn btn-sm" id="stats-buy-purchase-details-customize-columns">Customize Columns</button>
+                                </div>
+                                <div id="stats-buy-purchase-details" class="sheet-table-wrap"></div>
+                            </div>
+                        </div>
+
+                        <div class="collapsible-section stats-buy-nested" data-section="statsBuyStoreBreakdown">
+                            <button type="button" class="section-toggle" onclick="toggleSection('statsBuyStoreBreakdown')">
+                                <span>Store Breakdown</span>
+                                <span class="chevron">⌄</span>
+                            </button>
+                            <div class="section-content">
+                                <div id="stats-buy-store-summary" class="sheet-table-wrap"></div>
+                            </div>
+                        </div>
+
+                        <div class="collapsible-section stats-buy-nested" data-section="statsBuyAdvanced">
+                            <button type="button" class="section-toggle" onclick="toggleSection('statsBuyAdvanced')">
+                                <span>Advanced purchase metrics</span>
+                                <span class="chevron">⌄</span>
+                            </button>
+                            <div class="section-content">
+                                <div id="stats-buy-advanced-metrics" class="sheet-summary-grid"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsFinancialAnalytics" data-ic-panels="financial overview" id="financial-analytics-section">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsFinancialAnalytics')">
+                        <span>Financial Analytics</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <p class="settings-hint">Spending, budgets, savings estimates, and forecasts use the same purchase rules as Inventory. Gift Received is excluded; Purchased as Gift counts toward spending.</p>
+                        <div id="financial-analytics-root" class="financial-analytics-root" aria-live="polite"></div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsGiftAnalytics" data-ic-panels="purchase use" id="gift-analytics-section">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsGiftAnalytics')">
+                        <span>Gift Analytics</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="sheet-summary-grid">
+                            <div class="sheet-summary-card">
+                                <span class="sheet-summary-label">Gift Given</span>
+                                <strong id="stats-gift-given">—</strong>
+                            </div>
+                            <div class="sheet-summary-card">
+                                <span class="sheet-summary-label">Gift Received</span>
+                                <strong id="stats-gift-received">—</strong>
+                            </div>
+                            <div class="sheet-summary-card">
+                                <span class="sheet-summary-label">Net</span>
+                                <strong id="stats-gift-net">—</strong>
+                            </div>
+                        </div>
+                        <div class="stats-section">
+                            <h4 class="stats-inline-heading">Recipients</h4>
+                            <div id="stats-gift-recipients"></div>
+                        </div>
+                        <div class="stats-section">
+                            <h4 class="stats-inline-heading">Senders</h4>
+                            <div id="stats-gift-senders"></div>
+                        </div>
+                    </div>
+                </div>
+
+                </div>
+                    <div class="collapsible-section" data-section="statsPlanAnalytics" id="plan-analytics-section" data-ic-panels="plan-analytics overview">
+                        <button type="button" class="section-toggle" onclick="toggleSection('statsPlanAnalytics')">
+                            <span>Plan Analytics</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
+                            <div id="plan-analytics-panel" class="plan-analytics-panel" aria-live="polite"></div>
+                        </div>
+                    </div>
+                    <div class="collapsible-section" data-section="statsCustomMetrics" id="custom-metrics-section" data-ic-panels="custom">
+                        <button type="button" class="section-toggle" onclick="toggleSection('statsCustomMetrics')">
+                            <span>Custom Metrics</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
+                            <div id="custom-metrics-panel" class="custom-metrics-panel">
+                                <p class="settings-hint">Build spending-per-use-day, cost-per-sober-day, savings rate, and other formulas in the Custom Metrics Builder when available. Existing Insights totals stay available in Trends and Financial.</p>
+                                <div id="custom-metrics-root" class="custom-metrics-root"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="ic-loading" class="rd-state rd-loading hidden">Loading Insights &amp; Calendar…</div>
+                <div id="ic-error" class="rd-state rd-error hidden">
+                    <p id="ic-error-message">Could not load Insights &amp; Calendar.</p>
+                    <button type="button" class="secondary-btn btn-sm" onclick="renderInsightsCalendarCombinedView()">Retry</button>
+                </div>
+            </section>
+
 
             <!-- Buy Tracker Tab -->
             <section id="buy-tracker-tab" class="tab">
@@ -2655,7 +2764,7 @@
         </main>
     </div>
 
-    <nav class="bottom-nav" aria-label="Main navigation">
+        <nav class="bottom-nav" aria-label="Main navigation">
         <button class="nav-btn active" data-tab="dashboard-tab" onclick="switchTab('dashboard-tab')">
             <span>🏠</span>
             <span>Home</span>
@@ -2664,25 +2773,19 @@
             <span>📝</span>
             <span>Log</span>
         </button>
-        <button class="nav-btn" data-tab="calendar-tab" onclick="switchTab('calendar-tab')">
-            <span>📅</span>
-            <span>Calendar</span>
-        </button>
-        <button class="nav-btn" data-tab="goals-tab" onclick="switchTab('goals-tab')">
-            <span>🎯</span>
-            <span>Goals</span>
-        </button>
         <button class="nav-btn" data-tab="buy-tracker-tab" onclick="switchTab('buy-tracker-tab')">
             <span>📦</span>
             <span>Inventory</span>
         </button>
-        <button class="nav-btn" data-tab="stats-tab" onclick="switchTab('stats-tab')">
-            <span>📈</span>
-            <span>Insights</span>
+        <button class="nav-btn" data-tab="goals-plans-tab" onclick="switchTab('goals-plans-tab')">
+            <span>🎯</span>
+            <span class="nav-btn-label-full">Goals &amp; Plans</span>
+            <span class="nav-btn-label-short">Goals</span>
         </button>
-        <button class="nav-btn" data-tab="taper-tab" onclick="switchTab('taper-tab')">
-            <span>📉</span>
-            <span>Plan</span>
+        <button class="nav-btn" data-tab="insights-calendar-tab" onclick="switchTab('insights-calendar-tab')">
+            <span>📈</span>
+            <span class="nav-btn-label-full">Insights &amp; Calendar</span>
+            <span class="nav-btn-label-short">Insights</span>
         </button>
         <button class="nav-btn" data-tab="settings-tab" onclick="switchTab('settings-tab')">
             <span>⚙️</span>

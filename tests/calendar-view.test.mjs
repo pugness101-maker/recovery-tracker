@@ -587,7 +587,9 @@ test('mobile calendar markup and styles support bottom sheet, compact cells, and
     const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
 
     assert.match(html, /id="calendar-tab"/);
-    assert.match(html, /data-tab="calendar-tab"/);
+    assert.match(html, /id="calendar-tab"/);
+    assert.match(html, /data-tab="insights-calendar-tab"/);
+    assert.doesNotMatch(html, /data-tab="calendar-tab"/);
     assert.match(html, /id="calendar-event-sheet"/);
     assert.match(html, /cal-sheet-modal/);
     assert.match(html, /data-section="calendarFilters"/);
