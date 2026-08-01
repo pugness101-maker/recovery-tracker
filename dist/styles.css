@@ -9767,3 +9767,12 @@ body > .app-container {
     .ch-widget-actions, .ch-toolbar-actions, .bottom-nav { display: none !important; }
     .ch-widget { break-inside: avoid; }
 }
+
+
+/* Complete Weed Support */
+.use-weed-bud-fields-group,
+.use-weed-preroll-fields-group,
+.use-weed-edibles-fields-group,
+.use-weed-cart-fields-group { margin-top: 6px; }
+.weed-needs-review { color: #c62828; font-weight: 600; }
+.weed-estimate-label { font-size: 0.85rem; color: var(--text-secondary); }

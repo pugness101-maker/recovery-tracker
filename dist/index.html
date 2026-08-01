@@ -736,9 +736,27 @@
                             <div class="form-group use-log-compact">
                                 <label for="use-weed-edible-mg-per">THC mg per edible</label>
                                 <input type="number" id="use-weed-edible-mg-per" min="0" step="0.1" placeholder="From linked inventory" oninput="updateWeedEdibleUsePreview()">
+                                <label for="use-weed-edible-cbd-mg-per">CBD mg per edible</label>
+                                <input type="number" id="use-weed-edible-cbd-mg-per" min="0" step="0.1" placeholder="From linked inventory" oninput="updateWeedEdibleUsePreview()">
                                 <p id="use-weed-edible-strength-hint" class="use-supply-preview hidden">Strength missing — needs review</p>
                             </div>
                             <p id="use-weed-edible-thc-preview" class="use-supply-preview">Estimated THC mg used: —</p>
+                        </div>
+
+                        <div id="use-weed-bud-fields-group" class="use-weed-bud-fields-group hidden">
+                            <div class="form-group use-log-compact hidden" id="use-weed-bud-estimate-group">
+                                <label for="use-weed-bud-grams-per-unit">Estimated grams per joint/bowl</label>
+                                <input type="number" id="use-weed-bud-grams-per-unit" min="0" step="0.01" placeholder="e.g. 0.35" oninput="this.dataset.fromDefault=''; updateWeedBudUsePreview()">
+                                <p id="use-weed-bud-estimate-preview" class="use-supply-preview">—</p>
+                            </div>
+                        </div>
+
+                        <div id="use-weed-preroll-fields-group" class="use-weed-preroll-fields-group hidden">
+                            <div class="form-group use-log-compact">
+                                <label for="use-weed-preroll-grams-per">Grams per pre-roll</label>
+                                <input type="number" id="use-weed-preroll-grams-per" min="0" step="0.01" placeholder="From linked inventory">
+                                <p class="use-supply-preview">Fractions allowed: 0.25, 0.5, 0.75, 1, or custom</p>
+                            </div>
                         </div>
 
                         <div class="form-group use-log-compact hidden" id="use-nicotine-product-type-group">
@@ -2388,7 +2406,43 @@
                         <div class="form-group hidden" id="buy-weed-edibles-group">
                             <label for="buy-edibles-mg">THC mg per edible</label>
                             <input type="number" id="buy-edibles-mg" min="0" step="0.1" placeholder="e.g. 20" oninput="updateBuyWeedEdiblesPreview()">
+                            <label for="buy-edibles-cbd-mg">CBD mg per edible</label>
+                            <input type="number" id="buy-edibles-cbd-mg" min="0" step="0.1" placeholder="optional" oninput="updateBuyWeedEdiblesPreview()">
                             <p id="buy-edibles-preview" class="buy-preview">—</p>
+                        </div>
+                        <div class="form-row" id="buy-weed-strength-row">
+                            <div class="form-group">
+                                <label for="buy-weed-thc-pct">THC %</label>
+                                <input type="number" id="buy-weed-thc-pct" min="0" max="100" step="0.1" placeholder="optional">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-weed-cbd-pct">CBD %</label>
+                                <input type="number" id="buy-weed-cbd-pct" min="0" max="100" step="0.1" placeholder="optional">
+                            </div>
+                        </div>
+                        <div class="form-row" id="buy-weed-meta-row">
+                            <div class="form-group">
+                                <label for="buy-weed-strain">Strain / flavor</label>
+                                <input type="text" id="buy-weed-strain" placeholder="optional">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-weed-brand">Brand</label>
+                                <input type="text" id="buy-weed-brand" placeholder="optional">
+                            </div>
+                        </div>
+                        <div class="form-row hidden" id="buy-weed-bud-estimates-row">
+                            <div class="form-group">
+                                <label for="buy-bud-joint-estimate">Joint estimate (g)</label>
+                                <input type="number" id="buy-bud-joint-estimate" min="0" step="0.01" placeholder="e.g. 0.35">
+                            </div>
+                            <div class="form-group">
+                                <label for="buy-bud-bowl-estimate">Bowl estimate (g)</label>
+                                <input type="number" id="buy-bud-bowl-estimate" min="0" step="0.01" placeholder="e.g. 0.25">
+                            </div>
+                        </div>
+                        <div class="form-group hidden" id="buy-cart-starting-group">
+                            <label for="buy-cart-starting-percent">Starting percent</label>
+                            <input type="number" id="buy-cart-starting-percent" min="0" max="100" step="0.1" value="100">
                         </div>
                         <div class="hidden" id="buy-weed-prerolls-group">
                             <div class="form-row">
