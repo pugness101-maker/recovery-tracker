@@ -1105,7 +1105,12 @@ function updateLsdUseFormUI() {
     const isLsd = isLsdSubstanceId(substanceId);
     document.getElementById('use-lsd-fields-group')?.classList.toggle('hidden', !isLsd);
     document.getElementById('use-xanax-fields-group')?.classList.toggle('hidden', true);
-    document.getElementById('use-amount-mode-group')?.classList.toggle('hidden', isLsd || isVapeTrackingMode(substanceId) || isWeedTrackingMode(substanceId) || isXanaxSubstanceId(substanceId));
+    const hideAmountForWeed = isWeedTrackingMode(substanceId)
+        && getWeedUseProductType({ allowEmpty: true }) === 'cart';
+    document.getElementById('use-amount-mode-group')?.classList.toggle(
+        'hidden',
+        isLsd || isVapeTrackingMode(substanceId) || hideAmountForWeed || isXanaxSubstanceId(substanceId)
+    );
     if (isLsd) {
         setUseLogType('quick');
         syncLsdUseDatetimeUI();
