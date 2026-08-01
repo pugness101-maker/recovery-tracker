@@ -376,20 +376,23 @@ function mountBuyContactPickers() {
         mount('buy-gift-source-group', 'buy-gift-source', 'Gift From', 'gift', false);
         mount('buy-gift-recipient-group', 'buy-gift-recipient', 'Gift Recipient', 'gift', true);
 
-        const storeGroup = document.getElementById('buy-store-group');
-        if (storeGroup && typeof storeGroup.insertAdjacentElement === 'function'
-            && !document.getElementById('buy-supplier-contact-picker')) {
+        // Supplier contact picker removed — unified Source field covers businesses + people.
+        // Keep a hidden stub so older code that toggles #buy-supplier-contact-picker is safe.
+        if (!document.getElementById('buy-supplier-contact-picker')) {
             const holder = document.createElement('div');
             holder.id = 'buy-supplier-contact-picker';
-            holder.className = 'form-group';
-            holder.innerHTML = buildContactPickerHtml({
-                fieldId: 'buy-supplier-contact',
-                roleFilter: 'supplier',
-                label: 'Supplier contact (optional)',
-                allowFreeText: true
-            });
-            storeGroup.insertAdjacentElement('afterend', holder);
+            holder.className = 'form-group hidden';
+            holder.hidden = true;
+            const anchor = document.getElementById('buy-source-group')
+                || document.getElementById('buy-source-mount')
+                || document.getElementById('buy-store-group');
+            if (anchor && typeof anchor.insertAdjacentElement === 'function') {
+                anchor.insertAdjacentElement('afterend', holder);
+            }
+        } else {
+            document.getElementById('buy-supplier-contact-picker')?.classList.add('hidden');
         }
+        if (typeof ensureBuySourcePickerMounted === 'function') ensureBuySourcePickerMounted();
     } catch (err) {
         console.warn('[contacts] mountBuyContactPickers skipped', err?.message || err);
     }

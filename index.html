@@ -2629,14 +2629,15 @@
                             <p id="buy-cost-per-unit-preview" class="buy-preview">—</p>
                         </div>
                     </div>
-                    <div class="form-group" id="buy-store-group">
-                        <label for="buy-store-select">Store / Location</label>
+                    <div class="form-group hidden" id="buy-store-group" data-legacy-store="1" hidden>
+                        <label for="buy-store-select">Source (legacy)</label>
                         <select id="buy-store-select"></select>
                         <div class="form-group buy-store-new-group hidden" id="buy-store-new-group">
-                            <label for="buy-store-new">New Store / Location</label>
-                            <input type="text" id="buy-store-new" placeholder="Enter store or location name" autocomplete="off">
+                            <label for="buy-store-new">New Source</label>
+                            <input type="text" id="buy-store-new" placeholder="Enter source name" autocomplete="off">
                         </div>
                     </div>
+                    <div id="buy-source-mount" class="buy-source-mount"></div>
                     <div class="form-group" id="buy-payment-group">
                         <label for="buy-payment">Payment Method (optional)</label>
                         <select id="buy-payment">

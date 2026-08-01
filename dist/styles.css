@@ -9903,3 +9903,23 @@ body > .app-container {
     .ic-layout-actions { width: 100%; }
     .ic-layout-actions .secondary-btn { flex: 1; }
 }
+
+
+/* Inventory Source picker */
+.buy-source-picker { position: relative; }
+.buy-source-search {
+    width: 100%; min-height: 42px; border: 1px solid var(--border); border-radius: 8px;
+    padding: 8px 12px; background: var(--bg, #fff); color: var(--text);
+}
+.buy-source-menu {
+    position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 40;
+    max-height: 280px; overflow: auto; border: 1px solid var(--border); border-radius: 10px;
+    background: var(--bg, #fff); box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+}
+.buy-source-group-label {
+    padding: 8px 12px 4px; font-size: 0.75rem; font-weight: 600;
+    color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em;
+}
+.buy-source-meta { align-items: end; margin-top: 8px; gap: 8px; }
+.buy-source-meta .form-group { flex: 1; margin-bottom: 0; }
+#buy-source-group .settings-hint { margin-top: 6px; }
