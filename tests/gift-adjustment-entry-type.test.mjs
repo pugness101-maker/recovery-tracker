@@ -87,7 +87,7 @@ function installUseLogDom(rt) {
     rt.document.querySelectorAll = (sel) => {
         if (sel === '#use-entry-type-group .use-entry-toggle-btn') return buttons;
         if (sel === '.use-entry-toggle-btn, .type-toggle-btn') return buttons;
-        if (sel === '.use-tx-pill') return pills;
+        if (sel === '#use-transaction-type-block .use-tx-pill' || sel === '.use-tx-pill') return pills;
         if (sel === '.use-end-time-field') return [];
         return [];
     };

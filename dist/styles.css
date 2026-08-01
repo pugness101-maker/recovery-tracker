@@ -4854,6 +4854,27 @@ body.table-col-resizing {
     }
 }
 
+.buy-acquisition-type-group,
+#buy-acquisition-type-block {
+    display: block;
+    width: 100%;
+    margin-bottom: 12px;
+}
+
+#buy-acquisition-type-block.hidden {
+    display: block !important;
+}
+
+#buy-acquisition-type {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    margin: 0;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+}
+
 .use-log-field-block {
     display: flex;
     flex-direction: column;
@@ -5568,6 +5589,27 @@ body.table-col-resizing {
     .use-log-entry-toggle.use-entry-type-three {
         grid-template-columns: 1fr;
     }
+}
+
+.buy-acquisition-type-group,
+#buy-acquisition-type-block {
+    display: block;
+    width: 100%;
+    margin-bottom: 12px;
+}
+
+#buy-acquisition-type-block.hidden {
+    display: block !important;
+}
+
+#buy-acquisition-type {
+    display: block;
+    width: 100%;
+    min-height: 44px;
+    margin: 0;
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
 }
 
 .use-log-field-block {

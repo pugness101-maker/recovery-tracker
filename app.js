@@ -9387,6 +9387,7 @@ function updateBuyUnitDropdown() {
     });
     if (sub?.defaultUnit) unitSelect.value = sub.defaultUnit;
     updateBuyVapeFieldsVisibility();
+    updateBuyAcquisitionTypeUI();
 }
 
 function updateQuickActions() {
@@ -11463,7 +11464,7 @@ function formatLogHistoryLabel(entry, sub) {
 function setUseTransactionType(tx) {
     const hidden = document.getElementById('use-transaction-type');
     if (hidden) hidden.value = tx;
-    document.querySelectorAll('.use-tx-pill').forEach(btn => {
+    document.querySelectorAll('#use-transaction-type-block .use-tx-pill').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.tx === tx);
     });
 
@@ -15782,7 +15783,7 @@ function updateUseTransactionTypePillsVisibility() {
     const showTxBlock = hideEntryType || isGiftMode || supportsShared;
     document.getElementById('use-transaction-type-block')?.classList.toggle('hidden', !showTxBlock);
 
-    document.querySelectorAll('.use-tx-pill').forEach(btn => {
+    document.querySelectorAll('#use-transaction-type-block .use-tx-pill').forEach(btn => {
         const group = btn.dataset.txGroup
             || ((btn.dataset.tx === 'gift_given'
                 || btn.dataset.tx === 'gift_received'
@@ -17484,11 +17485,9 @@ function getBuyFormAcquisitionType() {
 
 function setBuyAcquisitionType(type) {
     const normalized = normalizePurchaseAcquisitionType(type);
-    const hidden = document.getElementById('buy-acquisition-type');
-    if (hidden) hidden.value = normalized;
-    document.querySelectorAll('.buy-acq-pill').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.acq === normalized);
-    });
+    const select = document.getElementById('buy-acquisition-type');
+    if (select) select.value = normalized;
+    document.getElementById('buy-acquisition-type-block')?.classList.remove('hidden');
     updateBuyAcquisitionTypeUI();
 }
 
@@ -17497,9 +17496,19 @@ function updateBuyAcquisitionTypeUI() {
     const isGift = type === 'gift_received';
     const isNonPurchase = type === 'gift_received' || type === 'other_adjustment';
     const costInput = document.getElementById('buy-total-cost');
+    const acquisitionBlock = document.getElementById('buy-acquisition-type-block');
+    const acquisitionSelect = document.getElementById('buy-acquisition-type');
+    acquisitionBlock?.classList.remove('hidden');
+    if (acquisitionSelect) {
+        acquisitionSelect.hidden = false;
+        acquisitionSelect.disabled = false;
+        acquisitionSelect.style.display = '';
+        if (!acquisitionSelect.value) acquisitionSelect.value = 'purchased';
+    }
     document.getElementById('buy-gift-source-group')?.classList.toggle('hidden', !isGift);
     document.getElementById('buy-total-cost-group')?.classList.toggle('hidden', isNonPurchase);
     document.getElementById('buy-cost-per-unit-group')?.classList.toggle('hidden', isNonPurchase);
+    document.getElementById('buy-store-group')?.classList.toggle('hidden', isGift);
     document.getElementById('buy-payment-group')?.classList.toggle('hidden', isNonPurchase);
     if (costInput) {
         costInput.required = !isNonPurchase;
@@ -17509,9 +17518,16 @@ function updateBuyAcquisitionTypeUI() {
             if (payment) payment.value = '';
         }
     }
+    if (isGift) {
+        const storeSelect = document.getElementById('buy-store-select');
+        if (storeSelect) storeSelect.value = '';
+        const storeNew = document.getElementById('buy-store-new');
+        if (storeNew) storeNew.value = '';
+        document.getElementById('buy-store-new-group')?.classList.add('hidden');
+    }
     if (!isGift) {
         const giftSource = document.getElementById('buy-gift-source');
-        if (giftSource && type !== 'gift_received') giftSource.value = '';
+        if (giftSource) giftSource.value = '';
     }
     updateBuyCostPerUnitPreview();
 }
@@ -17997,7 +18013,7 @@ function buildPurchaseFromForm() {
         unit,
         totalCost,
         costPerUnit: qty > 0 ? totalCost / qty : 0,
-        store: getBuyFormStoreValue(),
+        store: acquisitionType === 'gift_received' ? '' : getBuyFormStoreValue(),
         paymentMethod: isNonPurchase ? '' : (document.getElementById('buy-payment')?.value || ''),
         notes: document.getElementById('buy-notes')?.value || '',
         acquisitionType,

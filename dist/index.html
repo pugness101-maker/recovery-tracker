@@ -1937,14 +1937,13 @@
                         </div>
                         <p id="buy-xanax-preview" class="buy-preview">—</p>
                     </div>
-                    <div class="use-log-field-block" id="buy-acquisition-type-block">
-                        <span class="use-log-field-label">How Acquired</span>
-                        <div class="use-tx-pills" role="group" aria-label="How acquired">
-                            <button type="button" class="use-tx-pill buy-acq-pill active" data-acq="purchased" onclick="setBuyAcquisitionType('purchased')">Purchased</button>
-                            <button type="button" class="use-tx-pill buy-acq-pill" data-acq="gift_received" onclick="setBuyAcquisitionType('gift_received')">Gift Received</button>
-                            <button type="button" class="use-tx-pill buy-acq-pill" data-acq="other_adjustment" onclick="setBuyAcquisitionType('other_adjustment')">Other / Adjustment</button>
-                        </div>
-                        <input type="hidden" id="buy-acquisition-type" value="purchased" required>
+                    <div class="form-group buy-acquisition-type-group" id="buy-acquisition-type-block">
+                        <label for="buy-acquisition-type">How Acquired</label>
+                        <select id="buy-acquisition-type" required onchange="setBuyAcquisitionType(this.value)">
+                            <option value="purchased" selected>Purchased</option>
+                            <option value="gift_received">Gift Received</option>
+                            <option value="other_adjustment">Other / Adjustment</option>
+                        </select>
                     </div>
                     <div class="form-group hidden" id="buy-gift-source-group">
                         <label for="buy-gift-source">Gift From (optional)</label>

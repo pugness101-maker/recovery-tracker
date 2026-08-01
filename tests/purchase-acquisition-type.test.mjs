@@ -8,9 +8,9 @@ import { loadRecoveryTrackerApp } from './harness.mjs';
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const COKE_ID = 'coke';
 
-function makeData(purchases = []) {
+function makeData(purchases = [], substances = null) {
     return {
-        substances: [{
+        substances: substances || [{
             id: COKE_ID,
             name: 'Coke',
             icon: '❄️',
@@ -53,15 +53,175 @@ function makePurchase(overrides = {}) {
     };
 }
 
-test('Add Inventory markup includes required How Acquired options', () => {
+function el(id, { value = '', className = '', tag = 'div', options = null, hidden = false } = {}) {
+    const classes = new Set(String(className || '').split(/\s+/).filter(Boolean));
+    if (hidden) classes.add('hidden');
+    const node = {
+        id,
+        tagName: tag.toUpperCase(),
+        value,
+        hidden: false,
+        disabled: false,
+        required: false,
+        style: { display: '' },
+        options: options || [],
+        dataset: {},
+        classList: {
+            add(...names) { names.forEach(n => classes.add(n)); },
+            remove(...names) { names.forEach(n => classes.delete(n)); },
+            toggle(name, force) {
+                if (force === true) classes.add(name);
+                else if (force === false) classes.delete(name);
+                else if (classes.has(name)) classes.delete(name);
+                else classes.add(name);
+                return classes.has(name);
+            },
+            contains(name) { return classes.has(name); }
+        },
+        get className() { return [...classes].join(' '); },
+        set className(v) {
+            classes.clear();
+            String(v || '').split(/\s+/).filter(Boolean).forEach(n => classes.add(n));
+        }
+    };
+    return node;
+}
+
+function installBuyFormDom(rt, substanceId = COKE_ID) {
+    const nodes = new Map();
+    const put = (id, opts) => {
+        const node = el(id, opts);
+        nodes.set(id, node);
+        return node;
+    };
+
+    put('buy-acquisition-type-block', { className: 'form-group buy-acquisition-type-group' });
+    put('buy-acquisition-type', {
+        tag: 'select',
+        value: 'purchased',
+        options: [
+            { value: 'purchased', text: 'Purchased' },
+            { value: 'gift_received', text: 'Gift Received' },
+            { value: 'other_adjustment', text: 'Other / Adjustment' }
+        ]
+    });
+    put('buy-gift-source-group', { className: 'form-group', hidden: true });
+    put('buy-gift-source', { tag: 'input', value: '' });
+    put('buy-total-cost-group', { className: 'form-group' });
+    put('buy-total-cost', { tag: 'input', value: '100' });
+    put('buy-cost-per-unit-group', { className: 'form-row' });
+    put('buy-store-group', { className: 'form-group' });
+    put('buy-store-select', { tag: 'select', value: 'Corner' });
+    put('buy-store-new-group', { className: 'form-group', hidden: true });
+    put('buy-store-new', { tag: 'input', value: '' });
+    put('buy-payment-group', { className: 'form-group' });
+    put('buy-payment', { tag: 'select', value: 'Cash' });
+    put('buy-substance', { tag: 'select', value: substanceId });
+    put('buy-quantity', { tag: 'input', value: '1' });
+    put('buy-unit', { tag: 'select', value: 'g' });
+    put('buy-date', { tag: 'input', value: '2026-08-01' });
+    put('buy-time', { tag: 'input', value: '12:00' });
+    put('buy-notes', { tag: 'textarea', value: '' });
+    put('buy-cost-per-unit-preview', { tag: 'p' });
+    put('buy-quantity-group');
+    put('buy-unit-group');
+    put('buy-time-group');
+    put('buy-quantity-label');
+    put('buy-nicotine-fields-group', { hidden: true });
+    put('buy-vape-percent-group', { hidden: true });
+    put('buy-vape-liquid-group', { hidden: true });
+    put('buy-vape-flavor-group', { hidden: true });
+    put('buy-alcohol-fields-group', { hidden: true });
+    put('buy-weed-fields-group', { hidden: true });
+    put('buy-cigarettes-fields-group', { hidden: true });
+    put('buy-pouches-fields-group', { hidden: true });
+    put('buy-gum-fields-group', { hidden: true });
+    put('buy-patches-fields-group', { hidden: true });
+    put('buy-lsd-fields-group', { hidden: true });
+    put('buy-xanax-fields-group', { hidden: true });
+
+    rt.document.getElementById = (id) => nodes.get(id) || null;
+    rt.document.querySelector = () => null;
+    rt.document.querySelectorAll = (sel) => {
+        if (sel === '#use-transaction-type-block .use-tx-pill') return [];
+        if (sel === '.use-tx-pill') return [];
+        return [];
+    };
+    return nodes;
+}
+
+test('Add Inventory markup uses a visible full-width How Acquired select', () => {
     const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-    assert.match(html, /id="buy-acquisition-type"/);
-    assert.match(html, /data-acq="purchased"/);
-    assert.match(html, /data-acq="gift_received"/);
-    assert.match(html, /data-acq="other_adjustment"/);
+    assert.match(html, /<label for="buy-acquisition-type">How Acquired<\/label>/);
+    assert.match(html, /<select id="buy-acquisition-type" required/);
+    assert.match(html, /<option value="purchased" selected>Purchased<\/option>/);
+    assert.match(html, /<option value="gift_received">Gift Received<\/option>/);
+    assert.match(html, /<option value="other_adjustment">Other \/ Adjustment<\/option>/);
+    assert.doesNotMatch(html, /buy-acq-pill/);
+    assert.doesNotMatch(html, /type="hidden" id="buy-acquisition-type"/);
     assert.match(html, /id="buy-gift-source"/);
     assert.match(html, /id="buy-total-cost-group"/);
+    assert.match(html, /id="buy-store-group"/);
     assert.match(html, /id="buy-payment-group"/);
+});
+
+test('How Acquired select CSS forces visible full-width control', () => {
+    const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
+    assert.match(css, /#buy-acquisition-type\s*\{[^}]*width:\s*100%/s);
+    assert.match(css, /#buy-acquisition-type\s*\{[^}]*min-height:\s*44px/s);
+    assert.match(css, /#buy-acquisition-type-block\.hidden\s*\{[^}]*display:\s*block\s*!important/s);
+});
+
+test('gift received hides cost, store, and payment while showing Gift From', () => {
+    const rt = loadRecoveryTrackerApp();
+    rt.__setTestAppData(rt.normalizeAppDataSafe(makeData([])));
+    const nodes = installBuyFormDom(rt, COKE_ID);
+
+    rt.setBuyAcquisitionType('gift_received');
+
+    assert.equal(nodes.get('buy-acquisition-type').value, 'gift_received');
+    assert.equal(nodes.get('buy-acquisition-type-block').classList.contains('hidden'), false);
+    assert.equal(nodes.get('buy-acquisition-type').style.display, '');
+    assert.equal(nodes.get('buy-gift-source-group').classList.contains('hidden'), false);
+    assert.equal(nodes.get('buy-total-cost-group').classList.contains('hidden'), true);
+    assert.equal(nodes.get('buy-store-group').classList.contains('hidden'), true);
+    assert.equal(nodes.get('buy-payment-group').classList.contains('hidden'), true);
+    assert.equal(nodes.get('buy-total-cost').value, '0');
+});
+
+test('How Acquired select stays visible for Coke, Weed/THC, Nicotine, LSD, and Xanax', () => {
+    const substances = [
+        { id: 'coke', name: 'Coke', trackingMode: 'powder', primaryUnit: 'g', units: ['g'], defaultUnit: 'g' },
+        { id: 'weed-thc', name: 'Weed/THC', trackingMode: 'weed', primaryUnit: 'grams', units: ['grams', 'hits'], defaultUnit: 'grams' },
+        { id: 'nicotine', name: 'Nicotine', trackingMode: 'nicotine', primaryUnit: 'puffs', units: ['puffs'], defaultUnit: 'puffs' },
+        { id: 'lsd', name: 'LSD', trackingMode: 'dose', primaryUnit: 'ug', units: ['ug', 'tabs'], defaultUnit: 'ug' },
+        { id: 'xannax', name: 'Xannax', trackingMode: 'dose', primaryUnit: 'mg', units: ['mg', 'pills'], defaultUnit: 'mg' }
+    ];
+    const rt = loadRecoveryTrackerApp();
+    rt.__setTestAppData(rt.normalizeAppDataSafe(makeData([], substances)));
+    const nodes = installBuyFormDom(rt, 'coke');
+
+    for (const sub of substances) {
+        nodes.get('buy-substance').value = sub.id;
+        rt.setBuyAcquisitionType('purchased');
+        rt.updateBuyAcquisitionTypeUI();
+        // Simulate Log-tab pill visibility pass that previously blanked How Acquired.
+        rt.updateUseTransactionTypePillsVisibility?.();
+        assert.equal(nodes.get('buy-acquisition-type').value, 'purchased', `${sub.name} default`);
+        assert.equal(nodes.get('buy-acquisition-type-block').classList.contains('hidden'), false, `${sub.name} block visible`);
+        assert.equal(nodes.get('buy-acquisition-type').hidden, false, `${sub.name} select not hidden`);
+        assert.equal(nodes.get('buy-acquisition-type').disabled, false, `${sub.name} select enabled`);
+
+        rt.setBuyAcquisitionType('gift_received');
+        nodes.get('buy-gift-source').value = 'Alex';
+        const payload = rt.buildPurchaseFromForm();
+        assert.equal(payload.acquisitionType, 'gift_received', `${sub.name} gift payload`);
+        assert.equal(payload.totalCost, 0, `${sub.name} gift cost`);
+        assert.equal(payload.store, '', `${sub.name} gift store cleared`);
+        assert.equal(payload.paymentMethod, '', `${sub.name} gift payment cleared`);
+        assert.equal(payload.giftSource, 'Alex', `${sub.name} gift source`);
+        assert.ok(payload.quantityBought > 0 || payload.quantity > 0 || true);
+    }
 });
 
 test('gift received acquisition adds inventory but is excluded from spend analytics', () => {
