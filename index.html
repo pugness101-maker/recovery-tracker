@@ -315,6 +315,17 @@
                             </div>
                         </section>
 
+                        <section class="rd-section collapsible-section" data-rd-section="goals" aria-labelledby="rd-goals-heading">
+                            <button type="button" class="section-toggle rd-section-toggle" id="rd-goals-heading" onclick="toggleRecoveryDashboardSection('goals')" aria-expanded="true" aria-controls="rd-goals-body">
+                                <span>Goals</span>
+                                <span class="chevron" aria-hidden="true">⌄</span>
+                            </button>
+                            <div id="rd-goals-body" class="section-content rd-section-body">
+                                <p class="rd-section-hint">Active goals for the selected substance. Creating or deleting a goal never changes logs, purchases, or plans.</p>
+                                <div id="rd-goals-overview" class="rd-goals-overview"></div>
+                            </div>
+                        </section>
+
                         <section class="rd-section collapsible-section" data-rd-section="inventory" aria-labelledby="rd-inventory-heading">
                             <button type="button" class="section-toggle rd-section-toggle" id="rd-inventory-heading" onclick="toggleRecoveryDashboardSection('inventory')" aria-expanded="false" aria-controls="rd-inventory-body">
                                 <span>Inventory Overview</span>
@@ -1088,6 +1099,11 @@
                 <div id="calendar-root" class="cal-root" aria-live="polite"></div>
             </section>
 
+            <!-- Goals Tab -->
+            <section id="goals-tab" class="tab goals-page">
+                <div id="goals-root" class="goals-root" aria-live="polite"></div>
+            </section>
+
             <!-- Insights Tab -->
             <section id="stats-tab" class="tab insights-page">
                 <div class="page-header-row insights-page-header">
@@ -1137,6 +1153,16 @@
                     </div>
                     <p class="stats-range-summary" id="stats-range-summary"></p>
                 </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="statsGoalAnalytics">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsGoalAnalytics')">
+                        <span>Goal Analytics</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div id="goal-insights-panel" class="goal-insights-panel"></div>
                     </div>
                 </div>
 
@@ -2561,7 +2587,16 @@
                                 <input type="checkbox" id="settings-recovery-score-enabled" onchange="setRecoveryScoreEnabled(this.checked)">
                                 <span>Show Recovery Score on dashboard</span>
                             </label>
-                            <p class="settings-hint">Optional 0–100 progress indicator based on goals, plans, streaks, reduction, spending, and logging. Not a medical assessment. Hidden when there is not enough data.</p>
+                            <label class="settings-toggle-row" for="settings-goal-score-enabled">
+                                <input type="checkbox" id="settings-goal-score-enabled" checked onchange="persistGoalSystemPrefs({ scoreContributionEnabled: this.checked }); if(typeof renderRecoveryDashboard==='function')renderRecoveryDashboard();">
+                                <span>Include Goals in Recovery Score</span>
+                            </label>
+                            <div class="form-group">
+                                <label for="settings-goal-near-limit">Goal near-limit threshold (0–1)</label>
+                                <input type="number" id="settings-goal-near-limit" min="0.1" max="1" step="0.05" value="0.75"
+                                    onchange="persistGoalSystemPrefs({ thresholds: { nearLimit: parseFloat(this.value) || 0.75 } });">
+                            </div>
+                            <p class="settings-hint">Optional 0–100 progress indicator based on goals, plans, streaks, reduction, spending, and logging. Not a medical assessment. Hidden when there is not enough data. Paused, cancelled, and insufficient-data goals do not affect the score.</p>
                         </div>
                     </div>
                 </div>
@@ -2621,6 +2656,10 @@
         <button class="nav-btn" data-tab="calendar-tab" onclick="switchTab('calendar-tab')">
             <span>📅</span>
             <span>Calendar</span>
+        </button>
+        <button class="nav-btn" data-tab="goals-tab" onclick="switchTab('goals-tab')">
+            <span>🎯</span>
+            <span>Goals</span>
         </button>
         <button class="nav-btn" data-tab="buy-tracker-tab" onclick="switchTab('buy-tracker-tab')">
             <span>📦</span>
