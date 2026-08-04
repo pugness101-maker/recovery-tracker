@@ -23,7 +23,7 @@ const RECOVERY_DASHBOARD_PRESETS = Object.freeze({
 });
 const RECOVERY_SCORE_FACTORS = Object.freeze([
     { key: 'goalAdherence', label: 'Goal adherence', weight: 0.22 },
-    { key: 'planAdherence', label: 'Plan adherence', weight: 0.22 },
+    { key: 'planAdherence', label: 'Taper adherence', weight: 0.22 },
     { key: 'sobrietyProgress', label: 'Sobriety streak progress', weight: 0.18 },
     { key: 'reduction', label: 'Reduction vs baseline', weight: 0.14 },
     { key: 'spending', label: 'Spending improvement', weight: 0.12 },
@@ -56,7 +56,6 @@ const RECOVERY_DASHBOARD_SECTION_DEFAULTS = Object.freeze({
     plans: false,
     goals: false,
     inventory: true,
-    alerts: false,
     charts: false
 });
 
@@ -8891,14 +8890,14 @@ function saveDashboardLayoutFromEditor() {
 // ——— Adaptive taper intelligence (Phase 4) ———
 
 function getTaperStatusExplanation(plan, substanceId, data = appData) {
-    if (!plan) return { status: 'none', title: 'No plan', detail: 'Create a taper plan to see status.' };
+    if (!plan) return { status: 'none', title: 'No taper', detail: 'Create a taper to see status.' };
     if (isTaperPlanPaused(plan)) {
-        return { status: 'paused', title: 'Paused', detail: 'Limits are not enforced while the plan is paused.' };
+        return { status: 'paused', title: 'Paused', detail: 'Limits are not enforced while the taper is paused.' };
     }
     const today = getLocalDateString();
     const week = getWeekRowForDate(plan, today);
     if (!week) {
-        return { status: 'none', title: 'Outside plan dates', detail: 'Today is outside the plan start/quit range.' };
+        return { status: 'none', title: 'Outside taper dates', detail: 'Today is outside the taper start/quit range.' };
     }
     const status = week.status || 'under';
     if (isReducePuffsPlan(plan)) {
@@ -12043,9 +12042,15 @@ function migrateTaperPlansToV2IfNeeded(data) {
         });
     }
     (data.taperPlansV2 || []).forEach(plan => {
+        plan.type = 'taper';
+        plan.category = plan.category || 'taper';
+        plan.metric = plan.metric || (TAPER_REDUCTION_LABELS[plan.reductionType] || plan.reductionType || 'Taper target');
         if (!plan.status) plan.status = plan.isPaused ? 'paused' : 'active';
         if (plan.isPrimary == null) plan.isPrimary = false;
         if (!plan.name) plan.name = getDefaultTaperPlanName(plan.substanceId, data);
+        if (!plan.description) plan.description = String(plan.notes || '');
+        if (!plan.priority) plan.priority = plan.isPrimary ? 'high' : 'normal';
+        if (!plan.repeatSetting) plan.repeatSetting = 'weekly';
     });
     ensureSinglePrimaryPerSubstance(data);
     syncLegacyTaperPlansFromV2(data);
@@ -12908,7 +12913,7 @@ function validateGoalRecord(goal, data = appData) {
         errors.push('Choose the date you are holding out for.');
     }
     if (meta?.requiresPlan && !goal.linkedPlanId) {
-        errors.push('Plan adherence goals need a linked taper plan.');
+        errors.push('Taper adherence goals need a linked taper.');
     }
     if (goal.baselineMode === 'manual' && goalNeedsBaseline(goal) && !Number.isFinite(goalToNumber(goal.baselineValue, NaN))) {
         errors.push('Manual baseline needs a numeric value.');
@@ -15208,11 +15213,11 @@ function renderGoalDetailHtml(goalId, data = appData) {
     const linkedSiblings = plan ? goalsLinkedToPlan(plan.id, data).filter(g => g.id !== goal.id) : [];
     const planBlock = plan
         ? `<p>Linked to <strong>${escapeHtml(plan.name || goalSubstanceLabel(plan.substanceId, data))}</strong>
-             <button type="button" class="btn-small" onclick="switchTab('goals-plans-tab'); setGoalsPlansView('active-plans'); openTaperPlanFromManage('${escapeHtml(plan.id)}');">Open plan</button>
+             <button type="button" class="btn-small" onclick="switchTab('goals-plans-tab'); setGoalsPlansView('active'); openTaperPlanFromManage('${escapeHtml(plan.id)}');">Open taper</button>
              <button type="button" class="btn-small" onclick="unlinkGoalFromPlan('${escapeHtml(goal.id)}'); renderGoalsView();">Unlink</button></p>
            ${linkedSiblings.length ? `<p class="settings-hint">Also linked: ${linkedSiblings.map(g => escapeHtml(g.name || 'Goal')).join(', ')}</p>` : ''}`
-        : `<p class="goal-empty-inline">No taper plan linked.
-             <button type="button" class="btn-small" onclick="createPlanFromGoal('${escapeHtml(goal.id)}')">Create plan from goal</button></p>`;
+        : `<p class="goal-empty-inline">No taper linked.
+             <button type="button" class="btn-small" onclick="createPlanFromGoal('${escapeHtml(goal.id)}')">Generate Taper from Goal</button></p>`;
 
     const changeRows = [...(goal.changeHistory || [])].reverse().slice(0, 15).map(c => `
         <li>
@@ -18561,9 +18566,9 @@ if (typeof window !== 'undefined') {
 // ——— Combined navigation: Goals & Plans + Insights & Calendar ———
 
 const COMBINED_NAV_ROUTE_REDIRECTS = {
-    '/goals': { tab: 'goals-plans-tab', view: 'active-goals' },
-    '/plan': { tab: 'goals-plans-tab', view: 'active-plans' },
-    '/plans': { tab: 'goals-plans-tab', view: 'active-plans' },
+    '/goals': { tab: 'goals-plans-tab', view: 'active' },
+    '/plan': { tab: 'goals-plans-tab', view: 'active' },
+    '/plans': { tab: 'goals-plans-tab', view: 'active' },
     '/insights': { tab: 'insights-calendar-tab', view: 'overview' },
     '/calendar': { tab: 'insights-calendar-tab', view: 'calendar' },
     '/goals-plans': { tab: 'goals-plans-tab', view: null },
@@ -18578,12 +18583,9 @@ const COMBINED_NAV_ROUTE_REDIRECTS = {
 
 const GOALS_PLANS_VIEWS = [
     'overview',
-    'active-goals',
-    'active-plans',
-    'goal-history',
-    'plan-history',
-    'templates',
-    'achievements'
+    'active',
+    'history',
+    'templates'
 ];
 
 const INSIGHTS_CALENDAR_VIEWS = [
@@ -18595,12 +18597,12 @@ const INSIGHTS_CALENDAR_VIEWS = [
 ];
 
 const LEGACY_TAB_TO_COMBINED = {
-    'goals-tab': { tab: 'goals-plans-tab', view: 'active-goals' },
-    goals: { tab: 'goals-plans-tab', view: 'active-goals' },
-    'taper-tab': { tab: 'goals-plans-tab', view: 'active-plans' },
-    taper: { tab: 'goals-plans-tab', view: 'active-plans' },
-    plan: { tab: 'goals-plans-tab', view: 'active-plans' },
-    'plan-tab': { tab: 'goals-plans-tab', view: 'active-plans' },
+    'goals-tab': { tab: 'goals-plans-tab', view: 'active' },
+    goals: { tab: 'goals-plans-tab', view: 'active' },
+    'taper-tab': { tab: 'goals-plans-tab', view: 'active' },
+    taper: { tab: 'goals-plans-tab', view: 'active' },
+    plan: { tab: 'goals-plans-tab', view: 'active' },
+    'plan-tab': { tab: 'goals-plans-tab', view: 'active' },
     'stats-tab': { tab: 'insights-calendar-tab', view: 'overview' },
     stats: { tab: 'insights-calendar-tab', view: 'overview' },
     insights: { tab: 'insights-calendar-tab', view: 'overview' },
@@ -18685,8 +18687,15 @@ function persistActiveTab(tabId, data = appData) {
 function normalizeCombinedView(view, allowed, fallback) {
     const raw = String(view || '').trim().toLowerCase();
     const aliases = {
-        goals: 'active-goals',
-        plans: 'active-plans',
+        goals: 'active',
+        plan: 'active',
+        plans: 'active',
+        taper: 'active',
+        tapers: 'active',
+        'active-goals': 'active',
+        'active-plans': 'active',
+        'goal-history': 'history',
+        'plan-history': 'history',
         compare: 'more',
         comparison: 'more',
         comparisons: 'more',
@@ -18832,7 +18841,7 @@ function createPlanFromGoal(goalId, data = appData) {
     const goal = typeof getGoalById === 'function' ? getGoalById(goalId, data) : (data.goals || []).find(g => g?.id === goalId);
     if (!goal) return null;
     if (typeof showNewTaperPlan === 'function') {
-        setGoalsPlansView('active-plans', { persist: true, skipRoute: false });
+        setGoalsPlansView('active', { persist: true, skipRoute: false });
         showNewTaperPlan();
         const nameEl = typeof document !== 'undefined' ? document.getElementById('taper-plan-name') : null;
         if (nameEl && !nameEl.value) {
@@ -18843,6 +18852,9 @@ function createPlanFromGoal(goalId, data = appData) {
             substanceEl.value = goal.substanceId;
             if (typeof onTaperSubstanceChange === 'function') onTaperSubstanceChange();
         }
+        if (typeof attachUnifiedTaperSurface === 'function') {
+            attachUnifiedTaperSurface('taper-disabled-msg', 'taper-no-plan', 'taper-setup');
+        }
     }
     return goal;
 }
@@ -18850,7 +18862,7 @@ function createPlanFromGoal(goalId, data = appData) {
 function createGoalsFromPlanAndOpen(planId, data = appData) {
     const suggestions = typeof suggestGoalsFromPlan === 'function' ? suggestGoalsFromPlan(planId, data) : [];
     if (!suggestions.length) {
-        if (typeof showToast === 'function') showToast('No goal suggestions for this plan yet.', 'info');
+        if (typeof showToast === 'function') showToast('No goal suggestions for this taper yet.', 'info');
         return [];
     }
     ensureGoals(data);
@@ -18862,8 +18874,9 @@ function createGoalsFromPlanAndOpen(planId, data = appData) {
     if (typeof pushChangeHistory === 'function') {
         pushChangeHistory('goals-from-plan', { planId, count: suggestions.length });
     }
-    setGoalsPlansView('active-goals', { persist: true });
-    if (typeof renderGoalsView === 'function') renderGoalsView();
+    setGoalsPlansView('active', { persist: true });
+    if (typeof renderGoalsPlansRecordsView === 'function') renderGoalsPlansRecordsView('active');
+    else if (typeof renderGoalsView === 'function') renderGoalsView();
     if (typeof showToast === 'function') showToast(`Created ${suggestions.length} goal${suggestions.length === 1 ? '' : 's'} from plan.`, 'success');
     return suggestions;
 }
@@ -18876,6 +18889,353 @@ function linkGoalToPlan(goalId, planId, data = appData) {
     if (typeof goalAfterMutation === 'function') goalAfterMutation(data);
     else if (typeof saveData === 'function') saveData(data);
     return goal;
+}
+
+let goalsPlansUiState = {
+    activeType: 'all',
+    activeSubstanceId: 'all',
+    activeStatus: 'all',
+    historyFilter: 'all',
+    historySubstanceId: 'all',
+    historyStatus: 'all'
+};
+
+function getUnifiedTaperCurrentStep(plan, data = appData) {
+    if (!plan?.substanceId) return null;
+    try {
+        const byWeek = typeof buildTaperByWeekData === 'function'
+            ? buildTaperByWeekData(plan.substanceId, plan)
+            : null;
+        return byWeek?.rows?.find(row => row.isCurrent) || byWeek?.rows?.[0] || null;
+    } catch (_) {
+        const today = typeof getLocalDateString === 'function' ? getLocalDateString() : '';
+        return (plan.weeklyTargets || []).find(w => (w.weekStart || '') <= today && (w.weekEnd || '9999-12-31') >= today)
+            || (plan.weeklyTargets || [])[0]
+            || null;
+    }
+}
+
+function normalizeUnifiedGoalPlanRecord(record, { kind, evaluation = null, data = appData } = {}) {
+    if (kind === 'goal') {
+        const goal = record || {};
+        const meta = typeof getGoalTypeMeta === 'function' ? getGoalTypeMeta(goal.type) : null;
+        return {
+            type: 'goal',
+            id: goal.id,
+            name: goal.name || 'Untitled goal',
+            description: goal.description || '',
+            substanceId: goal.substanceId || DASHBOARD_ALL,
+            substanceLabel: typeof goalSubstanceLabel === 'function' ? goalSubstanceLabel(goal.substanceId, data) : (goal.substanceId || 'All substances'),
+            category: goal.category || meta?.category || 'goal',
+            metric: meta?.label || goal.type || 'Goal',
+            startDate: goal.startDate || '',
+            endDate: goal.endDate || '',
+            status: goal.status || evaluation?.status || 'active',
+            priority: goal.priority || 'normal',
+            notes: goal.notes || '',
+            repeatSetting: goal.recurring ? 'Repeats' : 'One time',
+            targetValue: goal.targetValue,
+            period: goal.period || '',
+            comparisonDirection: goal.direction || '',
+            deadline: goal.endDate || '',
+            linkedTaperId: goal.linkedPlanId || '',
+            evaluation,
+            source: goal
+        };
+    }
+
+    const plan = record || {};
+    const currentStep = getUnifiedTaperCurrentStep(plan, data);
+    const linkedGoals = typeof goalsLinkedToPlan === 'function' ? goalsLinkedToPlan(plan.id, data) : [];
+    const status = typeof getTaperPlanStatus === 'function' ? getTaperPlanStatus(plan) : (plan.status || 'active');
+    const plannedAmount = currentStep?.planned
+        ?? currentStep?.targetAmount
+        ?? currentStep?.weeklyMax
+        ?? currentStep?.puffTarget
+        ?? null;
+    return {
+        type: 'taper',
+        id: plan.id,
+        name: plan.name || 'Untitled taper',
+        description: plan.description || plan.notes || '',
+        substanceId: plan.substanceId || DASHBOARD_ALL,
+        substanceLabel: typeof goalSubstanceLabel === 'function' ? goalSubstanceLabel(plan.substanceId, data) : (plan.substanceId || 'All substances'),
+        category: plan.category || 'taper',
+        metric: plan.metric || (TAPER_REDUCTION_LABELS[plan.reductionType] || plan.reductionType || 'Taper target'),
+        startDate: plan.startDate || '',
+        endDate: plan.endDate || '',
+        status,
+        priority: plan.priority || (plan.isPrimary ? 'high' : 'normal'),
+        notes: plan.notes || '',
+        repeatSetting: plan.repeatSetting || 'weekly',
+        scheduledSteps: plan.weeklyTargets || [],
+        plannedAmountPerStep: plannedAmount,
+        spendingTarget: plan.monthlySpendTarget ?? plan.purchaseWeeklySpendTarget ?? null,
+        purchaseTarget: plan.monthlyMax ?? plan.purchaseWeeklyAmountTarget ?? null,
+        currentStep: currentStep?.weekNum || currentStep?.week || '—',
+        stepStatus: currentStep?.statusLabel || currentStep?.status || '—',
+        linkedGoalIds: linkedGoals.map(g => g.id),
+        source: plan
+    };
+}
+
+function getUnifiedGoalsPlansRecords(data = appData) {
+    const evaluations = typeof evaluateAllGoals === 'function' ? evaluateAllGoals({ data }) : [];
+    const goalRecords = evaluations.map(ev => normalizeUnifiedGoalPlanRecord(ev.goal, { kind: 'goal', evaluation: ev, data }));
+    if (typeof ensureTaperPlansV2 === 'function') ensureTaperPlansV2(data);
+    const taperRecords = (data.taperPlansV2 || [])
+        .filter(Boolean)
+        .map(plan => normalizeUnifiedGoalPlanRecord(plan, { kind: 'taper', data }));
+    return [...goalRecords, ...taperRecords];
+}
+
+function unifiedGoalPlanIsActive(record) {
+    return record.status === 'active' || record.status === 'paused' || record.status === 'draft' || record.status === 'upcoming';
+}
+
+function unifiedGoalPlanIsHistory(record) {
+    return ['completed', 'archived', 'missed', 'cancelled', 'met'].includes(record.status)
+        || (record.type === 'goal' && record.evaluation && ['completed', 'missed'].includes(record.evaluation.status));
+}
+
+function filterUnifiedGoalsPlansRecords(records, view, data = appData) {
+    if (view === 'history') {
+        const filter = goalsPlansUiState.historyFilter || 'all';
+        const substanceId = goalsPlansUiState.historySubstanceId || 'all';
+        const status = goalsPlansUiState.historyStatus || 'all';
+        return records.filter(record => {
+            if (!unifiedGoalPlanIsHistory(record)) return false;
+            if (filter === 'completed-goals' && !(record.type === 'goal' && (record.status === 'completed' || record.evaluation?.status === 'completed'))) return false;
+            if (filter === 'completed-tapers' && !(record.type === 'taper' && record.status === 'completed')) return false;
+            if (filter === 'archived' && record.status !== 'archived') return false;
+            if (filter === 'missed' && !(record.status === 'missed' || record.evaluation?.status === 'missed')) return false;
+            if (status !== 'all' && record.status !== status && record.evaluation?.status !== status) return false;
+            if (!goalIsAllSubstances(substanceId) && !goalMatchesSubstance(record.substanceId, substanceId, data)) return false;
+            return true;
+        });
+    }
+
+    const type = goalsPlansUiState.activeType || 'all';
+    const substanceId = goalsPlansUiState.activeSubstanceId || 'all';
+    const status = goalsPlansUiState.activeStatus || 'all';
+    return records.filter(record => {
+        if (!unifiedGoalPlanIsActive(record)) return false;
+        if (type === 'goals' && record.type !== 'goal') return false;
+        if (type === 'tapers' && record.type !== 'taper') return false;
+        if (status !== 'all' && record.status !== status && record.evaluation?.status !== status) return false;
+        if (!goalIsAllSubstances(substanceId) && !goalMatchesSubstance(record.substanceId, substanceId, data)) return false;
+        return true;
+    });
+}
+
+function unifiedGoalPlanStatusLabel(record) {
+    if (record.type === 'goal') {
+        return record.evaluation?.statusMeta?.label || formatGoalStatusLabel(record.status);
+    }
+    return typeof getTaperPlanStatusLabel === 'function' ? getTaperPlanStatusLabel(record.status) : record.status;
+}
+
+function renderUnifiedGoalPlanCard(record, data = appData) {
+    const badge = record.type === 'goal' ? 'Goal' : 'Taper';
+    const title = escapeHtml(record.name || badge);
+    const status = escapeHtml(unifiedGoalPlanStatusLabel(record));
+    const dateRange = [record.startDate, record.endDate].filter(Boolean).join(' - ') || 'No dates set';
+    const primaryMetric = record.type === 'goal'
+        ? `Target: ${escapeHtml(formatGoalTargetDisplay(record.source, data))}`
+        : `Current step: ${escapeHtml(String(record.currentStep))} · ${escapeHtml(String(record.stepStatus))}`;
+    const secondary = record.type === 'goal'
+        ? `${escapeHtml(record.metric)} · ${escapeHtml(record.period || 'No period')}`
+        : `${escapeHtml(record.metric)} · ${record.scheduledSteps.length} scheduled step${record.scheduledSteps.length === 1 ? '' : 's'}`;
+    const linked = record.type === 'goal'
+        ? (record.linkedTaperId ? '<span class="goal-chip">Linked taper</span>' : '')
+        : (record.linkedGoalIds.length ? `<span class="goal-chip">${record.linkedGoalIds.length} linked goal${record.linkedGoalIds.length === 1 ? '' : 's'}</span>` : '');
+    const openAction = record.type === 'goal'
+        ? `openGoalDetail('${escapeHtml(record.id)}')`
+        : `openUnifiedTaperRecord('${escapeHtml(record.id)}')`;
+    const editAction = record.type === 'goal'
+        ? `openGoalEditForm('${escapeHtml(record.id)}')`
+        : `editUnifiedTaperRecord('${escapeHtml(record.id)}')`;
+    const duplicateAction = record.type === 'goal'
+        ? `duplicateGoal('${escapeHtml(record.id)}'); renderGoalsPlansRecordsView('active')`
+        : `duplicateUnifiedTaperRecord('${escapeHtml(record.id)}')`;
+    const pauseAction = record.type === 'goal'
+        ? `pauseGoal('${escapeHtml(record.id)}'); renderGoalsPlansRecordsView('active')`
+        : `pauseUnifiedTaperRecord('${escapeHtml(record.id)}')`;
+    const completeAction = record.type === 'goal'
+        ? `completeGoalManually('${escapeHtml(record.id)}'); renderGoalsPlansRecordsView('history')`
+        : `completeUnifiedTaperRecord('${escapeHtml(record.id)}')`;
+    const archiveAction = record.type === 'goal'
+        ? `archiveGoal('${escapeHtml(record.id)}'); renderGoalsPlansRecordsView('history')`
+        : `archiveUnifiedTaperRecord('${escapeHtml(record.id)}')`;
+    const convertAction = record.type === 'goal'
+        ? `<button type="button" class="btn-small" onclick="createPlanFromGoal('${escapeHtml(record.id)}')">Generate Taper from Goal</button>`
+        : `<button type="button" class="btn-small" onclick="createGoalsFromPlanAndOpen('${escapeHtml(record.id)}')">Convert Taper to Goal</button>`;
+    return `
+        <article class="goal-card unified-goal-plan-card" data-record-type="${escapeAttr(record.type)}" data-record-id="${escapeAttr(record.id)}">
+            <header class="goal-card-head">
+                <div>
+                    <div class="goal-chip-row"><span class="goal-chip">${badge}</span>${linked}</div>
+                    <h3 class="goal-card-title">${title}</h3>
+                    <p class="goal-card-period">${escapeHtml(record.substanceLabel)} · ${escapeHtml(dateRange)}</p>
+                </div>
+                <span class="goal-status-pill goal-tone-neutral">${status}</span>
+            </header>
+            ${record.description ? `<p class="goal-card-desc">${escapeHtml(record.description)}</p>` : ''}
+            <div class="goal-card-foot">
+                <span>${secondary}</span>
+                <span>${primaryMetric}</span>
+                <span>Priority: <strong>${escapeHtml(record.priority || 'normal')}</strong></span>
+            </div>
+            <div class="goal-card-actions">
+                <button type="button" class="btn-small" onclick="${openAction}">Open</button>
+                <button type="button" class="btn-small" onclick="${editAction}">Edit</button>
+                <button type="button" class="btn-small" onclick="${duplicateAction}">Duplicate</button>
+                ${record.status === 'paused' ? '' : `<button type="button" class="btn-small" onclick="${pauseAction}">Pause</button>`}
+                ${record.status === 'completed' ? '' : `<button type="button" class="btn-small" onclick="${completeAction}">Complete</button>`}
+                ${record.status === 'archived' ? '' : `<button type="button" class="btn-small" onclick="${archiveAction}">Archive</button>`}
+                ${convertAction}
+            </div>
+        </article>`;
+}
+
+function renderUnifiedGoalsPlansFilters(view, data = appData) {
+    const substances = getActiveSubstances(data);
+    const substanceStateKey = view === 'history' ? 'historySubstanceId' : 'activeSubstanceId';
+    const statusStateKey = view === 'history' ? 'historyStatus' : 'activeStatus';
+    const substanceValue = goalsPlansUiState[substanceStateKey] || 'all';
+    const statusValue = goalsPlansUiState[statusStateKey] || 'all';
+    const substanceOptions = [`<option value="all"${substanceValue === 'all' ? ' selected' : ''}>All substances</option>`]
+        .concat(substances.map(s => `<option value="${escapeHtml(s.id)}"${substanceValue === s.id ? ' selected' : ''}>${escapeHtml(getSubstanceDisplayName(s, data))}</option>`))
+        .join('');
+    const statusOptions = ['all', 'active', 'paused', 'draft', 'completed', 'archived', 'missed']
+        .map(s => `<option value="${s}"${statusValue === s ? ' selected' : ''}>${escapeHtml(s === 'all' ? 'All statuses' : s.replace(/_/g, ' '))}</option>`)
+        .join('');
+
+    if (view === 'history') {
+        const filter = goalsPlansUiState.historyFilter || 'all';
+        return `
+            <section class="goal-filters">
+                <label class="goal-filter"><span>History</span><select onchange="setGoalsPlansHistoryFilter(this.value)">
+                    ${['all', 'completed-goals', 'completed-tapers', 'archived', 'missed'].map(v => `<option value="${v}"${filter === v ? ' selected' : ''}>${escapeHtml(v === 'all' ? 'All' : v.replace(/-/g, ' '))}</option>`).join('')}
+                </select></label>
+                <label class="goal-filter"><span>Substance</span><select onchange="setGoalsPlansFilter('historySubstanceId', this.value, 'history')">${substanceOptions}</select></label>
+                <label class="goal-filter"><span>Status</span><select onchange="setGoalsPlansFilter('historyStatus', this.value, 'history')">${statusOptions}</select></label>
+            </section>`;
+    }
+
+    const type = goalsPlansUiState.activeType || 'all';
+    return `
+        <section class="goal-filters">
+            <label class="goal-filter"><span>Type</span><select onchange="setGoalsPlansFilter('activeType', this.value, 'active')">
+                ${['all', 'goals', 'tapers'].map(v => `<option value="${v}"${type === v ? ' selected' : ''}>${escapeHtml(v === 'all' ? 'All' : v[0].toUpperCase() + v.slice(1))}</option>`).join('')}
+            </select></label>
+            <label class="goal-filter"><span>Substance</span><select onchange="setGoalsPlansFilter('activeSubstanceId', this.value, 'active')">${substanceOptions}</select></label>
+            <label class="goal-filter"><span>Status</span><select onchange="setGoalsPlansFilter('activeStatus', this.value, 'active')">${statusOptions}</select></label>
+        </section>`;
+}
+
+function renderGoalsPlansRecordsView(view = null) {
+    const root = goalRootEl();
+    if (!root) return;
+    const activeView = view || ensureCombinedNavPrefs().goalsPlansView || 'active';
+    if (activeView === 'templates') {
+        goalSystemUiState.bucket = 'active';
+        renderGoalsView();
+        return;
+    }
+    const data = appData;
+    ensureGoals(data);
+    if (typeof ensureTaperPlansV2 === 'function') ensureTaperPlansV2(data);
+    const allRecords = getUnifiedGoalsPlansRecords(data);
+    const records = filterUnifiedGoalsPlansRecords(allRecords, activeView, data);
+    const activeGoals = allRecords.filter(r => r.type === 'goal' && unifiedGoalPlanIsActive(r)).length;
+    const activeTapers = allRecords.filter(r => r.type === 'taper' && unifiedGoalPlanIsActive(r)).length;
+    const emptyCopy = activeView === 'history'
+        ? 'No completed, archived, or missed goals and tapers match this filter.'
+        : 'No active goals or tapers match this filter.';
+    root.innerHTML = `
+        <div class="goal-view unified-goals-plans-view">
+            <header class="goal-view-head">
+                <div>
+                    <h2 class="goal-view-title">${activeView === 'history' ? 'History' : 'Active'}</h2>
+                    <p class="goal-view-sub">${activeGoals} active goals · ${activeTapers} active tapers</p>
+                </div>
+                <div class="goal-view-actions">
+                    <button type="button" class="btn-primary" onclick="openGoalCreateForm()">New Goal</button>
+                    <button type="button" class="secondary-btn" onclick="openUnifiedNewTaper()">New Taper</button>
+                </div>
+            </header>
+            ${renderUnifiedGoalsPlansFilters(activeView, data)}
+            <section class="goal-list" id="goal-list">
+                ${records.length ? records.map(record => renderUnifiedGoalPlanCard(record, data)).join('') : `<div class="goal-empty"><p>${escapeHtml(emptyCopy)}</p></div>`}
+            </section>
+        </div>`;
+}
+
+function setGoalsPlansFilter(key, value, view = 'active') {
+    if (Object.prototype.hasOwnProperty.call(goalsPlansUiState, key)) goalsPlansUiState[key] = value;
+    renderGoalsPlansRecordsView(view);
+}
+
+function setGoalsPlansHistoryFilter(value) {
+    goalsPlansUiState.historyFilter = value || 'all';
+    renderGoalsPlansRecordsView('history');
+}
+
+function attachUnifiedTaperSurface(...ids) {
+    const root = goalRootEl();
+    if (!root) return;
+    let mount = document.getElementById('unified-taper-surface');
+    if (!mount) {
+        mount = document.createElement('section');
+        mount.id = 'unified-taper-surface';
+        mount.className = 'unified-taper-surface';
+        root.prepend(mount);
+    }
+    ids.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) mount.appendChild(el);
+    });
+}
+
+function openUnifiedNewTaper() {
+    setGoalsPlansView('active', { persist: true });
+    if (typeof showNewTaperPlan === 'function') showNewTaperPlan();
+    attachUnifiedTaperSurface('taper-disabled-msg', 'taper-no-plan', 'taper-setup');
+    document.getElementById('taper-setup')?.classList.remove('hidden');
+}
+
+function openUnifiedTaperRecord(planId) {
+    setGoalsPlansView('active', { persist: true });
+    openTaperPlanFromManage(planId);
+    attachUnifiedTaperSurface('taper-plan-toolbar', 'taper-disabled-msg', 'taper-dashboard', 'taper-no-plan', 'taper-setup');
+}
+
+function editUnifiedTaperRecord(planId) {
+    setGoalsPlansView('active', { persist: true });
+    editTaperPlanById(planId);
+    attachUnifiedTaperSurface('taper-disabled-msg', 'taper-no-plan', 'taper-setup');
+    document.getElementById('taper-setup')?.classList.remove('hidden');
+}
+
+function duplicateUnifiedTaperRecord(planId) {
+    duplicateTaperPlanById(planId);
+    renderGoalsPlansRecordsView('active');
+}
+
+function pauseUnifiedTaperRecord(planId) {
+    pauseTaperPlanById(planId);
+    renderGoalsPlansRecordsView('active');
+}
+
+function completeUnifiedTaperRecord(planId) {
+    completeTaperPlanById(planId);
+    renderGoalsPlansRecordsView('history');
+}
+
+function archiveUnifiedTaperRecord(planId) {
+    archiveTaperPlanById(planId);
+    renderGoalsPlansRecordsView('history');
 }
 
 function buildGoalsPlansOverview(data = appData) {
@@ -18927,16 +19287,24 @@ function buildGoalsPlansOverview(data = appData) {
         .filter(g => g && g.status === 'active' && g.endDate)
         .slice()
         .sort((a, b) => String(a.endDate).localeCompare(String(b.endDate)))[0];
+    const unifiedRecords = getUnifiedGoalsPlansRecords(data);
+    const activeRecords = unifiedRecords
+        .filter(unifiedGoalPlanIsActive)
+        .sort((a, b) => String(a.endDate || '9999-12-31').localeCompare(String(b.endDate || '9999-12-31')))
+        .slice(0, 8);
 
     return {
+        activeTotal: (activeGoals.length || (data.goals || []).filter(g => g?.status === 'active').length) + plans.length,
         activeGoalCount: activeGoals.length || (data.goals || []).filter(g => g?.status === 'active').length,
         activePlanCount: plans.length,
+        activeTaperCount: plans.length,
         goalsOnTrack: onTrack.length,
         goalsNearLimit: nearLimit.length,
         plansOnTrack,
         plansAboveTarget: plansAbove,
         closestGoalDeadline: closestDeadline ? { id: closestDeadline.id, name: closestDeadline.name, endDate: closestDeadline.endDate } : null,
         currentPlanWeek,
+        activeRecords,
         recentlyCompletedGoals: completedRecent,
         recentlyCompletedPlans: archivedPlans.slice(0, 5),
         evaluations,
@@ -18948,40 +19316,29 @@ function renderGoalsPlansOverviewHtml(overview) {
     const deadline = overview.closestGoalDeadline
         ? `${escapeHtml(overview.closestGoalDeadline.name || 'Goal')} · ${escapeHtml(overview.closestGoalDeadline.endDate)}`
         : 'None set';
-    const recentGoals = overview.recentlyCompletedGoals.length
-        ? `<ul class="combined-mini-list">${overview.recentlyCompletedGoals.map(g => `<li>${escapeHtml(g.name || 'Goal')}</li>`).join('')}</ul>`
-        : '<p class="settings-hint">No recently completed goals.</p>';
-    const recentPlans = overview.recentlyCompletedPlans.length
-        ? `<ul class="combined-mini-list">${overview.recentlyCompletedPlans.map(p => `<li>${escapeHtml(p.name || 'Plan')}</li>`).join('')}</ul>`
-        : '<p class="settings-hint">No recently completed plans.</p>';
+    const activeList = overview.activeRecords?.length
+        ? `<div class="goal-list combined-overview-list">${overview.activeRecords.map(record => renderUnifiedGoalPlanCard(record)).join('')}</div>`
+        : '<p class="settings-hint">No active goals or tapers yet.</p>';
 
     return `
         <div class="combined-overview">
             <div class="combined-overview-grid">
+                <article class="combined-stat-card"><span class="combined-stat-label">Active total</span><strong>${overview.activeTotal || 0}</strong></article>
                 <article class="combined-stat-card"><span class="combined-stat-label">Active goals</span><strong>${overview.activeGoalCount}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Active plans</span><strong>${overview.activePlanCount}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Goals on track</span><strong>${overview.goalsOnTrack}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Goals near limit</span><strong>${overview.goalsNearLimit}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Plans on track</span><strong>${overview.plansOnTrack}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Plans above target</span><strong>${overview.plansAboveTarget}</strong></article>
+                <article class="combined-stat-card"><span class="combined-stat-label">Active tapers</span><strong>${overview.activeTaperCount}</strong></article>
+                <article class="combined-stat-card"><span class="combined-stat-label">On track</span><strong>${overview.goalsOnTrack + overview.plansOnTrack}</strong></article>
+                <article class="combined-stat-card"><span class="combined-stat-label">Near limit</span><strong>${overview.goalsNearLimit}</strong></article>
+                <article class="combined-stat-card"><span class="combined-stat-label">Above target</span><strong>${overview.plansAboveTarget}</strong></article>
                 <article class="combined-stat-card"><span class="combined-stat-label">Closest goal deadline</span><strong class="combined-stat-text">${deadline}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Current plan week</span><strong class="combined-stat-text">${escapeHtml(String(overview.currentPlanWeek))}</strong></article>
+                <article class="combined-stat-card"><span class="combined-stat-label">Current taper step</span><strong class="combined-stat-text">${escapeHtml(String(overview.currentPlanWeek))}</strong></article>
             </div>
-            <div class="combined-overview-columns">
-                <section class="combined-overview-block">
-                    <h3>Recently completed goals</h3>
-                    ${recentGoals}
-                    <button type="button" class="secondary-btn btn-sm" onclick="setGoalsPlansView('goal-history')">View goal history</button>
-                </section>
-                <section class="combined-overview-block">
-                    <h3>Recently completed plans</h3>
-                    ${recentPlans}
-                    <button type="button" class="secondary-btn btn-sm" onclick="setGoalsPlansView('plan-history')">View plan history</button>
-                </section>
-            </div>
+            <section class="combined-overview-block">
+                <h3>Active goals and tapers</h3>
+                ${activeList}
+            </section>
             <div class="combined-overview-actions">
-                <button type="button" class="btn-primary" onclick="setGoalsPlansView('active-goals'); openGoalCreateForm();">New goal</button>
-                <button type="button" class="secondary-btn" onclick="setGoalsPlansView('active-plans'); showNewTaperPlan();">New plan</button>
+                <button type="button" class="btn-primary" onclick="setGoalsPlansView('active'); openGoalCreateForm();">New Goal</button>
+                <button type="button" class="secondary-btn" onclick="openUnifiedNewTaper();">New Taper</button>
                 <button type="button" class="secondary-btn" onclick="setGoalsPlansView('templates')">Browse templates</button>
             </div>
         </div>`;
@@ -19014,27 +19371,16 @@ function setGoalsPlansView(view, options = {}) {
     setCombinedSubviewVisibility('#goals-plans-tab', 'data-gp-view', next);
 
     if (typeof goalSystemUiState === 'object' && goalSystemUiState) {
-        if (next === 'active-goals') goalSystemUiState.bucket = 'active';
-        else if (next === 'goal-history') goalSystemUiState.bucket = 'history';
-        else if (next === 'achievements') goalSystemUiState.bucket = 'completed';
+        if (next === 'active') goalSystemUiState.bucket = 'active';
+        else if (next === 'history') goalSystemUiState.bucket = 'history';
         else if (next === 'templates') goalSystemUiState.bucket = 'active';
     }
 
     if (next === 'overview') {
         const root = document.getElementById('gp-overview-root');
         if (root) root.innerHTML = renderGoalsPlansOverviewHtml(buildGoalsPlansOverview());
-    } else if (next === 'active-goals' || next === 'goal-history' || next === 'templates' || next === 'achievements') {
-        if (typeof renderGoalsView === 'function') renderGoalsView();
-    } else if (next === 'active-plans' || next === 'plan-history') {
-        const showArchived = document.getElementById('taper-show-archived');
-        if (showArchived) {
-            showArchived.checked = next === 'plan-history';
-            if (typeof onTaperShowArchivedChange === 'function') onTaperShowArchivedChange();
-        }
-        if (typeof applyMainSubstanceToViewSelectors === 'function') applyMainSubstanceToViewSelectors();
-        if (typeof populatePageSubstanceDropdowns === 'function') populatePageSubstanceDropdowns();
-        if (typeof syncTaperSubstanceToSelected === 'function') syncTaperSubstanceToSelected();
-        if (typeof refreshTaperDashboard === 'function') refreshTaperDashboard();
+    } else if (next === 'active' || next === 'history' || next === 'templates') {
+        if (typeof renderGoalsPlansRecordsView === 'function') renderGoalsPlansRecordsView(next);
     }
 
     if (!options.skipRoute) syncLocationToCombinedRoute('goals-plans-tab', next);
@@ -19071,7 +19417,7 @@ function buildInsightsCalendarOverview(data = appData) {
 
     try {
         const gp = buildGoalsPlansOverview(data);
-        planPerf = `${gp.plansOnTrack} on track · ${gp.plansAboveTarget} above target`;
+        planPerf = `${gp.plansOnTrack} tapers on track · ${gp.plansAboveTarget} above target`;
         useSummary = `${gp.activeGoalCount} goals linked to recovery focus`;
     } catch (_) { /* overview soft-fail */ }
 
@@ -19106,7 +19452,7 @@ function renderInsightsCalendarOverviewHtml(overview) {
                 <article class="combined-stat-card"><span class="combined-stat-label">Spending summary</span><strong class="combined-stat-text">${escapeHtml(String(overview.spendSummary))}</strong></article>
                 <article class="combined-stat-card"><span class="combined-stat-label">Purchase summary</span><strong class="combined-stat-text">${escapeHtml(String(overview.purchaseSummary))}</strong></article>
                 <article class="combined-stat-card"><span class="combined-stat-label">Goal performance</span><strong class="combined-stat-text">${escapeHtml(String(overview.goalPerf))}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Plan performance</span><strong class="combined-stat-text">${escapeHtml(String(overview.planPerf))}</strong></article>
+                <article class="combined-stat-card"><span class="combined-stat-label">Taper performance</span><strong class="combined-stat-text">${escapeHtml(String(overview.planPerf))}</strong></article>
             </div>
             <div class="combined-overview-columns">
                 <section class="combined-overview-block">
@@ -19153,24 +19499,24 @@ function renderPlanAnalyticsPanel(data = appData) {
         if (typeof ensureTaperPlansV2 === 'function') ensureTaperPlansV2(data);
         const plans = (data.taperPlansV2 || []).filter(Boolean);
         if (!plans.length) {
-            panel.innerHTML = '<p class="settings-hint">No plans yet. Create a plan from Goals &amp; Plans.</p>';
+            panel.innerHTML = '<p class="settings-hint">No tapers yet. Create a taper from Goals &amp; Plans.</p>';
             return;
         }
         const rows = plans.slice(0, 20).map(plan => {
             const linked = goalsLinkedToPlan(plan.id, data);
             const status = plan.archived ? 'Archived' : 'Active';
             return `<tr>
-                <td>${escapeHtml(plan.name || 'Plan')}</td>
+                <td>${escapeHtml(plan.name || 'Taper')}</td>
                 <td>${escapeHtml(status)}</td>
                 <td>${linked.length}</td>
                 <td><button type="button" class="btn-small" onclick="setInsightsCalendarView('calendar')">Calendar</button>
-                    <button type="button" class="btn-small" onclick="switchTab('goals-plans-tab'); setGoalsPlansView('active-plans'); openTaperPlanFromManage('${escapeHtml(plan.id)}');">Open</button></td>
+                    <button type="button" class="btn-small" onclick="switchTab('goals-plans-tab'); setGoalsPlansView('active'); openTaperPlanFromManage('${escapeHtml(plan.id)}');">Open</button></td>
             </tr>`;
         }).join('');
         panel.innerHTML = `
             <div class="table-scroll">
                 <table class="sheet-table">
-                    <thead><tr><th>Plan</th><th>Status</th><th>Linked goals</th><th></th></tr></thead>
+                    <thead><tr><th>Taper</th><th>Status</th><th>Linked goals</th><th></th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
             </div>`;
@@ -22255,7 +22601,7 @@ const CHART_METRICS = Object.freeze([
     { id: 'no_use_streak', label: 'No-use streak', category: 'recovery', defaultType: 'line', unitFamily: 'days' },
     { id: 'no_purchase_streak', label: 'No-purchase streak', category: 'recovery', defaultType: 'line', unitFamily: 'days' },
     { id: 'recovery_score', label: 'Recovery score history', category: 'recovery', defaultType: 'area', unitFamily: 'score' },
-    { id: 'milestone_timeline', label: 'Achievement timeline', category: 'recovery', defaultType: 'scatter', unitFamily: 'count' }
+    { id: 'milestone_timeline', label: 'Milestone timeline', category: 'recovery', defaultType: 'scatter', unitFamily: 'count' }
 ]);
 
 const CHART_PRESETS = Object.freeze({
@@ -32389,7 +32735,7 @@ function resolveTabNavigation(tabId) {
         return { tabId: resolved, view: null };
     }
     if (resolved === 'goals-tab' || resolved === 'taper-tab') {
-        return { tabId: 'goals-plans-tab', view: resolved === 'taper-tab' ? 'active-plans' : 'active-goals' };
+        return { tabId: 'goals-plans-tab', view: 'active' };
     }
     if (resolved === 'stats-tab' || resolved === 'calendar-tab') {
         return { tabId: 'insights-calendar-tab', view: resolved === 'calendar-tab' ? 'calendar' : 'overview' };
@@ -43838,7 +44184,7 @@ function setSelectedDashboardSubstance(substanceId, options = {}) {
 function clearRecoveryDashboardRenderedContent() {
     [
         'rd-score-card', 'rd-summary-grid', 'rd-today-card', 'rd-status-cards',
-        'rd-active-plans', 'rd-inventory-overview', 'rd-milestones', 'rd-alerts'
+        'rd-active-plans', 'rd-inventory-overview', 'rd-milestones'
     ].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.innerHTML = '';
@@ -44264,7 +44610,7 @@ function buildRecoveryActivePlans(data = appData, options = {}) {
                 planId: plan.id,
                 substanceId: plan.substanceId,
                 substanceName: getSubstanceDisplayName(sub, data),
-                planName: plan.name || 'Plan',
+                planName: plan.name || 'Taper',
                 currentWeek: current?.weekNum ?? byWeek?.currentWeek ?? '—',
                 weeklyTarget: planned,
                 actualUse: used,
@@ -44421,130 +44767,6 @@ function buildRecoveryMilestones(statusCards, activePlans, bounds, data = appDat
         .slice(0, 12);
 }
 
-function buildRecoveryAlerts(goalStatuses, activePlans, inventoryGroups, data = appData, options = {}) {
-    const alerts = [];
-    const selectedId = options.substanceId == null
-        ? getSelectedDashboardSubstance(data)
-        : options.substanceId;
-    const health = scanDataHealth(data);
-    (health.issues || []).forEach(issue => {
-        if (['duplicate', 'brokenInventoryLink', 'negativeRemaining'].includes(issue.type)
-            || issue.severity === 'error') {
-            const linkedPurchase = issue.payload?.purchaseId
-                ? (data.purchases || []).find(p => String(p.id) === String(issue.payload.purchaseId))
-                : null;
-            const linkedLog = issue.payload?.logId
-                ? (data.logs || []).find(l => String(l.id) === String(issue.payload.logId))
-                : null;
-            const sid = issue.payload?.substanceId
-                || (linkedPurchase ? getPurchaseSubstanceId(linkedPurchase) : null)
-                || (linkedLog ? getUseSubstanceId(linkedLog) : null);
-            if (sid && !recoveryDashboardMatchesSubstance(sid, selectedId, data)) return;
-            if (!sid && !isRecoveryDashboardAllSubstances(selectedId, data)
-                && (issue.type === 'negativeRemaining' || issue.type === 'brokenInventoryLink')) {
-                // keep unscoped only in All view
-                return;
-            }
-            alerts.push({
-                id: issue.id,
-                type: issue.type,
-                severity: issue.severity === 'error' ? 'error' : 'warn',
-                message: issue.label,
-                linkTab: issue.type === 'brokenInventoryLink' || issue.type === 'duplicate'
-                    ? 'use-log-tab'
-                    : 'buy-tracker-tab',
-                linkLabel: 'Open related section',
-                payload: issue.payload
-            });
-        }
-    });
-
-    (data.logs || []).forEach(log => {
-        if (!recoveryDashboardMatchesSubstance(getUseSubstanceId(log), selectedId, data)) return;
-        if (weedLogNeedsProductTypeReview(log, data)) {
-            alerts.push({
-                id: `missing-ptype-${log.id}`,
-                type: 'missingProductType',
-                severity: 'warn',
-                message: `Log missing weed product type (${log.date || 'unknown date'})`,
-                linkTab: 'use-log-tab',
-                linkLabel: 'Open Log',
-                payload: { logId: log.id }
-            });
-        }
-    });
-
-    (data.purchases || []).forEach(purchase => {
-        if (!recoveryDashboardMatchesSubstance(getPurchaseSubstanceId(purchase), selectedId, data)) return;
-        if (purchase.needsStrengthInfo || weedEdiblePurchaseNeedsStrengthInfo(purchase)) {
-            alerts.push({
-                id: `missing-strength-${purchase.id}`,
-                type: 'missingStrength',
-                severity: 'warn',
-                message: `Purchase missing strength info (${purchase.date || purchase.id})`,
-                linkTab: 'buy-tracker-tab',
-                linkLabel: 'Open Inventory',
-                payload: { purchaseId: purchase.id }
-            });
-        }
-    });
-
-    inventoryGroups.forEach(group => {
-        group.items.forEach(item => {
-            if (item.daysRemaining != null && item.daysRemaining <= 7) {
-                alerts.push({
-                    id: `runout-${item.purchaseId}`,
-                    type: 'inventoryRunout',
-                    severity: item.daysRemaining <= 3 ? 'error' : 'warn',
-                    message: `${group.substanceName}: ${item.itemName} may run out in ~${item.daysRemaining} day(s)`,
-                    linkTab: 'buy-tracker-tab',
-                    linkLabel: 'Open Inventory',
-                    payload: { purchaseId: item.purchaseId }
-                });
-            }
-        });
-    });
-
-    goalStatuses.filter(g => g.nearLimit).forEach(g => {
-        alerts.push({
-            id: `goal-near-${g.substanceId}-${g.kind}`,
-            type: 'goalNearLimit',
-            severity: g.badge.level === 'risk' ? 'error' : 'warn',
-            message: `${g.name} ${g.kind} goal ${g.badge.label.toLowerCase()} (${formatAmount(g.used)} / ${formatAmount(g.target)})`,
-            linkTab: 'stats-tab',
-            linkLabel: 'Open Insights',
-            payload: { substanceId: g.substanceId }
-        });
-    });
-
-    activePlans.forEach(plan => {
-        if (plan.weeklyTarget != null && plan.actualUse != null && plan.actualUse > plan.weeklyTarget) {
-            alerts.push({
-                id: `plan-over-${plan.planId}`,
-                type: 'planAboveTarget',
-                severity: 'warn',
-                message: `${plan.substanceName} plan “${plan.planName}” is above weekly target`,
-                linkTab: 'taper-tab',
-                linkLabel: 'Open Plan',
-                payload: { planId: plan.planId, substanceId: plan.substanceId }
-            });
-        }
-        if (plan.spendingTarget != null && plan.actualSpending != null && plan.actualSpending > plan.spendingTarget) {
-            alerts.push({
-                id: `spend-over-${plan.planId}`,
-                type: 'spendingAboveBudget',
-                severity: 'warn',
-                message: `${plan.substanceName} spending is above this week’s budget`,
-                linkTab: 'taper-tab',
-                linkLabel: 'Open Plan',
-                payload: { planId: plan.planId }
-            });
-        }
-    });
-
-    return alerts.slice(0, 40);
-}
-
 function buildRecoveryTodayCard(data = appData, options = {}) {
     const today = getLocalDateString();
     const bounds = { startDate: today, endDate: today };
@@ -44605,7 +44827,7 @@ function buildRecoveryTodayCard(data = appData, options = {}) {
         giftsGivenToday: giftsGiven,
         giftsReceivedToday: giftsReceived,
         adjustmentsToday: adjustments,
-        remainingPlannedLabel: plannedLines.length ? plannedLines.join(' · ') : 'No daily plan limit set',
+        remainingPlannedLabel: plannedLines.length ? plannedLines.join(' · ') : 'No daily taper limit set',
         dailySpendingLabel: `${cur}${spending.toFixed(2)}`,
         goalsNearLimit: goalsNear
     };
@@ -44698,7 +44920,7 @@ function computeRecoveryScore(dataset, data = appData) {
             score: null,
             factors: [],
             explanation: [
-                'Not enough data yet. Log use, set a goal, or create a plan to unlock the recovery score.',
+                'Not enough data yet. Log use, set a goal, or create a taper to unlock the recovery score.',
                 'This score is an optional progress indicator, not a medical assessment.'
             ]
         };
@@ -44729,7 +44951,7 @@ function computeRecoveryScore(dataset, data = appData) {
         }
     }
 
-    // Plan adherence
+    // Taper adherence
     if (activePlans.length) {
         const ok = activePlans.filter(p => {
             if (p.weeklyTarget == null || p.actualUse == null) return true;
@@ -44803,7 +45025,7 @@ function computeRecoveryScore(dataset, data = appData) {
         score: Math.max(0, Math.min(100, score)),
         factors: usable.map(f => ({ ...f, value: factors[f.key] })),
         explanation: [
-            'Score blends goal adherence (from your Goals, excluding paused/cancelled/insufficient-data), plan adherence, sobriety streak progress, reduction vs the prior period, spending improvement, and logging consistency.',
+            'Score blends goal adherence (from your Goals, excluding paused/cancelled/insufficient-data), taper adherence, sobriety streak progress, reduction vs the prior period, spending improvement, and logging consistency.',
             'Goal contribution can be disabled in Goal settings. This is an optional progress indicator — not a medical assessment or diagnosis.'
         ]
     };
@@ -44860,7 +45082,6 @@ function buildRecoveryDashboardDataset(data = appData, options = {}) {
     const activePlans = buildRecoveryActivePlans(data, scope);
     const inventoryGroups = buildRecoveryInventoryOverview(data, scope);
     const milestones = buildRecoveryMilestones(statusCards, activePlans, bounds, data, scope);
-    const alerts = buildRecoveryAlerts(goalStatuses, activePlans, inventoryGroups, data, scope);
     const todayCard = buildRecoveryTodayCard(data, scope);
     const summary = buildRecoverySummary(statusCards, goalStatuses, activePlans, milestones, bounds, data, scope);
     const dataset = {
@@ -44875,7 +45096,6 @@ function buildRecoveryDashboardDataset(data = appData, options = {}) {
         activePlans,
         inventoryGroups,
         milestones,
-        alerts,
         todayCard,
         summary
     };
@@ -44962,13 +45182,6 @@ function openRecoveryQuickAction(action) {
     }
 }
 
-function followRecoveryAlert(alertId) {
-    const root = document.getElementById('rd-alerts');
-    const btn = root?.querySelector(`[data-alert-id="${alertId}"]`);
-    const tab = btn?.dataset.linkTab;
-    if (tab) switchTab(tab);
-}
-
 function rdProgressBar(pct, extraClass = '') {
     const width = Math.max(0, Math.min(100, pct ?? 0));
     return `<div class="rd-progress ${extraClass}"><div class="rd-progress-fill" style="width:${width}%"></div></div>`;
@@ -45040,7 +45253,7 @@ function renderRecoverySummaryGrid(summary) {
     if (!el) return;
     const tiles = [
         ['Substances tracked', summary.totalSubstances],
-        ['Active plans', summary.substancesWithPlans],
+        ['Active tapers', summary.substancesWithPlans],
         ['Active goals', summary.activeGoalCount ?? '—'],
         ['Current no-use streak', summary.longestNoUseLabel],
         ['Spent today', summary.spentTodayLabel || '—'],
@@ -45208,7 +45421,7 @@ function renderRecoveryActivePlans(plans) {
     const el = document.getElementById('rd-active-plans');
     if (!el) return;
     if (!plans.length) {
-        el.innerHTML = '<p class="empty-hint">No active plans. Use Quick Actions to create one.</p>';
+        el.innerHTML = '<p class="empty-hint">No active tapers. Use Quick Actions to create one.</p>';
         return;
     }
     const cur = getCurrencySymbol();
@@ -45281,7 +45494,7 @@ function renderRecoveryActivePlans(plans) {
                     target: plan.weeklyTarget
                 }), { ccrResult: taperCcr, showPercent: true })
                 : rdProgressBar(plan.progressPct ?? 0)}
-            <button type="button" class="secondary-btn btn-sm" onclick="openTaperPlanFromManage('${escapeHtml(plan.planId)}')">Open plan</button>
+            <button type="button" class="secondary-btn btn-sm" onclick="openTaperPlanFromManage('${escapeHtml(plan.planId)}')">Open taper</button>
         </article>`;
     }).join('');
 }
@@ -45391,25 +45604,6 @@ function renderRecoveryMilestones(milestones) {
             ${(!isTargetLinesEnabled() && !isInCellProgressBarsEnabled()) ? rdProgressBar(m.progressPct) : ''}
         </article>`;
     }).join('');
-}
-
-function renderRecoveryAlerts(alerts) {
-    const el = document.getElementById('rd-alerts');
-    if (!el) return;
-    if (!alerts.length) {
-        el.innerHTML = '<p class="empty-hint">No alerts right now.</p>';
-        return;
-    }
-    el.innerHTML = alerts.map(a => `
-        <div class="rd-alert rd-alert-${escapeHtml(a.severity)}" data-alert-id="${escapeHtml(a.id)}">
-            <div>
-                <strong>${escapeHtml(a.type.replace(/([A-Z])/g, ' $1').replace(/^./, s => s.toUpperCase()))}</strong>
-                <p>${escapeHtml(a.message)}</p>
-            </div>
-            <button type="button" class="secondary-btn btn-sm" data-link-tab="${escapeHtml(a.linkTab || '')}"
-                onclick="followRecoveryAlert('${escapeHtml(a.id)}')">${escapeHtml(a.linkLabel || 'Open')}</button>
-        </div>
-    `).join('');
 }
 
 function setRecoveryDashboardState({ loading = false, error = null, empty = false } = {}) {
@@ -45522,7 +45716,6 @@ function renderRecoveryDashboard() {
         renderRecoveryActivePlans(dataset.activePlans);
         if (typeof renderRecoveryGoalsSection === 'function') renderRecoveryGoalsSection(dataset);
         renderRecoveryInventoryOverview(dataset.inventoryGroups);
-        renderRecoveryAlerts(dataset.alerts);
         renderHomeCompactCharts(dataset);
         applyRecoveryDashboardCollapsedSections();
         setRecoveryDashboardState({});
@@ -56801,7 +56994,7 @@ function renderTaperPlanSummary(substanceId) {
             const pct = Math.min(100, Math.max(0, ((Date.now() - start) / (end - start)) * 100));
             const rounded = Math.round(pct);
             fill.style.width = `${rounded}%`;
-            if (pctLabel) pctLabel.textContent = `Plan progress · ${rounded}%`;
+            if (pctLabel) pctLabel.textContent = `Taper progress · ${rounded}%`;
         }
     }
 }
@@ -60837,6 +61030,8 @@ function __getRecoveryTrackerTestExports() {
         setGoalsPlansView,
         setInsightsCalendarView,
         buildGoalsPlansOverview,
+        getUnifiedGoalsPlansRecords,
+        normalizeUnifiedGoalPlanRecord,
         goalsLinkedToPlan,
         linkGoalToPlan,
         createPlanFromGoal,
@@ -61066,7 +61261,6 @@ function __getRecoveryTrackerTestExports() {
         buildRecoveryActivePlans,
         buildRecoveryInventoryOverview,
         buildRecoveryMilestones,
-        buildRecoveryAlerts,
         computeRecoveryScore,
         setRecoveryDashboardPreset,
         setRecoveryScoreEnabled,

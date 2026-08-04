@@ -293,32 +293,6 @@ test('recovery score disabled or insufficient data does not invent a number', ()
     assert.equal(off.score, null);
 });
 
-test('alerts include negative inventory and broken links with section targets', () => {
-    const rt = setup({
-        substances: [makeSubstance('coke')],
-        logs: [{
-            id: 'broken',
-            substanceId: COKE_ID,
-            date: '2026-07-30',
-            time: '10:00',
-            amount: 0.1,
-            purchaseId: 'missing-purchase',
-            transactionType: 'use',
-            type: 'quick'
-        }],
-        purchases: [
-            makePurchase(COKE_ID, { id: 'neg', remainingAmount: -1, quantityBought: 1, date: '2026-07-10' })
-        ]
-    });
-    const dataset = rt.buildRecoveryDashboardDataset();
-    const types = new Set(dataset.alerts.map(a => a.type));
-    assert.ok(types.has('brokenInventoryLink') || types.has('negativeRemaining'));
-    dataset.alerts.forEach(a => {
-        assert.ok(a.linkTab);
-        assert.ok(a.message);
-    });
-});
-
 test('quick actions map to existing form openers without throwing', () => {
     const rt = setup({ substances: [makeSubstance('coke')] });
     const calls = [];
@@ -392,7 +366,7 @@ test('recovery dashboard section collapse state persists per viewport', () => {
     assert.equal(prefs.collapsedSections.desktop.status, false);
     assert.equal(prefs.collapsedSections.desktop.summary, true);
     assert.equal(prefs.collapsedSections.desktop.charts, false);
-    assert.equal(prefs.collapsedSections.mobile.alerts, false);
+    assert.equal(prefs.collapsedSections.mobile.alerts, undefined);
     assert.equal(prefs.collapsedSections.desktop.score, undefined);
     assert.equal(prefs.collapsedSections.desktop.milestones, undefined);
 
@@ -404,7 +378,7 @@ test('recovery dashboard section collapse state persists per viewport', () => {
     rt.collapseAllRecoveryDashboardSections();
     const collapsed = rt.getRecoveryDashboardCollapsedMap();
     assert.equal(collapsed.today, true);
-    assert.equal(collapsed.alerts, true);
+    assert.equal(collapsed.alerts, undefined);
     assert.equal(collapsed.charts, true);
     rt.expandAllRecoveryDashboardSections();
     const expanded = rt.getRecoveryDashboardCollapsedMap();

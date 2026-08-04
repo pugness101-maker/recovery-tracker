@@ -35,10 +35,10 @@ test('legacy tab ids resolve to combined tabs with expected views', () => {
     const rt = setup();
     const goals = rt.resolveTabNavigation('goals-tab');
     assert.equal(goals.tabId, 'goals-plans-tab');
-    assert.equal(goals.view, 'active-goals');
+    assert.equal(goals.view, 'active');
     const taper = rt.resolveTabNavigation('taper-tab');
     assert.equal(taper.tabId, 'goals-plans-tab');
-    assert.equal(taper.view, 'active-plans');
+    assert.equal(taper.view, 'active');
     const stats = rt.resolveTabNavigation('stats-tab');
     assert.equal(stats.tabId, 'insights-calendar-tab');
     assert.equal(stats.view, 'overview');
@@ -55,11 +55,11 @@ test('old routes redirect to combined routes with view params', () => {
     const rt = setup();
     const goals = rt.parseAppRouteFromLocation({ hash: '#/goals', pathname: '/', search: '' });
     assert.equal(goals.tab, 'goals-plans-tab');
-    assert.equal(goals.view, 'active-goals');
+    assert.equal(goals.view, 'active');
 
     const plan = rt.parseAppRouteFromLocation({ hash: '#/plan', pathname: '/', search: '' });
     assert.equal(plan.tab, 'goals-plans-tab');
-    assert.equal(plan.view, 'active-plans');
+    assert.equal(plan.view, 'active');
 
     const insights = rt.parseAppRouteFromLocation({ hash: '#/insights', pathname: '/', search: '' });
     assert.equal(insights.tab, 'insights-calendar-tab');
@@ -70,8 +70,8 @@ test('old routes redirect to combined routes with view params', () => {
     assert.equal(calendar.view, 'calendar');
 
     assert.equal(
-        rt.buildAppRouteHash('goals-plans-tab', 'active-goals'),
-        '#/goals-plans?view=active-goals'
+        rt.buildAppRouteHash('goals-plans-tab', 'active'),
+        '#/goals-plans?view=active'
     );
     assert.equal(
         rt.buildAppRouteHash('insights-calendar-tab', 'calendar'),
@@ -99,7 +99,7 @@ test('migrate activeTab from legacy goals/plan/insights/calendar', () => {
     data.settings.activeTab = 'goals-tab';
     rt.migrateCombinedNavActiveTab(data);
     assert.equal(data.settings.activeTab, 'goals-plans-tab');
-    assert.equal(data.settings.combinedNav.goalsPlansView, 'active-goals');
+    assert.equal(data.settings.combinedNav.goalsPlansView, 'active');
 
     data.settings.activeTab = 'calendar-tab';
     rt.migrateCombinedNavActiveTab(data);
@@ -150,6 +150,9 @@ test('goals and plans remain separate record types with multi-goal plan links', 
     assert.ok(Array.isArray(data.goals));
     assert.ok(Array.isArray(data.taperPlansV2));
     assert.notEqual(data.goals[0].id, data.taperPlansV2[0].id);
+    const unified = rt.getUnifiedGoalsPlansRecords(data);
+    assert.ok(unified.some(record => record.id === 'g1' && record.type === 'goal'));
+    assert.ok(unified.some(record => record.id === planId && record.type === 'taper'));
 
     rt.unlinkGoalFromPlan('g1', data);
     assert.equal(rt.getGoalById('g1', data).linkedPlanId, '');
@@ -159,14 +162,17 @@ test('goals and plans remain separate record types with multi-goal plan links', 
 test('goals-plans overview includes required summary fields', () => {
     const rt = setup();
     const overview = rt.buildGoalsPlansOverview(rt.__getTestAppData());
+    assert.ok('activeTotal' in overview);
     assert.ok('activeGoalCount' in overview);
     assert.ok('activePlanCount' in overview);
+    assert.ok('activeTaperCount' in overview);
     assert.ok('goalsOnTrack' in overview);
     assert.ok('goalsNearLimit' in overview);
     assert.ok('plansOnTrack' in overview);
     assert.ok('plansAboveTarget' in overview);
     assert.ok('closestGoalDeadline' in overview);
     assert.ok('currentPlanWeek' in overview);
+    assert.ok(Array.isArray(overview.activeRecords));
     assert.ok(Array.isArray(overview.recentlyCompletedGoals));
     assert.ok(Array.isArray(overview.recentlyCompletedPlans));
 });

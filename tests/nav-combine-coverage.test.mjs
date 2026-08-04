@@ -64,7 +64,7 @@ test('legacy active tabs migrate onto the combined tabs and remember the subview
     rt.migrateCombinedNavActiveTab();
     const data = rt.__getTestAppData();
     assert.equal(data.settings.activeTab, 'goals-plans-tab');
-    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active-goals');
+    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active');
 
     data.settings.activeTab = 'calendar';
     rt.migrateCombinedNavActiveTab();
@@ -102,19 +102,19 @@ test('route hashes are built per tab and only carry a view for the combined tabs
     assert.equal(rt.buildAppRouteHash('buy-tracker-tab'), '#/inventory');
     assert.equal(rt.buildAppRouteHash('settings-tab', 'money'), '#/settings');
     assert.equal(rt.buildAppRouteHash('unknown-tab'), '#/home');
-    assert.equal(rt.buildAppRouteHash('goals-plans-tab', 'active-goals'), '#/goals-plans?view=active-goals');
+    assert.equal(rt.buildAppRouteHash('goals-plans-tab', 'active'), '#/goals-plans?view=active');
     assert.equal(rt.buildAppRouteHash('insights-calendar-tab', 'use'), '#/insights-calendar?view=use');
 });
 
 test('subview aliases normalize onto the canonical combined views', () => {
     const rt = setup();
     rt.setGoalsPlansView('plans', { skipRoute: true });
-    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active-plans');
+    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active');
     rt.setGoalsPlansView('goals', { skipRoute: true });
-    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active-goals');
+    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active');
     // Unknown views keep the current one rather than resetting the tab.
     rt.setGoalsPlansView('not-a-view', { skipRoute: true });
-    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active-goals');
+    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active');
 
     rt.setInsightsCalendarView('finances', { skipRoute: true });
     assert.equal(rt.ensureCombinedNavPrefs().insightsCalendarView, 'money');

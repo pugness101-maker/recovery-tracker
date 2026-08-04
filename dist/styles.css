@@ -10091,35 +10091,6 @@ html[data-theme="light"] .metric-pc-tone-unfavorable .metric-pc-change .metric-p
     margin: 0 0 6px;
 }
 
-.rd-alerts {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-}
-
-.rd-alert {
-    display: flex;
-    justify-content: space-between;
-    gap: 10px;
-    align-items: flex-start;
-    border: 1px solid var(--border);
-    border-radius: 10px;
-    padding: 10px 12px;
-}
-
-.rd-alert p {
-    margin: 4px 0 0;
-    font-size: 0.84rem;
-}
-
-.rd-alert-warn {
-    border-color: #c9a227;
-}
-
-.rd-alert-error {
-    border-color: #c45c5c;
-}
-
 .rd-inventory-group {
     margin-bottom: 12px;
 }

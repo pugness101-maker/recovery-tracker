@@ -296,7 +296,7 @@
 
                         <section class="rd-section collapsible-section" data-rd-section="plans" aria-labelledby="rd-plans-heading">
                             <button type="button" class="section-toggle rd-section-toggle" id="rd-plans-heading" onclick="toggleRecoveryDashboardSection('plans')" aria-expanded="true" aria-controls="rd-plans-body">
-                                <span>Active Plans</span>
+                                <span>Active Tapers</span>
                                 <span class="chevron" aria-hidden="true">⌄</span>
                             </button>
                             <div id="rd-plans-body" class="section-content rd-section-body">
@@ -323,16 +323,6 @@
                             <div id="rd-inventory-body" class="section-content rd-section-body">
                                 <p class="rd-section-hint">Purchased as Gift items are excluded from usable inventory.</p>
                                 <div id="rd-inventory-overview" class="rd-inventory-overview"></div>
-                            </div>
-                        </section>
-
-                        <section class="rd-section collapsible-section" data-rd-section="alerts" aria-labelledby="rd-alerts-heading">
-                            <button type="button" class="section-toggle rd-section-toggle" id="rd-alerts-heading" onclick="toggleRecoveryDashboardSection('alerts')" aria-expanded="true" aria-controls="rd-alerts-body">
-                                <span>Alerts &amp; Data Warnings</span>
-                                <span class="chevron" aria-hidden="true">⌄</span>
-                            </button>
-                            <div id="rd-alerts-body" class="section-content rd-section-body">
-                                <div id="rd-alerts" class="rd-alerts"></div>
                             </div>
                         </section>
 
@@ -815,7 +805,7 @@
                 <div class="page-header-row combined-page-header">
                     <div>
                         <h2>Goals &amp; Plans</h2>
-                        <p class="settings-hint">Goals define outcomes. Plans define the step-by-step method. Records stay separate and can be linked.</p>
+                        <p class="settings-hint">Goals define the target. Tapers define the gradual path.</p>
                     </div>
                 </div>
 
@@ -823,21 +813,15 @@
                     <label class="combined-subnav-mobile-label" for="gp-subnav-select">View</label>
                     <select id="gp-subnav-select" class="combined-subnav-select" aria-label="Goals and Plans view" onchange="setGoalsPlansView(this.value)">
                         <option value="overview">Overview</option>
-                        <option value="active-goals">Active Goals</option>
-                        <option value="active-plans">Active Plans</option>
-                        <option value="goal-history">Goal History</option>
-                        <option value="plan-history">Plan History</option>
+                        <option value="active">Active</option>
+                        <option value="history">History</option>
                         <option value="templates">Templates</option>
-                        <option value="achievements">Achievements</option>
                     </select>
                     <nav class="combined-subnav" id="gp-subnav" aria-label="Goals and Plans sections" role="tablist">
                         <button type="button" class="combined-subnav-btn active" data-gp-view="overview" onclick="setGoalsPlansView('overview')">Overview</button>
-                        <button type="button" class="combined-subnav-btn" data-gp-view="active-goals" onclick="setGoalsPlansView('active-goals')">Active Goals</button>
-                        <button type="button" class="combined-subnav-btn" data-gp-view="active-plans" onclick="setGoalsPlansView('active-plans')">Active Plans</button>
-                        <button type="button" class="combined-subnav-btn" data-gp-view="goal-history" onclick="setGoalsPlansView('goal-history')">Goal History</button>
-                        <button type="button" class="combined-subnav-btn" data-gp-view="plan-history" onclick="setGoalsPlansView('plan-history')">Plan History</button>
+                        <button type="button" class="combined-subnav-btn" data-gp-view="active" onclick="setGoalsPlansView('active')">Active</button>
+                        <button type="button" class="combined-subnav-btn" data-gp-view="history" onclick="setGoalsPlansView('history')">History</button>
                         <button type="button" class="combined-subnav-btn" data-gp-view="templates" onclick="setGoalsPlansView('templates')">Templates</button>
-                        <button type="button" class="combined-subnav-btn" data-gp-view="achievements" onclick="setGoalsPlansView('achievements')">Achievements</button>
                     </nav>
                 </div>
 
@@ -845,11 +829,11 @@
                     <div id="gp-overview-root" class="combined-overview-root" aria-live="polite"></div>
                 </div>
 
-                <div id="goals-tab" class="combined-subview goals-page" data-gp-view="active-goals goal-history templates achievements" role="tabpanel" hidden>
+                <div id="goals-tab" class="combined-subview goals-page" data-gp-view="active history templates" role="tabpanel" hidden>
                     <div id="goals-root" class="goals-root" aria-live="polite"></div>
                 </div>
 
-                <div id="taper-tab" class="combined-subview taper-page" data-gp-view="active-plans plan-history" role="tabpanel" hidden>
+                <div id="taper-tab" class="combined-subview taper-page" data-gp-view="" role="tabpanel" hidden>
                     <div class="page-header-row taper-page-header">
                     <h2>Plan</h2>
                     <div class="page-substance-selector substance-select-card taper-toolbar">
@@ -889,7 +873,7 @@
                     </div>
 
                     <div id="taper-legacy-puff-banner" class="taper-alert hidden">
-                        <span>This plan uses legacy puff targets.</span>
+                        <span>This taper uses legacy puff targets.</span>
                         <button type="button" class="taper-chip-btn" onclick="convertSelectedTaperPlanToNicotineVapePurchase()">Convert to purchase-based nicotine plan</button>
                     </div>
 
@@ -926,7 +910,7 @@
                                     </div>
                                 </div>
                                 <div class="taper-plan-strip-progress">
-                                    <span class="taper-plan-pct" id="taper-plan-pct-label">Plan progress</span>
+                                    <span class="taper-plan-pct" id="taper-plan-pct-label">Taper progress</span>
                                     <div class="taper-plan-pct-bar"><div class="taper-plan-pct-fill" id="taper-plan-pct-fill"></div></div>
                                 </div>
                                 <div class="taper-plan-actions">
@@ -1029,7 +1013,7 @@
                         </div>
                         <label class="checkbox-label taper-set-primary-label">
                             <input type="checkbox" id="taper-set-primary">
-                            Set as primary plan for this substance
+                            Set as primary taper for this substance
                         </label>
                         <div class="form-row" id="taper-date-row">
                             <div class="form-group" id="start-date-group">
@@ -1331,7 +1315,7 @@
                             </div>
                         </div>
                         <div class="form-group" id="taper-notes-group">
-                            <label for="taper-notes">Optional plan notes</label>
+                            <label for="taper-notes">Optional taper notes</label>
                             <textarea id="taper-notes" rows="2" placeholder="Personal reminders for this disposable taper..."></textarea>
                         </div>
                         <div id="taper-warn-toggles">
