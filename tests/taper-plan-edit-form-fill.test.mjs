@@ -239,7 +239,7 @@ function installEditFormDom(rt) {
     [
         'taper-substance', 'taper-plan-select', 'taper-plan-count', 'taper-plan-toolbar',
         'taper-dashboard', 'taper-setup', 'taper-no-plan', 'taper-disabled-msg',
-        'taper-generate-btn', 'taper-setup-title', 'taper-cancel-edit-btn',
+        'taper-generate-btn', 'taper-form-status', 'taper-setup-title', 'taper-cancel-edit-btn',
         'plan-type-hint', 'reduction-amount-group', 'reduction-percent-group',
         'taper-reduction-fields-row', 'manual-weekly-plan-section', 'taper-start-avg-group',
         'taper-end-weekly-row', 'weekly-max-group', 'monthly-max-group', 'taper-warn-toggles',

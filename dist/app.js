@@ -36577,6 +36577,7 @@ function setupEventListeners() {
     setupDashboardInsightControls();
     migrateLegacyUseStatsLayoutIfNeeded();
     document.getElementById('taper-form')?.addEventListener('submit', handleTaperSubmit);
+    document.getElementById('taper-generate-btn')?.addEventListener('click', handleTaperSubmitClick);
     setupSubstanceForm();
     document.getElementById('save-substance-btn')?.addEventListener('click', () => {
         console.log('[substance] save button clicked');
@@ -48251,7 +48252,8 @@ function getTaperFormWritableFields(reductionType) {
     switch (reductionType) {
         case 'manual-weekly':
             return [...shared, 'goalDailyAverage', 'manualWeeklyMode', 'manualWeeklyUnit',
-                'manualWeeklyBaseline', 'manualWeeklyTargets', 'startingDailyAverage'];
+                'manualWeeklyBaseline', 'manualWeeklyTargets', 'startingDailyAverage',
+                'weeklyMax', 'monthlyMax', 'doNotSurpassDaily', 'doNotSurpassWeekly'];
         case 'reduce-puffs':
             return [...shared, ...amountFields, 'puffReductionMode', 'taperDurationWeeks', 'purchaseIntervalDays'];
         case 'nicotine-vape-purchase':
@@ -48783,9 +48785,10 @@ function toggleTaperPlanTypeFields(options = {}) {
     manualSection?.classList.toggle('hidden', !isManual);
     startAvgGroup?.classList.toggle('hidden', isManual || isPurchasePlan || isNicotine);
     document.getElementById('taper-start-goal-row')?.classList.toggle('hidden', isManual || isPurchasePlan || isNicotine);
-    endWeeklyRow?.classList.toggle('hidden', isManual || isNicotine);
+    // Custom plans keep monthly cap editable; weekly max stays formula-only.
+    endWeeklyRow?.classList.toggle('hidden', isNicotine);
     weeklyMaxGroup?.classList.toggle('hidden', isManual || isPurchasePlan || isNicotine || isNicotineVape);
-    monthlyMaxGroup?.classList.toggle('hidden', isManual || isNicotine);
+    monthlyMaxGroup?.classList.toggle('hidden', isNicotine);
     warnToggles?.classList.toggle('hidden', isManual || isPurchasePlan || isNicotine);
     vapePuffsExtra?.classList.toggle('hidden', !isPuffs);
     vapeBuyingSection?.classList.toggle('hidden', !isBuying);
@@ -49109,8 +49112,25 @@ function getTaperFormSnapshot() {
 function updateTaperSaveButtonState() {
     const btn = document.getElementById('taper-generate-btn');
     if (!btn) return;
-    // Block save until the form has been initialized from the selected plan / create defaults.
-    btn.disabled = !taperFormInitialized;
+    // Keep Save clickable; readiness/errors are shown via status text — never silently disable.
+    btn.disabled = false;
+    if (typeof btn.removeAttribute === 'function') btn.removeAttribute('aria-disabled');
+    else if (btn.ariaDisabled != null) btn.ariaDisabled = 'false';
+}
+
+function setTaperFormStatus(message, kind = '') {
+    const el = document.getElementById('taper-form-status');
+    if (!el) return;
+    const text = message == null ? '' : String(message);
+    if (!text) {
+        el.hidden = true;
+        el.textContent = '';
+        el.className = 'taper-form-status';
+        return;
+    }
+    el.hidden = false;
+    el.textContent = text;
+    el.className = `taper-form-status${kind ? ` is-${kind}` : ''}`;
 }
 
 function markTaperFormClean() {
@@ -49158,6 +49178,7 @@ function bindTaperFormDirtyTracking() {
 function fillTaperFormFromPlan(plan) {
     if (!plan) return;
     resetTaperFormLifecycleState();
+    setTaperFormStatus('');
     bindTaperFormDirtyTracking();
     const substanceId = plan.substanceId || getTaperSubstanceId();
     const normalized = normalizePlanRecordForEditForm(plan);
@@ -50174,187 +50195,269 @@ function resolveTaperFormEditingPlanId() {
     return fromState || fromInput || fromSelection || null;
 }
 
+function handleTaperSubmitClick(e) {
+    if (e?.preventDefault) e.preventDefault();
+    return handleTaperSubmit(e || { preventDefault() {} });
+}
+
 function handleTaperSubmit(e) {
-    e.preventDefault();
-    if (!taperFormInitialized) {
-        return alert('Plan form is still loading. Please wait a moment and try again.');
-    }
-    const editingPlanId = resolveTaperFormEditingPlanId();
-    const existingPlan = editingPlanId ? getTaperPlanById(editingPlanId) : null;
-    const substanceId = existingPlan?.substanceId
-        || document.getElementById('taper-substance')?.value;
-    const sub = getSubstance(substanceId);
-    if (!sub?.taperTrackingEnabled) return alert('Taper tracking is disabled for this substance.');
-    const planName = document.getElementById('taper-plan-name')?.value?.trim();
-    if (!planName) return alert('Plan name is required.');
-    const reductionType = document.getElementById('reduction-type')?.value;
-    const startDate = document.getElementById('start-date')?.value
-        || existingPlan?.startDate
-        || (existingPlan?.createdAt ? getLocalDateFromIso(existingPlan.createdAt) : null)
-        || getLocalDateString();
+    if (e?.preventDefault) e.preventDefault();
+    const btn = document.getElementById('taper-generate-btn');
+    const previousBtnLabel = btn?.textContent || 'Save Plan';
 
-    if (!startDate) return alert('Start date is required.');
+    const fail = (message) => {
+        setTaperFormStatus(message, 'error');
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = previousBtnLabel;
+        }
+        return false;
+    };
 
-    if (reductionType === 'manual-weekly') {
-        const mode = getManualWeeklyModeFromForm();
-        let targets = collectManualWeeklyTargetsFromForm();
-        const hasPositive = targets.some(t =>
-            (parseFloat(t?.targetAmount) || 0) > 0 || (parseFloat(t?.targetPercent) || 0) > 0
-        );
-        if (!hasPositive && existingPlan) {
-            targets = extractManualWeeklyTargetsFromPlan(existingPlan);
+    try {
+        if (btn) {
+            btn.disabled = true;
+            btn.textContent = 'Saving…';
         }
-        if (!targets.length) return alert('Add at least one weekly target.');
-        if (mode === 'percent') {
-            const baseline = getManualWeeklyBaselineFromForm()
-                ?? existingPlan?.manualWeeklyBaseline
-                ?? null;
-            if (baseline == null || baseline <= 0) {
-                return alert('Enter a baseline amount for percentage mode.');
-            }
-            const hasPercent = targets.some(t => (parseFloat(t.targetPercent) || 0) > 0);
-            if (!hasPercent) return alert('Enter at least one weekly percentage.');
-        } else {
-            const hasAmount = targets.some(t => (parseFloat(t.targetAmount) || 0) > 0);
-            if (!hasAmount) return alert('Enter at least one weekly target amount.');
-        }
-    } else if (reductionType === 'nicotine-vape-purchase') {
-        const endDate = document.getElementById('end-date')?.value;
-        if (!endDate || new Date(endDate) <= new Date(startDate)) {
-            return alert('End date must be after the start date.');
-        }
-    } else if (reductionType === 'reduce-buying') {
-        const currentDays = parseOptionalTaperNumber(document.getElementById('vape-current-buy-days'));
-        const goalDays = parseOptionalTaperNumber(document.getElementById('vape-goal-buy-days'));
-        if (currentDays == null || currentDays <= 0) return alert('Enter your current buying frequency (days).');
-        if (goalDays == null || goalDays <= 0) return alert('Enter your goal buying frequency (days).');
-        const endDate = document.getElementById('end-date')?.value;
-        if (!endDate || new Date(endDate) <= new Date(startDate)) {
-            return alert('End date must be after the start date.');
-        }
-    } else if (reductionType === 'reduce-nicotine') {
-        const startNic = parseOptionalTaperNumber(document.getElementById('vape-start-nicotine'));
-        const goalNic = parseOptionalTaperNumber(document.getElementById('vape-goal-nicotine'));
-        const step = parseOptionalTaperNumber(document.getElementById('vape-nicotine-step'));
-        if (startNic == null || startNic <= 0) return alert('Enter a starting nicotine strength (mg/mL).');
-        if (goalNic == null || goalNic < 0) return alert('Enter a goal nicotine strength (mg/mL).');
-        if (step == null || step <= 0) return alert('Enter a step-down amount (mg/mL).');
-    } else if (reductionType === 'reduce-puffs') {
-        const goal = parseOptionalTaperNumber(document.getElementById('goal-avg'));
-        if (goal == null || goal < 0) return alert('Enter a goal puffs/day target.');
-        const endDate = document.getElementById('end-date')?.value;
-        if (!endDate || new Date(endDate) <= new Date(startDate)) {
-            return alert('End date must be after the start date.');
-        }
-    } else {
-        const endDate = document.getElementById('end-date')?.value;
-        if (!endDate || new Date(endDate) <= new Date(startDate)) {
-            return alert('End date must be after the start date.');
-        }
-    }
+        setTaperFormStatus('Saving…', 'saving');
 
-    if (document.getElementById('purchase-taper-enabled')?.checked && supportsPurchaseTaper(substanceId)) {
-        const settings = collectBuyingReductionSettingsFromForm();
-        if (!hasAnyBuyingReductionRuleEnabled(settings)) {
-            return alert('Enable at least one buying or spending reduction rule.');
-        }
-        if (settings.reducePurchaseAmount.enabled) {
-            const startAmt = settings.reducePurchaseAmount.startingAmount;
-            const redAmt = settings.reducePurchaseAmount.reductionPerWeek;
-            const redPct = settings.reducePurchaseAmount.reductionPercentPerWeek;
-            if (startAmt == null || startAmt <= 0) return alert('Enter a starting weekly purchase amount.');
-            if ((redAmt == null || redAmt <= 0) && (redPct == null || redPct <= 0)) {
-                return alert('Enter a reduction amount or percent per week for purchase amount.');
+        // If the form was still mid-load, try to finish from the selected/editing plan once.
+        if (!taperFormInitialized) {
+            const pendingId = resolveTaperFormEditingPlanId();
+            const pendingPlan = pendingId ? getTaperPlanById(pendingId) : null;
+            if (pendingPlan) {
+                fillTaperFormFromPlan(pendingPlan);
             }
         }
-        if (settings.reducePurchaseCost.enabled) {
-            const startSpend = settings.reducePurchaseCost.startingSpend;
-            const redAmt = settings.reducePurchaseCost.reductionPerWeek;
-            const redPct = settings.reducePurchaseCost.reductionPercentPerWeek;
-            if (startSpend == null || startSpend <= 0) return alert('Enter a starting weekly spend.');
-            if ((redAmt == null || redAmt <= 0) && (redPct == null || redPct <= 0)) {
-                return alert('Enter a spending reduction amount or percent per week.');
-            }
+        if (!taperFormInitialized) {
+            return fail('Plan form is still loading. Please wait a moment and try again.');
         }
-        if (settings.weeklyPurchaseLimit.enabled) {
-            const target = settings.weeklyPurchaseLimit.amount;
-            if (target == null || target < 0) return alert('Enter a weekly purchase limit (0 or greater).');
-        }
-        if (settings.weeklySpendingLimit.enabled) {
-            const target = settings.weeklySpendingLimit.amount;
-            if (target == null || target < 0) return alert('Enter a weekly spending limit (0 or greater).');
-        }
-        if (settings.monthlyPurchaseCap.enabled) {
-            const cap = settings.monthlyPurchaseCap.amount;
-            if (cap == null || cap < 0) return alert('Enter a monthly purchase cap (0 or greater).');
-        }
-        if (settings.monthlySpendingCap.enabled) {
-            const cap = settings.monthlySpendingCap.amount;
-            if (cap == null || cap < 0) return alert('Enter a monthly spending cap (0 or greater).');
-        }
-        if (settings.manualWeeklyBuyPlan.enabled) {
-            const targets = settings.manualWeeklyBuyPlan.values;
-            if (!targets.length || !targets.some(t => (parseFloat(t.amount) || 0) > 0)) {
-                return alert('Enter at least one manual weekly purchase amount.');
-            }
-        }
-        if (settings.manualWeeklySpendingPlan.enabled) {
-            const targets = settings.manualWeeklySpendingPlan.values;
-            if (!targets.length || !targets.some(t => (parseFloat(t.spend) || 0) > 0)) {
-                return alert('Enter at least one manual weekly spending target.');
-            }
-        }
-        const conflicts = detectBuyingReductionConflicts(settings);
-        if (conflicts.length) {
-            const proceed = confirm(`${conflicts.join('\n')}\n\nSave anyway?`);
-            if (!proceed) return;
-        }
-    }
 
-    ensureTaperPlansV2(appData);
-    const scrollY = typeof window !== 'undefined' ? window.scrollY : 0;
-    if (existingPlan) createAutoBackup('before-taper-plan-save');
-    const built = buildTaperPlanFromForm(substanceId, existingPlan);
-    built.name = planName;
-    const setPrimary = !!document.getElementById('taper-set-primary')?.checked;
-    const wasEdit = !!existingPlan;
+        const editingPlanId = resolveTaperFormEditingPlanId();
+        const existingPlan = editingPlanId ? getTaperPlanById(editingPlanId) : null;
+        if (editingPlanId && !existingPlan) {
+            return fail('Could not find the selected plan to update. Reload and try again.');
+        }
 
-    if (existingPlan) {
-        const preservedId = existingPlan.id;
-        const previousPrimary = !!existingPlan.isPrimary;
-        applyBuiltTaperPlanToExisting(existingPlan, built);
-        existingPlan.id = preservedId;
-        existingPlan.name = planName;
-        existingPlan.isPrimary = previousPrimary;
-        if (setPrimary) setTaperPlanPrimary(existingPlan.id, substanceId);
-        selectedTaperPlanId = preservedId;
-    } else {
-        built.id = generateUniqueId('taper');
-        built.status = 'active';
-        const hasPrimary = getTaperPlansForSubstance(substanceId).some(p => p.isPrimary && p.status === 'active');
-        built.isPrimary = setPrimary || !hasPrimary;
-        appData.taperPlansV2.push(built);
-        if (built.isPrimary) setTaperPlanPrimary(built.id, substanceId);
-        selectedTaperPlanId = built.id;
-    }
+        const substanceId = existingPlan?.substanceId
+            || document.getElementById('taper-substance')?.value;
+        const sub = getSubstance(substanceId);
+        if (!sub?.taperTrackingEnabled) {
+            return fail('Taper tracking is disabled for this substance.');
+        }
+        const planName = document.getElementById('taper-plan-name')?.value?.trim();
+        if (!planName) return fail('Plan name is required.');
 
-    syncLegacyTaperPlansFromV2(appData);
-    saveData(appData);
-    // Leave edit mode and return to the same plan's dashboard (selection preserved above).
-    taperEditingPlan = false;
-    taperFormPlanId = null;
-    setInputValue('taper-editing-plan-id', '');
-    resetTaperFormLifecycleState();
-    document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
-    setText('taper-generate-btn', 'Save Plan');
-    setText('taper-setup-title', 'Create Taper Plan');
-    refreshTaperDashboard();
-    if (typeof window !== 'undefined' && Number.isFinite(scrollY)) {
-        requestAnimationFrame(() => {
-            try { window.scrollTo(0, scrollY); } catch { /* ignore */ }
+        // Keep required flags aligned with the visible plan type (avoid stale HTML5 state).
+        toggleTaperPlanTypeFields({
+            selectedType: document.getElementById('reduction-type')?.value,
+            plan: existingPlan || undefined,
+            skipPrefill: true,
+            skipManualSeed: true,
+            skipPurchaseToggle: true
         });
+
+        const reductionType = document.getElementById('reduction-type')?.value;
+        const startDate = document.getElementById('start-date')?.value
+            || existingPlan?.startDate
+            || (existingPlan?.createdAt ? getLocalDateFromIso(existingPlan.createdAt) : null)
+            || getLocalDateString();
+
+        if (!startDate) return fail('Start date is required.');
+
+        if (reductionType === 'manual-weekly') {
+            const mode = getManualWeeklyModeFromForm();
+            let targets = collectManualWeeklyTargetsFromForm();
+            const hasPositive = targets.some(t =>
+                (parseFloat(t?.targetAmount) || 0) > 0 || (parseFloat(t?.targetPercent) || 0) > 0
+            );
+            if (!hasPositive && existingPlan) {
+                targets = extractManualWeeklyTargetsFromPlan(existingPlan);
+            }
+            if (!targets.length) return fail('Add at least one weekly target.');
+            if (mode === 'percent') {
+                const baseline = getManualWeeklyBaselineFromForm()
+                    ?? existingPlan?.manualWeeklyBaseline
+                    ?? null;
+                if (baseline == null || baseline <= 0) {
+                    return fail('Enter a baseline amount for percentage mode.');
+                }
+                const hasPercent = targets.some(t => (parseFloat(t.targetPercent) || 0) > 0);
+                if (!hasPercent) return fail('Enter at least one weekly percentage.');
+            } else {
+                const hasAmount = targets.some(t => (parseFloat(t.targetAmount) || 0) > 0);
+                if (!hasAmount) return fail('Enter at least one weekly target amount.');
+            }
+        } else if (reductionType === 'nicotine-vape-purchase') {
+            const endDate = document.getElementById('end-date')?.value;
+            if (!endDate || new Date(endDate) <= new Date(startDate)) {
+                return fail('End date must be after the start date.');
+            }
+        } else if (reductionType === 'reduce-buying') {
+            const currentDays = parseOptionalTaperNumber(document.getElementById('vape-current-buy-days'));
+            const goalDays = parseOptionalTaperNumber(document.getElementById('vape-goal-buy-days'));
+            if (currentDays == null || currentDays <= 0) return fail('Enter your current buying frequency (days).');
+            if (goalDays == null || goalDays <= 0) return fail('Enter your goal buying frequency (days).');
+            const endDate = document.getElementById('end-date')?.value;
+            if (!endDate || new Date(endDate) <= new Date(startDate)) {
+                return fail('End date must be after the start date.');
+            }
+        } else if (reductionType === 'reduce-nicotine') {
+            const startNic = parseOptionalTaperNumber(document.getElementById('vape-start-nicotine'));
+            const goalNic = parseOptionalTaperNumber(document.getElementById('vape-goal-nicotine'));
+            const step = parseOptionalTaperNumber(document.getElementById('vape-nicotine-step'));
+            if (startNic == null || startNic <= 0) return fail('Enter a starting nicotine strength (mg/mL).');
+            if (goalNic == null || goalNic < 0) return fail('Enter a goal nicotine strength (mg/mL).');
+            if (step == null || step <= 0) return fail('Enter a step-down amount (mg/mL).');
+        } else if (reductionType === 'reduce-puffs') {
+            const goal = parseOptionalTaperNumber(document.getElementById('goal-avg'));
+            if (goal == null || goal < 0) return fail('Enter a goal puffs/day target.');
+            const endDate = document.getElementById('end-date')?.value;
+            if (!endDate || new Date(endDate) <= new Date(startDate)) {
+                return fail('End date must be after the start date.');
+            }
+        } else {
+            const endDate = document.getElementById('end-date')?.value;
+            if (!endDate || new Date(endDate) <= new Date(startDate)) {
+                return fail('End date must be after the start date.');
+            }
+        }
+
+        if (document.getElementById('purchase-taper-enabled')?.checked && supportsPurchaseTaper(substanceId)) {
+            const settings = collectBuyingReductionSettingsFromForm();
+            if (!hasAnyBuyingReductionRuleEnabled(settings)) {
+                return fail('Enable at least one buying or spending reduction rule.');
+            }
+            if (settings.reducePurchaseAmount.enabled) {
+                const startAmt = settings.reducePurchaseAmount.startingAmount;
+                const redAmt = settings.reducePurchaseAmount.reductionPerWeek;
+                const redPct = settings.reducePurchaseAmount.reductionPercentPerWeek;
+                if (startAmt == null || startAmt <= 0) return fail('Enter a starting weekly purchase amount.');
+                if ((redAmt == null || redAmt <= 0) && (redPct == null || redPct <= 0)) {
+                    return fail('Enter a reduction amount or percent per week for purchase amount.');
+                }
+            }
+            if (settings.reducePurchaseCost.enabled) {
+                const startSpend = settings.reducePurchaseCost.startingSpend;
+                const redAmt = settings.reducePurchaseCost.reductionPerWeek;
+                const redPct = settings.reducePurchaseCost.reductionPercentPerWeek;
+                if (startSpend == null || startSpend <= 0) return fail('Enter a starting weekly spend.');
+                if ((redAmt == null || redAmt <= 0) && (redPct == null || redPct <= 0)) {
+                    return fail('Enter a spending reduction amount or percent per week.');
+                }
+            }
+            if (settings.weeklyPurchaseLimit.enabled) {
+                const target = settings.weeklyPurchaseLimit.amount;
+                if (target == null || target < 0) return fail('Enter a weekly purchase limit (0 or greater).');
+            }
+            if (settings.weeklySpendingLimit.enabled) {
+                const target = settings.weeklySpendingLimit.amount;
+                if (target == null || target < 0) return fail('Enter a weekly spending limit (0 or greater).');
+            }
+            if (settings.monthlyPurchaseCap.enabled) {
+                const cap = settings.monthlyPurchaseCap.amount;
+                if (cap == null || cap < 0) return fail('Enter a monthly purchase cap (0 or greater).');
+            }
+            if (settings.monthlySpendingCap.enabled) {
+                const cap = settings.monthlySpendingCap.amount;
+                if (cap == null || cap < 0) return fail('Enter a monthly spending cap (0 or greater).');
+            }
+            if (settings.manualWeeklyBuyPlan.enabled) {
+                const targets = settings.manualWeeklyBuyPlan.values;
+                if (!targets.length || !targets.some(t => (parseFloat(t.amount) || 0) > 0)) {
+                    return fail('Enter at least one manual weekly purchase amount.');
+                }
+            }
+            if (settings.manualWeeklySpendingPlan.enabled) {
+                const targets = settings.manualWeeklySpendingPlan.values;
+                if (!targets.length || !targets.some(t => (parseFloat(t.spend) || 0) > 0)) {
+                    return fail('Enter at least one manual weekly spending target.');
+                }
+            }
+            const conflicts = detectBuyingReductionConflicts(settings);
+            if (conflicts.length) {
+                const proceed = confirm(`${conflicts.join('\n')}\n\nSave anyway?`);
+                if (!proceed) {
+                    setTaperFormStatus('Save cancelled.', 'error');
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.textContent = previousBtnLabel;
+                    }
+                    return false;
+                }
+            }
+        }
+
+        ensureTaperPlansV2(appData);
+        const scrollY = typeof window !== 'undefined' ? window.scrollY : 0;
+        if (existingPlan) createAutoBackup('before-taper-plan-save');
+
+        const preservedId = existingPlan?.id || null;
+        const built = buildTaperPlanFromForm(substanceId, existingPlan);
+        built.name = planName;
+        if (preservedId) {
+            // Never allow edit-save to mint a new plan id.
+            built.id = preservedId;
+        }
+        const setPrimary = !!document.getElementById('taper-set-primary')?.checked;
+        const wasEdit = !!existingPlan;
+
+        if (existingPlan) {
+            const previousPrimary = !!existingPlan.isPrimary;
+            applyBuiltTaperPlanToExisting(existingPlan, built);
+            existingPlan.id = preservedId;
+            existingPlan.name = planName;
+            existingPlan.isPrimary = previousPrimary;
+            if (setPrimary) setTaperPlanPrimary(existingPlan.id, substanceId);
+            selectedTaperPlanId = preservedId;
+        } else {
+            built.id = generateUniqueId('taper');
+            built.status = 'active';
+            const hasPrimary = getTaperPlansForSubstance(substanceId).some(p => p.isPrimary && p.status === 'active');
+            built.isPrimary = setPrimary || !hasPrimary;
+            appData.taperPlansV2.push(built);
+            if (built.isPrimary) setTaperPlanPrimary(built.id, substanceId);
+            selectedTaperPlanId = built.id;
+        }
+
+        // Confirm the edited plan still exists under the stable id.
+        if (wasEdit) {
+            const savedPlan = getTaperPlanById(preservedId);
+            if (!savedPlan || savedPlan.id !== preservedId) {
+                return fail('Save failed: plan id changed unexpectedly. Your previous data was not replaced.');
+            }
+        }
+
+        syncLegacyTaperPlansFromV2(appData);
+        const persisted = saveData(appData);
+        if (!persisted) {
+            return fail('Could not write plan to local storage. Check browser storage and try again.');
+        }
+
+        // Leave edit mode and return to the same plan's dashboard (selection preserved above).
+        taperEditingPlan = false;
+        taperFormPlanId = null;
+        setInputValue('taper-editing-plan-id', '');
+        resetTaperFormLifecycleState();
+        document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
+        setText('taper-generate-btn', 'Save Plan');
+        setText('taper-setup-title', 'Create Taper Plan');
+        refreshTaperDashboard();
+        if (typeof window !== 'undefined' && Number.isFinite(scrollY)) {
+            requestAnimationFrame(() => {
+                try { window.scrollTo(0, scrollY); } catch { /* ignore */ }
+            });
+        }
+        setTaperFormStatus('Plan saved', 'success');
+        if (btn) {
+            btn.disabled = false;
+            btn.textContent = 'Save Plan';
+        }
+        return true;
+    } catch (err) {
+        console.error('Failed to save taper plan:', err);
+        return fail(err?.message ? `Save failed: ${err.message}` : 'Save failed. Please try again.');
     }
-    alert(wasEdit ? 'Plan updated!' : 'Taper plan saved!');
 }
 
 function getTaperSubstanceId() {
@@ -53586,6 +53689,8 @@ function __getRecoveryTrackerTestExports() {
         mergeWeeklyTargetsPreservingProgress,
         resolveTaperFormEditingPlanId,
         handleTaperSubmit,
+        handleTaperSubmitClick,
+        setTaperFormStatus,
         editTaperPlanById,
         buildTaperPlanFromForm,
         fillTaperFormFromPlan,

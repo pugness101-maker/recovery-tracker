@@ -1178,7 +1178,7 @@
                         <h3 id="taper-setup-title">Create Taper Plan</h3>
                         <button type="button" class="taper-chip-btn" onclick="cancelTaperEdit()">← Back to dashboard</button>
                     </div>
-                    <form id="taper-form" class="taper-form-compact">
+                    <form id="taper-form" class="taper-form-compact" novalidate>
                         <input type="hidden" id="taper-editing-plan-id" value="">
                         <div class="form-group">
                             <label for="taper-plan-name">Plan name</label>
@@ -1643,8 +1643,9 @@
                         </div>
                         <div class="taper-form-actions">
                             <button type="button" class="secondary-btn hidden" id="taper-cancel-edit-btn" onclick="cancelTaperEdit()">Cancel Edit</button>
-                            <button type="submit" class="submit-btn" id="taper-generate-btn">Save Plan</button>
+                            <button type="button" class="submit-btn" id="taper-generate-btn" onclick="handleTaperSubmitClick()">Save Plan</button>
                         </div>
+                        <p id="taper-form-status" class="taper-form-status" role="status" aria-live="polite" hidden></p>
                     </form>
                 </div>
                 </div>

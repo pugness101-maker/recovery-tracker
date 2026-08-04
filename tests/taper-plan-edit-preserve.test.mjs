@@ -115,6 +115,7 @@ function installTaperFormDom(rt, values = {}) {
     put('do-not-surpass-weekly', { checked: false });
     put('purchase-taper-enabled', { checked: false });
     put('taper-generate-btn', {});
+    put('taper-form-status', {});
     put('taper-setup-title', {});
     put('taper-cancel-edit-btn', {});
     put('taper-dashboard', {});
@@ -214,4 +215,143 @@ test('resolveTaperFormEditingPlanId falls back to selected plan while editing', 
     rt.taperEditingPlanRef.value = true;
     rt.selectedTaperPlanIdRef.value = 'taper-coke-1';
     assert.equal(rt.resolveTaperFormEditingPlanId(), 'taper-coke-1');
+});
+
+test('Save Changes updates custom weekly plan by stable id and persists after reload', () => {
+    const plan = makePlan({
+        id: 'taper-coke-custom',
+        name: 'Custom coke plan',
+        reductionType: 'manual-weekly',
+        manualWeeklyMode: 'amount',
+        manualWeeklyUnit: 'g',
+        startingDailyAverage: null,
+        goalDailyAverage: 0,
+        reductionAmount: 0,
+        monthlyMax: 20,
+        notes: 'original note',
+        purchaseTaperEnabled: true,
+        buyingReductionSettings: {
+            reducePurchaseAmount: { enabled: false },
+            reducePurchaseCost: { enabled: false },
+            weeklyPurchaseLimit: { enabled: false, amount: null },
+            weeklySpendingLimit: { enabled: true, amount: 40 },
+            monthlyPurchaseCap: { enabled: false, amount: null },
+            monthlySpendingCap: { enabled: true, amount: 150 },
+            manualWeeklyBuyPlan: { enabled: false, values: [] },
+            manualWeeklySpendingPlan: { enabled: false, values: [] },
+            autoSpendFromCostPerGram: { enabled: false, source: 'manual', manualCostPerGram: null }
+        },
+        manualWeeklyTargets: [
+            { week: 1, targetAmount: 3 },
+            { week: 2, targetAmount: 3 },
+            { week: 3, targetAmount: 2.7 },
+            { week: 4, targetAmount: 2.3 },
+            { week: 5, targetAmount: 1.5 },
+            { week: 6, targetAmount: 0.5 }
+        ],
+        weeklyTargets: [
+            { week: 1, weekStart: '2026-07-01', weekEnd: '2026-07-07', weeklyMax: 3, targetAmount: 3, actualUsed: 1 },
+            { week: 2, weekStart: '2026-07-08', weekEnd: '2026-07-14', weeklyMax: 3, targetAmount: 3, actualUsed: 0 },
+            { week: 3, weekStart: '2026-07-15', weekEnd: '2026-07-21', weeklyMax: 2.7, targetAmount: 2.7, actualUsed: 0 },
+            { week: 4, weekStart: '2026-07-22', weekEnd: '2026-07-28', weeklyMax: 2.3, targetAmount: 2.3, actualUsed: 0 },
+            { week: 5, weekStart: '2026-07-29', weekEnd: '2026-08-04', weeklyMax: 1.5, targetAmount: 1.5, actualUsed: 0 },
+            { week: 6, weekStart: '2026-08-05', weekEnd: '2026-08-11', weeklyMax: 0.5, targetAmount: 0.5, actualUsed: 0 }
+        ]
+    });
+
+    const rt = loadRecoveryTrackerApp();
+    rt.__setTestAppData(makeData([plan]));
+    const nodes = installTaperFormDom(rt, {
+        editingPlanId: plan.id,
+        name: 'Custom coke plan',
+        reductionType: 'manual-weekly',
+        notes: 'kept weeks',
+        currentAvg: '',
+        goalAvg: '',
+        reductionAmount: '',
+        endDate: '2026-08-11'
+    });
+    nodes.get('monthly-max').value = '18';
+    nodes.get('purchase-taper-enabled').checked = true;
+    // Buying reduction DOM stubs used by collectBuyingReductionSettingsFromForm
+    [
+        ['br-reduce-amount', false],
+        ['br-reduce-spend', false],
+        ['br-weekly-buy-limit', false],
+        ['br-weekly-spend-limit', true],
+        ['br-monthly-buy-cap', false],
+        ['br-monthly-spend-cap', true],
+        ['br-manual-buy-plan', false],
+        ['br-manual-spend-plan', false],
+        ['br-auto-spend-cost-per-gram', false]
+    ].forEach(([id, checked]) => {
+        nodes.set(id, {
+            id,
+            checked,
+            value: '',
+            classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } }
+        });
+    });
+    nodes.set('purchase-weekly-spend', { id: 'purchase-weekly-spend', value: '40' });
+    nodes.set('purchase-monthly-spend', { id: 'purchase-monthly-spend', value: '150' });
+    nodes.set('manual-weekly-targets-list', { id: 'manual-weekly-targets-list', innerHTML: '' });
+    nodes.set('manual-weekly-unit', { id: 'manual-weekly-unit', value: 'g', options: [{ value: 'g' }] });
+    nodes.set('manual-weekly-baseline', { id: 'manual-weekly-baseline', value: '' });
+    nodes.set('manual-weekly-plan-section', {
+        id: 'manual-weekly-plan-section',
+        classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } },
+        insertBefore() {}
+    });
+    nodes.set('goal-avg-group', { id: 'goal-avg-group' });
+    nodes.set('taper-start-goal-row', {
+        id: 'taper-start-goal-row',
+        appendChild() {},
+        classList: { add() {}, remove() {}, toggle() {}, contains() { return false; } }
+    });
+    const amountBtn = {
+        className: 'manual-mode-btn active',
+        dataset: { mode: 'amount' },
+        classList: { toggle() {}, add() {}, remove() {}, contains: () => true }
+    };
+    rt.document.querySelector = (sel) => (sel === '.manual-mode-btn.active' ? amountBtn : null);
+    rt.document.querySelectorAll = (sel) => {
+        if (sel === '.manual-mode-btn') return [amountBtn];
+        if (sel === '.manual-week-target-input') {
+            return plan.manualWeeklyTargets.map(t => ({
+                value: String(t.targetAmount),
+                dataset: { week: String(t.week) }
+            }));
+        }
+        return [];
+    };
+
+    rt.selectedTaperPlanIdRef.value = plan.id;
+    rt.taperFormPlanIdRef.value = plan.id;
+    rt.taperEditingPlanRef.value = true;
+    rt.taperFormInitializedRef.value = true;
+
+    const ok = rt.handleTaperSubmit({ preventDefault() {} });
+    assert.equal(ok, true);
+    assert.equal(nodes.get('taper-form-status').textContent, 'Plan saved');
+    assert.match(nodes.get('taper-form-status').className, /is-success/);
+
+    const saved = rt.__getTestAppData().taperPlansV2.find(p => p.id === plan.id);
+    assert.ok(saved);
+    assert.equal(saved.id, 'taper-coke-custom');
+    assert.equal(rt.__getTestAppData().taperPlansV2.length, 1);
+    assert.equal(saved.notes, 'kept weeks');
+    assert.equal(saved.monthlyMax, 18);
+    assert.equal(saved.reductionType, 'manual-weekly');
+    assert.equal(saved.manualWeeklyTargets[2].targetAmount, 2.7);
+    assert.equal(saved.weeklyTargets.find(w => w.week === 2).targetAmount, 3);
+    assert.equal(saved.buyingReductionSettings.weeklySpendingLimit.amount, 40);
+    assert.equal(saved.buyingReductionSettings.monthlySpendingCap.amount, 150);
+    assert.equal(rt.selectedTaperPlanIdRef.value, plan.id);
+
+    const raw = rt.localStorage.getItem('recovery-tracker-v2');
+    assert.ok(raw);
+    const reloaded = JSON.parse(raw).taperPlansV2.find(p => p.id === plan.id);
+    assert.equal(reloaded.monthlyMax, 18);
+    assert.equal(reloaded.notes, 'kept weeks');
+    assert.equal(reloaded.manualWeeklyTargets[5].targetAmount, 0.5);
 });

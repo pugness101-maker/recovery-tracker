@@ -2980,6 +2980,33 @@ input[type="range"]::-webkit-slider-thumb {
     margin: 0;
 }
 
+.taper-form-status {
+    margin: 8px 0 0;
+    padding: 10px 12px;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 600;
+}
+
+.taper-form-status[hidden] {
+    display: none !important;
+}
+
+.taper-form-status.is-saving {
+    background: color-mix(in srgb, var(--accent, #2e7d32) 12%, var(--bg-secondary, #f5f5f5));
+    color: var(--text);
+}
+
+.taper-form-status.is-success {
+    background: color-mix(in srgb, #2e7d32 16%, var(--bg-secondary, #f5f5f5));
+    color: #1b5e20;
+}
+
+.taper-form-status.is-error {
+    background: color-mix(in srgb, #c62828 14%, var(--bg-secondary, #f5f5f5));
+    color: #b71c1c;
+}
+
 .taper-days-list {
     max-height: 300px;
     overflow-y: auto;
