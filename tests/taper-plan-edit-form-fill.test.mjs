@@ -423,3 +423,100 @@ test('edit values persist across storage reload', () => {
     assert.equal(reloaded.name, 'Rich coke taper');
     assert.equal(reloaded.notes, 'Keep weekends lighter');
 });
+
+function makeCustomWeeklyOnlyPlan(overrides = {}) {
+    return {
+        id: 'taper-coke-custom-weeks',
+        substanceId: COKE_ID,
+        name: 'Custom week goals',
+        status: 'active',
+        isPrimary: true,
+        reductionType: 'reduce-amount',
+        startDate: '2026-07-01',
+        endDate: '2026-07-28',
+        // Formula fields blank/zero — schedule lives only in weeklyTargets (dashboard source).
+        startingDailyAverage: null,
+        goalDailyAverage: 0,
+        reductionAmount: 0,
+        reductionPercent: null,
+        weeklyMax: null,
+        monthlyMax: null,
+        notes: '',
+        doNotSurpassDaily: true,
+        doNotSurpassWeekly: false,
+        purchaseTaperEnabled: false,
+        weeklyTargets: [
+            { week: 1, weekStart: '2026-07-01', weekEnd: '2026-07-07', weeklyMax: 7, dailyTarget: 1, actualUsed: 2 },
+            { week: 2, weekStart: '2026-07-08', weekEnd: '2026-07-14', weeklyMax: 3, dailyTarget: 3 / 7, actualUsed: 1 },
+            { week: 3, weekStart: '2026-07-15', weekEnd: '2026-07-21', weeklyMax: 2, dailyTarget: 2 / 7, actualUsed: 0 },
+            { week: 4, weekStart: '2026-07-22', weekEnd: '2026-07-28', weeklyMax: 1, dailyTarget: 1 / 7, actualUsed: 0 }
+        ],
+        createdAt: '2026-07-01T12:00:00.000Z',
+        updatedAt: '2026-07-01T12:00:00.000Z',
+        ...overrides
+    };
+}
+
+test('normalize treats week-row schedules with blank formula fields as custom weekly', () => {
+    const rt = loadRecoveryTrackerApp();
+    const plan = makeCustomWeeklyOnlyPlan();
+    // Simulate migrate inventing reductionPercent before edit fill.
+    rt.migrateTaperPlan(plan, COKE_ID, makeData([plan]));
+    assert.equal(rt.planHasCustomWeeklySchedule(plan), true);
+    const normalized = rt.normalizePlanRecordForEditForm(plan);
+    assert.equal(normalized.reductionType, 'manual-weekly');
+    const weeks = rt.extractManualWeeklyTargetsFromPlan(normalized);
+    assert.equal(weeks.length, 4);
+    assert.equal(weeks[1].targetAmount, 3);
+    assert.equal(weeks[0].targetAmount, 7);
+});
+
+test('Edit form loads custom weeklyTargets into Manual weekly editor (not blank formula fields)', () => {
+    const plan = makeCustomWeeklyOnlyPlan();
+    const rt = loadRecoveryTrackerApp();
+    rt.__setTestAppData(makeData([plan]));
+    const nodes = installEditFormDom(rt);
+    rt.selectedTaperPlanIdRef.value = plan.id;
+    rt.taperFormPlanIdRef.value = plan.id;
+    rt.taperEditingPlanRef.value = true;
+
+    // editTaperPlanById migrates then fills — reproduce that order.
+    rt.migrateTaperPlan(plan, COKE_ID, rt.__getTestAppData());
+    rt.fillTaperFormFromPlan(plan);
+
+    assert.equal(nodes.get('reduction-type').value, 'manual-weekly');
+    const listHtml = nodes.get('manual-weekly-targets-list').innerHTML || '';
+    assert.match(listHtml, /data-week="2"[^>]*value="3"|value="3"[^>]*data-week="2"/);
+    assert.match(listHtml, /Week 2 Goal/);
+});
+
+test('saving custom weekly edit preserves week 2 target and progress', () => {
+    const plan = makeCustomWeeklyOnlyPlan();
+    const rt = loadRecoveryTrackerApp();
+    rt.__setTestAppData(makeData([plan]));
+    const nodes = installEditFormDom(rt);
+    rt.selectedTaperPlanIdRef.value = plan.id;
+    rt.taperFormPlanIdRef.value = plan.id;
+    rt.taperEditingPlanRef.value = true;
+    nodes.get('taper-editing-plan-id').value = plan.id;
+
+    rt.migrateTaperPlan(plan, COKE_ID, rt.__getTestAppData());
+    rt.fillTaperFormFromPlan(plan);
+    nodes.get('taper-notes').value = 'Keep custom weeks';
+    rt.taperFormDirtyRef.value = true;
+    rt.taperFormInitializedRef.value = true;
+
+    rt.handleTaperSubmit({ preventDefault() {} });
+
+    const saved = rt.__getTestAppData().taperPlansV2.find(p => p.id === plan.id);
+    assert.ok(saved);
+    assert.equal(saved.reductionType, 'manual-weekly');
+    assert.equal(saved.notes, 'Keep custom weeks');
+    const week2 = (saved.weeklyTargets || []).find(w => w.week === 2);
+    assert.ok(week2);
+    assert.equal(week2.weeklyMax, 3);
+    assert.equal(week2.targetAmount, 3);
+    const manualWeek2 = (saved.manualWeeklyTargets || []).find(w => w.week === 2);
+    assert.ok(manualWeek2);
+    assert.equal(manualWeek2.targetAmount, 3);
+});

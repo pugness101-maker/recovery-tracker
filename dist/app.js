@@ -47476,7 +47476,10 @@ function migrateTaperPlan(plan, substanceId, data) {
             const weeks = Math.max(1, countWeeksBetween(plan.startDate, plan.endDate));
             plan.reductionAmount = roundTaperValue((startVal - plan.goalDailyAverage) / weeks);
         }
-        if (plan.reductionPercent == null) plan.reductionPercent = 10;
+        // Only invent a percent default for percent plans — never for amount/fixed/custom weeks.
+        if (plan.reductionPercent == null && plan.reductionType === 'reduce-percent') {
+            plan.reductionPercent = 10;
+        }
     }
 
     if (!plan.reductionType) {
@@ -47539,7 +47542,10 @@ function migrateTaperPlan(plan, substanceId, data) {
                 };
             });
         }
-        plan.weeklyTargets = buildWeeklyTargetsFromManual(plan);
+        plan.weeklyTargets = mergeWeeklyTargetsPreservingProgress(
+            plan.weeklyTargets,
+            buildWeeklyTargetsFromManual(plan)
+        );
         if (!plan.endDate || plan.endDate < plan.startDate) {
             plan.endDate = computeManualPlanEndDate(plan);
         }
@@ -48064,6 +48070,14 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
             ? getManualWeeklyBaselineFromForm()
             : null;
         plan.manualWeeklyTargets = collectManualWeeklyTargetsFromForm();
+        // Preserve saved week goals if the editor DOM was empty (e.g. fill raced / test harness).
+        const hasPositiveManual = (plan.manualWeeklyTargets || []).some(t =>
+            (parseFloat(t?.targetAmount) || 0) > 0 || (parseFloat(t?.targetPercent) || 0) > 0
+        );
+        if (!hasPositiveManual && existingPlan) {
+            const fallback = extractManualWeeklyTargetsFromPlan(existingPlan);
+            if (fallback.length) plan.manualWeeklyTargets = fallback;
+        }
         plan.endDate = plan.endDate || computeManualPlanEndDate(plan);
     }
 
@@ -48830,14 +48844,122 @@ function formatTaperFormNumber(value) {
     return String(n);
 }
 
-function resolvePlanWeeklyMaxForForm(plan) {
-    if (plan?.weeklyMax != null && plan.weeklyMax !== '') return plan.weeklyMax;
+function isBlankOrZeroTaperNumber(value) {
+    if (value == null || value === '') return true;
+    const n = typeof value === 'number' ? value : parseFloat(value);
+    return !Number.isFinite(n) || n === 0;
+}
+
+function getWeekRowTargetAmount(row) {
+    if (!row || typeof row !== 'object') return null;
+    if (row.targetAmount != null && row.targetAmount !== '') {
+        const n = parseFloat(row.targetAmount);
+        return Number.isFinite(n) ? n : null;
+    }
+    if (row.weeklyMax != null && row.weeklyMax !== '') {
+        const n = parseFloat(row.weeklyMax);
+        return Number.isFinite(n) ? n : null;
+    }
+    if (row.dailyTarget != null && row.dailyTarget !== '') {
+        const n = parseFloat(row.dailyTarget);
+        return Number.isFinite(n) ? roundTaperValue(n * 7) : null;
+    }
+    return null;
+}
+
+function getWeekRowDailyTarget(row) {
+    if (!row || typeof row !== 'object') return null;
+    if (row.dailyTarget != null && row.dailyTarget !== '') {
+        const n = parseFloat(row.dailyTarget);
+        return Number.isFinite(n) ? n : null;
+    }
+    const weekly = getWeekRowTargetAmount(row);
+    return weekly != null ? roundTaperValue(weekly / 7) : null;
+}
+
+/** Rebuild manual week rows from saved weeklyTargets / manualWeeklyTargets. */
+function extractManualWeeklyTargetsFromPlan(plan) {
+    if (!plan) return [];
+    if (Array.isArray(plan.manualWeeklyTargets) && plan.manualWeeklyTargets.length) {
+        return plan.manualWeeklyTargets.map((entry, index) => {
+            const week = entry?.week ?? index + 1;
+            const targetAmount = entry?.targetAmount != null && entry.targetAmount !== ''
+                ? parseFloat(entry.targetAmount)
+                : getWeekRowTargetAmount(entry);
+            const targetPercent = entry?.targetPercent != null && entry.targetPercent !== ''
+                ? parseFloat(entry.targetPercent)
+                : null;
+            return {
+                week,
+                targetAmount: Number.isFinite(targetAmount) ? targetAmount : null,
+                targetPercent: Number.isFinite(targetPercent) ? targetPercent : null
+            };
+        });
+    }
+    const rows = Array.isArray(plan.weeklyTargets) ? plan.weeklyTargets : [];
+    return rows.map((row, index) => ({
+        week: row?.week ?? index + 1,
+        targetAmount: getWeekRowTargetAmount(row),
+        targetPercent: row?.targetPercent != null && row.targetPercent !== ''
+            ? parseFloat(row.targetPercent)
+            : null
+    })).filter(entry => entry.targetAmount != null || entry.targetPercent != null);
+}
+
+function planHasCustomWeeklySchedule(plan) {
+    if (!plan) return false;
+    if (isManualWeeklyPlan(plan)) return true;
+    if (Array.isArray(plan.manualWeeklyTargets) && plan.manualWeeklyTargets.length) return true;
+    const rows = Array.isArray(plan.weeklyTargets) ? plan.weeklyTargets : [];
+    const hasPositiveWeeks = rows.some(row => {
+        const amount = getWeekRowTargetAmount(row);
+        return amount != null && amount > 0;
+    });
+    if (!hasPositiveWeeks) return false;
+    // Week rows carry the schedule when formula inputs are blank/zero.
+    // Ignore reductionPercent here: migrateTaperPlan invents 10 when null, which
+    // would incorrectly hide custom weeklyTargets from the Edit form.
+    const hasStarting = !isBlankOrZeroTaperNumber(plan.startingDailyAverage ?? plan.currentAvg);
+    const hasAmountStep = !isBlankOrZeroTaperNumber(plan.reductionAmount);
+    const hasPercentStep = plan.reductionType === 'reduce-percent'
+        && !isBlankOrZeroTaperNumber(plan.reductionPercent);
+    if (hasStarting || hasAmountStep || hasPercentStep) return false;
+    return isBlankOrZeroTaperNumber(plan.goalDailyAverage ?? plan.goalAvg);
+}
+
+function deriveFormulaFieldsFromWeeklyTargets(plan) {
     const rows = Array.isArray(plan?.weeklyTargets) ? plan.weeklyTargets : [];
-    if (!rows.length) return null;
+    if (!rows.length) return {};
+    const firstDaily = getWeekRowDailyTarget(rows[0]);
+    const lastDaily = getWeekRowDailyTarget(rows[rows.length - 1]);
+    let reductionAmount = null;
+    if (rows.length >= 2) {
+        const d0 = getWeekRowDailyTarget(rows[0]);
+        const d1 = getWeekRowDailyTarget(rows[1]);
+        if (d0 != null && d1 != null) {
+            reductionAmount = roundTaperValue(Math.max(0, d0 - d1));
+        }
+    } else if (firstDaily != null && lastDaily != null && rows.length > 1) {
+        reductionAmount = roundTaperValue(Math.max(0, (firstDaily - lastDaily) / Math.max(1, rows.length - 1)));
+    }
+    return {
+        startingDailyAverage: firstDaily,
+        goalDailyAverage: lastDaily,
+        reductionAmount,
+        weeklyMax: getWeekRowTargetAmount(rows[0])
+    };
+}
+
+function resolvePlanWeeklyMaxForForm(plan) {
+    if (plan?.weeklyMax != null && plan.weeklyMax !== '' && Number(plan.weeklyMax) !== 0) {
+        return plan.weeklyMax;
+    }
+    const rows = Array.isArray(plan?.weeklyTargets) ? plan.weeklyTargets : [];
+    if (!rows.length) return plan?.weeklyMax ?? null;
     const today = getLocalDateString();
     const current = rows.find(r => r?.weekStart && r?.weekEnd && today >= r.weekStart && today <= r.weekEnd)
         || rows[0];
-    return current?.weeklyMax ?? current?.targetAmount ?? null;
+    return getWeekRowTargetAmount(current) ?? plan?.weeklyMax ?? null;
 }
 
 function resolvePlanMonthlyMaxForForm(plan) {
@@ -48847,8 +48969,8 @@ function resolvePlanMonthlyMaxForForm(plan) {
 }
 
 /**
- * Normalize legacy aliases onto a plan copy used only for form population.
- * Does not mutate stored weekly progress; migrateTaperPlan may still update the live plan.
+ * Normalize legacy aliases + custom weeklyTargets onto a plan copy used for form population.
+ * Dashboard progress reads weeklyTargets; Edit must show the same schedule.
  */
 function normalizePlanRecordForEditForm(plan) {
     if (!plan || typeof plan !== 'object') return plan;
@@ -48865,13 +48987,47 @@ function normalizePlanRecordForEditForm(plan) {
     if (normalized.doNotSurpassDaily == null && normalized.warnBeforeSurpass != null) {
         normalized.doNotSurpassDaily = !!normalized.warnBeforeSurpass;
     }
-    if (normalized.weeklyMax == null) {
-        normalized.weeklyMax = resolvePlanWeeklyMaxForForm(normalized);
+
+    const manualTargets = extractManualWeeklyTargetsFromPlan(normalized);
+    const customWeekly = planHasCustomWeeklySchedule(normalized);
+
+    // Custom week-by-week schedules belong in the Manual weekly editor, not blank formula fields.
+    if (customWeekly) {
+        normalized.reductionType = 'manual-weekly';
+        normalized.manualWeeklyMode = normalized.manualWeeklyMode === 'percent' ? 'percent' : 'amount';
+        if (manualTargets.length) normalized.manualWeeklyTargets = manualTargets;
+        if (normalized.manualWeeklyMode === 'percent'
+            && isBlankOrZeroTaperNumber(normalized.manualWeeklyBaseline)
+            && manualTargets[0]?.targetAmount != null
+            && manualTargets[0]?.targetPercent > 0) {
+            normalized.manualWeeklyBaseline = roundTaperValue(
+                manualTargets[0].targetAmount / (manualTargets[0].targetPercent / 100)
+            );
+        }
+    } else if (manualTargets.length && isManualWeeklyPlan(normalized)) {
+        normalized.manualWeeklyTargets = manualTargets;
+    }
+
+    const derived = deriveFormulaFieldsFromWeeklyTargets(normalized);
+    if (isBlankOrZeroTaperNumber(normalized.startingDailyAverage) && derived.startingDailyAverage != null) {
+        normalized.startingDailyAverage = derived.startingDailyAverage;
+    }
+    if (isBlankOrZeroTaperNumber(normalized.goalDailyAverage) && derived.goalDailyAverage != null) {
+        normalized.goalDailyAverage = derived.goalDailyAverage;
+    }
+    if (isBlankOrZeroTaperNumber(normalized.reductionAmount)
+        && normalized.reductionType === 'reduce-amount'
+        && derived.reductionAmount != null) {
+        normalized.reductionAmount = derived.reductionAmount;
+    }
+    if (isBlankOrZeroTaperNumber(normalized.weeklyMax)) {
+        normalized.weeklyMax = resolvePlanWeeklyMaxForForm(normalized) ?? derived.weeklyMax ?? null;
     }
     if (normalized.monthlyMax == null) {
         normalized.monthlyMax = resolvePlanMonthlyMaxForForm(normalized);
     }
-    if (normalized.reductionAmount == null && normalized.reductionType === 'reduce-amount') {
+    if (isBlankOrZeroTaperNumber(normalized.reductionAmount)
+        && normalized.reductionType === 'reduce-amount') {
         const startVal = normalized.startingDailyAverage ?? 0;
         const goalVal = normalized.goalDailyAverage ?? 0;
         if (startVal > goalVal && normalized.startDate && normalized.endDate) {
@@ -49047,11 +49203,12 @@ function fillTaperFormFromPlan(plan) {
     }
     if (weeklyEl) weeklyEl.checked = !!normalized.doNotSurpassWeekly;
 
-    if (isManualWeeklyPlan(normalized)) {
+    if (isManualWeeklyPlan(normalized) || (normalized.manualWeeklyTargets || []).length) {
         populateManualWeeklyUnitSelect(substanceId, normalized.manualWeeklyUnit);
         setManualWeeklyMode(normalized.manualWeeklyMode || 'amount', { skipRender: true });
         setInputValue('manual-weekly-baseline', formatTaperFormNumber(normalized.manualWeeklyBaseline));
-        renderManualWeeklyTargetsEditor(normalized.manualWeeklyTargets || []);
+        const weekTargets = extractManualWeeklyTargetsFromPlan(normalized);
+        renderManualWeeklyTargetsEditor(weekTargets.length ? weekTargets : (normalized.manualWeeklyTargets || []));
     }
 
     const purchaseEnabledEl = document.getElementById('purchase-taper-enabled');
@@ -49990,10 +50147,18 @@ function handleTaperSubmit(e) {
 
     if (reductionType === 'manual-weekly') {
         const mode = getManualWeeklyModeFromForm();
-        const targets = collectManualWeeklyTargetsFromForm();
+        let targets = collectManualWeeklyTargetsFromForm();
+        const hasPositive = targets.some(t =>
+            (parseFloat(t?.targetAmount) || 0) > 0 || (parseFloat(t?.targetPercent) || 0) > 0
+        );
+        if (!hasPositive && existingPlan) {
+            targets = extractManualWeeklyTargetsFromPlan(existingPlan);
+        }
         if (!targets.length) return alert('Add at least one weekly target.');
         if (mode === 'percent') {
-            const baseline = getManualWeeklyBaselineFromForm();
+            const baseline = getManualWeeklyBaselineFromForm()
+                ?? existingPlan?.manualWeeklyBaseline
+                ?? null;
             if (baseline == null || baseline <= 0) {
                 return alert('Enter a baseline amount for percentage mode.');
             }
@@ -53377,6 +53542,9 @@ function __getRecoveryTrackerTestExports() {
         normalizePlanRecordForEditForm,
         formatTaperFormNumber,
         resolvePlanWeeklyMaxForForm,
+        extractManualWeeklyTargetsFromPlan,
+        planHasCustomWeeklySchedule,
+        deriveFormulaFieldsFromWeeklyTargets,
         applyBuiltTaperPlanToExisting,
         getTaperFormWritableFields,
         getTaperFormSnapshot,
