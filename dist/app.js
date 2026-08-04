@@ -16474,16 +16474,18 @@ function showTaperWorkspace() {
     const overview = document.getElementById('gp-overview');
     if (overview) {
         overview.hidden = true;
-        overview.classList.remove('active');
+        overview.classList?.remove?.('active');
     }
     if (records) {
         records.hidden = true;
-        records.classList.remove('active');
+        records.classList?.remove?.('active');
     }
     if (ws) {
         ws.hidden = false;
-        ws.classList.add('active');
-        try { ws.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (_) { /* ignore */ }
+        if (typeof ws.removeAttribute === 'function') ws.removeAttribute('hidden');
+        ws.classList?.add?.('active');
+        ws.classList?.remove?.('hidden');
+        try { ws.scrollIntoView?.({ behavior: 'smooth', block: 'start' }); } catch (_) { /* ignore */ }
     }
 }
 
@@ -16492,9 +16494,20 @@ function hideTaperWorkspace() {
     const ws = document.getElementById('taper-tab');
     if (ws) {
         ws.hidden = true;
-        ws.classList.remove('active');
+        if (typeof ws.setAttribute === 'function') ws.setAttribute('hidden', '');
+        ws.classList?.remove?.('active');
     }
-    document.getElementById('taper-setup')?.classList.add('hidden');
+    document.getElementById('taper-setup')?.classList?.add?.('hidden');
+}
+
+function ensureTaperSetupVisible() {
+    showTaperWorkspace();
+    const setup = document.getElementById('taper-setup');
+    setup?.classList.remove('hidden');
+    document.getElementById('taper-dashboard')?.classList.add('hidden');
+    document.getElementById('taper-no-plan')?.classList.add('hidden');
+    document.getElementById('taper-disabled-msg')?.classList.add('hidden');
+    document.getElementById('taper-cancel-edit-btn')?.classList.remove('hidden');
 }
 
 function goalsLinkedToPlan() { return []; }
@@ -16809,23 +16822,34 @@ function openUnifiedNewTaper() {
     const prefs = ensureCombinedNavPrefs();
     const current = prefs.goalsPlansView || 'overview';
     const stay = current === 'overview' || current === 'active' || current === 'templates' ? current : 'active';
-    setGoalsPlansView(stay, { persist: true, skipRoute: false });
+    // Keep the editor mount alive while syncing the subnav — hideTaperWorkspace would blank the page.
+    setGoalsPlansView(stay, { persist: true, skipRoute: false, keepTaperEditor: true });
     showTaperWorkspace();
-    if (typeof showNewTaperPlan === 'function') showNewTaperPlan();
-    document.getElementById('taper-setup')?.classList.remove('hidden');
+    const opened = typeof showNewTaperPlan === 'function' ? showNewTaperPlan() : false;
+    if (opened === false) {
+        hideTaperWorkspace();
+        setGoalsPlansView(stay, { persist: true, skipRoute: true });
+        return;
+    }
+    ensureTaperSetupVisible();
 }
 
 function openUnifiedTaperRecord(planId) {
-    setGoalsPlansView('active', { persist: true });
+    setGoalsPlansView('active', { persist: true, keepTaperEditor: true });
     showTaperWorkspace();
     if (typeof openTaperPlanFromManage === 'function') openTaperPlanFromManage(planId);
 }
 
 function editUnifiedTaperRecord(planId) {
-    setGoalsPlansView('active', { persist: true });
+    setGoalsPlansView('active', { persist: true, keepTaperEditor: true });
     showTaperWorkspace();
-    if (typeof editTaperPlanById === 'function') editTaperPlanById(planId);
-    document.getElementById('taper-setup')?.classList.remove('hidden');
+    const opened = typeof editTaperPlanById === 'function' ? editTaperPlanById(planId) : false;
+    if (opened === false) {
+        hideTaperWorkspace();
+        setGoalsPlansView('active', { persist: true, skipRoute: true });
+        return;
+    }
+    ensureTaperSetupVisible();
 }
 
 function duplicateUnifiedTaperRecord(planId) {
@@ -16970,7 +16994,7 @@ function setGoalsPlansView(view, options = {}) {
 
     syncCombinedSubnav('gp-subnav', 'gp-subnav-select', 'data-gp-view', next);
     setCombinedSubviewVisibility('#goals-plans-tab', 'data-gp-view', next);
-    hideTaperWorkspace();
+    if (!options.keepTaperEditor) hideTaperWorkspace();
 
     if (next === 'overview') {
         const root = document.getElementById('gp-overview-root');
@@ -53125,7 +53149,7 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
 /** Fields the edit form is allowed to write for a given reduction type. */
 function getTaperFormWritableFields(reductionType) {
     const shared = [
-        'name', 'reductionType', 'startDate', 'endDate', 'notes', 'taperNotes',
+        'name', 'reductionType', 'startDate', 'endDate', 'notes', 'taperNotes', 'priority',
         'updatedAt', 'purchaseTaperEnabled', 'buyingReductionSettings', '_buyingReductionMigrated',
         'purchaseReductionMode', 'purchaseWeeklyAmountTarget', 'purchaseWeeklySpendTarget',
         'purchaseMonthlyAmountCap', 'purchaseMonthlySpendCap', 'purchaseStartingWeeklyAmount',
@@ -53210,7 +53234,6 @@ function getTaperPlanScheduleSignature(plan) {
  */
 function applyBuiltTaperPlanToExisting(existingPlan, built) {
     if (!existingPlan || !built) return existingPlan;
-    const preservedStatus = getTaperPlanStatus(existingPlan);
     const preservedPrimary = !!existingPlan.isPrimary;
     const preservedCreatedAt = existingPlan.createdAt;
     const preservedId = existingPlan.id;
@@ -53223,12 +53246,18 @@ function applyBuiltTaperPlanToExisting(existingPlan, built) {
     existingPlan.id = preservedId || built.id;
     existingPlan.createdAt = preservedCreatedAt || built.createdAt;
     existingPlan.substanceId = existingPlan.substanceId || built.substanceId;
-    existingPlan.status = preservedStatus;
-    existingPlan.isPaused = preservedStatus === 'paused';
+    // Honor status chosen in the edit form when present; otherwise keep prior lifecycle status.
+    const nextStatus = built.status || getTaperPlanStatus(existingPlan);
+    if (typeof setTaperPlanStatus === 'function') setTaperPlanStatus(existingPlan, nextStatus);
+    else {
+        existingPlan.status = nextStatus;
+        existingPlan.isPaused = nextStatus === 'paused';
+    }
     existingPlan.isPrimary = preservedPrimary;
     existingPlan.updatedAt = built.updatedAt || new Date().toISOString();
     existingPlan.notes = built.notes ?? existingPlan.notes;
     existingPlan.taperNotes = existingPlan.notes;
+    if (built.priority) existingPlan.priority = built.priority;
     return existingPlan;
 }
 
@@ -53467,6 +53496,7 @@ function markTaperSuggestFieldTouched(fieldId) {
 function bindTaperSuggestTracking() {
     const form = typeof document !== 'undefined' ? document.getElementById('taper-form') : null;
     if (!form || taperSuggestTrackingBound) return;
+    if (typeof form.addEventListener !== 'function') return;
     taperSuggestTrackingBound = true;
     const onChange = (e) => {
         const id = e?.target?.id;
@@ -53764,15 +53794,21 @@ function applyTaperSpendSuggestion(percent) {
         purchaseEnabled.checked = true;
         if (typeof togglePurchaseTaperFields === 'function') togglePurchaseTaperFields();
     }
+    const reduceSpend = document.getElementById('br-reduce-spend');
+    if (reduceSpend) reduceSpend.checked = true;
     const weeklyLimit = document.getElementById('br-weekly-spend-limit');
     if (weeklyLimit) weeklyLimit.checked = true;
     const monthlyCap = document.getElementById('br-monthly-spend-cap');
     if (monthlyCap && monthly != null) monthlyCap.checked = true;
     if (typeof togglePurchaseTaperFields === 'function') togglePurchaseTaperFields();
-    const weeklyInput = document.getElementById('br-weekly-spend-amount') || document.getElementById('vape-weekly-spend-cap');
-    if (weeklyInput) weeklyInput.value = String(weekly);
-    const monthlyInput = document.getElementById('br-monthly-spend-amount') || document.getElementById('nicotine-vape-monthly-spend-cap');
-    if (monthlyInput && monthly != null) monthlyInput.value = String(monthly);
+    setInputValue('purchase-start-spend', metrics.spendPerWeek);
+    setInputValue('purchase-goal-spend', weekly);
+    setInputValue('purchase-weekly-spend', weekly);
+    if (monthly != null) setInputValue('purchase-monthly-spend', monthly);
+    const weeklyCap = document.getElementById('vape-weekly-spend-cap');
+    if (weeklyCap) weeklyCap.value = String(weekly);
+    const monthlyCapInput = document.getElementById('nicotine-vape-monthly-spend-cap');
+    if (monthlyCapInput && monthly != null) monthlyCapInput.value = String(monthly);
     refreshTaperSuggestions({ autoFill: false });
 }
 
@@ -54021,40 +54057,46 @@ function refreshTaperSuggestions(options = {}) {
 }
 
 function showNewTaperPlan() {
-    if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return;
+    if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return false;
     taperFormPlanId = null;
     taperEditingPlan = true;
     resetTaperFormLifecycleState();
     setInputValue('taper-editing-plan-id', '');
     setText('taper-setup-title', 'Create Taper Plan');
     setText('taper-generate-btn', 'Save Plan');
-    document.getElementById('taper-dashboard')?.classList.add('hidden');
-    document.getElementById('taper-no-plan')?.classList.add('hidden');
-    document.getElementById('taper-setup')?.classList.remove('hidden');
-    document.getElementById('taper-cancel-edit-btn')?.classList.remove('hidden');
-    const substanceId = getTaperSubstanceId();
-    populateTaperReductionTypeSelect(substanceId);
-    setInputValue('taper-plan-name', getDefaultTaperPlanName(substanceId));
-    const setPrimaryEl = document.getElementById('taper-set-primary');
-    if (setPrimaryEl) {
-        setPrimaryEl.checked = !getTaperPlansForSubstance(substanceId).some(p => p.isPrimary && p.status === 'active');
+    ensureTaperSetupVisible();
+    try {
+        const substanceId = getTaperSubstanceId();
+        populateTaperReductionTypeSelect(substanceId);
+        setInputValue('taper-plan-name', getDefaultTaperPlanName(substanceId));
+        const setPrimaryEl = document.getElementById('taper-set-primary');
+        if (setPrimaryEl) {
+            setPrimaryEl.checked = !getTaperPlansForSubstance(substanceId).some(p => p.isPrimary && p.status === 'active');
+        }
+        setDefaultTaperEndDate();
+        resetTaperSuggestTouchState();
+        toggleTaperPlanTypeFields({ skipPrefill: false });
+        prefillVapeTaperDefaults(substanceId);
+        bindTaperFormDirtyTracking();
+        bindTaperSuggestTracking();
+        const purchaseEnabledEl = document.getElementById('purchase-taper-enabled');
+        if (purchaseEnabledEl) purchaseEnabledEl.checked = false;
+        setInputValue('purchase-reduction-mode', 'weekly_spend');
+        setInputValue('taper-priority', 'normal');
+        setInputValue('taper-status', 'active');
+        togglePurchaseTaperFields();
+        try {
+            if (typeof refreshTaperSuggestions === 'function') {
+                refreshTaperSuggestions({ autoFill: true, forceRender: true });
+            }
+        } catch (err) {
+            console.warn('[taper-suggest] refresh failed during create', err);
+        }
+    } finally {
+        markTaperFormClean();
+        ensureTaperSetupVisible();
     }
-    setDefaultTaperEndDate();
-    resetTaperSuggestTouchState();
-    toggleTaperPlanTypeFields({ skipPrefill: false });
-    prefillVapeTaperDefaults(substanceId);
-    bindTaperFormDirtyTracking();
-    bindTaperSuggestTracking();
-    markTaperFormClean();
-    const purchaseEnabledEl = document.getElementById('purchase-taper-enabled');
-    if (purchaseEnabledEl) purchaseEnabledEl.checked = false;
-    setInputValue('purchase-reduction-mode', 'weekly_spend');
-    setInputValue('taper-priority', 'normal');
-    setInputValue('taper-status', 'active');
-    togglePurchaseTaperFields();
-    if (typeof refreshTaperSuggestions === 'function') {
-        refreshTaperSuggestions({ autoFill: true, forceRender: true });
-    }
+    return true;
 }
 
 function duplicateSelectedTaperPlan() {
@@ -54211,14 +54253,14 @@ function openTaperPlanFromManage(planId) {
 
 function editTaperPlanById(planId) {
     const plan = getTaperPlanById(planId);
-    if (!plan) return;
-    if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return;
+    if (!plan) return false;
+    if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return false;
     selectedTaperPlanId = planId;
     taperFormPlanId = planId;
     taperEditingPlan = true;
     resetTaperFormLifecycleState();
     // Backup before normalizing/migrating plan data for edit.
-    createAutoBackup('before-taper-plan-edit');
+    try { createAutoBackup('before-taper-plan-edit'); } catch (_) { /* soft */ }
     migrateTaperPlan(plan, plan.substanceId, appData);
     // Keep substance selector aligned with the plan without firing change handlers
     // that would clear taperFormPlanId / selectedTaperPlanId.
@@ -54230,14 +54272,16 @@ function editTaperPlanById(planId) {
         setSelectedSubstanceId(plan.substanceId, { source: 'taper', refresh: false });
     }
     setInputValue('taper-editing-plan-id', planId);
-    fillTaperFormFromPlan(plan);
-    setText('taper-setup-title', 'Edit Taper Plan');
-    setText('taper-generate-btn', 'Save Changes');
-    document.getElementById('taper-cancel-edit-btn')?.classList.remove('hidden');
-    closeManageTaperPlansModal();
-    document.getElementById('taper-dashboard')?.classList.add('hidden');
-    document.getElementById('taper-no-plan')?.classList.add('hidden');
-    document.getElementById('taper-setup')?.classList.remove('hidden');
+    try {
+        fillTaperFormFromPlan(plan);
+        setText('taper-setup-title', 'Edit Taper Plan');
+        setText('taper-generate-btn', 'Save Changes');
+        closeManageTaperPlansModal();
+    } finally {
+        markTaperFormClean();
+        ensureTaperSetupVisible();
+    }
+    return true;
 }
 
 function pauseTaperPlanById(planId) {
@@ -54466,11 +54510,15 @@ function toggleTaperPlanTypeFields(options = {}) {
     }
     if (!options.skipPurchaseToggle) togglePurchaseTaperFields();
     if (taperFormInitialized) markTaperFormDirtyFromUi();
-    if (typeof refreshTaperSuggestions === 'function') {
-        refreshTaperSuggestions({
-            autoFill: !options.skipPrefill && !taperFormPlanId && isTaperAutoSuggestEnabled(),
-            forceRender: true
-        });
+    try {
+        if (typeof refreshTaperSuggestions === 'function') {
+            refreshTaperSuggestions({
+                autoFill: !options.skipPrefill && !taperFormPlanId && isTaperAutoSuggestEnabled(),
+                forceRender: true
+            });
+        }
+    } catch (err) {
+        console.warn('[taper-suggest] refresh failed during plan-type toggle', err);
     }
 }
 
@@ -54744,12 +54792,14 @@ function confirmDiscardTaperFormChanges() {
 
 function bindTaperFormDirtyTracking() {
     const form = document.getElementById('taper-form');
-    if (!form || form.dataset.dirtyBound === '1') return;
+    if (!form || form.dataset?.dirtyBound === '1') return;
+    if (typeof form.addEventListener !== 'function') return;
+    if (!form.dataset) form.dataset = {};
     form.dataset.dirtyBound = '1';
     const onChange = () => markTaperFormDirtyFromUi();
     form.addEventListener('input', onChange);
     form.addEventListener('change', onChange);
-    if (!taperFormBeforeUnloadBound && typeof window !== 'undefined') {
+    if (!taperFormBeforeUnloadBound && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
         taperFormBeforeUnloadBound = true;
         window.addEventListener('beforeunload', (e) => {
             if (!taperEditingPlan || !taperFormDirty) return;
@@ -54881,8 +54931,12 @@ function fillTaperFormFromPlan(plan) {
     togglePurchaseTaperFields();
     markTaperFormClean();
     resetTaperSuggestTouchState();
-    if (typeof refreshTaperSuggestions === 'function') {
-        refreshTaperSuggestions({ autoFill: false, forceRender: true, substanceId });
+    try {
+        if (typeof refreshTaperSuggestions === 'function') {
+            refreshTaperSuggestions({ autoFill: false, forceRender: true, substanceId });
+        }
+    } catch (err) {
+        console.warn('[taper-suggest] refresh failed during edit fill', err);
     }
 }
 
@@ -56027,7 +56081,10 @@ function handleTaperSubmit(e) {
             selectedTaperPlanId = preservedId;
         } else {
             built.id = generateUniqueId('taper');
-            built.status = 'active';
+            // New tapers are Active by default; honor explicit draft/paused from the form.
+            const formStatus = document.getElementById('taper-status')?.value;
+            built.status = (formStatus === 'draft' || formStatus === 'paused') ? formStatus : 'active';
+            built.isPaused = built.status === 'paused';
             const hasPrimary = getTaperPlansForSubstance(substanceId).some(p => p.isPrimary && p.status === 'active');
             built.isPrimary = setPrimary || !hasPrimary;
             appData.taperPlansV2.push(built);
@@ -59844,11 +59901,19 @@ function __getRecoveryTrackerTestExports() {
         GOAL_LIFECYCLE,
         TAPER_TEMPLATES,
         openUnifiedNewTaper,
+        editUnifiedTaperRecord,
+        openUnifiedTaperRecord,
         showTaperWorkspace,
         hideTaperWorkspace,
+        ensureTaperSetupVisible,
         tapersRootEl,
         renderGoalsPlansRecordsView,
         applyTaperTemplate,
+        showNewTaperPlan,
+        editTaperPlanById,
+        handleTaperSubmit,
+        buildTaperPlanFromForm,
+        applyBuiltTaperPlanToExisting,
         ensureTaperSuggestPrefs,
         isTaperAutoSuggestEnabled,
         setTaperAutoSuggestEnabled,

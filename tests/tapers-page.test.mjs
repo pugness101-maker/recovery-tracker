@@ -40,6 +40,9 @@ function el(id, props = {}) {
         querySelector() { return null; },
         querySelectorAll() { return []; },
         setAttribute() {},
+        removeAttribute(name) {
+            if (name === 'hidden') this.hidden = false;
+        },
         getAttribute(name) {
             if (name === 'data-gp-view') return this.dataset.gpView || '';
             return null;

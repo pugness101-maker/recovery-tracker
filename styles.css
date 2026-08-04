@@ -3007,6 +3007,15 @@ input[type="range"]::-webkit-slider-thumb {
     font-size: 0.92rem;
 }
 
+.taper-workspace:not([hidden]) {
+    display: block;
+}
+
+#taper-tab[hidden],
+#taper-tab.hidden {
+    display: none !important;
+}
+
 .taper-setup,
 .taper-plan,
 .today-target,
