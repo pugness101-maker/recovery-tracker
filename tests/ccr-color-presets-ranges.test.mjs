@@ -138,6 +138,50 @@ test('adjacent non-overlapping ranges are not conflicts; overlapping ranges are'
     assert.match(conflicts.gi[0].message, /value 1/);
 });
 
+test('range relationship distinguishes no overlap, boundary touch, and overlap', () => {
+    const rt = setupClean();
+    const base = {
+        metric: 'useAmount',
+        sectionScope: ['dashboard'],
+        substanceScope: 'all',
+        colors: { background: '#4caf50', text: '#fff', border: '#4caf50' }
+    };
+    const a = rt.normalizeConditionalColorRule({ ...base, id: 'a', name: '0-1', operator: 'between', rangeBoundary: 'inclusiveExclusive', value: 0, valueTo: 1 });
+    const b = rt.normalizeConditionalColorRule({ ...base, id: 'b', name: '1-2', operator: 'between', rangeBoundary: 'inclusiveExclusive', value: 1, valueTo: 2 });
+    const c = rt.normalizeConditionalColorRule({ ...base, id: 'c', name: '3-4', operator: 'between', rangeBoundary: 'inclusiveExclusive', value: 3, valueTo: 4 });
+    const d = rt.normalizeConditionalColorRule({ ...base, id: 'd', name: '1 inclusive', operator: 'between', rangeBoundary: 'inclusive', value: 0, valueTo: 1 });
+    const e = rt.normalizeConditionalColorRule({ ...base, id: 'e', name: '1 inclusive 2', operator: 'between', rangeBoundary: 'inclusive', value: 1, valueTo: 2 });
+
+    assert.equal(rt.getCcrRangeRelationship(rt.ccrNumericRange(a), rt.ccrNumericRange(b)).state, 'touch');
+    assert.equal(rt.getCcrRangeRelationship(rt.ccrNumericRange(a), rt.ccrNumericRange(c)).state, 'none');
+    assert.equal(rt.getCcrRangeRelationship(rt.ccrNumericRange(d), rt.ccrNumericRange(e)).state, 'overlap');
+    assert.equal(rt.summarizeCcrRuleRelationship(a, [a, b]).label, 'Touches boundary');
+});
+
+test('range generator creates five accessible range rules', () => {
+    const rt = setupClean();
+    const rules = rt.buildCcrGeneratedRangeRulesFromDraft({
+        name: 'Use amount',
+        metric: 'useAmount',
+        operator: 'between',
+        value: 0,
+        valueTo: 1,
+        sectionScope: ['dashboard'],
+        substanceScope: 'all',
+        visualTarget: 'value',
+        priority: 300,
+        colors: { background: '#4caf50', text: '#fff', border: '#4caf50' }
+    }, 'colorBlind');
+
+    assert.equal(rules.length, 5);
+    assert.deepEqual(Array.from(rules.map(r => r.operator)), ['between', 'between', 'between', 'between', 'gte']);
+    assert.equal(rules[0].rangeBoundary, 'inclusiveExclusive');
+    assert.equal(rules[4].value, 4);
+    assert.equal(rules[0].priority, 300);
+    assert.equal(rules[4].priority, 296);
+    assert.ok(rules.every(r => r.visualTarget === 'value'));
+});
+
 test('multiple range rules for same metric evaluate by priority', () => {
     const rt = setupClean();
     dataRules(rt, [

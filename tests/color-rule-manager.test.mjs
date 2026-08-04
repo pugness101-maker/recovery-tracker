@@ -29,6 +29,7 @@ function addRule(rt, patch = {}) {
         sectionScope: patch.sectionScope || ['dashboard'],
         metric: patch.metric || 'useAmount',
         operator: patch.operator || 'gt',
+        visualTarget: patch.visualTarget,
         value: patch.value ?? 5,
         valueTo: patch.valueTo,
         priority: patch.priority ?? 50,
@@ -414,6 +415,93 @@ test('rule editing updates fields and optional labels stay empty by default', ()
     const preview = rt.renderCcrColorPreview(updated);
     assert.match(preview, /ccr-color-preview/);
     assert.match(preview, /aria-label=/);
+});
+
+test('rule targets are explicit and non-value targets do not leak into values', () => {
+    const { rt } = setup();
+    const rowRule = addRule(rt, {
+        name: 'Row only',
+        visualTarget: 'row',
+        value: 1,
+        operator: 'gte',
+        colors: { background: '#ff0000', text: '#ffffff', border: '#ff0000' }
+    });
+    assert.equal(rowRule.visualTarget, 'row');
+
+    const valueResult = rt.evaluateConditionalColorRules({
+        substanceId: 'all',
+        section: 'dashboard',
+        metric: 'useAmount',
+        value: 2
+    });
+    assert.equal(valueResult.matched.length, 0);
+
+    const rowResult = rt.evaluateConditionalColorRules({
+        substanceId: 'all',
+        section: 'dashboard',
+        metric: 'useAmount',
+        visualTarget: 'row',
+        value: 2
+    });
+    assert.equal(rowResult.matched.length, 1);
+    assert.equal(rt.normalizeCcrVisualTarget('valueCell'), 'value');
+    assert.equal(rt.normalizeCcrVisualTarget('accent'), 'border');
+});
+
+test('precedence uses priority, specificity, then first created rule', () => {
+    const { rt, data } = setup();
+    rt.persistConditionalColorRulesState({ rules: [] });
+    const sid = data.substances[0].id;
+    const generic = addRule(rt, {
+        id: 'generic',
+        name: 'Generic',
+        substanceScope: 'all',
+        priority: 100,
+        value: 1,
+        colors: { background: '#111111', text: '#ffffff', border: '#111111' }
+    });
+    const specific = addRule(rt, {
+        id: 'specific',
+        name: 'Specific',
+        substanceScope: sid,
+        priority: 100,
+        value: 1,
+        colors: { background: '#222222', text: '#ffffff', border: '#222222' }
+    });
+    assert.ok(rt.compareCcrRulePrecedence(specific, generic) < 0);
+    assert.ok(rt.getCcrRuleSpecificityScore(specific) > rt.getCcrRuleSpecificityScore(generic));
+    const result = rt.evaluateConditionalColorRules({
+        substanceId: sid,
+        section: 'dashboard',
+        metric: 'useAmount',
+        visualTarget: 'value',
+        value: 2
+    });
+    assert.equal(result.matched[0].id, 'specific');
+    assert.match(rt.formatCcrPrecedenceLabel(specific), /Priority 100/);
+});
+
+test('rule cards show explanation, target, precedence, and overlap state', () => {
+    const { rt } = setup();
+    const rule = addRule(rt, {
+        id: 'explain',
+        name: 'Explain',
+        operator: 'between',
+        rangeBoundary: 'inclusiveExclusive',
+        value: 2,
+        valueTo: 3,
+        visualTarget: 'value',
+        colors: { background: '#ef6c00', text: '#ffffff', border: '#ef6c00' }
+    });
+    const html = rt.renderCcrRuleManagerCard(rule, {
+        conflicts: rt.detectConditionalColorRuleConflicts([rule]),
+        matchCounts: {},
+        selected: new Set()
+    });
+    assert.match(html, /If Use amount is/i);
+    assert.match(html, /Value only/);
+    assert.match(html, /Priority 50|Priority 100|Priority/);
+    assert.match(html, /No overlap/);
 });
 
 test('performance: hundreds of rules filter/sort and conflict scan stay bounded', () => {

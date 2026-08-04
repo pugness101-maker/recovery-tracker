@@ -189,6 +189,7 @@ test('custom Gift Given rule overrides default preset colors', () => {
                 metric: 'transactionType',
                 operator: 'eq',
                 value: 'gift_given',
+                visualTarget: 'row',
                 sectionScope: ['useHistory'],
                 substanceScope: 'all',
                 priority: 200,

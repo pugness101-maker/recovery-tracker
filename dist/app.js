@@ -1599,6 +1599,45 @@ const CCR_COLOR_CHANNEL_DEFAULTS = Object.freeze({
     border: '#4caf50'
 });
 
+const CCR_RANGE_COLOR_SCHEMES = Object.freeze({
+    rainbow: {
+        label: 'Auto Rainbow',
+        colors: ['#2e7d32', '#f9a825', '#ef6c00', '#c62828', '#6a1b9a']
+    },
+    traffic: {
+        label: 'Traffic Light',
+        colors: ['#2e7d32', '#66bb6a', '#f9a825', '#ef6c00', '#c62828']
+    },
+    blue: {
+        label: 'Blue Scale',
+        colors: ['#e3f2fd', '#90caf9', '#42a5f5', '#1976d2', '#0d47a1']
+    },
+    heat: {
+        label: 'Heat Map',
+        colors: ['#fff8e1', '#ffe082', '#ffb74d', '#f4511e', '#b71c1c']
+    },
+    recovery: {
+        label: 'Recovery',
+        colors: ['#1b5e20', '#43a047', '#fbc02d', '#fb8c00', '#d32f2f']
+    },
+    colorBlind: {
+        label: 'Color-Blind Safe',
+        colors: ['#0072b2', '#009e73', '#f0e442', '#e69f00', '#cc79a7']
+    },
+    monochrome: {
+        label: 'Monochrome',
+        colors: ['#eeeeee', '#bdbdbd', '#757575', '#424242', '#111111']
+    },
+    pastel: {
+        label: 'Pastel',
+        colors: ['#c8e6c9', '#fff9c4', '#ffe0b2', '#ffcdd2', '#e1bee7']
+    },
+    dark: {
+        label: 'Dark',
+        colors: ['#1b5e20', '#827717', '#e65100', '#b71c1c', '#4a148c']
+    }
+});
+
 const CCR_METRIC_GROUP_ORDER = Object.freeze([
     { id: 'use', label: 'Use' },
     { id: 'inventory', label: 'Inventory' },
@@ -1899,9 +1938,13 @@ const CCR_RANGE_BOUNDARIES = Object.freeze([
     { id: 'exclusiveInclusive', label: 'Exclusive lower, inclusive upper' }
 ]);
 const CCR_VISUAL_TARGETS = Object.freeze([
-    { id: 'valueCell', label: 'Value cell only' },
+    { id: 'value', label: 'Value only' },
     { id: 'row', label: 'Entire row' },
-    { id: 'accent', label: 'Border/accent only' }
+    { id: 'card', label: 'Entire card' },
+    { id: 'column', label: 'Column' },
+    { id: 'badge', label: 'Badge only' },
+    { id: 'progressBar', label: 'Progress bar only' },
+    { id: 'border', label: 'Border only' }
 ]);
 
 function normalizeCcrRangeBoundary(value, operator = 'between') {
@@ -1919,7 +1962,14 @@ function getCcrRuleRangeBoundary(rule) {
 
 function normalizeCcrVisualTarget(value) {
     const raw = String(value || '').trim();
-    return CCR_VISUAL_TARGETS.some(t => t.id === raw) ? raw : 'valueCell';
+    if (!raw || raw === 'valueCell') return 'value';
+    if (raw === 'accent') return 'border';
+    return CCR_VISUAL_TARGETS.some(t => t.id === raw) ? raw : 'value';
+}
+
+function getCcrVisualTargetLabel(value) {
+    const id = normalizeCcrVisualTarget(value);
+    return CCR_VISUAL_TARGETS.find(t => t.id === id)?.label || 'Value only';
 }
 
 function getDefaultCcrMetricSettings(metricKey) {
@@ -2560,6 +2610,7 @@ function getConditionalColorPresetRules(theme = 'dark') {
             metric: 'transactionType',
             operator: 'eq',
             value: 'gift_given',
+            visualTarget: 'row',
             colors: color('giftGiven'),
             priority: 40,
             stopProcessing: false,
@@ -2576,6 +2627,7 @@ function getConditionalColorPresetRules(theme = 'dark') {
             metric: 'transactionType',
             operator: 'eq',
             value: 'gift_received',
+            visualTarget: 'row',
             colors: color('giftReceived'),
             priority: 40,
             stopProcessing: false,
@@ -2802,12 +2854,11 @@ function normalizeConditionalColorRule(raw, index = 0) {
     const normalizedBoundary = raw.rangeBoundary == null && operator === 'between'
         ? 'inclusive'
         : normalizeCcrRangeBoundary(raw.rangeBoundary, operator);
-    const hasVisualTarget = raw.visualTarget != null || raw.targetArea != null || raw.target != null;
     let visualTarget = normalizeCcrVisualTarget(raw.visualTarget || raw.targetArea || raw.target);
-    if (!hasVisualTarget && metric === 'transactionType' && sectionScope.includes('useHistory')) {
-        visualTarget = 'row';
-    }
     const createdByUser = raw.createdByUser === true || (!raw.isPreset && raw.createdByUser !== false);
+    const createdAt = raw.createdAt
+        ? String(raw.createdAt)
+        : (raw.lastModified ? String(raw.lastModified) : new Date().toISOString());
     const normalized = {
         id: String(raw.id || ccrNewId()),
         name: String(raw.name || `Rule ${index + 1}`).slice(0, 80),
@@ -2841,6 +2892,7 @@ function normalizeConditionalColorRule(raw, index = 0) {
         },
         visualTarget,
         createdByUser,
+        createdAt,
         priority: Number.isFinite(Number(raw.priority)) ? Number(raw.priority) : (100 - index),
         stopProcessing: !!raw.stopProcessing,
         statusLabel: raw.statusLabel != null ? String(raw.statusLabel).slice(0, 40) : '',
@@ -2876,7 +2928,7 @@ function normalizeCcrCustomGroup(raw, index = 0) {
 
 function normalizeCcrManagerPersistedUi(raw = {}) {
     const allowedGroupBy = new Set(['substance', 'metric', 'section', 'enabled', 'custom']);
-    const groupBy = allowedGroupBy.has(raw.groupBy) ? raw.groupBy : 'substance';
+    const groupBy = allowedGroupBy.has(raw.groupBy) ? raw.groupBy : 'metric';
     const collapsedGroups = raw.collapsedGroups && typeof raw.collapsedGroups === 'object'
         ? { ...raw.collapsedGroups }
         : {};
@@ -3743,6 +3795,38 @@ function ruleMatchesMetric(rule, metric) {
     return migrateCcrMetricKey(rule.metric) === migrateCcrMetricKey(metric);
 }
 
+function getCcrRuleSpecificityScore(rule) {
+    if (!rule) return 0;
+    let score = 0;
+    const substanceScope = rule.substanceScope;
+    const sectionScope = rule.sectionScope || [];
+    if (substanceScope && substanceScope !== 'all') {
+        score += Array.isArray(substanceScope) ? Math.min(3, substanceScope.length) : 3;
+    }
+    if (sectionScope.length && !sectionScope.includes('all')) score += Math.min(3, sectionScope.length);
+    if (rule.metric && rule.metric !== 'all') score += 2;
+    if (normalizeCcrVisualTarget(rule.visualTarget) !== 'value') score += 1;
+    if (rule.operator === 'between' || rule.operator === 'eq') score += 1;
+    return score;
+}
+
+function compareCcrRulePrecedence(a, b) {
+    const pa = Number(a?.priority) || 0;
+    const pb = Number(b?.priority) || 0;
+    if (pa !== pb) return pb - pa;
+    const sa = getCcrRuleSpecificityScore(a);
+    const sb = getCcrRuleSpecificityScore(b);
+    if (sa !== sb) return sb - sa;
+    const ca = Date.parse(a?.createdAt || '') || 0;
+    const cb = Date.parse(b?.createdAt || '') || 0;
+    if (ca !== cb) return ca - cb;
+    return String(a?.id || '').localeCompare(String(b?.id || ''));
+}
+
+function formatCcrPrecedenceLabel(rule) {
+    return `Priority ${Number(rule?.priority) || 0} · Specificity ${getCcrRuleSpecificityScore(rule)} · Created ${formatCcrLastModifiedLabel(rule?.createdAt)}`;
+}
+
 /**
  * Shared evaluation engine.
  * context: { substanceId, section, metric, value, textValue, target, dateValue }
@@ -3763,14 +3847,15 @@ function evaluateConditionalColorRules(context = {}, data = appData) {
     const rules = (state.rules || [])
         .filter(r => r && r.enabled)
         .slice()
-        .sort((a, b) => (Number(b.priority) || 0) - (Number(a.priority) || 0));
+        .sort(compareCcrRulePrecedence);
 
     const matched = [];
     let style = null;
+    const contextTarget = normalizeCcrVisualTarget(context.visualTarget || 'value');
 
     for (const rule of rules) {
-        if (context.section === 'useHistory' && rule.createdByUser !== true) continue;
-        if (context.visualTarget && normalizeCcrVisualTarget(rule.visualTarget) !== normalizeCcrVisualTarget(context.visualTarget)) continue;
+        if (rule.createdByUser !== true) continue;
+        if (normalizeCcrVisualTarget(rule.visualTarget) !== contextTarget) continue;
         if (!ruleMatchesSubstanceScope(rule, context.substanceId)) continue;
         if (!ruleMatchesSectionScope(rule, context.section)) continue;
         if (!ruleMatchesMetric(rule, context.metric)) continue;
@@ -3783,14 +3868,14 @@ function evaluateConditionalColorRules(context = {}, data = appData) {
         matched.push(rule);
         if (!style) {
             style = {
-                background: normalizeCcrVisualTarget(rule.visualTarget) === 'accent' ? '' : rule.colors.background,
-                text: normalizeCcrVisualTarget(rule.visualTarget) === 'accent' ? '' : rule.colors.text,
+                background: normalizeCcrVisualTarget(rule.visualTarget) === 'border' ? '' : rule.colors.background,
+                text: normalizeCcrVisualTarget(rule.visualTarget) === 'border' ? '' : rule.colors.text,
                 border: rule.colors.border || rule.colors.accent,
                 accent: rule.colors.accent || rule.colors.border
             };
         } else {
             // Higher priority already applied; lower-priority rules may fill missing slots only.
-            if (normalizeCcrVisualTarget(rule.visualTarget) !== 'accent') {
+            if (normalizeCcrVisualTarget(rule.visualTarget) !== 'border') {
                 style.background = style.background || rule.colors.background;
                 style.text = style.text || rule.colors.text;
             }
@@ -4027,7 +4112,9 @@ function evaluateSpendColors(amount, options = {}, data = appData) {
 
 function saveConditionalColorRule(rule, data = appData) {
     const state = ensureConditionalColorRules(data);
+    const existing = state.rules.find(r => r.id === rule?.id);
     const normalized = normalizeConditionalColorRule({
+        ...(existing ? { createdAt: existing.createdAt } : {}),
         ...rule,
         lastModified: new Date().toISOString()
     }, state.rules.length);
@@ -4058,6 +4145,7 @@ function duplicateConditionalColorRule(ruleId, data = appData) {
         name: `${src.name} (copy)`,
         isPreset: false,
         presetId: null,
+        createdAt: new Date().toISOString(),
         priority: (Number(src.priority) || 0) + 1,
         lastModified: new Date().toISOString()
     });
@@ -4195,7 +4283,7 @@ let ccrManagerUiState = {
     section: 'all',
     metric: 'all',
     enabled: 'all',
-    groupBy: 'substance',
+    groupBy: 'metric',
     sort: 'priority',
     sortDir: 'desc',
     selectedIds: []
@@ -4418,13 +4506,60 @@ function ccrRangeOverlapPoint(a, b) {
     return null;
 }
 
-function buildCcrConflictEntry(otherRule, overlapValue = null) {
+function ccrRangesTouchBoundary(a, b) {
+    if (!a || !b || ccrRangesOverlap(a, b)) return false;
+    if (a.hi === b.lo && Number.isFinite(a.hi)) return true;
+    if (b.hi === a.lo && Number.isFinite(b.hi)) return true;
+    return false;
+}
+
+function ccrRangeTouchPoint(a, b) {
+    if (!ccrRangesTouchBoundary(a, b)) return null;
+    if (a.hi === b.lo && Number.isFinite(a.hi)) return a.hi;
+    if (b.hi === a.lo && Number.isFinite(b.hi)) return b.hi;
+    return null;
+}
+
+function getCcrRangeRelationship(a, b) {
+    if (ccrRangesOverlap(a, b)) {
+        return { state: 'overlap', label: 'Overlaps', level: 'red', value: ccrRangeOverlapPoint(a, b) };
+    }
+    if (ccrRangesTouchBoundary(a, b)) {
+        return { state: 'touch', label: 'Touches boundary', level: 'yellow', value: ccrRangeTouchPoint(a, b) };
+    }
+    return { state: 'none', label: 'No overlap', level: 'green', value: null };
+}
+
+function buildCcrConflictEntry(otherRule, overlapValue = null, state = 'overlap') {
     const valueText = overlapValue == null ? 'an overlapping range' : `value ${formatAmount(overlapValue)}`;
+    const isTouch = state === 'touch';
     return {
         ...otherRule,
+        relationship: isTouch ? 'touch' : 'overlap',
+        severity: isTouch ? 'warning' : 'error',
         conflictAt: overlapValue,
-        message: `Overlaps with '${otherRule.name}' at ${valueText}.`
+        message: isTouch
+            ? `Touches boundary with '${otherRule.name}' at ${valueText}.`
+            : `Overlaps with '${otherRule.name}' at ${valueText}.`
     };
+}
+
+function summarizeCcrRuleRelationship(rule, rules = null, data = appData) {
+    const list = (rules || getConditionalColorRules(data)).filter(r => r && r.id !== rule?.id && r.enabled && rule?.enabled);
+    let hasTouch = null;
+    for (const other of list) {
+        if (rule.metric !== other.metric) continue;
+        if (normalizeCcrVisualTarget(rule.visualTarget) !== normalizeCcrVisualTarget(other.visualTarget)) continue;
+        if (!scopesOverlapSubstances(rule.substanceScope, other.substanceScope)) continue;
+        if (!scopesOverlapSections(rule.sectionScope, other.sectionScope)) continue;
+        const rangeA = ccrNumericRange(rule);
+        const rangeB = ccrNumericRange(other);
+        if (!rangeA || !rangeB) continue;
+        const relationship = getCcrRangeRelationship(rangeA, rangeB);
+        if (relationship.state === 'overlap') return { ...relationship, other };
+        if (relationship.state === 'touch' && !hasTouch) hasTouch = { ...relationship, other };
+    }
+    return hasTouch || { state: 'none', label: 'No overlap', level: 'green', value: null, other: null };
 }
 
 /**
@@ -4434,15 +4569,25 @@ function detectConditionalColorRuleConflicts(rules = null, data = appData) {
     const list = (rules || getConditionalColorRules(data)).slice();
     const byId = Object.create(null);
     list.forEach(rule => { byId[rule.id] = []; });
+    const meta = list.map(rule => ({
+        rule,
+        enabled: !!rule?.enabled,
+        metric: rule?.metric,
+        target: normalizeCcrVisualTarget(rule?.visualTarget),
+        range: ccrNumericRange(rule)
+    }));
 
-    for (let i = 0; i < list.length; i++) {
-        for (let j = i + 1; j < list.length; j++) {
-            const a = list[i];
-            const b = list[j];
+    for (let i = 0; i < meta.length; i++) {
+        const ma = meta[i];
+        if (!ma.enabled) continue;
+        for (let j = i + 1; j < meta.length; j++) {
+            const mb = meta[j];
+            if (!mb.enabled) continue;
+            const a = ma.rule;
+            const b = mb.rule;
             if (!a || !b) continue;
-            if (!a.enabled || !b.enabled) continue;
-            if (a.metric !== b.metric) continue;
-            if (normalizeCcrVisualTarget(a.visualTarget) !== normalizeCcrVisualTarget(b.visualTarget)) continue;
+            if (ma.metric !== mb.metric) continue;
+            if (ma.target !== mb.target) continue;
             if (!scopesOverlapSubstances(a.substanceScope, b.substanceScope)) continue;
             if (!scopesOverlapSections(a.sectionScope, b.sectionScope)) continue;
             if (a.operator === 'contains' || b.operator === 'contains'
@@ -4456,10 +4601,8 @@ function detectConditionalColorRuleConflicts(rules = null, data = appData) {
                 }
                 continue;
             }
-            const rangeA = ccrNumericRange(a);
-            const rangeB = ccrNumericRange(b);
-            if (ccrRangesOverlap(rangeA, rangeB)) {
-                const overlap = ccrRangeOverlapPoint(rangeA, rangeB);
+            if (ccrRangesOverlap(ma.range, mb.range)) {
+                const overlap = ccrRangeOverlapPoint(ma.range, mb.range);
                 byId[a.id].push(buildCcrConflictEntry(b, overlap));
                 byId[b.id].push(buildCcrConflictEntry(a, overlap));
             }
@@ -4675,9 +4818,9 @@ function filterAndSortConditionalColorRules(rules, filters = getCcrManagerUiStat
             return (aHi - bHi) * dir;
         }
         // priority (default)
-        av = Number(a.priority) || 0;
-        bv = Number(b.priority) || 0;
-        return (av - bv) * dir;
+        return filters.sortDir === 'asc'
+            ? -compareCcrRulePrecedence(a, b)
+            : compareCcrRulePrecedence(a, b);
     });
     return list;
 }
@@ -4763,6 +4906,33 @@ function formatCcrRuleManagerSummary(rule, data = appData) {
         return `${substance} · ${condition}`;
     }
     return `${substance} · ${metric} · ${condition}`;
+}
+
+function getCcrRulePrimaryColorName(rule) {
+    const raw = rule?.colors?.background || rule?.colors?.border || rule?.colors?.text || '';
+    const parsed = parseCssColor(raw);
+    if (!parsed) return 'theme color';
+    const { r, g, b } = parsed;
+    if (g >= r && g >= b && r < 180) return 'green';
+    if (r > 200 && g > 170 && b < 120) return 'yellow';
+    if (r > 200 && g > 100 && g < 190 && b < 120) return 'orange';
+    if (r > 180 && g < 120 && b < 140) return 'red';
+    if (r > 120 && b > 140) return 'purple';
+    if (b > r && b > g) return 'blue';
+    if (Math.max(r, g, b) - Math.min(r, g, b) < 32) return 'gray';
+    return 'selected color';
+}
+
+function formatCcrRuleExplanation(rule, data = appData) {
+    const metric = getCcrMetricUiDef(rule?.metric, data)?.label || getCcrMetricDef(rule?.metric)?.label || rule?.metric || 'Metric';
+    const metricPattern = String(metric).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const condition = formatCcrConditionSummary(rule)
+        .replace(new RegExp(`^${metricPattern}\\s*·?\\s*`, 'i'), '')
+        .replace(/^Duration\s+/i, '')
+        .trim();
+    const target = getCcrVisualTargetLabel(rule?.visualTarget).toLowerCase();
+    const color = getCcrRulePrimaryColorName(rule);
+    return `If ${metric} is ${condition || 'matched'} → Color ${target} ${color}.`;
 }
 
 function applyCcrBulkNameChange(rule, changes = {}, index = 0, data = appData) {
@@ -5030,6 +5200,14 @@ function buildCcrRuleGroups(rules, { groupBy = null, conflicts = null, matchCoun
         if ((conflictMap[rule.id] || []).length) group.conflictCount += 1;
         group.totalMatchCount += counts[rule.id] || 0;
     });
+    groups.forEach(group => {
+        if (group.groupBy === 'metric') {
+            group.rules.sort((a, b) => {
+                const sa = formatCcrSubstanceScopeLabel(a, data).localeCompare(formatCcrSubstanceScopeLabel(b, data));
+                return sa || compareCcrRulePrecedence(a, b);
+            });
+        }
+    });
     return [...groups.values()];
 }
 
@@ -5047,6 +5225,59 @@ function selectCcrRuleGroup(groupId, checked, rules = null, data = appData) {
         ui.selectedIds = ui.selectedIds.filter(id => !drop.has(id));
     }
     return ids;
+}
+
+function getCcrManagerGroup(groupId, data = appData) {
+    const ui = getCcrManagerUiState();
+    const state = ensureConditionalColorRules(data);
+    const visible = filterAndSortConditionalColorRules(state.rules, ui, data);
+    return buildCcrRuleGroups(visible, { groupBy: ui.groupBy || state.ui?.groupBy, data })
+        .find(g => g.id === groupId) || null;
+}
+
+function setCcrRuleGroupEnabled(groupId, enabled, data = appData) {
+    const group = getCcrManagerGroup(groupId, data);
+    if (!group) return [];
+    const ids = group.rules.map(r => r.id);
+    bulkSetConditionalColorRulesEnabled(ids, enabled, data);
+    return ids;
+}
+
+function duplicateCcrRuleManagerGroup(groupId, data = appData) {
+    const group = getCcrManagerGroup(groupId, data);
+    if (!group) return [];
+    const state = ensureConditionalColorRules(data);
+    const now = new Date().toISOString();
+    const copies = group.rules.map(rule => normalizeConditionalColorRule({
+        ...rule,
+        id: ccrNewId(),
+        name: `${rule.name} (copy)`,
+        isPreset: false,
+        presetId: null,
+        createdAt: now,
+        lastModified: now
+    }));
+    state.rules.push(...copies);
+    persistConditionalColorRulesState({ rules: state.rules }, data);
+    invalidateConditionalColorRuleMatchCache();
+    return copies;
+}
+
+function deleteCcrRuleManagerGroup(groupId, data = appData) {
+    const group = getCcrManagerGroup(groupId, data);
+    if (!group) return [];
+    const ids = new Set(group.rules.map(r => String(r.id)));
+    const state = ensureConditionalColorRules(data);
+    state.rules = state.rules.filter(rule => !ids.has(String(rule.id)));
+    persistConditionalColorRulesState({ rules: state.rules }, data);
+    invalidateConditionalColorRuleMatchCache();
+    return [...ids];
+}
+
+function exportCcrRuleManagerGroupJson(groupId, data = appData) {
+    const group = getCcrManagerGroup(groupId, data);
+    if (!group) return '';
+    return exportConditionalColorRulesSelectionJson(group.rules.map(r => r.id), data);
 }
 
 /**
@@ -5147,7 +5378,7 @@ function getCcrEditorDraftFromForm() {
         metric,
         operator: get('ccr-rule-operator')?.value || 'gt',
         rangeBoundary: get('ccr-rule-boundary')?.value || 'inclusiveExclusive',
-        visualTarget: get('ccr-rule-visual-target')?.value || 'valueCell',
+        visualTarget: get('ccr-rule-visual-target')?.value || 'value',
         value: get('ccr-rule-value')?.value ?? '',
         valueTo: get('ccr-rule-value-to')?.value ?? '',
         targetValue: get('ccr-rule-target')?.value ?? '',
@@ -5212,7 +5443,7 @@ function fillCcrEditorForm(rule) {
         name: 'New rule',
         metric: 'useAmount',
         operator: 'gt',
-        visualTarget: 'valueCell',
+        visualTarget: 'value',
         value: 0,
         priority: 100,
         colors: { background: 'rgba(76, 175, 80, 0.22)', text: '#81c784', border: '#4caf50' },
@@ -5257,7 +5488,7 @@ function fillCcrEditorForm(rule) {
     set('ccr-rule-priority', r.priority);
     set('ccr-rule-stop', r.stopProcessing, 'checked');
     set('ccr-rule-status-label', r.statusLabel);
-    set('ccr-rule-visual-target', r.visualTarget || 'valueCell');
+    set('ccr-rule-visual-target', normalizeCcrVisualTarget(r.visualTarget));
     applyCcrBackgroundControlsFromValue(r.colors.background);
     set('ccr-rule-text', r.colors.text);
     set('ccr-rule-text-hex', r.colors.text.startsWith('#') ? r.colors.text.slice(0, 7) : '#81c784');
@@ -5358,6 +5589,35 @@ function updateCcrOperatorFieldsVisibility() {
     updateCcrRangeVisualizer();
 }
 
+const CCR_RULE_EXAMPLE_VALUES = Object.freeze([0.5, 1, 1.5, 2, 2.5, 3, 4, 5]);
+
+function renderCcrExampleValuePreview(rule) {
+    const canCompare = getCcrMetricSettings(rule.metric)?.valueType !== 'string'
+        && getCcrMetricSettings(rule.metric)?.valueType !== 'boolean';
+    if (!canCompare) return '<p class="settings-hint">Example values are shown for numeric rules.</p>';
+    return `<div class="ccr-example-values" aria-label="Example values">
+        ${CCR_RULE_EXAMPLE_VALUES.map(value => {
+            const matches = compareConditionalColorRule(rule, { value, textValue: String(value) });
+            return `<span class="ccr-example-value${matches ? ' is-match' : ''}" title="${matches ? 'Matches this rule' : 'Does not match this rule'}">${escapeHtml(String(value))}</span>`;
+        }).join('')}
+    </div>`;
+}
+
+function buildCcrPreviewStyleForTarget(colors, target) {
+    const normalized = normalizeCcrVisualTarget(target);
+    const background = normalized === 'border' ? '' : colors.background;
+    const text = normalized === 'border' ? '' : colors.text;
+    return buildConditionalColorInlineStyle({
+        matched: [{}],
+        style: {
+            background,
+            text,
+            border: colors.border || colors.accent,
+            accent: colors.accent || colors.border
+        }
+    });
+}
+
 function updateCcrLivePreview() {
     const draft = getCcrEditorDraftFromForm();
     const preview = document.getElementById('ccr-live-preview');
@@ -5374,12 +5634,21 @@ function updateCcrLivePreview() {
             ...draft.colors,
             background: bgValidation.ok ? draft.colors.background : ''
         };
-        const style = buildConditionalColorInlineStyle({ style: previewColors, matched: [draft] });
+        const style = buildCcrPreviewStyleForTarget(previewColors, draft.visualTarget);
         const label = (draft.statusLabel || '').trim();
-        const sample = `<span class="ccr-preview-sample"${style ? ` style="${escapeAttr(style)}"` : ''}>Sample value 12.5</span>`;
-        preview.innerHTML = label
-            ? `<span class="ccr-preview-swatch"${style ? ` style="${escapeAttr(style)}"` : ''}>${escapeHtml(label)}</span>${sample}`
-            : sample;
+        const badge = label
+            ? `<span class="ccr-preview-badge"${style ? ` style="${escapeAttr(style)}"` : ''}>${escapeHtml(label)}</span>`
+            : `<span class="ccr-preview-badge"${style ? ` style="${escapeAttr(style)}"` : ''}>Badge</span>`;
+        preview.innerHTML = `
+            <div class="ccr-live-preview-grid">
+                <div class="ccr-preview-neutral"><span>Neutral</span><strong>12.5</strong></div>
+                <div class="ccr-preview-value"><span>Colored Value</span><strong${style ? ` style="${escapeAttr(style)}"` : ''}>12.5</strong></div>
+                <div class="ccr-preview-row"${normalizeCcrVisualTarget(draft.visualTarget) === 'row' && style ? ` style="${escapeAttr(style)}"` : ''}><span>Colored Row</span><strong>12.5</strong></div>
+                <div class="ccr-preview-card"${normalizeCcrVisualTarget(draft.visualTarget) === 'card' && style ? ` style="${escapeAttr(style)}"` : ''}><span>Colored Card</span><strong>12.5</strong>${badge}</div>
+            </div>
+            <div class="ccr-rule-explanation">${escapeHtml(formatCcrRuleExplanation(draft))}</div>
+            ${renderCcrExampleValuePreview(draft)}
+        `;
     }
     if (warn) {
         const bgParsed = bgValidation.parsed || parseCssColor(draft.colors.background);
@@ -5455,12 +5724,42 @@ function selectCcrRuleGroupFromUi(groupId, checked) {
 }
 
 function bulkSetCcrRuleGroupEnabledFromUi(groupId, enabled) {
-    const ui = getCcrManagerUiState();
-    const rules = filterAndSortConditionalColorRules(getConditionalColorRules(), ui);
-    const group = buildCcrRuleGroups(rules, { groupBy: ui.groupBy }).find(g => g.id === groupId);
-    if (!group) return;
-    bulkSetConditionalColorRulesEnabled(group.rules.map(r => r.id), enabled);
+    const ids = setCcrRuleGroupEnabled(groupId, enabled);
     renderConditionalColorRulesSettings();
+    if (typeof showToast === 'function') showToast(`${enabled ? 'Enabled' : 'Disabled'} ${ids.length} rules`);
+}
+
+function duplicateCcrRuleGroupFromUi(groupId) {
+    const copies = duplicateCcrRuleManagerGroup(groupId);
+    renderConditionalColorRulesSettings();
+    if (typeof showToast === 'function') showToast(`Duplicated ${copies.length} rules`);
+}
+
+function deleteCcrRuleGroupFromUi(groupId) {
+    const group = getCcrManagerGroup(groupId);
+    if (!group) return;
+    if (!confirm(`Delete ${group.rules.length} rules in "${group.name}"?`)) return;
+    const deleted = deleteCcrRuleManagerGroup(groupId);
+    renderConditionalColorRulesSettings();
+    if (typeof showToast === 'function') showToast(`Deleted ${deleted.length} rules`);
+}
+
+function exportCcrRuleGroupFromUi(groupId) {
+    const group = getCcrManagerGroup(groupId);
+    if (!group) return;
+    const json = exportCcrRuleManagerGroupJson(groupId);
+    if (!json) return;
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `recovery-tracker-color-rules-${String(group.name || 'group').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}-${getLocalDateString?.() || 'export'}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+function importCcrRuleGroupFromUi() {
+    document.getElementById('ccr-import-file')?.click();
 }
 
 function moveSelectedColorRulesToGroupFromUi() {
@@ -5499,10 +5798,11 @@ function openCcrBulkEditDialog() {
 function renderCcrRuleManagerCard(rule, { conflicts, matchCounts, selected } = {}) {
     const metricLabel = (id) => getCcrMetricUiDef(id)?.label || getCcrMetricDef(id)?.label || id;
     const conflictList = conflicts[rule.id] || [];
+    const relationship = summarizeCcrRuleRelationship(rule);
     const expanded = isCcrRuleCardExpanded(rule.id);
     const conflictHtml = conflictList.length
-        ? `<span class="ccr-conflict-group"><button type="button" class="ccr-conflict-btn" title="${escapeAttr(conflictList.map(c => c.message || c.name).join(' '))}" aria-label="${escapeAttr(conflictList[0].message || `May conflict with ${conflictList[0].name}`)}" onclick="jumpToConflictingColorRule('${escapeAttr(conflictList[0].id)}')">Conflict${conflictList.length > 1 ? ` +${conflictList.length - 1}` : ''}</button><button type="button" class="secondary-btn btn-sm" onclick="fixCcrRangeBoundariesForRule('${escapeAttr(rule.id)}')">Fix range boundaries</button></span>`
-        : '';
+        ? `<span class="ccr-conflict-group"><button type="button" class="ccr-overlap-pill ccr-overlap-red" title="${escapeAttr(conflictList.map(c => c.message || c.name).join(' '))}" aria-label="${escapeAttr(conflictList[0].message || `Overlaps with ${conflictList[0].name}`)}" onclick="jumpToConflictingColorRule('${escapeAttr(conflictList[0].id)}')">🔴 Overlaps${conflictList.length > 1 ? ` +${conflictList.length - 1}` : ''}</button><button type="button" class="secondary-btn btn-sm" onclick="fixCcrRangeBoundariesForRule('${escapeAttr(rule.id)}')">Fix range boundaries</button></span>`
+        : `<span class="ccr-overlap-pill ccr-overlap-${relationship.level}" title="${escapeAttr(relationship.other ? `${relationship.label} ${relationship.other.name}` : relationship.label)}">${relationship.level === 'yellow' ? '🟡' : '🟢'} ${escapeHtml(relationship.label)}</span>`;
     const reviewHtml = rule.needsReview
         ? `<span class="ccr-conflict-btn" title="${escapeAttr(rule.reviewReason || 'Needs review')}">Needs review</span>`
         : '';
@@ -5529,13 +5829,15 @@ function renderCcrRuleManagerCard(rule, { conflicts, matchCounts, selected } = {
             <div class="ccr-rule-card-body">
                 <div class="ccr-rule-compact-line">
                     <strong class="ccr-rule-name">${escapeHtml(rule.name)}</strong>
-                    <span class="ccr-rule-condition">${escapeHtml(formatCcrRuleManagerSummary(rule))}</span>
-                    <span class="ccr-priority-pill">P${escapeHtml(String(rule.priority))}</span>
+                    <span class="ccr-rule-condition">${escapeHtml(formatCcrRuleExplanation(rule))}</span>
+                    <span class="ccr-target-pill">${escapeHtml(getCcrVisualTargetLabel(rule.visualTarget))}</span>
+                    <span class="ccr-priority-pill">Priority ${escapeHtml(String(rule.priority))}</span>
                     ${reviewHtml}
                     ${conflictHtml}
                 </div>
                 ${expanded ? `<div class="ccr-rule-expanded-details">
                     <p class="ccr-rule-meta"><span>${escapeHtml(formatCcrSubstanceScopeLabel(rule))}</span> · <span>${escapeHtml(formatCcrSectionScopeLabel(rule))}</span></p>
+                    <p class="ccr-rule-meta">${escapeHtml(formatCcrPrecedenceLabel(rule))}</p>
                     <p class="ccr-rule-meta ccr-rule-usage">${usage || '<span class="ccr-usage-chip">All sections</span>'}</p>
                     <p class="ccr-rule-meta">Matches: <strong>${escapeHtml(String(matchCount))}</strong> record${matchCount === 1 ? '' : 's'} · Updated ${escapeHtml(formatCcrLastModifiedLabel(rule.lastModified))}</p>
                 </div>` : ''}
@@ -5564,7 +5866,7 @@ function renderConditionalColorRulesList() {
     if (enabledToggle) enabledToggle.checked = state.enabled !== false;
 
     const filters = getCcrManagerUiState();
-    filters.groupBy = state.ui?.groupBy || filters.groupBy || 'substance';
+    filters.groupBy = state.ui?.groupBy || filters.groupBy || 'metric';
     const rules = filterAndSortConditionalColorRules(state.rules, filters);
     const conflicts = detectConditionalColorRuleConflicts(state.rules);
     const matchCounts = computeConditionalColorRuleMatchCounts();
@@ -5577,7 +5879,7 @@ function renderConditionalColorRulesList() {
     document.getElementById('ccr-manager-bulk-edit')?.classList.toggle('hidden', selected.size < 2);
 
     if (!state.rules.length) {
-        root.innerHTML = '<p class="empty-hint">No rules yet. Add a rule or load recovery presets.</p>';
+        root.innerHTML = '<p class="empty-hint">No rules yet. Add a rule or load example rules.</p>';
         return;
     }
     if (!rules.length) {
@@ -5597,15 +5899,31 @@ function renderConditionalColorRulesList() {
                 <strong>${escapeHtml(group.name)}</strong>
                 <span class="ccr-group-stat">${group.count} rules</span>
                 <span class="ccr-group-stat">${group.enabledCount} enabled</span>
-                <span class="ccr-group-stat">${group.conflictCount} conflicts</span>
+                <span class="ccr-group-stat">${group.conflictCount} overlaps</span>
                 <span class="ccr-group-stat">${group.totalMatchCount} matches</span>
                 <div class="ccr-group-actions">
-                    <button type="button" class="secondary-btn btn-sm" onclick="selectCcrRuleGroupFromUi('${escapeAttr(group.id)}', true)">Select group</button>
-                    <button type="button" class="secondary-btn btn-sm" onclick="bulkSetCcrRuleGroupEnabledFromUi('${escapeAttr(group.id)}', true)">Enable group</button>
-                    <button type="button" class="secondary-btn btn-sm" onclick="bulkSetCcrRuleGroupEnabledFromUi('${escapeAttr(group.id)}', false)">Disable group</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="bulkSetCcrRuleGroupEnabledFromUi('${escapeAttr(group.id)}', true)">Enable all</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="bulkSetCcrRuleGroupEnabledFromUi('${escapeAttr(group.id)}', false)">Disable all</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="duplicateCcrRuleGroupFromUi('${escapeAttr(group.id)}')">Duplicate group</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="exportCcrRuleGroupFromUi('${escapeAttr(group.id)}')">Export group</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="importCcrRuleGroupFromUi('${escapeAttr(group.id)}')">Import group</button>
+                    <button type="button" class="danger-btn btn-sm" onclick="deleteCcrRuleGroupFromUi('${escapeAttr(group.id)}')">Delete group</button>
                 </div>
             </header>
-            ${group.collapsed ? '' : `<div class="ccr-rule-group-body">${group.rules.map(rule => renderCcrRuleManagerCard(rule, { conflicts, matchCounts, selected })).join('')}</div>`}
+            ${group.collapsed ? '' : `<div class="ccr-rule-group-body">${(() => {
+                if (group.groupBy !== 'metric') {
+                    return group.rules.map(rule => renderCcrRuleManagerCard(rule, { conflicts, matchCounts, selected })).join('');
+                }
+                let currentSubstance = null;
+                return group.rules.map(rule => {
+                    const label = formatCcrSubstanceScopeLabel(rule);
+                    const header = label !== currentSubstance
+                        ? `<h4 class="ccr-rule-subgroup-heading">${escapeHtml(label)}</h4>`
+                        : '';
+                    currentSubstance = label;
+                    return header + renderCcrRuleManagerCard(rule, { conflicts, matchCounts, selected });
+                }).join('');
+            })()}</div>`}
         </section>`;
     }).join('');
 }
@@ -5774,20 +6092,20 @@ function loadRecoveryColorPresetsFromUi() {
     const state = ensureConditionalColorRules();
     let replace = true;
     if (state.rules.length) {
-        replace = confirm('Load Recovery Presets.\n\nOK = replace existing rules\nCancel = keep existing and only add missing presets');
+        replace = confirm('Load Example Rules.\n\nOK = replace existing rules\nCancel = keep existing and only add missing examples');
     }
     loadRecoveryColorRulePresets(appData, { replace });
     renderConditionalColorRulesSettings();
     if (typeof showToast === 'function') {
-        showToast(replace ? 'Recovery presets loaded (replaced)' : 'Missing recovery presets added');
+        showToast(replace ? 'Example rules loaded (replaced)' : 'Missing example rules added');
     }
 }
 
 function confirmResetColorRulesToPresets() {
-    if (!confirm('Reset all color rules to default Recovery presets? Existing custom rules will be removed.')) return;
+    if (!confirm('Replace all color rules with Example Rules? Existing custom rules will be removed.')) return;
     resetConditionalColorRulesToPresets();
     renderConditionalColorRulesSettings();
-    if (typeof showToast === 'function') showToast('Color rules reset to presets');
+    if (typeof showToast === 'function') showToast('Example rules loaded');
 }
 
 function jumpToConflictingColorRule(ruleId) {
@@ -5982,6 +6300,11 @@ function getCcrChannelSelectedHex(channel) {
 
 function renderCcrColorPalette(channel) {
     const selected = (getCcrChannelSelectedHex(channel) || '').toLowerCase();
+    const rangeButtons = channel === 'background'
+        ? `<div class="ccr-range-scheme-actions">${Object.entries(CCR_RANGE_COLOR_SCHEMES).map(([id, scheme]) =>
+            `<button type="button" class="secondary-btn btn-sm" onclick="generateCcrRangeRulesFromEditor('${escapeAttr(id)}')">${id === 'rainbow' ? '🌈 ' : ''}${escapeHtml(scheme.label)}</button>`
+        ).join('')}</div>`
+        : '';
     const swatches = CCR_QUICK_COLOR_PRESETS.map(preset => {
         const isSelected = selected === preset.hex.toLowerCase();
         return `<button type="button" class="ccr-swatch-btn${isSelected ? ' is-selected' : ''}"
@@ -6010,6 +6333,7 @@ function renderCcrColorPalette(channel) {
                 <button type="button" class="secondary-btn btn-sm" onclick="clearCcrColorChannel('${escapeAttr(channel)}')">Clear color</button>
                 <button type="button" class="secondary-btn btn-sm" onclick="resetCcrColorChannel('${escapeAttr(channel)}')">Reset</button>
             </div>
+            ${rangeButtons}
         </div>`;
 }
 
@@ -6269,8 +6593,60 @@ function buildNextCcrRangeDraft(src) {
         statusLabel: '',
         isPreset: false,
         presetId: null,
+        createdAt: new Date().toISOString(),
         lastModified: new Date().toISOString()
     });
+}
+
+function ccrRangeSchemeColorSet(hex) {
+    const normalized = normalizeHexColor(hex, '#4caf50').slice(0, 7);
+    return {
+        background: composeCcrBackgroundFromPicker(normalized, 22),
+        text: normalized,
+        border: normalized
+    };
+}
+
+function buildCcrGeneratedRangeRulesFromDraft(draft, schemeId = 'rainbow') {
+    const base = normalizeConditionalColorRule(draft || getCcrEditorDraftFromForm());
+    const scheme = CCR_RANGE_COLOR_SCHEMES[schemeId] || CCR_RANGE_COLOR_SCHEMES.rainbow;
+    const ranges = [
+        { label: '0-1', operator: 'between', value: 0, valueTo: 1, rangeBoundary: 'inclusiveExclusive' },
+        { label: '1-2', operator: 'between', value: 1, valueTo: 2, rangeBoundary: 'inclusiveExclusive' },
+        { label: '2-3', operator: 'between', value: 2, valueTo: 3, rangeBoundary: 'inclusiveExclusive' },
+        { label: '3-4', operator: 'between', value: 3, valueTo: 4, rangeBoundary: 'inclusiveExclusive' },
+        { label: '>4', operator: 'gte', value: 4, valueTo: '', rangeBoundary: 'inclusiveExclusive' }
+    ];
+    const now = new Date().toISOString();
+    const metric = getCcrMetricUiDef(base.metric)?.label || getCcrMetricDef(base.metric)?.label || base.metric || 'Metric';
+    return ranges.map((range, index) => normalizeConditionalColorRule({
+        ...base,
+        id: ccrNewId('range'),
+        name: `${metric} ${range.label}`,
+        operator: range.operator,
+        rangeBoundary: range.rangeBoundary,
+        value: range.value,
+        valueTo: range.valueTo,
+        priority: (Number(base.priority) || 100) - index,
+        colors: ccrRangeSchemeColorSet(scheme.colors[index]),
+        statusLabel: '',
+        isPreset: false,
+        presetId: null,
+        createdAt: now,
+        lastModified: now
+    }, index));
+}
+
+function generateCcrRangeRulesFromEditor(schemeId = 'rainbow', data = appData) {
+    const rules = buildCcrGeneratedRangeRulesFromDraft(getCcrEditorDraftFromForm(), schemeId);
+    const state = ensureConditionalColorRules(data);
+    state.rules.push(...rules);
+    persistConditionalColorRulesState({ rules: state.rules }, data);
+    invalidateConditionalColorRuleMatchCache();
+    renderConditionalColorRulesSettings();
+    closeConditionalColorRuleEditor();
+    if (typeof showToast === 'function') showToast(`Generated ${rules.length} range rules`);
+    return rules;
 }
 
 function duplicateConditionalColorRuleChangeRange(ruleId, data = appData) {
@@ -6283,6 +6659,7 @@ function duplicateConditionalColorRuleChangeRange(ruleId, data = appData) {
         name: `${src.name.replace(/\s*\(copy\)\s*$/i, '').trim()} (range)`,
         isPreset: false,
         presetId: null,
+        createdAt: new Date().toISOString(),
         priority: (Number(src.priority) || 0) + 1,
         statusLabel: '',
         lastModified: new Date().toISOString()
@@ -27238,7 +27615,7 @@ function evaluateAverageUseCcr(row, metricValue) {
         substanceId: row.substanceId,
         section: 'insights',
         metric: 'useAmount',
-        visualTarget: 'valueCell',
+        visualTarget: 'value',
         value: metricValue
     });
 }
@@ -31866,7 +32243,7 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
                 const ccr = evaluateConditionalColorRules({
                     substanceId: getUseSubstanceId(entry),
                     section: 'useHistory',
-                    visualTarget: 'valueCell',
+                    visualTarget: 'value',
                     metric: 'transactionType',
                     value: tx,
                     textValue: tx,
@@ -31882,7 +32259,7 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
                 const ccr = evaluateConditionalColorRules({
                     substanceId: getUseSubstanceId(entry),
                     section: 'useHistory',
-                    visualTarget: 'valueCell',
+                    visualTarget: 'value',
                     metric: 'useAmount',
                     value: amount
                 });
@@ -36841,7 +37218,7 @@ function applyConditionalColorToMetricHtml(html, context = {}, data = appData) {
     const ccr = evaluateConditionalColorRules({
         substanceId: context.substanceId,
         section: context.section || 'useHistory',
-        visualTarget: context.visualTarget || 'valueCell',
+        visualTarget: context.visualTarget || 'value',
         metric: context.metric,
         value,
         log: context.log
@@ -61554,14 +61931,28 @@ function __getRecoveryTrackerTestExports() {
         CCR_COLOR_CHANNEL_DEFAULTS,
         CCR_RANGE_BOUNDARIES,
         CCR_VISUAL_TARGETS,
+        CCR_RANGE_COLOR_SCHEMES,
         normalizeCcrRangeBoundary,
         getCcrRuleRangeBoundary,
         normalizeCcrVisualTarget,
+        getCcrVisualTargetLabel,
+        getCcrRuleSpecificityScore,
+        compareCcrRulePrecedence,
+        formatCcrPrecedenceLabel,
+        formatCcrRuleExplanation,
         ccrNumericRange,
         ccrRangesOverlap,
+        ccrRangesTouchBoundary,
+        getCcrRangeRelationship,
+        summarizeCcrRuleRelationship,
         ccrRangeOverlapPoint,
         getCcrSiblingRangeRules,
         fixCcrRangeBoundariesForRule,
+        buildCcrGeneratedRangeRulesFromDraft,
+        generateCcrRangeRulesFromEditor,
+        duplicateCcrRuleManagerGroup,
+        deleteCcrRuleManagerGroup,
+        exportCcrRuleManagerGroupJson,
         renderCcrRangeVisualizer,
         buildNextCcrRangeDraft,
         duplicateConditionalColorRuleChangeRange,

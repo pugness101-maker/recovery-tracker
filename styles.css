@@ -4909,32 +4909,10 @@ body.table-col-resizing {
     max-width: 120px;
 }
 
-.session-table tr.high-rate td {
-    background: rgba(244, 67, 54, 0.12);
-}
-
-.session-table tr.short-break td {
-    background: rgba(255, 152, 0, 0.1);
-}
-
-.session-table tr.long-break td {
-    background: rgba(76, 175, 80, 0.12);
-}
-
-.session-table tr.taper-close td {
-    background: rgba(255, 235, 59, 0.12);
-}
-
 .session-table tr.ccr-row-colored > td {
     background: var(--ccr-row-bg, transparent);
     color: var(--ccr-row-text, inherit);
     box-shadow: inset 3px 0 0 0 var(--ccr-row-border, transparent);
-}
-
-.session-table tr.ccr-row-colored.gift-given-row > td,
-.session-table tr.ccr-row-colored.gift-received-row > td {
-    /* Keep gift row tones quieter than warning red/amber/green */
-    background: var(--ccr-row-bg, transparent);
 }
 
 .use-type-toggle .type-toggle-btns {
@@ -5696,22 +5674,6 @@ body.table-col-resizing {
     margin-bottom: 10px;
 }
 
-.use-history-card.high-rate {
-    border-color: rgba(244, 67, 54, 0.5);
-}
-
-.use-history-card.short-break {
-    border-color: rgba(255, 152, 0, 0.45);
-}
-
-.use-history-card.long-break {
-    border-color: rgba(76, 175, 80, 0.45);
-}
-
-.use-history-card.taper-close {
-    border-color: rgba(255, 235, 59, 0.45);
-}
-
 .use-history-card.ccr-row-colored {
     background: var(--ccr-row-bg, var(--bg-card));
     border-color: var(--ccr-row-border, var(--border));
@@ -6438,22 +6400,6 @@ body.table-col-resizing {
     border-radius: 10px;
     padding: 12px;
     margin-bottom: 10px;
-}
-
-.use-history-card.high-rate {
-    border-color: rgba(244, 67, 54, 0.5);
-}
-
-.use-history-card.short-break {
-    border-color: rgba(255, 152, 0, 0.45);
-}
-
-.use-history-card.long-break {
-    border-color: rgba(76, 175, 80, 0.45);
-}
-
-.use-history-card.taper-close {
-    border-color: rgba(255, 235, 59, 0.45);
 }
 
 .use-history-card.ccr-row-colored {

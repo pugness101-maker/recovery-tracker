@@ -2631,8 +2631,7 @@
 
                         <div class="ccr-manager-toolbar ccr-toolbar" role="toolbar" aria-label="Color rule actions">
                             <button type="button" class="submit-btn btn-sm" onclick="openConditionalColorRuleEditor()">Add rule</button>
-                            <button type="button" class="secondary-btn btn-sm" onclick="loadRecoveryColorPresetsFromUi()">Load Recovery Presets</button>
-                            <button type="button" class="secondary-btn btn-sm" onclick="confirmResetColorRulesToPresets()">Reset to default presets</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="loadRecoveryColorPresetsFromUi()">Load Example Rules</button>
                             <button type="button" class="secondary-btn btn-sm" onclick="downloadConditionalColorRulesExport()">Export rules</button>
                             <button type="button" class="secondary-btn btn-sm" onclick="toggleCcrMetricAuditReport()">Metric audit</button>
                             <label class="secondary-btn btn-sm ccr-import-label">
@@ -2681,8 +2680,8 @@
                             <div class="form-group">
                                 <label for="ccr-manager-group-by">Group by</label>
                                 <select id="ccr-manager-group-by" onchange="onCcrManagerGroupByChanged(this.value)">
-                                    <option value="substance">Substance</option>
                                     <option value="metric">Metric</option>
+                                    <option value="substance">Substance</option>
                                     <option value="section">Section</option>
                                     <option value="enabled">Enabled status</option>
                                     <option value="custom">Custom group</option>
@@ -2862,9 +2861,13 @@
                                 <div class="form-group">
                                     <label for="ccr-rule-visual-target">Rule target</label>
                                     <select id="ccr-rule-visual-target" onchange="updateCcrLivePreview()">
-                                        <option value="valueCell">Value cell only</option>
+                                        <option value="value">Value only</option>
                                         <option value="row">Entire row</option>
-                                        <option value="accent">Border/accent only</option>
+                                        <option value="card">Entire card</option>
+                                        <option value="column">Column</option>
+                                        <option value="badge">Badge only</option>
+                                        <option value="progressBar">Progress bar only</option>
+                                        <option value="border">Border only</option>
                                     </select>
                                 </div>
                             </div>
@@ -2914,6 +2917,18 @@
                             <div class="ccr-range-block">
                                 <span class="settings-hint">Related ranges for this metric</span>
                                 <div id="ccr-range-visualizer" class="ccr-range-visualizer-host"></div>
+                                <div class="ccr-toolbar">
+                                    <span class="settings-hint">Generate ranges: 0-1, 1-2, 2-3, 3-4, &gt;4</span>
+                                    <button type="button" class="secondary-btn btn-sm" onclick="generateCcrRangeRulesFromEditor('rainbow')">🌈 Auto Rainbow</button>
+                                    <button type="button" class="secondary-btn btn-sm" onclick="generateCcrRangeRulesFromEditor('traffic')">Traffic Light</button>
+                                    <button type="button" class="secondary-btn btn-sm" onclick="generateCcrRangeRulesFromEditor('blue')">Blue Scale</button>
+                                    <button type="button" class="secondary-btn btn-sm" onclick="generateCcrRangeRulesFromEditor('heat')">Heat Map</button>
+                                    <button type="button" class="secondary-btn btn-sm" onclick="generateCcrRangeRulesFromEditor('recovery')">Recovery</button>
+                                    <button type="button" class="secondary-btn btn-sm" onclick="generateCcrRangeRulesFromEditor('colorBlind')">Color-Blind Safe</button>
+                                    <button type="button" class="secondary-btn btn-sm" onclick="generateCcrRangeRulesFromEditor('monochrome')">Monochrome</button>
+                                    <button type="button" class="secondary-btn btn-sm" onclick="generateCcrRangeRulesFromEditor('pastel')">Pastel</button>
+                                    <button type="button" class="secondary-btn btn-sm" onclick="generateCcrRangeRulesFromEditor('dark')">Dark</button>
+                                </div>
                             </div>
                             <div class="ccr-editor-actions">
                                 <button type="button" class="submit-btn" onclick="saveConditionalColorRuleFromForm()">Save rule</button>
