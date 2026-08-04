@@ -7404,15 +7404,58 @@ body.purchase-history-col-resizing {
     margin-bottom: 12px;
 }
 
+.ccr-rule-group {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    overflow: hidden;
+    background: var(--surface, transparent);
+}
+
+.ccr-rule-group-header {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: 8px 10px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-secondary, rgba(127, 127, 127, 0.06));
+}
+
+.ccr-group-toggle {
+    min-width: 34px;
+}
+
+.ccr-group-stat {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 7px;
+}
+
+.ccr-group-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-left: auto;
+}
+
+.ccr-rule-group-body {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    padding: 8px;
+}
+
 .ccr-rule-card,
 .ccr-manager-row {
     display: flex;
     flex-wrap: wrap;
     justify-content: space-between;
     gap: 10px;
-    padding: 10px 12px;
+    padding: 8px 10px;
     border: 1px solid var(--border);
-    border-radius: 10px;
+    border-radius: 8px;
     background: var(--surface, transparent);
     outline: none;
 }
@@ -7476,7 +7519,32 @@ body.purchase-history-col-resizing {
 }
 
 .ccr-rule-name {
-    display: block;
+    display: inline;
+}
+
+.ccr-rule-compact-line {
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 6px;
+    min-width: 0;
+}
+
+.ccr-rule-condition {
+    color: var(--text-secondary);
+    font-size: 0.76rem;
+}
+
+.ccr-priority-pill {
+    font-size: 0.7rem;
+    font-weight: 700;
+    border: 1px solid var(--border);
+    border-radius: 999px;
+    padding: 1px 6px;
+}
+
+.ccr-rule-expanded-details {
+    margin-top: 4px;
 }
 
 .ccr-color-preview {
@@ -7571,6 +7639,12 @@ body.purchase-history-col-resizing {
     flex-wrap: wrap;
     gap: 6px;
     align-items: center;
+    width: 100%;
+    justify-content: flex-end;
+}
+
+.ccr-card-expand-btn {
+    align-self: flex-start;
 }
 
 .ccr-enable-mini {

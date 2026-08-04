@@ -137,6 +137,150 @@ test('bulk enable, disable, and delete', () => {
     assert.equal(rt.getConditionalColorRules().some(r => r.id === r1.id || r.id === r2.id), false);
 });
 
+test('bulk rename previews replace full name before saving', () => {
+    const { rt } = setup();
+    const r1 = addRule(rt, { name: 'Use coke (range)' });
+    const r2 = addRule(rt, { name: 'Use coke (copy)' });
+    const preview = rt.buildCcrBulkEditPreview([r1.id, r2.id], { nameMode: 'replace', name: 'Coke use' });
+    assert.equal(preview.length, 2);
+    assert.equal(preview[0].after.name, 'Coke use');
+    assert.equal(rt.getConditionalColorRules().find(r => r.id === r1.id).name, 'Use coke (range)');
+    rt.applyCcrBulkEdit([r1.id, r2.id], { nameMode: 'replace', name: 'Coke use' });
+    assert.equal(rt.getConditionalColorRules().find(r => r.id === r2.id).name, 'Coke use');
+});
+
+test('bulk prefix and suffix only update selected rule names', () => {
+    const { rt } = setup();
+    const r1 = addRule(rt, { name: 'Range A' });
+    const r2 = addRule(rt, { name: 'Range B' });
+    rt.applyCcrBulkEdit([r1.id, r2.id], { nameMode: 'prefix', namePrefix: 'Coke ' });
+    rt.applyCcrBulkEdit([r1.id], { nameMode: 'suffix', nameSuffix: ' active' });
+    assert.equal(rt.getConditionalColorRules().find(r => r.id === r1.id).name, 'Coke Range A active');
+    assert.equal(rt.getConditionalColorRules().find(r => r.id === r2.id).name, 'Coke Range B');
+});
+
+test('bulk find and replace updates matching text', () => {
+    const { rt } = setup();
+    const r1 = addRule(rt, { name: 'Use coke low' });
+    const r2 = addRule(rt, { name: 'Use coke high' });
+    rt.applyCcrBulkEdit([r1.id, r2.id], { nameMode: 'findReplace', findText: 'Use coke', replaceText: 'Coke use' });
+    assert.equal(rt.getConditionalColorRules().find(r => r.id === r1.id).name, 'Coke use low');
+    assert.equal(rt.getConditionalColorRules().find(r => r.id === r2.id).name, 'Coke use high');
+});
+
+test('bulk auto-numbering supports ranges in the name template', () => {
+    const { rt } = setup();
+    const r1 = addRule(rt, { name: 'Use coke (range)', operator: 'between', value: 1, valueTo: 2 });
+    const r2 = addRule(rt, { name: 'Use coke (copy)', operator: 'between', value: 2, valueTo: 3 });
+    const r3 = addRule(rt, { name: 'Use coke (range)', operator: 'between', value: 3, valueTo: 4 });
+    rt.applyCcrBulkEdit([r1.id, r2.id, r3.id], {
+        nameMode: 'autoNumber',
+        numberTemplate: 'Coke use {range} g',
+        numberStart: 1
+    });
+    assert.equal(rt.getConditionalColorRules().find(r => r.id === r1.id).name, 'Coke use 1-2 g');
+    assert.equal(rt.getConditionalColorRules().find(r => r.id === r2.id).name, 'Coke use 2-3 g');
+    assert.equal(rt.getConditionalColorRules().find(r => r.id === r3.id).name, 'Coke use 3-4 g');
+});
+
+test('bulk auto-name from condition uses substance, metric, and range', () => {
+    const { rt, data } = setup();
+    const r1 = addRule(rt, {
+        name: 'Untitled',
+        substanceScope: data.substances[0].id,
+        metric: 'useAmount',
+        operator: 'between',
+        value: 1,
+        valueTo: 2
+    });
+    const preview = rt.buildCcrBulkEditPreview([r1.id], { autoNameFromCondition: true }, data);
+    assert.match(preview[0].after.name, /.+ · Use amount · 1-2/);
+});
+
+test('partial bulk edits do not overwrite unspecified fields', () => {
+    const { rt } = setup();
+    const r1 = addRule(rt, {
+        name: 'Keep details',
+        metric: 'useAmount',
+        operator: 'between',
+        value: 1,
+        valueTo: 2,
+        priority: 12,
+        colors: { background: '#111111', text: '#eeeeee', border: '#222222' }
+    });
+    rt.applyCcrBulkEdit([r1.id], { enabled: false, backgroundColor: '#333333' });
+    const saved = rt.getConditionalColorRules().find(r => r.id === r1.id);
+    assert.equal(saved.enabled, false);
+    assert.equal(saved.name, 'Keep details');
+    assert.equal(saved.metric, 'useAmount');
+    assert.equal(saved.value, 1);
+    assert.equal(saved.valueTo, 2);
+    assert.equal(saved.priority, 12);
+    assert.equal(saved.colors.background, '#333333');
+    assert.equal(saved.colors.text, '#eeeeee');
+});
+
+test('custom group creation, rename, enable-disable, and export', () => {
+    const { rt } = setup();
+    const r1 = addRule(rt, { name: 'Grouped 1', enabled: true });
+    const r2 = addRule(rt, { name: 'Grouped 2', enabled: true });
+    const group = rt.createCcrCustomGroup('Coke Use Ranges');
+    rt.moveCcrRulesToCustomGroup([r1.id, r2.id], group.id);
+    assert.equal(rt.getConditionalColorRules().find(r => r.id === r1.id).customGroupId, group.id);
+    rt.renameCcrCustomGroup(group.id, 'Duration Rules');
+    assert.equal(rt.getCcrCustomGroups().find(g => g.id === group.id).name, 'Duration Rules');
+    rt.setCcrCustomGroupEnabled(group.id, false);
+    assert.equal(rt.getConditionalColorRules().find(r => r.id === r2.id).enabled, false);
+    const json = JSON.parse(rt.exportCcrCustomGroupJson(group.id));
+    assert.equal(json.group.name, 'Duration Rules');
+    assert.equal(json.rules.length, 2);
+});
+
+test('deleting custom groups keeps their rules', () => {
+    const { rt } = setup();
+    const r1 = addRule(rt, { name: 'Keep after group delete' });
+    const group = rt.createCcrCustomGroup('Temporary');
+    rt.moveCcrRulesToCustomGroup([r1.id], group.id);
+    rt.deleteCcrCustomGroup(group.id);
+    const saved = rt.getConditionalColorRules().find(r => r.id === r1.id);
+    assert.ok(saved);
+    assert.equal(saved.customGroupId, '');
+});
+
+test('group building, expand-collapse persistence, select all, and moving rules', () => {
+    const { rt, data } = setup();
+    const r1 = addRule(rt, { name: 'Metric A', metric: 'useAmount', enabled: true });
+    const r2 = addRule(rt, { name: 'Metric B', metric: 'useAmount', enabled: false });
+    const groups = rt.buildCcrRuleGroups([r1, r2], { groupBy: 'metric', data });
+    assert.equal(groups.length, 1);
+    assert.equal(groups[0].count, 2);
+    assert.equal(groups[0].enabledCount, 1);
+    rt.setCcrRuleGroupCollapsed(groups[0].id, true, data);
+    assert.equal(rt.getCcrGroupCollapseMap(data)[groups[0].id], true);
+    rt.setCcrManagerFilters({ selectedIds: [], groupBy: 'metric' });
+    const selected = rt.selectCcrRuleGroup(groups[0].id, true, [r1, r2], data);
+    assert.equal(selected.sort().join(','), [r1.id, r2.id].sort().join(','));
+    assert.equal(rt.getCcrManagerUiState().selectedIds.length, 2);
+    const custom = rt.createCcrCustomGroup('Inventory Warnings', data);
+    rt.moveCcrRulesToCustomGroup([r1.id], custom.id, data);
+    assert.equal(rt.getConditionalColorRules(data).find(r => r.id === r1.id).customGroupId, custom.id);
+});
+
+test('compact and expanded rule card layouts expose the right actions', () => {
+    const { rt, data } = setup();
+    const rule = addRule(rt, { name: 'Compact rule' });
+    const conflicts = rt.detectConditionalColorRuleConflicts([rule], data);
+    const matchCounts = { [rule.id]: 3 };
+    const compact = rt.renderCcrRuleManagerCard(rule, { conflicts, matchCounts, selected: new Set() });
+    assert.match(compact, /ccr-rule-compact-line/);
+    assert.doesNotMatch(compact, />Delete</);
+    rt.setCcrRuleCardExpanded(rule.id, true, data);
+    const expanded = rt.renderCcrRuleManagerCard(rule, { conflicts, matchCounts, selected: new Set() });
+    assert.match(expanded, /ccr-rule-expanded-details/);
+    assert.match(expanded, />Delete</);
+    assert.equal(rt.isCcrRuleCardExpanded(rule.id, data), true);
+});
+
 test('drag-and-drop priority order updates priorities', () => {
     const { rt } = setup();
     const low = addRule(rt, { id: 'ord-low', name: 'Low', priority: 10 });

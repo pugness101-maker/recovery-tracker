@@ -2672,6 +2672,16 @@
                                     <option value="asc">Ascending</option>
                                 </select>
                             </div>
+                            <div class="form-group">
+                                <label for="ccr-manager-group-by">Group by</label>
+                                <select id="ccr-manager-group-by" onchange="onCcrManagerGroupByChanged(this.value)">
+                                    <option value="substance">Substance</option>
+                                    <option value="metric">Metric</option>
+                                    <option value="section">Section</option>
+                                    <option value="enabled">Enabled status</option>
+                                    <option value="custom">Custom group</option>
+                                </select>
+                            </div>
                         </div>
 
                         <div class="ccr-manager-bulk" role="group" aria-label="Bulk rule actions">
@@ -2679,8 +2689,12 @@
                                 <input type="checkbox" id="ccr-manager-select-all" onchange="selectAllVisibleCcrManagerRules(this.checked)">
                                 <span>Select visible</span>
                             </label>
+                            <button type="button" class="submit-btn btn-sm hidden" id="ccr-manager-bulk-edit" onclick="openCcrBulkEditDialog()">Bulk Edit</button>
                             <button type="button" class="secondary-btn btn-sm" onclick="bulkEnableSelectedColorRules()">Enable selected</button>
                             <button type="button" class="secondary-btn btn-sm" onclick="bulkDisableSelectedColorRules()">Disable selected</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="moveSelectedColorRulesToGroupFromUi()">Move to group</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="expandAllCcrRuleGroups()">Expand all</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="collapseAllCcrRuleGroups()">Collapse all</button>
                             <button type="button" class="danger-btn btn-sm" onclick="bulkDeleteSelectedColorRules()">Delete selected</button>
                             <button type="button" class="secondary-btn btn-sm" onclick="downloadSelectedColorRulesExport()">Export selected</button>
                             <span id="ccr-manager-result-count" class="ccr-manager-result-count" aria-live="polite"></span>
