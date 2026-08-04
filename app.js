@@ -1564,7 +1564,9 @@ const CCR_OPERATORS = Object.freeze([
     { id: 'gte', label: 'Greater than or equal' },
     { id: 'lt', label: 'Less than' },
     { id: 'lte', label: 'Less than or equal' },
-    { id: 'between', label: 'Between' },
+    { id: 'between', label: 'Between (inclusive)' },
+    { id: 'betweenInclusive', label: 'Between inclusive' },
+    { id: 'betweenExclusive', label: 'Between (exclusive)' },
     { id: 'contains', label: 'Contains' },
     { id: 'empty', label: 'Empty' },
     { id: 'notEmpty', label: 'Not empty' },
@@ -1574,6 +1576,28 @@ const CCR_OPERATORS = Object.freeze([
     { id: 'pctBelowTarget', label: 'Percentage below target' },
     { id: 'daysSince', label: 'Days since value' }
 ]);
+
+const CCR_QUICK_COLOR_PRESETS = Object.freeze([
+    { id: 'red', label: 'Red', hex: '#f44336' },
+    { id: 'orange', label: 'Orange', hex: '#ff9800' },
+    { id: 'yellow', label: 'Yellow', hex: '#ffeb3b' },
+    { id: 'lime', label: 'Lime', hex: '#cddc39' },
+    { id: 'green', label: 'Green', hex: '#4caf50' },
+    { id: 'teal', label: 'Teal', hex: '#009688' },
+    { id: 'cyan', label: 'Cyan', hex: '#00bcd4' },
+    { id: 'blue', label: 'Blue', hex: '#2196f3' },
+    { id: 'purple', label: 'Purple', hex: '#9c27b0' },
+    { id: 'pink', label: 'Pink', hex: '#e91e63' },
+    { id: 'gray', label: 'Gray', hex: '#9e9e9e' },
+    { id: 'white', label: 'White', hex: '#ffffff' },
+    { id: 'black', label: 'Black', hex: '#000000' }
+]);
+
+const CCR_COLOR_CHANNEL_DEFAULTS = Object.freeze({
+    background: 'rgba(76, 175, 80, 0.22)',
+    text: '#81c784',
+    border: '#4caf50'
+});
 
 const CCR_METRICS = Object.freeze([
     { id: 'useAmount', label: 'Use amount', valueType: 'number' },
@@ -1962,7 +1986,8 @@ function normalizeConditionalColorRule(raw, index = 0) {
     const metricIds = new Set(CCR_METRICS.map(m => m.id));
     const opIds = new Set(CCR_OPERATORS.map(o => o.id));
     const metric = metricIds.has(raw.metric) ? raw.metric : 'useAmount';
-    const operator = opIds.has(raw.operator) ? raw.operator : 'gt';
+    let operator = opIds.has(raw.operator) ? raw.operator : 'gt';
+    if (operator === 'betweenInclusive') operator = 'between';
     let sectionScope = raw.sectionScope;
     if (sectionScope === 'all' || sectionScope == null) sectionScope = ['all'];
     if (!Array.isArray(sectionScope)) sectionScope = [String(sectionScope)];
@@ -2002,9 +2027,13 @@ function normalizeConditionalColorRule(raw, index = 0) {
             background: Object.prototype.hasOwnProperty.call(colors, 'background')
                 ? String(colors.background ?? '').trim()
                 : 'rgba(76, 175, 80, 0.22)',
-            text: normalizeHexColor(colors.text, '#81c784'),
-            border,
-            accent: normalizeHexColor(colors.accent || colors.border, border)
+            text: Object.prototype.hasOwnProperty.call(colors, 'text') && String(colors.text ?? '').trim() === ''
+                ? ''
+                : normalizeHexColor(colors.text, '#81c784'),
+            border: Object.prototype.hasOwnProperty.call(colors, 'border') && String(colors.border ?? '').trim() === ''
+                ? ''
+                : border,
+            accent: normalizeHexColor(colors.accent || colors.border, border || '#4caf50')
         },
         priority: Number.isFinite(Number(raw.priority)) ? Number(raw.priority) : (100 - index),
         stopProcessing: !!raw.stopProcessing,
@@ -2105,11 +2134,18 @@ function compareConditionalColorRule(rule, context = {}) {
                 return numValue != null && compare != null && numValue < compare;
             case 'lte':
                 return numValue != null && compare != null && numValue <= compare;
-            case 'between': {
+            case 'between':
+            case 'betweenInclusive': {
                 if (numValue == null || compare == null || compareTo == null) return false;
                 const lo = Math.min(compare, compareTo);
                 const hi = Math.max(compare, compareTo);
                 return numValue >= lo && numValue <= hi;
+            }
+            case 'betweenExclusive': {
+                if (numValue == null || compare == null || compareTo == null) return false;
+                const lo = Math.min(compare, compareTo);
+                const hi = Math.max(compare, compareTo);
+                return numValue > lo && numValue < hi;
             }
             case 'pctAboveTarget': {
                 if (numValue == null || target == null || target === 0 || compare == null) return false;
@@ -2502,6 +2538,7 @@ const CCR_MANAGER_SORT_OPTIONS = Object.freeze([
     { id: 'name', label: 'Name' },
     { id: 'metric', label: 'Metric' },
     { id: 'substance', label: 'Substance' },
+    { id: 'rangeLower', label: 'Range (lower bound)' },
     { id: 'lastModified', label: 'Last Modified' }
 ]);
 
@@ -2552,7 +2589,7 @@ function formatCcrConditionSummary(rule) {
     if (!rule) return '—';
     const op = CCR_OPERATORS.find(o => o.id === rule.operator);
     const opLabel = op?.label || rule.operator;
-    if (rule.operator === 'between') {
+    if (rule.operator === 'between' || rule.operator === 'betweenInclusive' || rule.operator === 'betweenExclusive') {
         return `${opLabel} ${rule.value ?? '—'} – ${rule.valueTo ?? '—'}`;
     }
     if (rule.operator === 'empty' || rule.operator === 'notEmpty'
@@ -2616,28 +2653,56 @@ function ccrNumericRange(rule) {
     const v2 = ccrCoerceNumber(rule.valueTo);
     switch (rule.operator) {
         case 'eq':
-            return v == null ? null : { lo: v, hi: v };
+            return v == null ? null : { lo: v, hi: v, loExclusive: false, hiExclusive: false };
         case 'gt':
+            return v == null ? null : { lo: v, hi: Infinity, loExclusive: true, hiExclusive: true };
         case 'gte':
-            return v == null ? null : { lo: v, hi: Infinity };
+            return v == null ? null : { lo: v, hi: Infinity, loExclusive: false, hiExclusive: true };
         case 'lt':
+            return v == null ? null : { lo: -Infinity, hi: v, loExclusive: true, hiExclusive: true };
         case 'lte':
-            return v == null ? null : { lo: -Infinity, hi: v };
+            return v == null ? null : { lo: -Infinity, hi: v, loExclusive: true, hiExclusive: false };
         case 'between':
+        case 'betweenInclusive': {
             if (v == null || v2 == null) return null;
-            return { lo: Math.min(v, v2), hi: Math.max(v, v2) };
+            return {
+                lo: Math.min(v, v2),
+                hi: Math.max(v, v2),
+                loExclusive: false,
+                hiExclusive: false
+            };
+        }
+        case 'betweenExclusive': {
+            if (v == null || v2 == null) return null;
+            return {
+                lo: Math.min(v, v2),
+                hi: Math.max(v, v2),
+                loExclusive: true,
+                hiExclusive: true
+            };
+        }
         case 'pctAboveTarget':
         case 'pctBelowTarget':
         case 'daysSince':
-            return v == null ? null : { lo: v, hi: Infinity };
+            return v == null ? null : { lo: v, hi: Infinity, loExclusive: false, hiExclusive: true };
         default:
             return null;
     }
 }
 
+/** True only when two numeric ranges share at least one matching value. Adjacent non-overlapping bounds are not conflicts. */
 function ccrRangesOverlap(a, b) {
-    if (!a || !b) return true; // unknown → treat as potential conflict
-    return a.lo <= b.hi && b.lo <= a.hi;
+    if (!a || !b) return false;
+    if (a.hi < b.lo || b.hi < a.lo) return false;
+    if (a.hi === b.lo) {
+        if (!Number.isFinite(a.hi)) return true;
+        return !a.hiExclusive && !b.loExclusive;
+    }
+    if (b.hi === a.lo) {
+        if (!Number.isFinite(a.lo)) return true;
+        return !b.hiExclusive && !a.loExclusive;
+    }
+    return true;
 }
 
 /**
@@ -2830,6 +2895,16 @@ function filterAndSortConditionalColorRules(rules, filters = getCcrManagerUiStat
             bv = b.lastModified || '';
             return av < bv ? -dir : av > bv ? dir : 0;
         }
+        if (sortKey === 'rangeLower') {
+            const ar = ccrNumericRange(a);
+            const br = ccrNumericRange(b);
+            av = ar ? ar.lo : Number.POSITIVE_INFINITY;
+            bv = br ? br.lo : Number.POSITIVE_INFINITY;
+            if (av !== bv) return (av - bv) * dir;
+            const aHi = ar ? ar.hi : Number.POSITIVE_INFINITY;
+            const bHi = br ? br.hi : Number.POSITIVE_INFINITY;
+            return (aHi - bHi) * dir;
+        }
         // priority (default)
         av = Number(a.priority) || 0;
         bv = Number(b.priority) || 0;
@@ -2982,8 +3057,8 @@ function getCcrEditorDraftFromForm() {
         statusLabel: get('ccr-rule-status-label')?.value || '',
         colors: {
             background: backgroundRaw,
-            text: get('ccr-rule-text')?.value || '#81c784',
-            border: get('ccr-rule-border')?.value || '#4caf50'
+            text: get('ccr-rule-text') ? get('ccr-rule-text').value : '#81c784',
+            border: get('ccr-rule-border') ? get('ccr-rule-border').value : '#4caf50'
         }
     });
 }
@@ -3074,7 +3149,9 @@ function fillCcrEditorForm(rule) {
     if (textHex) syncCcrColorInputs(textHex);
     if (borderHex) syncCcrColorInputs(borderHex);
     updateCcrOperatorFieldsVisibility();
+    refreshCcrColorPalettes();
     updateCcrLivePreview();
+    updateCcrRangeVisualizer();
 }
 
 function updateCcrOperatorFieldsVisibility() {
@@ -3083,11 +3160,12 @@ function updateCcrOperatorFieldsVisibility() {
     const valueToRow = document.getElementById('ccr-value-to-row');
     const targetRow = document.getElementById('ccr-target-row');
     const needsValue = !['empty', 'notEmpty', 'true', 'false'].includes(op);
-    const needsTo = op === 'between';
+    const needsTo = op === 'between' || op === 'betweenInclusive' || op === 'betweenExclusive';
     const needsTarget = op === 'pctAboveTarget' || op === 'pctBelowTarget';
     valueRow?.classList.toggle('hidden', !needsValue);
     valueToRow?.classList.toggle('hidden', !needsTo);
     targetRow?.classList.toggle('hidden', !needsTarget);
+    updateCcrRangeVisualizer();
 }
 
 function updateCcrLivePreview() {
@@ -3123,6 +3201,7 @@ function updateCcrLivePreview() {
         warn.classList.toggle('ccr-contrast-bad', !info.ok);
         warn.classList.toggle('ccr-contrast-ok', !!info.ok);
     }
+    updateCcrRangeVisualizer();
 }
 
 function populateCcrSubstanceSelect() {
@@ -3206,8 +3285,15 @@ function renderConditionalColorRulesList() {
             <div class="ccr-rule-card-actions">
                 <button type="button" class="secondary-btn btn-sm" onclick="openConditionalColorRuleEditor('${escapeAttr(rule.id)}')">Edit</button>
                 <button type="button" class="secondary-btn btn-sm" onclick="duplicateConditionalColorRule('${escapeAttr(rule.id)}'); renderConditionalColorRulesSettings();">Duplicate</button>
+                <button type="button" class="secondary-btn btn-sm" onclick="duplicateConditionalColorRuleChangeRange('${escapeAttr(rule.id)}')">Duplicate and change range</button>
+                <button type="button" class="secondary-btn btn-sm" onclick="addNextCcrRangeFromRule('${escapeAttr(rule.id)}')">Add next range</button>
                 <button type="button" class="danger-btn btn-sm" onclick="confirmDeleteConditionalColorRule('${escapeAttr(rule.id)}')">Delete</button>
             </div>
+            ${(() => {
+                const siblings = getCcrSiblingRangeRules(rule);
+                if (!siblings.length || siblings[0].id !== rule.id) return '';
+                return `<div class="ccr-rule-range-map">${renderCcrRangeVisualizer(siblings, rule.id)}</div>`;
+            })()}
         </article>`;
     }).join('');
 }
@@ -3237,10 +3323,12 @@ function populateCcrManagerFilterSelects() {
         metricEl.dataset.ready = '1';
     }
     const sortEl = document.getElementById('ccr-manager-sort');
-    if (sortEl && !sortEl.dataset.ready) {
+    if (sortEl) {
+        const current = sortEl.value || getCcrManagerUiState().sort || 'priority';
         sortEl.innerHTML = CCR_MANAGER_SORT_OPTIONS.map(o =>
             `<option value="${escapeAttr(o.id)}">${escapeHtml(o.label)}</option>`
         ).join('');
+        sortEl.value = [...sortEl.options].some(o => o.value === current) ? current : 'priority';
         sortEl.dataset.ready = '1';
     }
     syncCcrManagerFilterControls();
@@ -3430,8 +3518,12 @@ function renderConditionalColorRulesSettings() {
         metricEl.innerHTML = CCR_METRICS.map(m => `<option value="${m.id}">${escapeHtml(m.label)}</option>`).join('');
     }
     const opEl = document.getElementById('ccr-rule-operator');
-    if (opEl && !opEl.options.length) {
-        opEl.innerHTML = CCR_OPERATORS.map(o => `<option value="${o.id}">${escapeHtml(o.label)}</option>`).join('');
+    if (opEl) {
+        const current = opEl.value;
+        opEl.innerHTML = CCR_OPERATORS
+            .filter(o => o.id !== 'betweenInclusive')
+            .map(o => `<option value="${o.id}">${escapeHtml(o.label)}</option>`).join('');
+        if ([...opEl.options].some(o => o.value === current)) opEl.value = current;
     }
     const sectionsEl = document.getElementById('ccr-rule-sections');
     if (sectionsEl && !sectionsEl.options.length) {
@@ -3461,6 +3553,8 @@ function openConditionalColorRuleEditor(ruleId = null) {
         statusLabel: ''
     });
     populateCcrSubstanceSelect();
+    refreshCcrColorPalettes();
+    updateCcrRangeVisualizer();
 }
 
 function closeConditionalColorRuleEditor() {
@@ -3531,6 +3625,331 @@ function onConditionalColorRulesImportFile(event) {
     reader.readAsText(file);
 }
 
+function hslToHexColor(h, s = 1, l = 0.5) {
+    const hue = ((Number(h) % 360) + 360) % 360;
+    const sat = Math.max(0, Math.min(1, s));
+    const light = Math.max(0, Math.min(1, l));
+    const c = (1 - Math.abs(2 * light - 1)) * sat;
+    const x = c * (1 - Math.abs(((hue / 60) % 2) - 1));
+    const m = light - c / 2;
+    let r = 0;
+    let g = 0;
+    let b = 0;
+    if (hue < 60) { r = c; g = x; }
+    else if (hue < 120) { r = x; g = c; }
+    else if (hue < 180) { g = c; b = x; }
+    else if (hue < 240) { g = x; b = c; }
+    else if (hue < 300) { r = x; b = c; }
+    else { r = c; b = x; }
+    return rgbToHexColor((r + m) * 255, (g + m) * 255, (b + m) * 255);
+}
+
+function getCcrChannelSelectedHex(channel) {
+    if (channel === 'background') {
+        const raw = document.getElementById('ccr-rule-bg')?.value || '';
+        const parsed = parseCssColor(raw);
+        return parsed ? rgbToHexColor(parsed.r, parsed.g, parsed.b) : '';
+    }
+    if (channel === 'text') {
+        return normalizeHexColor(document.getElementById('ccr-rule-text')?.value || '', '').slice(0, 7);
+    }
+    if (channel === 'border') {
+        return normalizeHexColor(document.getElementById('ccr-rule-border')?.value || '', '').slice(0, 7);
+    }
+    return '';
+}
+
+function renderCcrColorPalette(channel) {
+    const selected = (getCcrChannelSelectedHex(channel) || '').toLowerCase();
+    const swatches = CCR_QUICK_COLOR_PRESETS.map(preset => {
+        const isSelected = selected === preset.hex.toLowerCase();
+        return `<button type="button" class="ccr-swatch-btn${isSelected ? ' is-selected' : ''}"
+            style="--ccr-swatch:${escapeAttr(preset.hex)}"
+            data-ccr-channel="${escapeAttr(channel)}"
+            data-ccr-hex="${escapeAttr(preset.hex)}"
+            aria-label="${escapeAttr(preset.label)}"
+            aria-pressed="${isSelected ? 'true' : 'false'}"
+            title="${escapeAttr(preset.label)}"
+            onclick="applyCcrQuickColor('${escapeAttr(channel)}', '${escapeAttr(preset.hex)}')"></button>`;
+    }).join('');
+    return `
+        <div class="ccr-color-palette" data-ccr-palette="${escapeAttr(channel)}" role="group" aria-label="${escapeAttr(channel)} color presets">
+            <div class="ccr-swatch-row">${swatches}</div>
+            <div class="ccr-rainbow-strip"
+                role="slider"
+                tabindex="0"
+                aria-label="${escapeAttr(channel)} rainbow hue picker"
+                aria-valuemin="0"
+                aria-valuemax="360"
+                aria-valuenow="0"
+                data-ccr-channel="${escapeAttr(channel)}"
+                onmousedown="onCcrRainbowPointerDown(event, '${escapeAttr(channel)}')"
+                onkeydown="onCcrRainbowKeyDown(event, '${escapeAttr(channel)}')"></div>
+            <div class="ccr-color-palette-actions">
+                <button type="button" class="secondary-btn btn-sm" onclick="clearCcrColorChannel('${escapeAttr(channel)}')">Clear color</button>
+                <button type="button" class="secondary-btn btn-sm" onclick="resetCcrColorChannel('${escapeAttr(channel)}')">Reset</button>
+            </div>
+        </div>`;
+}
+
+function refreshCcrColorPalettes() {
+    ['background', 'text', 'border'].forEach(channel => {
+        const host = document.getElementById(`ccr-palette-${channel}`);
+        if (host) host.innerHTML = renderCcrColorPalette(channel);
+    });
+}
+
+function applyCcrQuickColor(channel, hex) {
+    const normalized = normalizeHexColor(hex, '#4caf50').slice(0, 7);
+    if (channel === 'background') {
+        const opacity = Number(document.getElementById('ccr-rule-bg-opacity')?.value);
+        const pct = Number.isFinite(opacity) ? opacity : 100;
+        const picker = document.getElementById('ccr-rule-bg-picker');
+        const text = document.getElementById('ccr-rule-bg');
+        if (picker) picker.value = normalized;
+        if (text) text.value = composeCcrBackgroundFromPicker(normalized, pct);
+        setCcrBackgroundOpacityUi(pct);
+        setCcrBackgroundColorError('');
+    } else if (channel === 'text' || channel === 'border') {
+        const picker = document.getElementById(`ccr-rule-${channel}-picker`);
+        const hexEl = document.getElementById(`ccr-rule-${channel}-hex`);
+        const value = document.getElementById(`ccr-rule-${channel}`);
+        if (picker) picker.value = normalized;
+        if (hexEl) hexEl.value = normalized;
+        if (value) value.value = normalized;
+    }
+    refreshCcrColorPalettes();
+    updateCcrLivePreview();
+}
+
+function clearCcrColorChannel(channel) {
+    if (channel === 'background') {
+        const text = document.getElementById('ccr-rule-bg');
+        if (text) text.value = '';
+        setCcrBackgroundColorError('');
+        setCcrBackgroundOpacityUi(100);
+    } else if (channel === 'text' || channel === 'border') {
+        const picker = document.getElementById(`ccr-rule-${channel}-picker`);
+        const hexEl = document.getElementById(`ccr-rule-${channel}-hex`);
+        const value = document.getElementById(`ccr-rule-${channel}`);
+        // Clear means no color override in preview; keep picker at a neutral so UI stays usable
+        if (value) value.value = '';
+        if (hexEl) hexEl.value = '';
+        if (picker) picker.value = channel === 'text' ? '#ffffff' : '#000000';
+    }
+    refreshCcrColorPalettes();
+    updateCcrLivePreview();
+}
+
+function resetCcrColorChannel(channel) {
+    const defaults = CCR_COLOR_CHANNEL_DEFAULTS;
+    if (channel === 'background') {
+        applyCcrBackgroundControlsFromValue(defaults.background);
+    } else {
+        applyCcrQuickColor(channel, defaults[channel]);
+        return;
+    }
+    refreshCcrColorPalettes();
+    updateCcrLivePreview();
+}
+
+function ccrRainbowHexFromClientX(el, clientX) {
+    if (!el) return '#4caf50';
+    const rect = el.getBoundingClientRect();
+    const ratio = rect.width > 0 ? Math.max(0, Math.min(1, (clientX - rect.left) / rect.width)) : 0;
+    const hue = ratio * 360;
+    el.setAttribute('aria-valuenow', String(Math.round(hue)));
+    return hslToHexColor(hue);
+}
+
+function onCcrRainbowPointerDown(event, channel) {
+    event.preventDefault();
+    const el = event.currentTarget;
+    const apply = (clientX) => applyCcrQuickColor(channel, ccrRainbowHexFromClientX(el, clientX));
+    apply(event.clientX);
+    const onMove = (ev) => apply(ev.clientX);
+    const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+    };
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+}
+
+function onCcrRainbowKeyDown(event, channel) {
+    const el = event.currentTarget;
+    let hue = Number(el?.getAttribute('aria-valuenow')) || 0;
+    if (event.key === 'ArrowRight' || event.key === 'ArrowUp') hue = Math.min(360, hue + 5);
+    else if (event.key === 'ArrowLeft' || event.key === 'ArrowDown') hue = Math.max(0, hue - 5);
+    else if (event.key === 'Home') hue = 0;
+    else if (event.key === 'End') hue = 360;
+    else return;
+    event.preventDefault();
+    el.setAttribute('aria-valuenow', String(hue));
+    applyCcrQuickColor(channel, hslToHexColor(hue));
+}
+
+function getCcrSiblingRangeRules(seedRule = null, data = appData) {
+    const draft = seedRule || getCcrEditorDraftFromForm();
+    if (!draft) return [];
+    return getConditionalColorRules(data)
+        .filter(rule => rule.metric === draft.metric
+            && scopesOverlapSubstances(rule.substanceScope, draft.substanceScope)
+            && scopesOverlapSections(rule.sectionScope, draft.sectionScope)
+            && ccrNumericRange(rule))
+        .slice()
+        .sort((a, b) => {
+            const ar = ccrNumericRange(a);
+            const br = ccrNumericRange(b);
+            return (ar.lo - br.lo) || (ar.hi - br.hi);
+        });
+}
+
+function formatCcrRangeTick(n) {
+    if (!Number.isFinite(n)) return n > 0 ? '∞' : '−∞';
+    if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
+    return String(Math.round(n * 100) / 100);
+}
+
+function ccrRangeSwatchEmoji(rule) {
+    const parsed = parseCssColor(rule?.colors?.background || rule?.colors?.border || rule?.colors?.text || '');
+    if (!parsed) return '⚪';
+    const { r, g, b } = parsed;
+    const max = Math.max(r, g, b);
+    const min = Math.min(r, g, b);
+    if (max < 40) return '⚫';
+    if (min > 220) return '⚪';
+    if (g > r && g > b) return '🟢';
+    if (r > g && r > b && g > 80) return '🟠';
+    if (r > g && r > b) return '🔴';
+    if (b > r && b > g) return '🔵';
+    if (r > 180 && g > 180 && b < 120) return '🟡';
+    if (r > 150 && b > 150) return '🟣';
+    return '🔘';
+}
+
+function renderCcrRangeVisualizer(rules = null, highlightId = null) {
+    const list = (rules || getCcrSiblingRangeRules()).slice();
+    if (!list.length) {
+        return '<p class="settings-hint">Add Between / comparison rules for this metric to see the range map.</p>';
+    }
+    const ticks = [];
+    list.forEach(rule => {
+        const range = ccrNumericRange(rule);
+        if (!range) return;
+        if (Number.isFinite(range.lo)) ticks.push(range.lo);
+        if (Number.isFinite(range.hi)) ticks.push(range.hi);
+    });
+    const uniqueTicks = [...new Set(ticks.map(t => Math.round(t * 1000) / 1000))].sort((a, b) => a - b);
+    if (!uniqueTicks.length) uniqueTicks.push(0);
+    const axis = uniqueTicks.map(formatCcrRangeTick).join('────') + '────+';
+    const markers = list.map(rule => {
+        const range = ccrNumericRange(rule);
+        const mark = ccrRangeSwatchEmoji(rule);
+        const active = highlightId && rule.id === highlightId ? ' is-active' : '';
+        return `<span class="ccr-range-marker${active}" title="${escapeAttr(rule.name + ': ' + formatCcrConditionSummary(rule))}">${mark}<span class="ccr-range-marker-label">${escapeHtml(formatCcrRangeTick(range.lo))}–${escapeHtml(formatCcrRangeTick(range.hi))}</span></span>`;
+    }).join('');
+    return `
+        <div class="ccr-range-visualizer" role="img" aria-label="Range map for related color rules">
+            <div class="ccr-range-axis" aria-hidden="true">${escapeHtml(axis)}</div>
+            <div class="ccr-range-markers">${markers}</div>
+            <ul class="ccr-range-legend">
+                ${list.map(rule => `<li${highlightId && rule.id === highlightId ? ' class="is-active"' : ''}>${escapeHtml(rule.name)} · ${escapeHtml(formatCcrConditionSummary(rule))}</li>`).join('')}
+            </ul>
+        </div>`;
+}
+
+function updateCcrRangeVisualizer() {
+    const host = document.getElementById('ccr-range-visualizer');
+    if (!host) return;
+    const draft = getCcrEditorDraftFromForm();
+    const siblings = getCcrSiblingRangeRules(draft);
+    // Include unsaved draft range when editing
+    const draftRange = ccrNumericRange(draft);
+    const combined = siblings.filter(r => r.id !== draft.id);
+    if (draftRange) combined.push(draft);
+    combined.sort((a, b) => {
+        const ar = ccrNumericRange(a);
+        const br = ccrNumericRange(b);
+        return (ar.lo - br.lo) || (ar.hi - br.hi);
+    });
+    host.innerHTML = renderCcrRangeVisualizer(combined, draft.id);
+}
+
+function buildNextCcrRangeDraft(src) {
+    const source = normalizeConditionalColorRule(src);
+    const range = ccrNumericRange(source);
+    let nextValue = 0;
+    let nextValueTo = 1;
+    let operator = 'betweenExclusive';
+    if (range && Number.isFinite(range.hi)) {
+        nextValue = range.hi;
+        nextValueTo = Number.isFinite(range.hi) ? range.hi + Math.max(1, Math.abs(range.hi - range.lo) || 1) : range.hi + 1;
+        // Adjacent to an inclusive upper bound → exclusive lower next range
+        operator = range.hiExclusive ? 'between' : 'betweenExclusive';
+    } else if (range && range.hi === Infinity && Number.isFinite(range.lo)) {
+        operator = 'gt';
+        nextValue = range.lo;
+        nextValueTo = '';
+    }
+    return normalizeConditionalColorRule({
+        ...source,
+        id: ccrNewId(),
+        name: `${source.name.replace(/\s*\(copy\)\s*$/i, '').replace(/\s*range\s*\d*$/i, '').trim()} range`,
+        operator,
+        value: nextValue,
+        valueTo: operator.startsWith('between') ? nextValueTo : '',
+        priority: (Number(source.priority) || 0) - 1,
+        statusLabel: '',
+        isPreset: false,
+        presetId: null,
+        lastModified: new Date().toISOString()
+    });
+}
+
+function duplicateConditionalColorRuleChangeRange(ruleId, data = appData) {
+    const state = ensureConditionalColorRules(data);
+    const src = state.rules.find(r => r.id === ruleId);
+    if (!src) return null;
+    const copy = normalizeConditionalColorRule({
+        ...src,
+        id: ccrNewId(),
+        name: `${src.name.replace(/\s*\(copy\)\s*$/i, '').trim()} (range)`,
+        isPreset: false,
+        presetId: null,
+        priority: (Number(src.priority) || 0) + 1,
+        statusLabel: '',
+        lastModified: new Date().toISOString()
+    });
+    state.rules.push(copy);
+    persistConditionalColorRulesState({ rules: state.rules }, data);
+    invalidateConditionalColorRuleMatchCache();
+    openConditionalColorRuleEditor(copy.id);
+    if (typeof showToast === 'function') showToast('Duplicated — adjust the range');
+    return copy;
+}
+
+function addNextCcrRangeFromRule(ruleId = null, data = appData) {
+    const state = ensureConditionalColorRules(data);
+    const src = ruleId
+        ? state.rules.find(r => r.id === ruleId)
+        : (ccrEditingRuleId ? state.rules.find(r => r.id === ccrEditingRuleId) : getCcrEditorDraftFromForm());
+    if (!src) {
+        if (typeof showToast === 'function') showToast('Save or select a rule first');
+        return null;
+    }
+    const draft = buildNextCcrRangeDraft(src);
+    const editor = document.getElementById('ccr-rule-editor');
+    editor?.classList.remove('hidden');
+    fillCcrEditorForm(draft);
+    populateCcrSubstanceSelect();
+    refreshCcrColorPalettes();
+    updateCcrRangeVisualizer();
+    document.getElementById('ccr-rule-value')?.focus();
+    if (typeof showToast === 'function') showToast('Add next range — set boundaries and save');
+    return draft;
+}
+
 function syncCcrBackgroundColorInputs(source) {
     const picker = document.getElementById('ccr-rule-bg-picker');
     const text = document.getElementById('ccr-rule-bg');
@@ -3563,6 +3982,7 @@ function syncCcrBackgroundColorInputs(source) {
         picker.value = rgbToHexColor(parsed.r, parsed.g, parsed.b);
         setCcrBackgroundOpacityUi(Math.round(parsed.a * 100));
     }
+    refreshCcrColorPalettes();
     updateCcrLivePreview();
 }
 
@@ -3594,6 +4014,7 @@ function syncCcrColorInputs(source) {
             }
         }
     });
+    refreshCcrColorPalettes();
     updateCcrLivePreview();
 }
 
@@ -57651,8 +58072,21 @@ function __getRecoveryTrackerTestExports() {
         composeCcrBackgroundFromPicker,
         validateCcrBackgroundColor,
         rgbToHexColor,
+        hslToHexColor,
         syncCcrBackgroundColorInputs,
         syncCcrColorInputs,
+        applyCcrQuickColor,
+        clearCcrColorChannel,
+        resetCcrColorChannel,
+        CCR_QUICK_COLOR_PRESETS,
+        CCR_COLOR_CHANNEL_DEFAULTS,
+        ccrNumericRange,
+        ccrRangesOverlap,
+        getCcrSiblingRangeRules,
+        renderCcrRangeVisualizer,
+        buildNextCcrRangeDraft,
+        duplicateConditionalColorRuleChangeRange,
+        addNextCcrRangeFromRule,
         CCR_OPERATORS,
         CCR_METRICS,
         CCR_SECTIONS,

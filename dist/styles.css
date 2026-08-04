@@ -7620,6 +7620,142 @@ body.light-theme .ccr-color-error {
     color: #c62828;
 }
 
+.ccr-palette-host {
+    margin-top: 8px;
+}
+
+.ccr-color-palette {
+    display: grid;
+    gap: 6px;
+}
+
+.ccr-swatch-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+}
+
+.ccr-swatch-btn {
+    width: 22px;
+    height: 22px;
+    border-radius: 4px;
+    border: 2px solid transparent;
+    background: var(--ccr-swatch, #888);
+    padding: 0;
+    cursor: pointer;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.ccr-swatch-btn.is-selected,
+.ccr-swatch-btn:focus-visible {
+    outline: 2px solid var(--accent, #4caf50);
+    outline-offset: 2px;
+    border-color: var(--text-primary, #fff);
+}
+
+.ccr-swatch-btn[data-ccr-hex="#ffffff"],
+.ccr-swatch-btn[style*="#ffffff"] {
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.45);
+}
+
+.ccr-rainbow-strip {
+    height: 18px;
+    border-radius: 4px;
+    border: 1px solid var(--border);
+    cursor: crosshair;
+    background: linear-gradient(
+        to right,
+        #ff0000 0%,
+        #ffff00 17%,
+        #00ff00 33%,
+        #00ffff 50%,
+        #0000ff 67%,
+        #ff00ff 83%,
+        #ff0000 100%
+    );
+}
+
+.ccr-rainbow-strip:focus-visible {
+    outline: 2px solid var(--accent, #4caf50);
+    outline-offset: 2px;
+}
+
+.ccr-color-palette-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.ccr-range-block,
+.ccr-rule-range-map {
+    margin: 10px 0 12px;
+    padding: 10px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: var(--bg-secondary, transparent);
+}
+
+.ccr-range-visualizer {
+    display: grid;
+    gap: 8px;
+}
+
+.ccr-range-axis {
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 0.78rem;
+    letter-spacing: 0.02em;
+    color: var(--text-secondary);
+    overflow-x: auto;
+    white-space: nowrap;
+}
+
+.ccr-range-markers {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+}
+
+.ccr-range-marker {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    font-size: 1rem;
+    min-width: 3.5rem;
+}
+
+.ccr-range-marker.is-active {
+    outline: 2px solid var(--accent, #4caf50);
+    outline-offset: 2px;
+    border-radius: 6px;
+    padding: 2px 4px;
+}
+
+.ccr-range-marker-label {
+    font-size: 0.68rem;
+    color: var(--text-secondary);
+}
+
+.ccr-range-legend {
+    margin: 0;
+    padding-left: 1.1rem;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.ccr-range-legend li.is-active {
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+.ccr-rule-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    align-content: flex-start;
+}
+
 .ccr-contrast-warning {
     margin: 6px 0;
     font-size: 0.78rem;

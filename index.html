@@ -2757,6 +2757,7 @@
                                         <input type="color" id="ccr-rule-bg-picker" value="#4caf50" aria-label="Background color picker" oninput="syncCcrBackgroundColorInputs(this)">
                                         <input type="text" id="ccr-rule-bg" placeholder="#hex or rgba(...)" aria-describedby="ccr-rule-bg-error ccr-rule-bg-hint" oninput="syncCcrBackgroundColorInputs(this)">
                                     </div>
+                                    <div id="ccr-palette-background" class="ccr-palette-host"></div>
                                     <div class="ccr-bg-opacity-row">
                                         <label for="ccr-rule-bg-opacity">Opacity <span id="ccr-rule-bg-opacity-label">100%</span></label>
                                         <input type="range" id="ccr-rule-bg-opacity" min="0" max="100" value="100" step="1" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" oninput="syncCcrBackgroundColorInputs(this)">
@@ -2771,6 +2772,7 @@
                                         <input type="text" id="ccr-rule-text-hex" maxlength="9" oninput="syncCcrColorInputs(this)">
                                         <input type="hidden" id="ccr-rule-text">
                                     </div>
+                                    <div id="ccr-palette-text" class="ccr-palette-host"></div>
                                 </div>
                                 <div class="form-group ccr-color-field">
                                     <label for="ccr-rule-border-hex">Border color</label>
@@ -2779,6 +2781,7 @@
                                         <input type="text" id="ccr-rule-border-hex" maxlength="9" oninput="syncCcrColorInputs(this)">
                                         <input type="hidden" id="ccr-rule-border">
                                     </div>
+                                    <div id="ccr-palette-border" class="ccr-palette-host"></div>
                                 </div>
                             </div>
                             <p id="ccr-contrast-warning" class="ccr-contrast-warning" aria-live="polite"></p>
@@ -2786,8 +2789,13 @@
                                 <span class="settings-hint">Live preview</span>
                                 <div id="ccr-live-preview" class="ccr-live-preview"></div>
                             </div>
+                            <div class="ccr-range-block">
+                                <span class="settings-hint">Related ranges for this metric</span>
+                                <div id="ccr-range-visualizer" class="ccr-range-visualizer-host"></div>
+                            </div>
                             <div class="ccr-editor-actions">
                                 <button type="button" class="submit-btn" onclick="saveConditionalColorRuleFromForm()">Save rule</button>
+                                <button type="button" class="secondary-btn" onclick="addNextCcrRangeFromRule()">Add next range</button>
                                 <button type="button" class="secondary-btn" onclick="closeConditionalColorRuleEditor()">Cancel</button>
                             </div>
                         </div>
