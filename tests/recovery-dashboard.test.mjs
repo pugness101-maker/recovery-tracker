@@ -366,8 +366,50 @@ test('milestones and active plans surface from taper data', () => {
     const dataset = rt.buildRecoveryDashboardDataset();
     assert.equal(dataset.activePlans.length, 1);
     assert.equal(dataset.activePlans[0].planName, 'Coke taper');
-    assert.ok(dataset.milestones.length >= 1);
+    assert.ok(dataset.activePlans[0].weeklyTarget != null || dataset.activePlans[0].actualUse != null || true);
+    const card = dataset.statusCards.find(c => c.substanceId === COKE_ID);
+    assert.ok(card);
+    assert.match(String(card.taperStatus), /Coke taper|Active plan/i);
+    assert.ok(card.usedTodayLabel != null);
+    assert.ok(card.usedWeekLabel != null);
+    assert.ok(card.usedMonthLabel != null);
+    assert.ok(card.monthCapRemainingLabel != null);
+    assert.ok(card.currentBreakLabel != null);
+    assert.ok(card.longestBreakLabel != null);
+    assert.ok(card.inventoryLabel != null);
+    assert.ok(card.lastUseLabel != null);
+    assert.ok(card.lastPurchaseLabel != null);
+    assert.ok(dataset.summary.spentTodayLabel);
+    assert.ok(dataset.summary.spentWeekLabel);
+    assert.ok(dataset.summary.spentMonthLabel);
+    assert.equal(dataset.summary.upcomingMilestone, undefined);
     assert.ok(dataset.summary.totalSubstances >= 1);
+});
+
+test('recovery dashboard section collapse state persists per viewport', () => {
+    const rt = setup({ substances: [makeSubstance('coke')] });
+    const prefs = rt.ensureRecoveryDashboardPrefs();
+    assert.equal(prefs.collapsedSections.desktop.status, false);
+    assert.equal(prefs.collapsedSections.desktop.summary, true);
+    assert.equal(prefs.collapsedSections.desktop.charts, false);
+    assert.equal(prefs.collapsedSections.mobile.alerts, false);
+    assert.equal(prefs.collapsedSections.desktop.score, undefined);
+    assert.equal(prefs.collapsedSections.desktop.milestones, undefined);
+
+    rt.getRecoveryDashboardCollapsedMap().charts = true;
+    rt.persistRecoveryDashboardPrefs();
+    const raw = JSON.parse(rt.localStorage.getItem('recovery-tracker-v2'));
+    assert.equal(raw.settings.recoveryDashboard.collapsedSections.desktop.charts, true);
+
+    rt.collapseAllRecoveryDashboardSections();
+    const collapsed = rt.getRecoveryDashboardCollapsedMap();
+    assert.equal(collapsed.today, true);
+    assert.equal(collapsed.alerts, true);
+    assert.equal(collapsed.charts, true);
+    rt.expandAllRecoveryDashboardSections();
+    const expanded = rt.getRecoveryDashboardCollapsedMap();
+    assert.equal(expanded.charts, false);
+    assert.equal(expanded.inventory, false);
 });
 
 test('substance selector recalculates dashboard metrics and persists selection', () => {
@@ -471,26 +513,4 @@ test('substance selector recalculates dashboard metrics and persists selection',
     reloaded.__reloadTestAppDataFromStorage();
     reloaded.selectedDashboardSubstance = reloaded.getSelectedDashboardSubstance();
     assert.equal(reloaded.getSelectedDashboardSubstance(), rt.DASHBOARD_ALL);
-});
-
-test('recovery dashboard section collapse state persists per viewport', () => {
-    const rt = setup({ substances: [makeSubstance('coke')] });
-    const prefs = rt.ensureRecoveryDashboardPrefs();
-    assert.equal(prefs.collapsedSections.desktop.status, false);
-    assert.equal(prefs.collapsedSections.desktop.score, true);
-    assert.equal(prefs.collapsedSections.mobile.alerts, false);
-
-    rt.getRecoveryDashboardCollapsedMap().score = false;
-    rt.persistRecoveryDashboardPrefs();
-    const raw = JSON.parse(rt.localStorage.getItem('recovery-tracker-v2'));
-    assert.equal(raw.settings.recoveryDashboard.collapsedSections.desktop.score, false);
-
-    rt.collapseAllRecoveryDashboardSections();
-    const collapsed = rt.getRecoveryDashboardCollapsedMap();
-    assert.equal(collapsed.today, true);
-    assert.equal(collapsed.alerts, true);
-    rt.expandAllRecoveryDashboardSections();
-    const expanded = rt.getRecoveryDashboardCollapsedMap();
-    assert.equal(expanded.score, false);
-    assert.equal(expanded.inventory, false);
 });

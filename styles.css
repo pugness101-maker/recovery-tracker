@@ -9072,6 +9072,29 @@ body > .app-container {
     gap: 10px;
 }
 
+.rd-home-charts {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
+}
+
+.rd-home-chart-block {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    background: var(--surface, transparent);
+}
+
+.rd-home-chart-block h4 {
+    margin: 0 0 8px;
+    font-size: 0.9rem;
+}
+
+.rd-home-chart-block .dash-insight-rows {
+    max-height: 220px;
+    overflow: auto;
+}
+
 .rd-summary-tile,
 .rd-status-card,
 .rd-plan-card,
@@ -9267,7 +9290,8 @@ body > .app-container {
     .rd-milestones,
     .rd-inventory-items,
     .rd-quick-actions,
-    .rd-today-grid {
+    .rd-today-grid,
+    .rd-home-charts {
         grid-template-columns: 1fr;
     }
 

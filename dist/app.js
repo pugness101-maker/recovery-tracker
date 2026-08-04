@@ -49,7 +49,6 @@ const CALENDAR_EVENT_TYPE_META = Object.freeze({
 });
 
 const RECOVERY_DASHBOARD_SECTION_DEFAULTS = Object.freeze({
-    score: true,
     summary: true,
     today: false,
     actions: false,
@@ -57,8 +56,8 @@ const RECOVERY_DASHBOARD_SECTION_DEFAULTS = Object.freeze({
     plans: false,
     goals: false,
     inventory: true,
-    milestones: true,
-    alerts: false
+    alerts: false,
+    charts: false
 });
 
 let themePreference = 'dark';
@@ -26052,17 +26051,19 @@ function updateBuyUnitDropdown() {
 
 function updateQuickActions() {
     const logBtn = document.getElementById('quick-log-btn');
+    if (!logBtn) return;
+    const icon = logBtn.querySelector('.quick-icon');
+    const label = logBtn.querySelector('.quick-label');
+    if (!icon || !label) return;
     if (isAllSubstancesView()) {
-        if (logBtn) {
-            logBtn.querySelector('.quick-icon').textContent = '📊';
-            logBtn.querySelector('.quick-label').textContent = 'Quick Use (pick substance)';
-        }
+        icon.textContent = '📊';
+        label.textContent = 'Quick Use (pick substance)';
         return;
     }
     const sub = getSubstance(currentSubstanceId);
-    if (logBtn && sub) {
-        logBtn.querySelector('.quick-icon').textContent = sub.icon;
-        logBtn.querySelector('.quick-label').textContent = 'Quick Use';
+    if (sub) {
+        icon.textContent = sub.icon;
+        label.textContent = 'Quick Use';
     }
 }
 
@@ -37200,9 +37201,7 @@ function buildDailyUsageBuckets(substanceId, days = 7, data = appData) {
         const label = d ? d.toLocaleDateString('en-US', { weekday: 'short' }) : dateStr.slice(5);
         buckets.push({
             label,
-            value: isVapeNicotineSubstanceId(substanceId, data)
-                ? getStatsUsageOnDate(substanceId, dateStr, data)
-                : sumUsageForDate(data.logs, dateStr, substanceId, { data }).amount
+            value: getCanonicalUsageOnDate(substanceId, dateStr, data)
         });
     }
     return buckets;
@@ -37215,7 +37214,7 @@ function buildWeeklyUsageBuckets(substanceId, weeks = 4, data = appData) {
         const weekEnd = addDaysToDateStr(getWeekStartDateStr(today), -i * 7 + 6);
         const weekStart = addDaysToDateStr(weekEnd, -6);
         const rangeEnd = weekEnd > today ? today : weekEnd;
-        const used = getStatsUsageInRange(substanceId, weekStart, rangeEnd, data);
+        const used = getCanonicalUsageInRange(substanceId, weekStart, rangeEnd, data);
         buckets.push({ label: formatShortMonthDay(weekStart), value: used });
     }
     return buckets;
@@ -37230,9 +37229,7 @@ function buildMonthlyUsageBuckets(substanceId, months = 3, data = appData) {
         const monthStart = getLocalDateString(d);
         const monthEnd = getMonthEndDateStr(monthStart);
         const rangeEnd = monthEnd > todayStr ? todayStr : monthEnd;
-        const used = isVapeNicotineSubstanceId(substanceId, data)
-            ? getStatsUsageInRange(substanceId, monthStart, rangeEnd, data)
-            : sumUsageForRange(data.logs, monthStart, rangeEnd, substanceId, { data }).amount;
+        const used = getCanonicalUsageInRange(substanceId, monthStart, rangeEnd, data);
         const label = d.toLocaleDateString('en-US', { month: 'short' });
         buckets.push({ label, value: used });
     }
@@ -37966,31 +37963,39 @@ function buildRecoveryStatusCards(bounds, data = appData, options = {}) {
     const weekStart = getWeekStartDateStr(today);
     const monthStart = getMonthStartDateStr(today);
     const substances = options.substances || getRecoveryDashboardSubstances(data, options.substanceId);
+    const cur = getCurrencySymbol();
     return substances.map(sub => {
         const sid = sub.id;
-        const metrics = buildNormalizedSubstanceMetrics(sid, { today }, data);
+        const metrics = buildNormalizedSubstanceMetrics(sid, { today, weekStart, monthStart }, data);
         const streak = computeRecoveryStreakDays(sid);
         const best = Math.max(data.recoveryStreaks?.[sid]?.best || 0, streak.days);
+        const breaks = getBreakMetrics(sid);
         const lastUse = getLastUseForSubstance(sid);
         const lastPurchase = getLastPurchaseForSubstance(sid, data);
         const plan = getPrimaryTaperPlan(sid, data);
         let taperStatus = 'No active plan';
         if (plan && plan.status === 'active') {
-            const byWeek = buildTaperByWeekData(sid, plan);
-            const current = byWeek?.rows?.find(r => r.isCurrent);
-            taperStatus = current
-                ? `Week ${current.weekNum}: ${current.statusLabel || current.status}`
-                : `${plan.name || 'Plan'} · ${getRecoveryTaperStatusLabel(plan.status) || plan.status}`;
+            taperStatus = plan.name || 'Active plan';
         } else if (plan) {
             taperStatus = getRecoveryTaperStatusLabel(plan.status) || plan.status;
         }
         const weedBreakdown = isWeedTrackingMode(sid, data)
             ? {
+                today: getWeedProductTypeUsageInRange(sid, today, today, data),
                 week: getWeedProductTypeUsageInRange(sid, weekStart, today, data),
-                month: getWeedProductTypeUsageInRange(sid, monthStart, today, data),
-                range: getWeedProductTypeUsageInRange(sid, bounds.startDate, bounds.endDate, data)
+                month: getWeedProductTypeUsageInRange(sid, monthStart, today, data)
             }
             : null;
+        const spentWeek = (data.purchases || []).reduce((sum, p) => {
+            if (!purchaseCountsTowardSpend(p)) return sum;
+            if (getPurchaseSubstanceId(p) !== sid
+                && normalizeSubstanceRef(getPurchaseSubstanceId(p), data) !== normalizeSubstanceRef(sid, data)) {
+                return sum;
+            }
+            const d = getPurchaseDateStr(p);
+            if (d < weekStart || d > today) return sum;
+            return sum + getPurchaseSpendAmount(p);
+        }, 0);
         return {
             substanceId: sid,
             name: getSubstanceDisplayName(sub, data),
@@ -37999,26 +38004,28 @@ function buildRecoveryStatusCards(bounds, data = appData, options = {}) {
             unit: metrics.unit,
             currentStreakDays: streak.days,
             longestStreakDays: best,
+            currentBreakLabel: breaks.current?.text || breaks.streakWithoutUse?.text || '—',
+            longestBreakLabel: breaks.longest != null ? formatBreakFromHours(breaks.longest) : '—',
             lastUseLabel: lastUse
                 ? formatRecoveryDashboardDateTime(getLogDatetimeMs(lastUse))
                 : 'No use logged',
             lastPurchaseLabel: lastPurchase
                 ? formatRecoveryDashboardDateTime(getPurchaseDatetimeMs(lastPurchase))
                 : 'No purchase logged',
+            usedTodayLabel: weedBreakdown?.today?.length
+                ? weedBreakdown.today.map(w => w.display).join(' · ')
+                : formatRecoveryUsageAmount(sid, metrics.usage.today, data),
             usedWeekLabel: weedBreakdown?.week?.length
                 ? weedBreakdown.week.map(w => w.display).join(' · ')
                 : formatRecoveryUsageAmount(sid, metrics.usage.week, data),
             usedMonthLabel: weedBreakdown?.month?.length
                 ? weedBreakdown.month.map(w => w.display).join(' · ')
                 : formatRecoveryUsageAmount(sid, metrics.usage.month, data),
-            usedRangeLabel: weedBreakdown?.range?.length
-                ? weedBreakdown.range.map(w => w.display).join(' · ')
-                : formatRecoveryUsageAmount(
-                    sid,
-                    getCanonicalUsageInRange(sid, bounds.startDate, bounds.endDate, data),
-                    data
-                ),
-            spentMonthLabel: `${getCurrencySymbol()}${(metrics.spend.month || 0).toFixed(2)}`,
+            spentWeekLabel: `${cur}${(spentWeek || 0).toFixed(2)}`,
+            spentMonthLabel: `${cur}${(metrics.spend.month || 0).toFixed(2)}`,
+            monthCapRemainingLabel: metrics.monthRemaining != null
+                ? formatRecoveryUsageAmount(sid, metrics.monthRemaining, data)
+                : '—',
             inventoryLabel: formatActiveInventoryRemaining(sid, data),
             taperStatus,
             weedBreakdown
@@ -38440,16 +38447,22 @@ function buildRecoverySummary(statusCards, goalStatuses, activePlans, milestones
     const selectedId = options.substanceId == null
         ? getSelectedDashboardSubstance(data)
         : options.substanceId;
-    const monthStart = getMonthStartDateStr(getLocalDateString());
+    const today = getLocalDateString();
+    const weekStart = getWeekStartDateStr(today);
+    const monthStart = getMonthStartDateStr(today);
     const prevMonthEnd = addDaysYYYYMMDD(monthStart, -1);
     const prevMonthStart = getMonthStartDateStr(prevMonthEnd);
     let thisMonth = 0;
     let lastMonth = 0;
+    let spentToday = 0;
+    let spentWeek = 0;
     (data.purchases || []).forEach(p => {
         if (!purchaseCountsTowardSpend(p)) return;
         if (!recoveryDashboardMatchesSubstance(getPurchaseSubstanceId(p), selectedId, data)) return;
         const d = getPurchaseDateStr(p);
         const cost = getPurchaseSpendAmount(p);
+        if (d === today) spentToday += cost;
+        if (d >= weekStart && d <= today) spentWeek += cost;
         if (d >= monthStart) thisMonth += cost;
         else if (d >= prevMonthStart && d <= prevMonthEnd) lastMonth += cost;
     });
@@ -38459,26 +38472,17 @@ function buildRecoverySummary(statusCards, goalStatuses, activePlans, milestones
         : `${cur}${thisMonth.toFixed(2)} this month`;
 
     let longestNoUse = { days: 0, name: '—' };
-    let longestNoBuy = { days: 0, name: '—' };
     statusCards.forEach(card => {
         if (card.currentStreakDays > longestNoUse.days) {
             longestNoUse = { days: card.currentStreakDays, name: card.name };
         }
-        const noBuy = computeNoPurchaseStreakDays(card.substanceId, data);
-        if (noBuy.days > longestNoBuy.days) {
-            longestNoBuy = { days: noBuy.days, name: card.name };
-        }
     });
 
-    const upcoming = milestones[0] || null;
+    let activeGoalCount = null;
     let goalsOnTrack = goalStatuses.filter(g => g.onTrack && !g.nearLimit).length;
     let goalsNearLimit = goalStatuses.filter(g => g.nearLimit).length;
-    let activeGoalCount = null;
     let goalsExceeded = null;
-    let closestGoalDeadline = null;
-    let highestRiskGoal = null;
-    if (typeof buildGoalDashboardSummary === 'function' && typeof evaluateAllGoals === 'function') {
-        const selectedId = options.substanceId == null ? getSelectedDashboardSubstance(data) : options.substanceId;
+    if (typeof evaluateAllGoals === 'function') {
         const evals = evaluateAllGoals({ data, persist: false })
             .filter(ev => goalMatchesSubstance(ev.goal.substanceId, selectedId, data))
             .filter(ev => ev.goal.status === 'active');
@@ -38487,84 +38491,26 @@ function buildRecoverySummary(statusCards, goalStatuses, activePlans, milestones
             goalsOnTrack = evals.filter(ev => ev.status === 'on_track').length;
             goalsNearLimit = evals.filter(ev => ev.status === 'near_limit' || ev.status === 'at_limit').length;
             goalsExceeded = evals.filter(ev => ev.status === 'exceeded').length;
-            const closest = evals.filter(ev => ev.goal.endDate).sort((a, b) => String(a.goal.endDate).localeCompare(String(b.goal.endDate)))[0];
-            closestGoalDeadline = closest ? (closest.goal.name + ' (' + closest.goal.endDate + ')') : null;
-            const risk = evals.slice().sort((a, b) => (b.percent || 0) - (a.percent || 0))[0];
-            highestRiskGoal = risk ? (risk.goal.name + ' · ' + risk.statusLabel) : null;
         }
     }
-    const baseSummary = {
+
+    return {
         totalSubstances: statusCards.length,
         substancesWithPlans: activePlans.length,
         activeGoalCount,
         goalsOnTrack,
         goalsNearLimit,
         goalsExceeded,
-        closestGoalDeadline,
-        highestRiskGoal,
         longestNoUseLabel: longestNoUse.days
             ? `${longestNoUse.days}d (${longestNoUse.name})`
             : '0 days',
-        longestNoPurchaseLabel: longestNoBuy.days
-            ? `${longestNoBuy.days}d (${longestNoBuy.name})`
-            : '0 days',
-        upcomingMilestone: upcoming
-            ? `${upcoming.name}${upcoming.substance && upcoming.substance !== 'All' ? ` · ${upcoming.substance}` : ''}`
-            : 'None yet',
         monthlySpendCompare: spendCompare,
         thisMonthSpend: thisMonth,
         lastMonthSpend: lastMonth,
-        finSpentToday: '—',
-        finSpentWeek: '—',
-        finBudgetStatus: '—',
-        finSavingsVsLastMonth: '—',
-        finProjectedMonth: '—',
-        finLargestPurchase: '—'
+        spentTodayLabel: `${cur}${spentToday.toFixed(2)}`,
+        spentWeekLabel: `${cur}${spentWeek.toFixed(2)}`,
+        spentMonthLabel: `${cur}${thisMonth.toFixed(2)}`
     };
-
-    if (typeof buildDashboardFinancialSummary === 'function' && typeof getFinancialPurchases === 'function') {
-        try {
-            const fin = buildDashboardFinancialSummary(data, selectedId);
-            const curSym = getCurrencySymbol();
-            const todayBounds = resolveFinancialBounds({ dateRangePreset: 'today', substanceId: selectedId }, data);
-            const weekBounds = resolveFinancialBounds({ dateRangePreset: 'this-week', substanceId: selectedId }, data);
-            const todaySpend = sumFinancialSpend(getFinancialPurchases({
-                substanceId: selectedId,
-                startDate: todayBounds.startDate,
-                endDate: todayBounds.endDate
-            }, data));
-            const weekSpend = sumFinancialSpend(getFinancialPurchases({
-                substanceId: selectedId,
-                startDate: weekBounds.startDate,
-                endDate: weekBounds.endDate
-            }, data));
-            const recent = getFinancialPurchases({
-                substanceId: selectedId,
-                startDate: addDaysYYYYMMDD(getLocalDateString(), -30),
-                endDate: getLocalDateString()
-            }, data);
-            let largest = null;
-            recent.forEach(p => {
-                const cost = getPurchaseSpendAmount(p);
-                if (!largest || cost > largest.cost) largest = { cost, date: getPurchaseDateStr(p) };
-            });
-            const tight = fin.tightestBudget;
-            return {
-                ...baseSummary,
-                finSpentToday: `${curSym}${todaySpend.toFixed(2)}`,
-                finSpentWeek: `${curSym}${weekSpend.toFixed(2)}`,
-                finBudgetStatus: tight
-                    ? `${tight.statusLabel || tight.status} · ${tight.budget?.name || 'Budget'}`
-                    : (fin.budgetCount ? `${fin.budgetsOnTrack}/${fin.budgetCount} on track` : 'No active budget'),
-                finSavingsVsLastMonth: fin.lastMonthSpend
-                    ? `${curSym}${(-fin.monthDelta).toFixed(2)} (${fin.monthDeltaPct == null ? '—' : `${fin.monthDeltaPct <= 0 ? '' : '+'}${(fin.monthDeltaPct * 100).toFixed(1)}%`})`
-                    : '—',
-                finProjectedMonth: `${curSym}${Number(fin.projectedMonthSpend || 0).toFixed(2)} (Estimate)`,
-                finLargestPurchase: largest ? `${curSym}${largest.cost.toFixed(2)} · ${largest.date}` : '—'
-            };
-        } catch (_) { /* use base */ }
-    }
-    return baseSummary;
 }
 
 function computeRecoveryScore(dataset, data = appData) {
@@ -38927,21 +38873,11 @@ function renderRecoverySummaryGrid(summary) {
         ['Substances tracked', summary.totalSubstances],
         ['Active plans', summary.substancesWithPlans],
         ['Active goals', summary.activeGoalCount ?? '—'],
-        ['Goals on track', summary.goalsOnTrack],
-        ['Goals near limit', summary.goalsNearLimit],
-        ['Goals exceeded', summary.goalsExceeded ?? '—'],
-        ['Closest goal deadline', summary.closestGoalDeadline || '—'],
-        ['Highest-risk goal', summary.highestRiskGoal || '—'],
-        ['Longest no-use streak', summary.longestNoUseLabel],
-        ['Longest no-purchase streak', summary.longestNoPurchaseLabel],
-        ['Upcoming milestone', summary.upcomingMilestone],
-        ['Monthly spending', summary.monthlySpendCompare],
-        ['Spent today', summary.finSpentToday || '—'],
-        ['Spent this week', summary.finSpentWeek || '—'],
-        ['Budget status', summary.finBudgetStatus || '—'],
-        ['Savings vs last month', summary.finSavingsVsLastMonth || '—'],
-        ['Projected monthly spend', summary.finProjectedMonth || '—'],
-        ['Largest recent purchase', summary.finLargestPurchase || '—']
+        ['Current no-use streak', summary.longestNoUseLabel],
+        ['Spent today', summary.spentTodayLabel || '—'],
+        ['Spent this week', summary.spentWeekLabel || '—'],
+        ['Spent this month', summary.spentMonthLabel || '—'],
+        ['vs last month', summary.monthlySpendCompare]
     ];
     el.innerHTML = tiles.map(([label, value]) => `
         <div class="rd-summary-tile">
@@ -38984,16 +38920,18 @@ function renderRecoveryStatusCards(cards) {
                 <h4>${escapeHtml(card.icon || '')} ${escapeHtml(card.name)}</h4>
             </header>
             <dl class="rd-stat-list">
-                <div><dt>Current sobriety streak</dt><dd>${card.currentStreakDays} day${card.currentStreakDays === 1 ? '' : 's'}</dd></div>
-                <div><dt>Longest sobriety streak</dt><dd>${card.longestStreakDays} day${card.longestStreakDays === 1 ? '' : 's'}</dd></div>
+                <div><dt>Today used</dt><dd>${escapeHtml(card.usedTodayLabel)}</dd></div>
+                <div><dt>This week used</dt><dd>${escapeHtml(card.usedWeekLabel)}</dd></div>
+                <div><dt>This month used</dt><dd>${escapeHtml(card.usedMonthLabel)}</dd></div>
+                <div><dt>Spent this week</dt><dd>${escapeHtml(card.spentWeekLabel)}</dd></div>
+                <div><dt>Spent this month</dt><dd>${escapeHtml(card.spentMonthLabel)}</dd></div>
+                <div><dt>Remaining monthly cap</dt><dd>${escapeHtml(card.monthCapRemainingLabel)}</dd></div>
+                <div><dt>Current break</dt><dd>${escapeHtml(card.currentBreakLabel)}</dd></div>
+                <div><dt>Longest break</dt><dd>${escapeHtml(card.longestBreakLabel)}</dd></div>
+                <div><dt>Inventory remaining</dt><dd>${escapeHtml(card.inventoryLabel)}</dd></div>
                 <div><dt>Last use</dt><dd>${escapeHtml(card.lastUseLabel)}</dd></div>
                 <div><dt>Last purchase</dt><dd>${escapeHtml(card.lastPurchaseLabel)}</dd></div>
-                <div><dt>Used this week</dt><dd>${escapeHtml(card.usedWeekLabel)}</dd></div>
-                <div><dt>Used this month</dt><dd>${escapeHtml(card.usedMonthLabel)}</dd></div>
-                <div><dt>Used in selected range</dt><dd>${escapeHtml(card.usedRangeLabel)}</dd></div>
-                <div><dt>Spent this month</dt><dd>${escapeHtml(card.spentMonthLabel)}</dd></div>
-                <div><dt>Active inventory</dt><dd>${escapeHtml(card.inventoryLabel)}</dd></div>
-                <div><dt>Active taper</dt><dd>${escapeHtml(card.taperStatus)}</dd></div>
+                <div><dt>Active taper plan</dt><dd>${escapeHtml(card.taperStatus)}</dd></div>
             </dl>
         </article>
     `).join('');
@@ -39140,10 +39078,48 @@ function renderRecoveryGoalsSection(dataset) {
         (recent.length ? '<p class="rd-section-hint">Recently completed: ' + recent.join(', ') + '</p>' : '');
 }
 
+function renderHomeCompactCharts(dataset) {
+    const dayEl = document.getElementById('rd-chart-usage-day');
+    const weekEl = document.getElementById('rd-chart-usage-week');
+    const spendEl = document.getElementById('rd-chart-spend');
+    if (!dayEl && !weekEl && !spendEl) return;
+
+    const empty = (message) => {
+        [dayEl, weekEl, spendEl].forEach(el => {
+            if (el) el.innerHTML = `<p class="dash-insight-empty">${message}</p>`;
+        });
+    };
+
+    if (dataset.isAllSubstances || !dataset.substanceId || dataset.substanceId === DASHBOARD_ALL) {
+        empty('Select one substance for compact charts. Full analytics are on Insights.');
+        return;
+    }
+
+    const substanceId = dataset.substanceId;
+    const unit = getSubstanceDisplayUnit(substanceId);
+    renderInsightBarRows('rd-chart-usage-day', buildDailyUsageBuckets(substanceId, 7), {
+        unit,
+        showZero: true,
+        allowAllZeroRows: true,
+        emptyHint: 'No use in the last 7 days'
+    });
+    renderInsightBarRows('rd-chart-usage-week', buildWeeklyUsageBuckets(substanceId, 4), {
+        unit,
+        showZero: true,
+        allowAllZeroRows: true,
+        emptyHint: 'No use in recent weeks'
+    });
+    renderInsightBarRows('rd-chart-spend', buildCostOverTimeBuckets(substanceId, 14), {
+        isCost: true,
+        showZero: false,
+        allowAllZeroRows: false,
+        emptyHint: 'No spending in the last 14 days'
+    });
+}
+
 function renderRecoveryDashboard() {
     const root = document.getElementById('recovery-dashboard');
     if (!root) return;
-    syncRecoveryScoreSettingsToggle();
     selectedDashboardSubstance = getSelectedDashboardSubstance();
     const dash = document.getElementById('dashboard-substance');
     if (dash && dash.value !== selectedDashboardSubstance) {
@@ -39165,15 +39141,14 @@ function renderRecoveryDashboard() {
             return;
         }
         renderRecoveryDashboardDateControls(dataset);
-        renderRecoveryScoreCard(dataset.score);
         renderRecoverySummaryGrid(dataset.summary);
         renderRecoveryTodayCard(dataset.todayCard);
         renderRecoveryStatusCards(dataset.statusCards);
         renderRecoveryActivePlans(dataset.activePlans);
         if (typeof renderRecoveryGoalsSection === 'function') renderRecoveryGoalsSection(dataset);
         renderRecoveryInventoryOverview(dataset.inventoryGroups);
-        renderRecoveryMilestones(dataset.milestones);
         renderRecoveryAlerts(dataset.alerts);
+        renderHomeCompactCharts(dataset);
         applyRecoveryDashboardCollapsedSections();
         setRecoveryDashboardState({});
     } catch (err) {
@@ -39184,56 +39159,9 @@ function renderRecoveryDashboard() {
 
 
 function updateDashboard() {
-    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
-
-    const todayStats = isAllSubstancesView()
-        ? aggregateTodayUseStats()
-        : getTodayUseStats(currentSubstanceId);
-
-    const unitLabel = isAllSubstancesView() ? 'uses' : (getSubstance(currentSubstanceId)?.defaultUnit || 'units');
-    const sessionLabel = todayStats.sessionCount === 1 ? 'session' : 'sessions';
-
-    set('dash-today-total-use', `${todayStats.totalAmount.toFixed(1)} ${unitLabel}`);
-    set('dash-today-session-count', `${todayStats.sessionCount} ${sessionLabel}`);
-    set('dash-today-duration', `Duration: ${formatTodayDuration(todayStats.totalDurationHours)}`);
-    set('dash-today-avg-session', todayStats.avgPerSession != null
-        ? `Avg/session: ${todayStats.avgPerSession.toFixed(1)} ${unitLabel}`
-        : 'Avg/session: —');
-
-    const sinceMs = isAllSubstancesView()
-        ? (() => {
-            let min = null;
-            getActiveSubstances().forEach(sub => {
-                const ms = getTimeSinceLastUse(sub.id);
-                if (ms != null && (min == null || ms < min)) min = ms;
-            });
-            return min;
-        })()
-        : getTimeSinceLastUse(currentSubstanceId);
-    set('dash-time-since-last-use', sinceMs != null ? formatHoursAgo(sinceMs) : '—');
-
-    if (!isAllSubstancesView()) {
-        updateRecoveryStreakDisplay(currentSubstanceId);
-    } else {
-        const best = getAllSubstancesBestStreak();
-        set('recovery-streak-current', best.days ? `${best.days} day${best.days === 1 ? '' : 's'}` : '0 days');
-        set('recovery-streak-since', best.name ? `Best streak: ${best.name}` : 'All substances');
-        const bestEl = document.getElementById('recovery-streak-best');
-        if (bestEl) bestEl.textContent = '—';
-    }
-
-    updateCurrentSupplyDashboard();
-    renderSubstanceCompare();
-    updateQuickActions();
     updateDashboardMainDisplay();
-    updateBreakMetricsDashboard();
-
-    const dashSubId = isDashboardAllSubstancesSelected() ? null : (resolveDashboardInsightSubstanceId() || currentSubstanceId);
-    renderDashboardSummaryCards(dashSubId);
-    renderVapeDashboardSection(dashSubId);
-    renderDashboardRecoveryInsights();
+    updateQuickActions();
     renderRecoveryDashboard();
-    if (typeof renderHomeContactCards === 'function') renderHomeContactCards();
 }
 
 function formatBreakFromHours(hours) {

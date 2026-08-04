@@ -186,7 +186,6 @@
         <main>
             <!-- Dashboard Tab -->
             <section id="dashboard-tab" class="tab active dashboard-page">
-                <div id="dash-contacts-root" class="dash-contacts-root" aria-live="polite"></div>
                 <div class="safety-notice dash-safety">
                     <strong>Safety Note:</strong> If you feel unsafe, may overdose, or have severe withdrawal symptoms, call emergency services or a medical professional immediately.
                 </div>
@@ -245,17 +244,6 @@
                     </div>
 
                     <div id="rd-content" class="rd-content hidden">
-                        <section class="rd-section collapsible-section" id="rd-section-score" data-rd-section="score" aria-labelledby="rd-score-heading">
-                            <button type="button" class="section-toggle rd-section-toggle" id="rd-score-heading" onclick="toggleRecoveryDashboardSection('score')" aria-expanded="false" aria-controls="rd-score-body">
-                                <span>Recovery Score</span>
-                                <span class="chevron" aria-hidden="true">›</span>
-                            </button>
-                            <div id="rd-score-body" class="section-content rd-section-body">
-                                <p class="rd-section-hint">Optional progress indicator — not a medical assessment.</p>
-                                <div id="rd-score-card" class="rd-score-card"></div>
-                            </div>
-                        </section>
-
                         <section class="rd-section collapsible-section" data-rd-section="summary" aria-labelledby="rd-summary-heading">
                             <button type="button" class="section-toggle rd-section-toggle" id="rd-summary-heading" onclick="toggleRecoveryDashboardSection('summary')" aria-expanded="false" aria-controls="rd-summary-body">
                                 <span>Recovery Summary</span>
@@ -301,7 +289,7 @@
                                 <span class="chevron" aria-hidden="true">⌄</span>
                             </button>
                             <div id="rd-status-body" class="section-content rd-section-body">
-                                <p class="rd-section-hint">One card per substance. Units are never mixed.</p>
+                                <p class="rd-section-hint">Canonical use, spend, break, and inventory metrics for the selected substance.</p>
                                 <div id="rd-status-cards" class="rd-status-cards"></div>
                             </div>
                         </section>
@@ -338,16 +326,6 @@
                             </div>
                         </section>
 
-                        <section class="rd-section collapsible-section" data-rd-section="milestones" aria-labelledby="rd-milestones-heading">
-                            <button type="button" class="section-toggle rd-section-toggle" id="rd-milestones-heading" onclick="toggleRecoveryDashboardSection('milestones')" aria-expanded="false" aria-controls="rd-milestones-body">
-                                <span>Upcoming Milestones</span>
-                                <span class="chevron" aria-hidden="true">›</span>
-                            </button>
-                            <div id="rd-milestones-body" class="section-content rd-section-body">
-                                <div id="rd-milestones" class="rd-milestones"></div>
-                            </div>
-                        </section>
-
                         <section class="rd-section collapsible-section" data-rd-section="alerts" aria-labelledby="rd-alerts-heading">
                             <button type="button" class="section-toggle rd-section-toggle" id="rd-alerts-heading" onclick="toggleRecoveryDashboardSection('alerts')" aria-expanded="true" aria-controls="rd-alerts-body">
                                 <span>Alerts &amp; Data Warnings</span>
@@ -357,215 +335,80 @@
                                 <div id="rd-alerts" class="rd-alerts"></div>
                             </div>
                         </section>
+
+                        <section class="rd-section collapsible-section" data-rd-section="charts" aria-labelledby="rd-charts-heading">
+                            <button type="button" class="section-toggle rd-section-toggle" id="rd-charts-heading" onclick="toggleRecoveryDashboardSection('charts')" aria-expanded="true" aria-controls="rd-charts-body">
+                                <span>Compact Charts</span>
+                                <span class="chevron" aria-hidden="true">⌄</span>
+                            </button>
+                            <div id="rd-charts-body" class="section-content rd-section-body">
+                                <p class="rd-section-hint">Quick use and spend trends for the selected substance. Open Insights for full analytics.</p>
+                                <div id="rd-home-charts" class="rd-home-charts">
+                                    <div class="rd-home-chart-block">
+                                        <h4>Use by day</h4>
+                                        <div id="rd-chart-usage-day" class="dash-insight-rows"></div>
+                                    </div>
+                                    <div class="rd-home-chart-block">
+                                        <h4>Use by week</h4>
+                                        <div id="rd-chart-usage-week" class="dash-insight-rows"></div>
+                                    </div>
+                                    <div class="rd-home-chart-block">
+                                        <h4>Spend (recent)</h4>
+                                        <div id="rd-chart-spend" class="dash-insight-rows dash-insight-rows-cost"></div>
+                                    </div>
+                                </div>
+                            </div>
+                        </section>
                     </div>
                 </div>
 
-                <div id="substance-compare" class="substance-compare hidden"></div>
-
-                <!-- Key metrics (usage + spend; streak lives in Recovery) -->
-                <div class="dash-recovery-metrics" id="dashboard-main-stats">
-                    <div class="dash-metric-card"><span class="dash-metric-label">Today Used</span><strong id="dash-card-today">0</strong></div>
-                    <div class="dash-metric-card"><span class="dash-metric-label">This Week Used</span><strong id="dash-card-week">0</strong></div>
-                    <div class="dash-metric-card"><span class="dash-metric-label">This Month Used</span><strong id="dash-card-month">0</strong></div>
-                    <div class="dash-metric-card"><span class="dash-metric-label">Spent This Month</span><strong id="dash-card-spent">$0</strong></div>
-                    <div class="dash-metric-card"><span class="dash-metric-label">Remaining Monthly Cap</span><strong id="dash-card-month-cap">—</strong></div>
-                </div>
+                <!-- Hidden legacy hooks kept for older JS callers -->
+                <span class="hidden" id="dash-contacts-root"></span>
+                <span class="hidden" id="rd-score-card"></span>
+                <span class="hidden" id="rd-milestones"></span>
+                <span class="hidden" id="rd-section-score"></span>
+                <span class="hidden" id="substance-compare"></span>
+                <span class="hidden" id="dashboard-main-stats"></span>
+                <span class="hidden" id="dash-card-today"></span>
+                <span class="hidden" id="dash-card-week"></span>
+                <span class="hidden" id="dash-card-month"></span>
+                <span class="hidden" id="dash-card-spent"></span>
+                <span class="hidden" id="dash-card-month-cap"></span>
                 <span class="hidden" id="dash-card-streak"></span>
-
-                <!-- Quick Actions -->
-                <div class="quick-actions dash-quick-actions">
-                    <button id="quick-log-btn" class="quick-btn primary" onclick="logOneUse()">
-                        <span class="quick-icon">⚡</span>
-                        <span class="quick-label">Quick Use</span>
-                    </button>
-                    <button class="quick-btn secondary" onclick="openUseLogSession()">
-                        <span>⏱️</span>
-                        <span>Session</span>
-                    </button>
-                    <button class="quick-btn success" onclick="openBuyTrackerModal()">
-                        <span>🛒</span>
-                        <span>Buy</span>
-                    </button>
-                    <button class="quick-btn danger" id="quick-undo-btn" onclick="undoLastUse()">
-                        <span>↩️</span>
-                        <span>Undo</span>
-                    </button>
-                </div>
-
-                <div class="collapsible-section dash-vape-section" data-section="dashVapeSection">
-                    <button type="button" class="section-toggle" onclick="toggleSection('dashVapeSection')">
-                        <span>Vape / Nicotine Details</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                <div id="vape-dashboard-section" class="hidden vape-dashboard-section">
-                    <div class="vape-dash-grid">
-                        <div class="dash-card vape-dash-card">
-                            <h4>Active Vape</h4>
-                            <div class="vape-dash-rows">
-                                <div class="vape-dash-row"><span>Name</span><strong id="vape-dash-name">—</strong></div>
-                                <div class="vape-dash-row"><span>Purchase date</span><strong id="vape-dash-purchase-date">—</strong></div>
-                                <div class="vape-dash-row"><span>First use</span><strong id="vape-dash-started">—</strong></div>
-                                <div class="vape-dash-row"><span>Full puff count</span><strong id="vape-dash-full-puffs">—</strong></div>
-                                <div class="vape-dash-row"><span>Puffs left</span><strong id="vape-dash-puffs-left">—</strong></div>
-                                <div class="vape-dash-row"><span>Percent left</span><strong id="vape-dash-percent-left">—</strong></div>
-                                <div class="vape-dash-row"><span>Status</span><strong id="vape-dash-status" class="vape-dash-status">—</strong></div>
-                            </div>
-                        </div>
-                        <div class="dash-card vape-dash-card">
-                            <h4>Usage</h4>
-                            <div class="vape-dash-rows">
-                                <div class="vape-dash-row"><span>Week puffs</span><strong id="vape-dash-week-puffs">—</strong></div>
-                                <div class="vape-dash-row"><span>Month puffs</span><strong id="vape-dash-month-puffs">—</strong></div>
-                                <div class="vape-dash-row"><span>Avg puffs/day</span><strong id="vape-dash-avg-day">—</strong></div>
-                                <div class="vape-dash-row"><span>Avg puffs/session</span><strong id="vape-dash-avg-session">—</strong></div>
-                                <div class="vape-dash-row"><span>Last log</span><strong id="vape-dash-last-log">—</strong></div>
-                                <div class="vape-dash-row"><span>Est. daily (percent logs)</span><strong id="vape-dash-est-daily">—</strong></div>
-                            </div>
-                        </div>
-                        <div class="dash-card vape-dash-card">
-                            <h4>Cost</h4>
-                            <div class="vape-dash-rows">
-                                <div class="vape-dash-row"><span>Avg cost/vape</span><strong id="vape-dash-avg-cost-vape">—</strong></div>
-                                <div class="vape-dash-row"><span>Cost/day</span><strong id="vape-dash-cost-day">—</strong></div>
-                                <div class="vape-dash-row"><span>Cost / 1,000 puffs</span><strong id="vape-dash-cost-1k">—</strong></div>
-                                <div class="vape-dash-row"><span>Month spend</span><strong id="vape-dash-month-spend">—</strong></div>
-                                <div class="vape-dash-row"><span>All-time spend</span><strong id="vape-dash-all-spend">—</strong></div>
-                            </div>
-                        </div>
-                        <div class="dash-card vape-dash-card">
-                            <h4>Nicotine Estimate</h4>
-                            <p class="settings-hint">Estimate based on mL and mg/mL</p>
-                            <div class="vape-dash-rows">
-                                <div class="vape-dash-row"><span>Total mg/vape</span><strong id="vape-dash-total-nic">—</strong></div>
-                                <div class="vape-dash-row"><span>Est. mg used</span><strong id="vape-dash-nic-used">—</strong></div>
-                                <div class="vape-dash-row"><span>Avg mg/day</span><strong id="vape-dash-nic-day">—</strong></div>
-                                <div class="vape-dash-row"><span>Est. mg left</span><strong id="vape-dash-nic-left">—</strong></div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                    </div>
-                </div>
-
-                <!-- Legacy today detail (hidden, for JS compatibility) -->
+                <span class="hidden" id="dash-break-current"></span>
+                <span class="hidden" id="dash-break-longest"></span>
+                <span class="hidden" id="dash-break-avg-30"></span>
+                <span class="hidden" id="dash-break-average"></span>
+                <span class="hidden" id="dash-break-streak-no-use"></span>
+                <span class="hidden" id="recovery-streak-current"></span>
+                <span class="hidden" id="recovery-streak-since"></span>
+                <span class="hidden" id="recovery-streak-best"></span>
+                <span class="hidden" id="dash-recovery-insights"></span>
+                <span class="hidden" id="dash-recovery-insights-all"></span>
+                <span class="hidden" id="dash-recovery-insights-detail"></span>
+                <span class="hidden" id="insight-avg-daily"></span>
+                <span class="hidden" id="insight-highest-day"></span>
+                <span class="hidden" id="insight-no-use-days"></span>
+                <span class="hidden" id="insight-rows-day"></span>
+                <span class="hidden" id="insight-rows-week"></span>
+                <span class="hidden" id="insight-rows-month"></span>
+                <span class="hidden" id="insight-rows-cost"></span>
+                <span class="hidden" id="insight-show-zero-usage"></span>
+                <span class="hidden" id="insight-show-zero-cost"></span>
+                <span class="hidden" id="dash-supply-remaining"></span>
+                <span class="hidden" id="dash-supply-days-left"></span>
+                <span class="hidden" id="dash-supply-total"></span>
+                <span class="hidden" id="dash-supply-all-substances"></span>
+                <span class="hidden" id="dash-supply-rows-standard"></span>
+                <span class="hidden" id="vape-dashboard-section"></span>
                 <span class="hidden" id="dash-today-total-use"></span>
                 <span class="hidden" id="dash-today-session-count"></span>
                 <span class="hidden" id="dash-today-duration"></span>
                 <span class="hidden" id="dash-today-avg-session"></span>
-                <span class="hidden" id="dash-supply-total"></span>
                 <span class="hidden" id="dash-time-since-last-use"></span>
-
-                <!-- Recovery (metrics + insights) -->
-                <div class="collapsible-section dash-recovery-section" data-section="dashRecovery">
-                    <button type="button" class="section-toggle" onclick="toggleSection('dashRecovery')">
-                        <span>Recovery</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                        <div id="dash-recovery-insights" class="dash-insights-wrap">
-                            <div class="dash-recovery-top-row">
-                                <div class="dash-recovery-stat">
-                                    <span class="dash-recovery-label">Streak</span>
-                                    <strong class="dash-recovery-value" id="recovery-streak-current">0 days</strong>
-                                    <span class="dash-recovery-sub" id="recovery-streak-since">—</span>
-                                </div>
-                                <div class="dash-recovery-stat">
-                                    <span class="dash-recovery-label">Current break</span>
-                                    <strong class="dash-recovery-value" id="dash-break-current">—</strong>
-                                </div>
-                                <div class="dash-recovery-stat">
-                                    <span class="dash-recovery-label">Longest break</span>
-                                    <strong class="dash-recovery-value" id="dash-break-longest">—</strong>
-                                </div>
-                                <div class="dash-recovery-stat">
-                                    <span class="dash-recovery-label">30-day avg break</span>
-                                    <strong class="dash-recovery-value" id="dash-break-avg-30">—</strong>
-                                </div>
-                            </div>
-                            <div id="dash-recovery-insights-all" class="hidden"></div>
-                            <div id="dash-recovery-insights-detail">
-                                <div class="dash-insight-stats">
-                                    <div class="dash-insight-stat"><span>Avg daily use</span><strong id="insight-avg-daily">—</strong></div>
-                                    <div class="dash-insight-stat"><span>Highest-use day</span><strong id="insight-highest-day">—</strong></div>
-                                    <div class="dash-insight-stat"><span>No-use days this month</span><strong id="insight-no-use-days">—</strong></div>
-                                </div>
-                                <div class="collapsible-section dash-recovery-details-section" data-section="dashRecoveryDetails">
-                                    <button type="button" class="section-toggle" onclick="toggleSection('dashRecoveryDetails')">
-                                        <span>Usage &amp; cost details</span>
-                                        <span class="chevron">⌄</span>
-                                    </button>
-                                    <div class="section-content">
-                                        <div class="dash-insight-toggles">
-                                            <label class="dash-insight-toggle">
-                                                <input type="checkbox" id="insight-show-zero-usage" checked>
-                                                Show zero-use days
-                                            </label>
-                                            <label class="dash-insight-toggle">
-                                                <input type="checkbox" id="insight-show-zero-cost">
-                                                Show $0 purchase days
-                                            </label>
-                                        </div>
-                                        <div class="dash-insight-sections">
-                                            <div class="dash-insight-section">
-                                                <h4>Usage by day</h4>
-                                                <div id="insight-rows-day" class="dash-insight-rows"></div>
-                                            </div>
-                                            <div class="dash-insight-section">
-                                                <h4>Usage by week</h4>
-                                                <div id="insight-rows-week" class="dash-insight-rows"></div>
-                                            </div>
-                                            <div class="dash-insight-section">
-                                                <h4>Usage by month</h4>
-                                                <div id="insight-rows-month" class="dash-insight-rows"></div>
-                                            </div>
-                                            <div class="dash-insight-section dash-insight-section-cost">
-                                                <h4>Cost over time</h4>
-                                                <div id="insight-rows-cost" class="dash-insight-rows dash-insight-rows-cost"></div>
-                                            </div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                    <span class="hidden" id="recovery-streak-best"></span>
-                    <span class="hidden" id="dash-break-average"></span>
-                    <span class="hidden" id="dash-break-streak-no-use"></span>
-                </div>
-
-                <!-- Inventory preview (full detail on Inventory tab) -->
-                <div class="dash-card dash-inventory-preview">
-                    <div class="dash-inventory-preview-head">
-                        <h3 class="dash-card-title" id="dash-supply-card-title">Inventory</h3>
-                        <button type="button" class="secondary-btn btn-sm" onclick="switchTab('buy-tracker-tab')">Open Inventory</button>
-                    </div>
-                    <div id="dash-supply-rows-standard" class="dash-inventory-preview-rows">
-                        <div class="dash-inventory-preview-line"><span>Remaining</span><strong id="dash-supply-remaining">—</strong></div>
-                        <div class="dash-inventory-preview-line"><span>Est. days left</span><strong id="dash-supply-days-left">—</strong></div>
-                    </div>
-                    <div id="dash-supply-all-substances" class="dash-supply-all hidden"></div>
-                    <!-- Legacy supply ids (hidden, for JS that may reference them) -->
-                    <span class="hidden" id="dash-supply-last-buy-date"></span>
-                    <span class="hidden" id="dash-supply-last-used"></span>
-                    <span class="hidden" id="dash-supply-since-last-use"></span>
-                    <span class="hidden" id="dash-supply-since-last-buy"></span>
-                    <span class="hidden" id="dash-supply-avg-buy-break"></span>
-                    <span class="hidden" id="dash-supply-est-next-buy"></span>
-                    <span class="hidden" id="dash-supply-last-purchase"></span>
-                    <span class="hidden" id="dash-supply-purchased"></span>
-                    <span class="hidden" id="dash-supply-used"></span>
-                    <span class="hidden" id="dash-supply-gifted"></span>
-                    <span class="hidden" id="dash-supply-received"></span>
-                    <span class="hidden" id="dash-supply-remaining-breakdown"></span>
-                    <span class="hidden" id="dash-gift-given"></span>
-                    <span class="hidden" id="dash-gift-received"></span>
-                    <span class="hidden" id="dash-gift-net"></span>
-                    <span class="hidden" id="dash-spent-today-buy"></span>
-                    <span class="hidden" id="dash-last-purchase"></span>
-                </div>
-
-
+                <span class="hidden" id="quick-log-btn"></span>
+                <span class="hidden" id="quick-undo-btn"></span>
+            </section>
             </section>
 
             <!-- Log Tab -->
@@ -2779,20 +2622,12 @@
                             <p class="settings-hint">Choose which Home widgets to show. Grouped substance summaries are used for All Substances (no fake mixed-unit totals).</p>
                             <div id="dashboard-layout-editor" class="dashboard-layout-editor"></div>
                             <button type="button" class="secondary-btn" onclick="saveDashboardLayoutFromEditor()">Save Dashboard Layout</button>
-                            <label class="settings-toggle-row" for="settings-recovery-score-enabled">
-                                <input type="checkbox" id="settings-recovery-score-enabled" onchange="setRecoveryScoreEnabled(this.checked)">
-                                <span>Show Recovery Score on dashboard</span>
-                            </label>
-                            <label class="settings-toggle-row" for="settings-goal-score-enabled">
-                                <input type="checkbox" id="settings-goal-score-enabled" checked onchange="persistGoalSystemPrefs({ scoreContributionEnabled: this.checked }); if(typeof renderRecoveryDashboard==='function')renderRecoveryDashboard();">
-                                <span>Include Goals in Recovery Score</span>
-                            </label>
                             <div class="form-group">
                                 <label for="settings-goal-near-limit">Goal near-limit threshold (0–1)</label>
                                 <input type="number" id="settings-goal-near-limit" min="0.1" max="1" step="0.05" value="0.75"
                                     onchange="persistGoalSystemPrefs({ thresholds: { nearLimit: parseFloat(this.value) || 0.75 } });">
                             </div>
-                            <p class="settings-hint">Optional 0–100 progress indicator based on goals, plans, streaks, reduction, spending, and logging. Not a medical assessment. Hidden when there is not enough data. Paused, cancelled, and insufficient-data goals do not affect the score.</p>
+                            <p class="settings-hint">Home shows a concise recovery overview. Full analytics live on Insights. Goal near-limit threshold controls when goals turn amber.</p>
                         </div>
                     </div>
                 </div>
@@ -2805,7 +2640,7 @@
                     <div class="section-content">
                         <div class="settings-section">
                             <h3>Manage Contacts</h3>
-                            <p class="settings-hint">Shared contacts for Log, Inventory, Goals &amp; Plans, Insights, and Home. Archiving never deletes history.</p>
+                            <p class="settings-hint">Shared contacts for Log, Inventory, Goals &amp; Plans, and Insights. Archiving never deletes history.</p>
                             <div id="contacts-root" class="contacts-root" aria-live="polite"></div>
                         </div>
                     </div>
