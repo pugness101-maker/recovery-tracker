@@ -1663,8 +1663,7 @@ const CCR_METRICS = Object.freeze([
         unitType: 'ratio',
         groupBySubstance: { coke: 'use' }
     }),
-    ccrMetricDef({ key: 'useGapCurrent', label: 'Use Gap → Current gap', group: 'useGap', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours' }),
-    ccrMetricDef({ key: 'useGapPrevious', label: 'Use Gap → Previous gap', group: 'useGap', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours' }),
+    ccrMetricDef({ key: 'useGapPrevious', label: 'Break Between Uses', group: 'useGap', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours' }),
 
     ccrMetricDef({ key: 'inventoryRemaining', label: 'Inventory remaining', group: 'inventory', substances: ['all', 'coke'], unitType: 'amount' }),
     ccrMetricDef({ key: 'inventoryPercent', label: 'Inventory % remaining', group: 'inventory', substances: ['all', 'coke', 'lsd', 'xanax'], unitType: 'percent' }),
@@ -1808,6 +1807,7 @@ const CCR_METRICS = Object.freeze([
     // ——— Deleted / legacy (kept for saved-rule migration; never shown in dropdowns) ———
     ccrMetricDef({ key: 'paymentMethod', label: 'Payment method', group: 'record', substances: [], valueType: 'string', deleted: true }),
     ccrMetricDef({ key: 'costPerUnit', label: 'Cost per unit', group: 'purchases', substances: [], unitType: 'currency', deleted: true }),
+    ccrMetricDef({ key: 'useGapCurrent', label: 'Use Gap → Current gap', group: 'useGap', substances: [], unitType: 'hours', deleted: true }),
     ccrMetricDef({ key: 'timeSinceLastUse', label: 'Time since last use', group: 'useGap', substances: [], unitType: 'days', deleted: true }),
     ccrMetricDef({ key: 'breakSincePreviousUse', label: 'Break since previous use', group: 'useGap', substances: [], unitType: 'hours', deleted: true }),
     ccrMetricDef({ key: 'daysSinceUse', label: 'Days since use', group: 'useGap', substances: [], unitType: 'days', deleted: true })
@@ -2424,7 +2424,9 @@ function getDefaultConditionalColorRulesState(theme = 'dark') {
     return {
         enabled: true,
         version: 1,
-        rules: getConditionalColorPresetRules(theme),
+        rules: getConditionalColorPresetRules(theme)
+            .map((r, i) => normalizeConditionalColorRule(r, i))
+            .filter(Boolean),
         metricSettings: {}
     };
 }
@@ -2567,6 +2569,8 @@ function getContrastWarning(fg, bg) {
 function normalizeConditionalColorRule(raw, index = 0) {
     if (!raw || typeof raw !== 'object') return null;
     const rawMetricKey = String(raw.metric || '').trim();
+    const migratedMetricKey = migrateCcrMetricKey(rawMetricKey);
+    const removedCurrentGapMetric = migratedMetricKey === 'useGapCurrent';
     const opIds = new Set(CCR_OPERATORS.map(o => o.id));
     const metricDef = getCcrMetricDef(raw.metric);
     const metric = metricDef ? metricDef.key : 'useAmount';
@@ -2628,10 +2632,10 @@ function normalizeConditionalColorRule(raw, index = 0) {
         valueUnit = null;
         durationValueVersion = null;
     }
-    return {
+    const normalized = {
         id: String(raw.id || ccrNewId()),
         name: String(raw.name || `Rule ${index + 1}`).slice(0, 80),
-        enabled: raw.enabled !== false,
+        enabled: removedCurrentGapMetric ? false : raw.enabled !== false,
         isPreset: !!raw.isPreset,
         presetId: raw.presetId ? String(raw.presetId) : null,
         substanceScope,
@@ -2662,6 +2666,14 @@ function normalizeConditionalColorRule(raw, index = 0) {
         customGroupId: raw.customGroupId ? String(raw.customGroupId) : '',
         lastModified
     };
+    if (removedCurrentGapMetric) {
+        normalized.needsReview = true;
+        normalized.reviewReason = 'Current gap rules were disabled because the metric was removed. Recreate as Break Between Uses only if that preserves the intended meaning.';
+    } else {
+        normalized.needsReview = !!raw.needsReview;
+        if (raw.reviewReason) normalized.reviewReason = String(raw.reviewReason).slice(0, 240);
+    }
+    return normalized;
 }
 
 function normalizeCcrCustomGroup(raw, index = 0) {
@@ -2725,7 +2737,9 @@ function ensureConditionalColorRules(data = appData, options = {}) {
     state.ui = normalizeCcrManagerPersistedUi(state.ui);
     state.metricSettings = normalizeCcrMetricSettingsMap(state.metricSettings);
     if (!Array.isArray(state.rules) || !state.rules.length) {
-        state.rules = getConditionalColorPresetRules(theme);
+        state.rules = getConditionalColorPresetRules(theme)
+            .map((r, i) => normalizeConditionalColorRule(r, i))
+            .filter(Boolean);
     } else {
         state.rules = state.rules
             .map((r, i) => normalizeConditionalColorRule(r, i))
@@ -4695,6 +4709,9 @@ function renderCcrRuleManagerCard(rule, { conflicts, matchCounts, selected } = {
     const conflictHtml = conflictList.length
         ? `<button type="button" class="ccr-conflict-btn" title="${escapeAttr(conflictList.map(c => c.name).join(', '))}" aria-label="May conflict with ${escapeAttr(conflictList.map(c => c.name).join(', '))}" onclick="jumpToConflictingColorRule('${escapeAttr(conflictList[0].id)}')">Conflict${conflictList.length > 1 ? ` +${conflictList.length - 1}` : ''}</button>`
         : '';
+    const reviewHtml = rule.needsReview
+        ? `<span class="ccr-conflict-btn" title="${escapeAttr(rule.reviewReason || 'Needs review')}">Needs review</span>`
+        : '';
     const usage = getConditionalColorRuleUsage(rule)
         .filter(u => u.used)
         .map(u => `<span class="ccr-usage-chip">${escapeHtml(u.label)}</span>`)
@@ -4720,6 +4737,7 @@ function renderCcrRuleManagerCard(rule, { conflicts, matchCounts, selected } = {
                     <strong class="ccr-rule-name">${escapeHtml(rule.name)}</strong>
                     <span class="ccr-rule-condition">${escapeHtml(formatCcrRuleManagerSummary(rule))}</span>
                     <span class="ccr-priority-pill">P${escapeHtml(String(rule.priority))}</span>
+                    ${reviewHtml}
                     ${conflictHtml}
                 </div>
                 ${expanded ? `<div class="ccr-rule-expanded-details">
@@ -39880,8 +39898,7 @@ function renderUseHistoryTable(options = {}) {
     const {
         wrapId = 'use-history-table-wrap',
         // undefined → use current Log substance filter (do NOT default to null/"all")
-        substanceId = undefined,
-        showLegend = true
+        substanceId = undefined
     } = typeof options === 'object' ? options : { wrapId: options };
     const wrap = document.getElementById(wrapId);
     if (!wrap) return;
@@ -39940,14 +39957,7 @@ function renderUseHistoryTable(options = {}) {
     tableHtml += '</tbody></table></div>';
     cardsHtml += '</div>';
 
-    const legendHtml = showLegend ? `<div class="session-legend use-history-legend">
-        <span class="legend-high-rate">High rate</span>
-        <span class="legend-short-break">Short break</span>
-        <span class="legend-long-break">Long break</span>
-        <span class="legend-taper-close">Near taper limit</span>
-    </div>` : '';
-
-    wrap.innerHTML = tableHtml + cardsHtml + legendHtml;
+    wrap.innerHTML = tableHtml + cardsHtml;
     pruneUseHistorySelectionToVisible();
     updateUseHistorySelectionUI();
     syncUseHistorySelectAllCheckbox();

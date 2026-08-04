@@ -49,7 +49,7 @@ function log(patch = {}) {
     };
 }
 
-test('Use Gap current gap calculates hours since latest qualifying personal use', () => {
+test('Current gap helper remains available for legacy rule review', () => {
     const { rt, data } = setup([
         log({ id: 'old', date: '2026-08-01', startTime: '10:00', endTime: '11:00' }),
         log({ id: 'latest', date: '2026-08-02', startTime: '09:00', endTime: '10:00' })
@@ -57,7 +57,7 @@ test('Use Gap current gap calculates hours since latest qualifying personal use'
     assert.equal(rt.computeCurrentUseGapHours(COKE, data, '2026-08-03T10:00:00'), 24);
 });
 
-test('Use Gap previous gap uses the gap before this use and returns null for first use', () => {
+test('Break Between Uses uses the gap before this use and returns null for first use', () => {
     const first = log({ id: 'first', date: '2026-08-01', startTime: '10:00', endTime: '11:00' });
     const second = log({ id: 'second', date: '2026-08-01', startTime: '14:30', endTime: '15:00' });
     const { rt, data } = setup([first, second]);
@@ -65,7 +65,7 @@ test('Use Gap previous gap uses the gap before this use and returns null for fir
     assert.equal(rt.resolveNormalizedLogMetric('useGapPrevious', second, data), 3.5);
 });
 
-test('Use Gap thresholds use hour conversion and decimal hours', () => {
+test('Break Between Uses thresholds use hour conversion and decimal hours', () => {
     const { rt } = setup();
     const halfHour = rt.normalizeConditionalColorRule({
         id: 'gap-half',
@@ -91,7 +91,7 @@ test('Use Gap thresholds use hour conversion and decimal hours', () => {
     assert.equal(rt.formatCcrUseGapThresholdLabel(30), '1d 6h');
 });
 
-test('Use Gap excludes gifts, adjustments, distributed children, and shared use without personal amount', () => {
+test('Break Between Uses excludes gifts, adjustments, distributed children, and shared use without personal amount', () => {
     const personal = log({ id: 'personal', date: '2026-08-01', startTime: '10:00', endTime: '11:00' });
     const gift = log({ id: 'gift', date: '2026-08-01', startTime: '12:00', endTime: '13:00', transactionType: 'gift_given' });
     const adjustment = log({ id: 'adj', date: '2026-08-01', startTime: '13:00', endTime: '14:00', transactionType: 'inventory_adjustment' });
@@ -103,7 +103,7 @@ test('Use Gap excludes gifts, adjustments, distributed children, and shared use 
     assert.equal(rt.computeCurrentUseGapHours(COKE, data, '2026-08-01T22:00:00'), 1);
 });
 
-test('Use Gap calculations stay separate by substance and shared personal use qualifies', () => {
+test('Break Between Uses calculations stay separate by substance and shared personal use qualifies', () => {
     const cokeShared = log({ id: 'coke-shared', date: '2026-08-01', startTime: '10:00', endTime: '11:00', transactionType: 'shared_use', personalAmount: 0.25, sharedAmount: 0.75 });
     const nicotineUse = log({ id: 'nic', substanceId: NICOTINE, date: '2026-08-01', startTime: '15:00', endTime: '16:00' });
     const { rt, data } = setup([cokeShared, nicotineUse]);
@@ -111,7 +111,7 @@ test('Use Gap calculations stay separate by substance and shared personal use qu
     assert.equal(rt.computeCurrentUseGapHours(NICOTINE, data, '2026-08-01T18:00:00'), 2);
 });
 
-test('legacy gap rules migrate to Use Gap variants without changing meaning', () => {
+test('legacy current gap rules are disabled for review while previous gap rules migrate', () => {
     const { rt } = setup();
     const current = rt.normalizeConditionalColorRule({
         id: 'legacy-current',
@@ -122,6 +122,9 @@ test('legacy gap rules migrate to Use Gap variants without changing meaning', ()
     });
     assert.equal(current.metric, 'useGapCurrent');
     assert.equal(current.value, 48);
+    assert.equal(current.enabled, false);
+    assert.equal(current.needsReview, true);
+    assert.match(current.reviewReason, /Current gap rules were disabled/);
     const previous = rt.normalizeConditionalColorRule({
         id: 'legacy-previous',
         name: 'Old previous',
@@ -131,12 +134,14 @@ test('legacy gap rules migrate to Use Gap variants without changing meaning', ()
     });
     assert.equal(previous.metric, 'useGapPrevious');
     assert.equal(previous.value, 2);
+    assert.equal(previous.enabled, true);
+    assert.equal(previous.needsReview, false);
 });
 
 test('metric customization persists, affects labels, and resets to defaults', () => {
     const { rt, data } = setup();
     const saved = rt.saveCcrMetricSettings('useGapPrevious', {
-        displayName: 'Use Gap → Previous gap',
+        displayName: 'Break Between Uses',
         groupName: 'Use Gap',
         inputUnit: 'hours',
         displayUnit: 'automatic',
@@ -146,17 +151,17 @@ test('metric customization persists, affects labels, and resets to defaults', ()
         helpText: 'Custom help'
     }, data);
     assert.equal(saved.favorableDirection, 'higher');
-    assert.equal(rt.getCcrMetricUiDef('useGapPrevious', data).label, 'Use Gap → Previous gap');
+    assert.equal(rt.getCcrMetricUiDef('useGapPrevious', data).label, 'Break Between Uses');
     const json = rt.exportConditionalColorRulesJson(data);
     assert.match(json, /metricSettings/);
     const reloaded = rt.__reloadTestAppDataFromStorage();
     assert.equal(reloaded.settings.conditionalColorRules.metricSettings.useGapPrevious.helpText, 'Custom help');
     const reset = rt.resetCcrMetricSettings('useGapPrevious', data);
-    assert.equal(reset.displayName, 'Use Gap → Previous gap');
+    assert.equal(reset.displayName, 'Break Between Uses');
     assert.equal(rt.getCcrMetricSettings('useGapPrevious', data).helpText, 'Enter duration in hours. Decimals are allowed.');
 });
 
-test('manager summaries include substance, Use Gap variant, and readable threshold', () => {
+test('manager summaries include substance, Break Between Uses, and readable threshold', () => {
     const { rt, data } = setup();
     const rule = rt.normalizeConditionalColorRule({
         id: 'summary',
@@ -166,5 +171,5 @@ test('manager summaries include substance, Use Gap variant, and readable thresho
         operator: 'lt',
         value: 2
     });
-    assert.equal(rt.formatCcrRuleManagerSummary(rule, data), 'Coke · Use Gap: Previous gap · Less than 2h');
+    assert.equal(rt.formatCcrRuleManagerSummary(rule, data), 'Coke · Break Between Uses · Less than 2h');
 });

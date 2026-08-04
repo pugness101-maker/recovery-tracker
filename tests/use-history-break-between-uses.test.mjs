@@ -243,7 +243,7 @@ test('edit/delete recalculation uses live shared engine', () => {
     assert.equal(rt.computeBreakSincePreviousUseHours(c, data), 11);
 });
 
-test('CCR applies breakSincePreviousUse metric to Break Between Uses cell', () => {
+test('CCR applies Break Between Uses metric to Break Between Uses cell', () => {
     const a = coke({ id: 70, date: '2026-07-26', startTime: '10:00', endTime: '11:00' });
     const b = coke({ id: 71, date: '2026-07-26', startTime: '12:00', endTime: '13:00' });
     const { rt, data } = setup([a, b]);
@@ -253,7 +253,7 @@ test('CCR applies breakSincePreviousUse metric to Break Between Uses cell', () =
             rt.normalizeConditionalColorRule({
                 id: 'short-break',
                 name: 'Short break',
-                metric: 'breakSincePreviousUse',
+                metric: 'useGapPrevious',
                 operator: 'lt',
                 value: 3,
                 sectionScope: ['useHistory'],
