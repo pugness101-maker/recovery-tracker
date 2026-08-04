@@ -2630,11 +2630,13 @@
                             <button type="button" class="secondary-btn btn-sm" onclick="loadRecoveryColorPresetsFromUi()">Load Recovery Presets</button>
                             <button type="button" class="secondary-btn btn-sm" onclick="confirmResetColorRulesToPresets()">Reset to default presets</button>
                             <button type="button" class="secondary-btn btn-sm" onclick="downloadConditionalColorRulesExport()">Export rules</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="toggleCcrMetricAuditReport()">Metric audit</button>
                             <label class="secondary-btn btn-sm ccr-import-label">
                                 Import rules
                                 <input type="file" id="ccr-import-file" accept="application/json,.json" class="hidden" onchange="onConditionalColorRulesImportFile(event)">
                             </label>
                         </div>
+                        <div id="ccr-metric-audit-report" class="ccr-metric-audit-report hidden" role="region" aria-label="Metric audit report"></div>
 
                         <div class="ccr-manager-filters" role="search" aria-label="Filter color rules">
                             <div class="form-group ccr-manager-search-group">

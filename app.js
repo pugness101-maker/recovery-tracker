@@ -1620,6 +1620,7 @@ const CCR_METRIC_ALIASES = Object.freeze({
     gPerHour: 'gramsPerHour',
     break: 'useGapPrevious',
     breakSincePreviousUse: 'useGapPrevious',
+    purchaseFrequency: 'averageGapBetweenPurchases',
     costPerUnit: 'costPerUnit'
 });
 
@@ -1631,8 +1632,15 @@ function ccrMetricDef({
     sections = ['all'],
     valueType = 'number',
     unitType = null,
+    internalUnit = null,
+    displayUnit = null,
     allowedOperators = null,
     groupBySubstance = null,
+    favorableDirection = 'neutral',
+    resolver = null,
+    formatter = null,
+    requiresTarget = false,
+    hideWhenUnavailable = false,
     deleted = false
 }) {
     return Object.freeze({
@@ -1644,8 +1652,15 @@ function ccrMetricDef({
         sections: Object.freeze([...(sections || ['all'])]),
         valueType,
         unitType,
+        internalUnit: internalUnit || unitType || null,
+        displayUnit: displayUnit || unitType || 'automatic',
         allowedOperators: allowedOperators ? Object.freeze([...allowedOperators]) : null,
         groupBySubstance: groupBySubstance ? Object.freeze({ ...groupBySubstance }) : null,
+        favorableDirection,
+        resolver: resolver || key,
+        formatter: formatter || null,
+        requiresTarget: !!requiresTarget,
+        hideWhenUnavailable: !!hideWhenUnavailable,
         deleted: !!deleted
     });
 }
@@ -1661,9 +1676,12 @@ const CCR_METRICS = Object.freeze([
         substances: ['all', 'coke', 'lsd', 'xanax', 'alcohol'],
         valueType: 'ratio',
         unitType: 'ratio',
-        groupBySubstance: { coke: 'use' }
+        groupBySubstance: { coke: 'use' },
+        favorableDirection: 'lower',
+        requiresTarget: true,
+        hideWhenUnavailable: true
     }),
-    ccrMetricDef({ key: 'useGapPrevious', label: 'Break Between Uses', group: 'useGap', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours' }),
+    ccrMetricDef({ key: 'useGapPrevious', label: 'Break Between Uses', group: 'useGap', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours', favorableDirection: 'higher' }),
 
     ccrMetricDef({ key: 'inventoryRemaining', label: 'Inventory remaining', group: 'inventory', substances: ['all', 'coke'], unitType: 'amount' }),
     ccrMetricDef({ key: 'inventoryPercent', label: 'Inventory % remaining', group: 'inventory', substances: ['all', 'coke', 'lsd', 'xanax'], unitType: 'percent' }),
@@ -1688,7 +1706,9 @@ const CCR_METRICS = Object.freeze([
     ccrMetricDef({ key: 'purchaseCount', label: 'Purchase count', group: 'purchases', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'count' }),
     ccrMetricDef({ key: 'purchaseAmount', label: 'Purchase amount', group: 'purchases', substances: ['all', 'coke', 'lsd', 'xanax', 'alcohol'], unitType: 'amount' }),
     ccrMetricDef({ key: 'breakBetweenPurchases', label: 'Break between purchases', group: 'purchases', substances: ['all', 'coke'], unitType: 'hours' }),
-    ccrMetricDef({ key: 'purchaseFrequency', label: 'Purchase frequency / average gap', group: 'purchases', substances: ['all', 'coke', 'nicotine'], unitType: 'days' }),
+    ccrMetricDef({ key: 'averageGapBetweenPurchases', label: 'Average Gap Between Purchases', group: 'purchases', substances: ['all', 'coke', 'nicotine'], unitType: 'days', favorableDirection: 'higher' }),
+    ccrMetricDef({ key: 'purchasesPerWeek', label: 'Purchases Per Week', group: 'purchases', substances: ['all', 'coke', 'nicotine'], unitType: 'count', favorableDirection: 'lower' }),
+    ccrMetricDef({ key: 'purchasesPerMonth', label: 'Purchases Per Month', group: 'purchases', substances: ['all', 'coke', 'nicotine'], unitType: 'count', favorableDirection: 'lower' }),
     ccrMetricDef({ key: 'store', label: 'Store', group: 'purchases', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], valueType: 'string' }),
 
     ccrMetricDef({ key: 'taperPlannedVsActual', label: 'Taper planned vs actual ratio', group: 'taperGoals', substances: ['all'], valueType: 'ratio', unitType: 'ratio' }),
@@ -1698,6 +1718,7 @@ const CCR_METRICS = Object.freeze([
         group: 'taperGoals',
         substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax'],
         valueType: 'string',
+        allowedOperators: ['eq', 'neq', 'contains', 'empty', 'notEmpty'],
         groupBySubstance: { coke: 'taper', nicotine: 'taper' }
     }),
     ccrMetricDef({ key: 'plannedAmount', label: 'Planned amount', group: 'taperGoals', substances: ['all'], unitType: 'amount' }),
@@ -1730,7 +1751,6 @@ const CCR_METRICS = Object.freeze([
         valueType: 'string',
         groupBySubstance: { alcohol: 'goals' }
     }),
-    ccrMetricDef({ key: 'booleanFlag', label: 'Boolean flag', group: 'record', substances: ['all'], valueType: 'boolean' }),
 
     ccrMetricDef({ key: 'periodPreviousValue', label: 'Previous-period value', group: 'period', substances: ['all'], unitType: 'amount' }),
     ccrMetricDef({ key: 'periodNumericChange', label: 'Previous-period numeric change', group: 'period', substances: ['all'], unitType: 'amount' }),
@@ -1807,6 +1827,8 @@ const CCR_METRICS = Object.freeze([
     // ——— Deleted / legacy (kept for saved-rule migration; never shown in dropdowns) ———
     ccrMetricDef({ key: 'paymentMethod', label: 'Payment method', group: 'record', substances: [], valueType: 'string', deleted: true }),
     ccrMetricDef({ key: 'costPerUnit', label: 'Cost per unit', group: 'purchases', substances: [], unitType: 'currency', deleted: true }),
+    ccrMetricDef({ key: 'purchaseFrequency', label: 'Purchase frequency / average gap', group: 'purchases', substances: [], unitType: 'days', deleted: true }),
+    ccrMetricDef({ key: 'booleanFlag', label: 'Boolean flag', group: 'record', substances: [], valueType: 'boolean', deleted: true }),
     ccrMetricDef({ key: 'useGapCurrent', label: 'Use Gap → Current gap', group: 'useGap', substances: [], unitType: 'hours', deleted: true }),
     ccrMetricDef({ key: 'timeSinceLastUse', label: 'Time since last use', group: 'useGap', substances: [], unitType: 'days', deleted: true }),
     ccrMetricDef({ key: 'breakSincePreviousUse', label: 'Break since previous use', group: 'useGap', substances: [], unitType: 'hours', deleted: true }),
@@ -1836,18 +1858,18 @@ function getDefaultCcrMetricSettings(metricKey) {
     if (!def) return null;
     const group = CCR_METRIC_GROUP_ORDER.find(g => g.id === def.group);
     const valueType = def.valueType || 'number';
-    const allowed = valueType === 'string'
+    const allowed = def.allowedOperators || (valueType === 'string'
         ? CCR_TEXT_OPERATORS
-        : (valueType === 'boolean' ? CCR_BOOLEAN_OPERATORS : CCR_NUMERIC_OPERATORS);
+        : (valueType === 'boolean' ? CCR_BOOLEAN_OPERATORS : CCR_NUMERIC_OPERATORS));
     const isGap = isCcrTimeGapMetric(def.key);
     return {
         key: def.key,
         displayName: def.label,
         groupName: group?.label || def.group || 'Use',
         inputUnit: isGap || def.unitType === 'hours' ? 'hours' : (def.unitType || ''),
-        displayUnit: isGap ? 'automatic' : (def.unitType || 'automatic'),
+        displayUnit: isGap ? 'automatic' : (def.displayUnit || def.unitType || 'automatic'),
         decimalPrecision: isGap ? 1 : 2,
-        favorableDirection: isGap ? 'higher' : 'neutral',
+        favorableDirection: def.favorableDirection || (isGap ? 'higher' : 'neutral'),
         defaultOperator: isGap ? 'gt' : (allowed.includes('gt') ? 'gt' : allowed[0]),
         allowedOperators: [...allowed],
         supportedSections: [...(def.sections || ['all'])],
@@ -1980,6 +2002,11 @@ function getCcrMetricsForSubstance(substanceScope, data = appData) {
     return CCR_METRICS
         .filter(m => {
             if (m.deleted) return false;
+            if (!getCcrMetricResolver(m.key)) {
+                warnCcrMissingMetricResolver(m.key);
+                return false;
+            }
+            if (m.hideWhenUnavailable && !ccrMetricHasAvailableData(m, data, family)) return false;
             const settings = getCcrMetricSettings(m.key, data);
             if (settings?.visible === false) return false;
             return (settings?.supportedSubstances || m.substances).includes(family);
@@ -1997,6 +2024,11 @@ function isCcrMetricValidForSubstance(metricKey, substanceScope, data = appData)
     const family = resolveCcrMetricSubstanceFamily(substanceScope, data);
     const def = getCcrMetricDef(metricKey);
     if (!def || def.deleted) return false;
+    if (!getCcrMetricResolver(def.key)) {
+        warnCcrMissingMetricResolver(def.key);
+        return false;
+    }
+    if (def.hideWhenUnavailable && !ccrMetricHasAvailableData(def, data, family)) return false;
     const settings = getCcrMetricSettings(def.key, data);
     if (settings?.visible === false) return false;
     return (settings?.supportedSubstances || def.substances).includes(family);
@@ -2632,6 +2664,11 @@ function normalizeConditionalColorRule(raw, index = 0) {
         valueUnit = null;
         durationValueVersion = null;
     }
+    const metricDefaults = getDefaultCcrMetricSettings(metric);
+    const allowedMetricOps = new Set(metricDefaults?.allowedOperators || CCR_OPERATORS.map(o => o.id));
+    if (!allowedMetricOps.has(operator)) {
+        operator = metricDefaults?.defaultOperator || [...allowedMetricOps][0] || 'gt';
+    }
     const normalized = {
         id: String(raw.id || ccrNewId()),
         name: String(raw.name || `Rule ${index + 1}`).slice(0, 80),
@@ -2782,6 +2819,534 @@ function ccrCoerceNumber(value) {
     if (typeof value === 'number') return Number.isFinite(value) ? value : null;
     const n = parseFloat(String(value).replace(/[^0-9eE.+-]/g, ''));
     return Number.isFinite(n) ? n : null;
+}
+
+function ccrMetricLegacyKeys(metricKey) {
+    const canonical = migrateCcrMetricKey(metricKey);
+    return Object.entries(CCR_METRIC_ALIASES)
+        .filter(([, target]) => target === canonical)
+        .map(([key]) => key);
+}
+
+function ccrMetricRecordFromContext(context = {}) {
+    return context.record || context.log || context.purchase || context.taperRow
+        || context.periodComparison || context.comparison || null;
+}
+
+function ccrMetricNumber(value) {
+    return ccrCoerceNumber(value);
+}
+
+function ccrMetricText(value) {
+    return value == null ? '' : String(value);
+}
+
+function ccrMetricDateDiffDays(dateValue, asOf = new Date()) {
+    if (!dateValue) return null;
+    const then = typeof parseLocalDate === 'function' ? parseLocalDate(String(dateValue)) : new Date(dateValue);
+    const now = asOf instanceof Date ? asOf : new Date(asOf);
+    if (!then?.getTime || !Number.isFinite(then.getTime()) || !Number.isFinite(now.getTime())) return null;
+    return Math.max(0, (now.getTime() - then.getTime()) / 86400000);
+}
+
+function ccrMetricMatchesFamily(record, family, data = appData) {
+    if (!record || !family || family === 'all') return true;
+    const sid = record.substanceId || record.substance || record.item || record.substanceScope;
+    if (!sid) return true;
+    return resolveCcrMetricSubstanceFamily(sid, data) === family;
+}
+
+function ccrMetricPurchaseList(context = {}, data = appData) {
+    const family = resolveCcrMetricSubstanceFamily(context.substanceId || context.substanceScope || 'all', data);
+    const direct = Array.isArray(context.purchases) ? context.purchases : (data.purchases || []);
+    return direct
+        .filter(p => ccrMetricMatchesFamily(p, family, data))
+        .filter(p => !p.archivedAt && !p.inventoryHidden);
+}
+
+function ccrMetricPurchaseGapsDays(purchases = []) {
+    const sorted = purchases
+        .filter(p => p?.date)
+        .slice()
+        .sort((a, b) => getPurchaseDatetimeMs(a) - getPurchaseDatetimeMs(b));
+    const gaps = [];
+    for (let i = 1; i < sorted.length; i++) {
+        const prev = getPurchaseDatetimeMs(sorted[i - 1]);
+        const cur = getPurchaseDatetimeMs(sorted[i]);
+        if (Number.isFinite(prev) && Number.isFinite(cur) && cur >= prev) {
+            gaps.push((cur - prev) / 86400000);
+        }
+    }
+    return gaps;
+}
+
+function ccrMetricPurchaseWindowDays(purchases = []) {
+    const times = purchases
+        .map(p => getPurchaseDatetimeMs(p))
+        .filter(Number.isFinite)
+        .sort((a, b) => a - b);
+    if (!times.length) return null;
+    if (times.length === 1) return 7;
+    return Math.max(1, (times[times.length - 1] - times[0]) / 86400000);
+}
+
+function ccrMetricPurchaseUnitCost(purchase, explicitKey = null) {
+    if (!purchase) return null;
+    const explicit = explicitKey ? ccrMetricNumber(purchase[explicitKey]) : null;
+    if (explicit != null) return explicit;
+    const spend = getPurchaseSpendAmount(purchase);
+    const qty = getPurchaseQuantityBought(purchase);
+    return qty > 0 ? spend / qty : null;
+}
+
+function ccrMetricLogAmount(log) {
+    if (!log) return null;
+    if (typeof getLogPersonalAmount === 'function') {
+        const personal = getLogPersonalAmount(log);
+        if (Number.isFinite(personal) && personal > 0) return personal;
+    }
+    return ccrMetricNumber(log.amount);
+}
+
+function ccrMetricResolveField(context, keys, fallback = null) {
+    const record = ccrMetricRecordFromContext(context);
+    for (const key of keys) {
+        if (record && record[key] != null && record[key] !== '') return record[key];
+        if (context[key] != null && context[key] !== '') return context[key];
+    }
+    return fallback;
+}
+
+function ccrMetricResolveNumericField(context, keys, fallback = null) {
+    const value = ccrMetricResolveField(context, keys, fallback);
+    return ccrMetricNumber(value);
+}
+
+function ccrMetricResolveTextField(context, keys, fallback = '') {
+    return ccrMetricText(ccrMetricResolveField(context, keys, fallback));
+}
+
+function ccrMetricResolveUseVsTarget(context = {}) {
+    const used = ccrMetricResolveNumericField(context, ['used', 'actual', 'current', 'value']);
+    const target = ccrMetricResolveNumericField(context, ['target', 'goal', 'limit', 'planned', 'targetValue']);
+    if (used == null || target == null || target <= 0) return null;
+    return { value: used / target, target };
+}
+
+function ccrMetricResolveTaperRatio(context = {}) {
+    const actual = ccrMetricResolveNumericField(context, ['actual', 'actualAmount', 'actualGrams', 'actualPuffs', 'actualDrinks', 'used']);
+    const planned = ccrMetricResolveNumericField(context, ['planned', 'plannedAmount', 'plannedGrams', 'puffTarget', 'weeklyMax', 'plannedDrinks', 'target']);
+    if (actual == null || planned == null || planned <= 0) return null;
+    return { value: actual / planned, target: planned };
+}
+
+function ccrMetricResolvePercentageOfTarget(context = {}) {
+    const direct = ccrMetricResolveNumericField(context, ['percentageOfTarget']);
+    if (direct != null) return direct;
+    const ratio = ccrMetricResolveTaperRatio(context);
+    return ratio?.value != null ? ratio.value * 100 : null;
+}
+
+function ccrMetricResolvePurchaseBreakHours(context = {}, data = appData) {
+    const purchase = context.purchase || context.record;
+    if (!purchase?.date) return ccrMetricResolveNumericField(context, ['breakBetweenPurchases', 'breakHours']);
+    const family = resolveCcrMetricSubstanceFamily(context.substanceId || getPurchaseSubstanceId(purchase) || 'all', data);
+    const sorted = (data.purchases || [])
+        .filter(p => p !== purchase && ccrMetricMatchesFamily(p, family, data))
+        .filter(p => p.date && !p.archivedAt && !p.inventoryHidden)
+        .sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a));
+    const cur = getPurchaseDatetimeMs(purchase);
+    const prev = sorted.find(p => getPurchaseDatetimeMs(p) < cur);
+    if (!prev) return null;
+    return (cur - getPurchaseDatetimeMs(prev)) / 3600000;
+}
+
+function ccrMetricResolveMonthlySpend(context = {}, data = appData) {
+    const direct = ccrMetricResolveNumericField(context, ['monthlySpending', 'monthSpend']);
+    if (direct != null) return direct;
+    const purchase = context.purchase || context.record;
+    const month = purchase?.date ? String(purchase.date).slice(0, 7) : getLocalDateString().slice(0, 7);
+    return ccrMetricPurchaseList(context, data)
+        .filter(p => String(p.date || '').slice(0, 7) === month)
+        .reduce((sum, p) => sum + getPurchaseSpendAmount(p), 0);
+}
+
+function ccrMetricResolvePeriod(context = {}, key) {
+    const comparison = context.periodComparison || context.comparison || context.record || {};
+    if (key === 'periodPreviousValue') return ccrMetricNumber(comparison.previous);
+    if (key === 'periodNumericChange') return ccrMetricNumber(comparison.difference);
+    if (key === 'periodPercentageChange') return ccrMetricNumber(comparison.percent);
+    if (key === 'periodChangeDirection') {
+        const text = comparison.directionKey || comparison.direction || comparison.directionValue;
+        return { value: comparison.directionValue ?? text, textValue: ccrMetricText(text) };
+    }
+    return null;
+}
+
+const CCR_METRIC_FORMATTERS = Object.freeze({
+    number: value => value == null ? '—' : formatAmount(value),
+    currency: value => value == null ? '—' : fmtSheetMoney(value, appData?.settings?.currency || '$'),
+    percent: value => value == null ? '—' : `${formatAmount(value)}%`,
+    ratio: value => value == null ? '—' : `${formatAmount(value * 100)}%`,
+    hours: value => value == null ? '—' : formatBreakSincePreviousUse(value),
+    days: value => value == null ? '—' : `${formatAmount(value)}d`,
+    text: value => value == null || value === '' ? '—' : String(value),
+    boolean: value => value ? 'True' : 'False'
+});
+
+const CCR_METRIC_RESOLVERS = Object.freeze({
+    useAmount: (context) => ccrMetricLogAmount(context.log || context.record),
+    sessionDuration: (context) => getNormalizedSessionDurationMinutes(context.log || context.record),
+    useVsTarget: ccrMetricResolveUseVsTarget,
+    useGapPrevious: (context, data) => computeBreakSincePreviousUseHours(context.log || context.record, data),
+    inventoryRemaining: (context) => getPurchaseRemainingAmount(context.purchase || context.record),
+    inventoryPercent: (context) => getPurchasePercentRemaining(context.purchase || context.record),
+    daysSincePurchase: (context) => ccrMetricDateDiffDays((context.purchase || context.record)?.date, context.asOf),
+    inventoryStatus: (context) => {
+        const purchase = context.purchase || context.record;
+        const status = purchase?.inventoryStatus || getPurchaseSupplyStatus(purchase)?.key || '';
+        return { value: status, textValue: status };
+    },
+    spend: (context) => getPurchaseSpendAmount(context.purchase || context.record),
+    purchaseCount: (context, data) => context.purchase || context.record?.date ? 1 : ccrMetricPurchaseList(context, data).length,
+    purchaseAmount: (context) => getPurchaseQuantityBought(context.purchase || context.record),
+    breakBetweenPurchases: ccrMetricResolvePurchaseBreakHours,
+    averageGapBetweenPurchases: (context, data) => {
+        const direct = ccrMetricResolveNumericField(context, ['averageGapBetweenPurchases', 'averagePurchaseGapDays', 'purchaseFrequencyDays']);
+        if (direct != null) return direct;
+        const gaps = ccrMetricPurchaseGapsDays(ccrMetricPurchaseList(context, data));
+        return gaps.length ? gaps.reduce((sum, gap) => sum + gap, 0) / gaps.length : null;
+    },
+    purchasesPerWeek: (context, data) => {
+        const direct = ccrMetricResolveNumericField(context, ['purchasesPerWeek']);
+        if (direct != null) return direct;
+        const purchases = ccrMetricPurchaseList(context, data);
+        const days = ccrMetricPurchaseWindowDays(purchases);
+        return days ? purchases.length / (days / 7) : null;
+    },
+    purchasesPerMonth: (context, data) => {
+        const direct = ccrMetricResolveNumericField(context, ['purchasesPerMonth', 'purchaseFrequency']);
+        if (direct != null) return direct;
+        const purchases = ccrMetricPurchaseList(context, data);
+        const days = ccrMetricPurchaseWindowDays(purchases);
+        return days ? purchases.length / (days / 30.4375) : null;
+    },
+    store: (context) => {
+        const store = ccrMetricResolveTextField(context, ['store', 'location', 'supplier']);
+        return { value: store, textValue: store };
+    },
+    taperPlannedVsActual: ccrMetricResolveTaperRatio,
+    taperStatus: (context) => {
+        const status = ccrMetricResolveTextField(context, ['status', 'statusLabel', 'taperStatus']);
+        return { value: status, textValue: status };
+    },
+    plannedAmount: (context) => ccrMetricResolveNumericField(context, ['plannedAmount', 'planned', 'target']),
+    actualAmount: (context) => ccrMetricResolveNumericField(context, ['actualAmount', 'actual', 'used']),
+    difference: (context) => ccrMetricResolveNumericField(context, ['difference', 'diff']),
+    percentageOfTarget: ccrMetricResolvePercentageOfTarget,
+    transactionType: (context) => {
+        const tx = getLogTransactionType(context.log || context.record || {});
+        return { value: tx, textValue: tx };
+    },
+    productType: (context) => {
+        const record = ccrMetricRecordFromContext(context) || {};
+        const productType = record.productType || record.type || '';
+        return { value: productType, textValue: productType };
+    },
+    statusLabel: (context) => {
+        const label = ccrMetricResolveTextField(context, ['statusLabel', 'status']);
+        return { value: label, textValue: label };
+    },
+    periodPreviousValue: (context) => ccrMetricResolvePeriod(context, 'periodPreviousValue'),
+    periodNumericChange: (context) => ccrMetricResolvePeriod(context, 'periodNumericChange'),
+    periodPercentageChange: (context) => ccrMetricResolvePeriod(context, 'periodPercentageChange'),
+    periodChangeDirection: (context) => ccrMetricResolvePeriod(context, 'periodChangeDirection'),
+    gramsPerHour: (context) => getNormalizedGramsPerHour(context.log || context.record),
+    supplyDuration: (context) => ccrMetricResolveNumericField(context, ['supplyDuration', 'supplyDurationDays']),
+    costPerGram: (context) => ccrMetricPurchaseUnitCost(context.purchase || context.record, 'costPerGram'),
+    plannedGrams: (context) => ccrMetricResolveNumericField(context, ['plannedGrams', 'plannedAmount', 'planned']),
+    actualGrams: (context) => ccrMetricResolveNumericField(context, ['actualGrams', 'actualAmount', 'actual']),
+    useDifference: (context) => ccrMetricResolveNumericField(context, ['useDifference', 'difference']),
+    plannedSpending: (context) => ccrMetricResolveNumericField(context, ['plannedSpending', 'spendPlanned']),
+    actualSpending: (context) => ccrMetricResolveNumericField(context, ['actualSpending', 'spent']),
+    spendingDifference: (context) => ccrMetricResolveNumericField(context, ['spendingDifference', 'spendDiff']),
+    puffs: (context) => ccrMetricResolveNumericField(context, ['puffs', 'amount']),
+    percentLeftCheckpoint: (context) => ccrMetricResolveNumericField(context, ['percentAfter', 'percentLeft', 'percentLeftCheckpoint']),
+    personalUseAmount: (context) => getLogPersonalAmount(context.log || context.record || {}),
+    nicotineFreeHours: (context) => ccrMetricResolveNumericField(context, ['nicotineFreeHours']),
+    percentLeft: (context) => ccrMetricResolveNumericField(context, ['percentLeft', 'remainingPercent']),
+    puffsRemaining: (context) => ccrMetricResolveNumericField(context, ['puffsRemaining', 'remainingPuffs', 'remainingAmount']),
+    currentVapeAge: (context) => ccrMetricResolveNumericField(context, ['currentVapeAge', 'vapeAgeDays']),
+    vapeLifespan: (context) => ccrMetricResolveNumericField(context, ['vapeLifespan', 'vapeLifespanDays']),
+    nicotineStrength: (context) => ccrMetricResolveNumericField(context, ['nicotineStrength', 'nicotineMgPerMl', 'nicotinePercent']),
+    vapesPurchased: (context, data) => context.purchase || context.record?.date ? 1 : ccrMetricPurchaseList(context, data).length,
+    costPerVape: (context) => ccrMetricPurchaseUnitCost(context.purchase || context.record, 'costPerVape'),
+    monthlySpending: ccrMetricResolveMonthlySpend,
+    breakBetweenVapePurchases: ccrMetricResolvePurchaseBreakHours,
+    puffTarget: (context) => ccrMetricResolveNumericField(context, ['puffTarget', 'weeklyMax']),
+    actualPuffs: (context) => ccrMetricResolveNumericField(context, ['actualPuffs', 'used']),
+    puffDifference: (context) => ccrMetricResolveNumericField(context, ['puffDifference', 'difference']),
+    puffsVsTargetRatio: (context) => {
+        const actual = ccrMetricResolveNumericField(context, ['actualPuffs', 'used']);
+        const target = ccrMetricResolveNumericField(context, ['puffTarget', 'weeklyMax', 'target']);
+        return actual != null && target > 0 ? { value: actual / target, target } : null;
+    },
+    vapeLifespanGoal: (context) => ccrMetricResolveNumericField(context, ['vapeLifespanGoal', 'lifespanGoal']),
+    daysBetweenPurchasesGoal: (context) => ccrMetricResolveNumericField(context, ['daysBetweenPurchasesGoal', 'buyInterval']),
+    monthlyVapeCap: (context) => ccrMetricResolveNumericField(context, ['monthlyVapeCap', 'targetMonthlyVapeCap']),
+    spendingGoal: (context) => ccrMetricResolveNumericField(context, ['spendingGoal', 'goalMonthlySpend']),
+    tabs: (context) => ccrMetricResolveNumericField(context, ['tabs', 'quantityTabs', 'amount']),
+    ug: (context) => ccrMetricResolveNumericField(context, ['ug', 'totalUg']),
+    tabsRemaining: (context) => ccrMetricResolveNumericField(context, ['tabsRemaining', 'remainingTabs', 'remainingAmount']),
+    ugRemaining: (context) => ccrMetricResolveNumericField(context, ['ugRemaining', 'remainingUg']),
+    costPerTab: (context) => ccrMetricPurchaseUnitCost(context.purchase || context.record, 'costPerTab'),
+    costPerUg: (context) => ccrMetricPurchaseUnitCost(context.purchase || context.record, 'costPerUg'),
+    plannedTabs: (context) => ccrMetricResolveNumericField(context, ['plannedTabs', 'plannedAmount', 'planned']),
+    actualTabs: (context) => ccrMetricResolveNumericField(context, ['actualTabs', 'actualAmount', 'actual']),
+    plannedUg: (context) => ccrMetricResolveNumericField(context, ['plannedUg', 'plannedAmount', 'planned']),
+    actualUg: (context) => ccrMetricResolveNumericField(context, ['actualUg', 'actualAmount', 'actual']),
+    pills: (context) => ccrMetricResolveNumericField(context, ['pills', 'pillQuantity', 'amount']),
+    mg: (context) => ccrMetricResolveNumericField(context, ['mg', 'totalMg']),
+    strengthPerPill: (context) => ccrMetricResolveNumericField(context, ['strengthPerPill', 'mgPerPill']),
+    pillsRemaining: (context) => ccrMetricResolveNumericField(context, ['pillsRemaining', 'remainingPills', 'remainingAmount']),
+    mgRemaining: (context) => ccrMetricResolveNumericField(context, ['mgRemaining', 'remainingMg']),
+    missingStrengthFlag: (context) => !!(context.record || context.purchase || {}).needsStrengthReview,
+    costPerPill: (context) => ccrMetricPurchaseUnitCost(context.purchase || context.record, 'costPerPill'),
+    costPerMg: (context) => ccrMetricPurchaseUnitCost(context.purchase || context.record, 'costPerMg'),
+    plannedPills: (context) => ccrMetricResolveNumericField(context, ['plannedPills', 'plannedAmount', 'planned']),
+    actualPills: (context) => ccrMetricResolveNumericField(context, ['actualPills', 'actualAmount', 'actual']),
+    plannedMg: (context) => ccrMetricResolveNumericField(context, ['plannedMg', 'plannedAmount', 'planned']),
+    actualMg: (context) => ccrMetricResolveNumericField(context, ['actualMg', 'actualAmount', 'actual']),
+    drinks: (context) => ccrMetricResolveNumericField(context, ['drinks', 'amount']),
+    multiDayDuration: (context) => ccrMetricResolveNumericField(context, ['multiDayDuration', 'durationDays']),
+    costPerDrink: (context) => ccrMetricPurchaseUnitCost(context.purchase || context.record, 'costPerDrink'),
+    plannedDrinks: (context) => ccrMetricResolveNumericField(context, ['plannedDrinks', 'plannedAmount', 'planned']),
+    actualDrinks: (context) => ccrMetricResolveNumericField(context, ['actualDrinks', 'actualAmount', 'actual'])
+});
+
+const ccrMissingResolverWarnings = new Set();
+
+function getCcrMetricResolver(metricKey) {
+    const def = getCcrMetricDef(metricKey);
+    if (!def) return null;
+    return CCR_METRIC_RESOLVERS[def.resolver || def.key] || CCR_METRIC_RESOLVERS[def.key] || null;
+}
+
+function warnCcrMissingMetricResolver(metricKey) {
+    const key = migrateCcrMetricKey(metricKey);
+    if (ccrMissingResolverWarnings.has(key)) return;
+    ccrMissingResolverWarnings.add(key);
+    if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+        console.warn(`[CCR] Metric "${key}" is visible but has no registered resolver.`);
+    }
+}
+
+function getCcrMetricFormatter(metricKey) {
+    const def = getCcrMetricDef(metricKey);
+    if (!def) return CCR_METRIC_FORMATTERS.number;
+    if (def.formatter && CCR_METRIC_FORMATTERS[def.formatter]) return CCR_METRIC_FORMATTERS[def.formatter];
+    if (def.valueType === 'string') return CCR_METRIC_FORMATTERS.text;
+    if (def.valueType === 'boolean') return CCR_METRIC_FORMATTERS.boolean;
+    if (def.unitType && CCR_METRIC_FORMATTERS[def.unitType]) return CCR_METRIC_FORMATTERS[def.unitType];
+    return CCR_METRIC_FORMATTERS.number;
+}
+
+function normalizeCcrMetricResolvedValue(result) {
+    if (result && typeof result === 'object' && !Array.isArray(result)
+        && (Object.prototype.hasOwnProperty.call(result, 'value')
+            || Object.prototype.hasOwnProperty.call(result, 'textValue')
+            || Object.prototype.hasOwnProperty.call(result, 'target'))) {
+        return {
+            value: result.value,
+            textValue: result.textValue,
+            target: result.target
+        };
+    }
+    return { value: result };
+}
+
+function resolveCcrRegisteredMetric(metricKey, context = {}, data = appData) {
+    const def = getCcrMetricDef(metricKey);
+    const resolver = getCcrMetricResolver(metricKey);
+    if (!def || !resolver) return null;
+    try {
+        return normalizeCcrMetricResolvedValue(resolver(context, data, def));
+    } catch (err) {
+        if (typeof console !== 'undefined' && typeof console.warn === 'function') {
+            console.warn(`[CCR] Metric resolver failed for "${def.key}".`, err);
+        }
+        return null;
+    }
+}
+
+function getCcrMetricRegistryEntry(metricKey) {
+    const def = getCcrMetricDef(metricKey);
+    if (!def) return null;
+    return {
+        key: def.key,
+        label: def.label,
+        group: def.group,
+        valueType: def.valueType,
+        internalUnit: def.internalUnit,
+        displayUnit: def.displayUnit,
+        supportedSubstances: [...def.substances],
+        supportedSections: [...def.sections],
+        allowedOperators: [...(getDefaultCcrMetricSettings(def.key)?.allowedOperators || [])],
+        calculationFunction: getCcrMetricResolver(def.key),
+        formatter: getCcrMetricFormatter(def.key),
+        favorableDirection: def.favorableDirection,
+        legacyKeys: ccrMetricLegacyKeys(def.key),
+        deleted: def.deleted
+    };
+}
+
+function getCcrMetricRegistry() {
+    return CCR_METRICS.map(m => getCcrMetricRegistryEntry(m.key)).filter(Boolean);
+}
+
+function hasCcrValidTargetData(data = appData, family = 'all') {
+    const logs = data.logs || [];
+    if (logs.some(l => ccrMetricMatchesFamily(l, family, data)
+        && (l.target != null || l.goal != null || l.limit != null || l.planned != null))) return true;
+    const plans = [
+        ...Object.values(data.taperPlans || {}),
+        ...(data.taperPlansV2 || [])
+    ];
+    return plans.some(plan => {
+        if (!ccrMetricMatchesFamily(plan, family, data)) return false;
+        return plan.target != null || plan.dailyLimit != null || plan.weeklyLimit != null
+            || plan.goalAmount != null || (plan.weeklyTargets || []).some(w => (
+                w.plannedAmount != null || w.plannedGrams != null || w.weeklyMax != null || w.puffTarget != null
+            ));
+    });
+}
+
+function ccrMetricHasAvailableData(metric, data = appData, family = 'all') {
+    if (!metric) return false;
+    if (metric.requiresTarget) return hasCcrValidTargetData(data, family);
+    const key = metric.key;
+    if (['spend', 'purchaseCount', 'purchaseAmount', 'breakBetweenPurchases', 'averageGapBetweenPurchases',
+        'purchasesPerWeek', 'purchasesPerMonth', 'store', 'inventoryRemaining', 'inventoryPercent',
+        'daysSincePurchase', 'inventoryStatus', 'costPerGram', 'costPerVape', 'costPerTab', 'costPerUg',
+        'costPerPill', 'costPerMg', 'breakBetweenVapePurchases', 'vapesPurchased', 'monthlySpending'].includes(key)) {
+        return (data.purchases || []).some(p => ccrMetricMatchesFamily(p, family, data));
+    }
+    if (['taperPlannedVsActual', 'taperStatus', 'plannedAmount', 'actualAmount', 'difference', 'percentageOfTarget',
+        'plannedGrams', 'actualGrams', 'useDifference', 'plannedSpending', 'actualSpending', 'spendingDifference',
+        'puffTarget', 'actualPuffs', 'puffDifference', 'puffsVsTargetRatio', 'vapeLifespanGoal',
+        'daysBetweenPurchasesGoal', 'monthlyVapeCap', 'spendingGoal', 'plannedTabs', 'actualTabs',
+        'plannedUg', 'actualUg', 'plannedPills', 'actualPills', 'plannedMg', 'actualMg',
+        'plannedDrinks', 'actualDrinks'].includes(key)) {
+        return !!((data.taperPlansV2 || []).length || Object.keys(data.taperPlans || {}).length);
+    }
+    if (key.startsWith('period')) return (data.logs || []).length > 0 || (data.purchases || []).length > 0;
+    return (data.logs || []).some(l => ccrMetricMatchesFamily(l, family, data));
+}
+
+function ccrMetricSupportsSection(metric, section = 'all') {
+    if (!metric) return false;
+    if (!section || section === 'all') return true;
+    const sections = metric.sections || ['all'];
+    return sections.includes('all') || sections.includes(section);
+}
+
+function ccrMetricSupportsFamily(metric, family = 'all') {
+    if (!metric) return false;
+    if (!family || family === 'all') return metric.substances.includes('all');
+    return metric.substances.includes(family);
+}
+
+function buildCcrMetricAuditReport(data = appData, options = {}) {
+    const family = resolveCcrMetricSubstanceFamily(options.substanceScope || options.substance || 'all', data);
+    const section = options.section || 'all';
+    return CCR_METRICS.map(metric => {
+        const resolver = getCcrMetricResolver(metric.key);
+        const unsupportedSection = !ccrMetricSupportsSection(metric, section);
+        const unsupportedSubstance = !ccrMetricSupportsFamily(metric, family);
+        const noAvailableData = !ccrMetricHasAvailableData(metric, data, family);
+        const statuses = [];
+        if (resolver) statuses.push('implemented');
+        else statuses.push('missing resolver');
+        if (unsupportedSection) statuses.push('unsupported section');
+        if (unsupportedSubstance) statuses.push('unsupported substance');
+        if (noAvailableData) statuses.push('no available data');
+        return {
+            key: metric.key,
+            label: metric.label,
+            group: metric.group,
+            valueType: metric.valueType,
+            internalUnit: metric.internalUnit,
+            displayUnit: metric.displayUnit,
+            supportedSubstances: [...metric.substances],
+            supportedSections: [...metric.sections],
+            allowedOperators: [...(getDefaultCcrMetricSettings(metric.key)?.allowedOperators || [])],
+            favorableDirection: metric.favorableDirection,
+            legacyKeys: ccrMetricLegacyKeys(metric.key),
+            visible: !metric.deleted
+                && !!resolver
+                && !unsupportedSubstance
+                && !unsupportedSection
+                && !(metric.hideWhenUnavailable && noAvailableData),
+            deleted: metric.deleted,
+            implemented: !!resolver,
+            missingResolver: !resolver,
+            unsupportedSection,
+            unsupportedSubstance,
+            noAvailableData,
+            statuses
+        };
+    });
+}
+
+function renderCcrMetricAuditReport(data = appData, options = {}) {
+    const rows = buildCcrMetricAuditReport(data, options);
+    const visibleRows = rows.filter(r => !r.deleted);
+    const counts = {
+        implemented: visibleRows.filter(r => r.implemented).length,
+        missing: visibleRows.filter(r => r.missingResolver).length,
+        unsupportedSection: visibleRows.filter(r => r.unsupportedSection).length,
+        unsupportedSubstance: visibleRows.filter(r => r.unsupportedSubstance).length,
+        noData: visibleRows.filter(r => r.noAvailableData).length
+    };
+    const body = visibleRows.map(row => `
+        <tr>
+            <td><code>${escapeHtml(row.key)}</code></td>
+            <td>${escapeHtml(row.label)}</td>
+            <td>${escapeHtml(row.group)}</td>
+            <td>${escapeHtml(row.valueType)}</td>
+            <td>${escapeHtml(row.internalUnit || '—')}</td>
+            <td>${escapeHtml(row.displayUnit || '—')}</td>
+            <td>${escapeHtml(row.supportedSubstances.join(', ') || '—')}</td>
+            <td>${escapeHtml(row.supportedSections.join(', ') || '—')}</td>
+            <td>${escapeHtml(row.allowedOperators.join(', ') || '—')}</td>
+            <td>${escapeHtml(row.statuses.join(', '))}</td>
+        </tr>
+    `).join('');
+    return `<div class="ccr-metric-audit-summary">
+        <span>Implemented: ${counts.implemented}</span>
+        <span>Missing resolver: ${counts.missing}</span>
+        <span>Unsupported section: ${counts.unsupportedSection}</span>
+        <span>Unsupported substance: ${counts.unsupportedSubstance}</span>
+        <span>No available data: ${counts.noData}</span>
+    </div>
+    <div class="table-scroll">
+        <table class="ccr-metric-audit-table">
+            <thead><tr><th>Key</th><th>Label</th><th>Group</th><th>Type</th><th>Internal</th><th>Display</th><th>Substances</th><th>Sections</th><th>Operators</th><th>Status</th></tr></thead>
+            <tbody>${body}</tbody>
+        </table>
+    </div>`;
+}
+
+function toggleCcrMetricAuditReport() {
+    const el = document.getElementById('ccr-metric-audit-report');
+    if (!el) return;
+    const show = el.classList.contains('hidden');
+    el.classList.toggle('hidden', !show);
+    if (show) {
+        const substance = document.getElementById('ccr-manager-filter-substance')?.value || 'all';
+        const section = document.getElementById('ccr-manager-filter-section')?.value || 'all';
+        el.innerHTML = renderCcrMetricAuditReport(appData, { substanceScope: substance, section });
+    }
 }
 
 function isCcrDurationMetric(metric) {
@@ -60060,6 +60625,13 @@ function __getRecoveryTrackerTestExports() {
         CCR_SECTIONS,
         migrateCcrMetricKey,
         getCcrMetricDef,
+        getCcrMetricRegistry,
+        getCcrMetricRegistryEntry,
+        getCcrMetricResolver,
+        getCcrMetricFormatter,
+        resolveCcrRegisteredMetric,
+        buildCcrMetricAuditReport,
+        renderCcrMetricAuditReport,
         resolveCcrMetricSubstanceFamily,
         getCcrMetricsForSubstance,
         isCcrMetricValidForSubstance,

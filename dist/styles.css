@@ -7364,6 +7364,45 @@ body.purchase-history-col-resizing {
     margin-left: auto;
 }
 
+.ccr-metric-audit-report {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px;
+    margin: 8px 0 12px;
+    background: var(--bg-secondary, rgba(127, 127, 127, 0.06));
+}
+
+.ccr-metric-audit-summary {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+}
+
+.ccr-metric-audit-summary span {
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 3px 6px;
+    background: var(--bg-card);
+}
+
+.ccr-metric-audit-table {
+    width: 100%;
+    min-width: 940px;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+}
+
+.ccr-metric-audit-table th,
+.ccr-metric-audit-table td {
+    border-bottom: 1px solid var(--border);
+    padding: 6px 8px;
+    text-align: left;
+    vertical-align: top;
+}
+
 .ccr-import-label {
     display: inline-flex;
     align-items: center;

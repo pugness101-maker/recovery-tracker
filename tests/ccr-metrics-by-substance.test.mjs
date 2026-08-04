@@ -44,11 +44,11 @@ test('all substances metric filter shows only universal metrics', () => {
     const rt = setup();
     const keys = keysFor(rt, 'all');
     assertHas(keys, [
-        'useAmount', 'sessionDuration', 'useGapPrevious', 'useVsTarget',
+        'useAmount', 'sessionDuration', 'useGapPrevious',
         'inventoryRemaining', 'inventoryPercent', 'daysSincePurchase', 'inventoryStatus',
-        'spend', 'purchaseCount', 'purchaseAmount', 'breakBetweenPurchases', 'purchaseFrequency', 'store',
+        'spend', 'purchaseCount', 'purchaseAmount', 'breakBetweenPurchases', 'averageGapBetweenPurchases', 'purchasesPerWeek', 'purchasesPerMonth', 'store',
         'taperPlannedVsActual', 'taperStatus', 'plannedAmount', 'actualAmount', 'difference', 'percentageOfTarget',
-        'transactionType', 'productType', 'statusLabel', 'booleanFlag',
+        'transactionType', 'productType', 'statusLabel',
         'periodPreviousValue', 'periodNumericChange', 'periodPercentageChange', 'periodChangeDirection'
     ]);
     assertMissing(keys, [
@@ -61,9 +61,9 @@ test('coke metric filter includes g/hr and excludes nicotine/LSD/alcohol specifi
     const rt = setup();
     const keys = keysFor(rt, 'coke');
     assertHas(keys, [
-        'useAmount', 'sessionDuration', 'gramsPerHour', 'useGapPrevious', 'useVsTarget',
+        'useAmount', 'sessionDuration', 'gramsPerHour', 'useGapPrevious',
         'inventoryRemaining', 'inventoryPercent', 'daysSincePurchase', 'supplyDuration',
-        'spend', 'purchaseAmount', 'purchaseCount', 'costPerGram', 'breakBetweenPurchases', 'purchaseFrequency', 'store',
+        'spend', 'purchaseAmount', 'purchaseCount', 'costPerGram', 'breakBetweenPurchases', 'averageGapBetweenPurchases', 'purchasesPerWeek', 'purchasesPerMonth', 'store',
         'plannedGrams', 'actualGrams', 'useDifference', 'plannedSpending', 'actualSpending', 'spendingDifference', 'taperStatus'
     ]);
     assertMissing(keys, [
@@ -80,7 +80,7 @@ test('nicotine metric filter includes puffs/vape metrics and excludes g/hr and p
         'percentLeft', 'puffsRemaining', 'currentVapeAge', 'vapeLifespan', 'nicotineStrength',
         'daysSincePurchase', 'inventoryStatus',
         'vapesPurchased', 'purchaseCount', 'costPerVape', 'monthlySpending',
-        'breakBetweenVapePurchases', 'purchaseFrequency', 'store',
+        'breakBetweenVapePurchases', 'averageGapBetweenPurchases', 'purchasesPerWeek', 'purchasesPerMonth', 'store',
         'puffTarget', 'actualPuffs', 'puffDifference', 'puffsVsTargetRatio',
         'vapeLifespanGoal', 'daysBetweenPurchasesGoal', 'monthlyVapeCap', 'spendingGoal', 'taperStatus'
     ]);
@@ -93,7 +93,7 @@ test('lsd metric filter includes tabs/µg and excludes puffs/g/hr', () => {
     const rt = setup();
     const keys = keysFor(rt, 'lsd');
     assertHas(keys, [
-        'tabs', 'ug', 'sessionDuration', 'useGapPrevious', 'useVsTarget',
+        'tabs', 'ug', 'sessionDuration', 'useGapPrevious',
         'tabsRemaining', 'ugRemaining', 'inventoryPercent', 'daysSincePurchase', 'inventoryStatus',
         'purchaseAmount', 'purchaseCount', 'costPerTab', 'costPerUg', 'spend', 'store',
         'plannedTabs', 'actualTabs', 'plannedUg', 'actualUg', 'difference', 'percentageOfTarget', 'taperStatus'
@@ -105,7 +105,7 @@ test('xanax metric filter includes pills/mg and missing strength flag', () => {
     const rt = setup();
     const keys = keysFor(rt, 'xanax');
     assertHas(keys, [
-        'pills', 'mg', 'strengthPerPill', 'sessionDuration', 'useGapPrevious', 'useVsTarget',
+        'pills', 'mg', 'strengthPerPill', 'sessionDuration', 'useGapPrevious',
         'pillsRemaining', 'mgRemaining', 'inventoryPercent', 'daysSincePurchase', 'inventoryStatus', 'missingStrengthFlag',
         'purchaseAmount', 'purchaseCount', 'costPerPill', 'costPerMg', 'spend', 'store',
         'plannedPills', 'actualPills', 'plannedMg', 'actualMg', 'difference', 'percentageOfTarget', 'taperStatus'
@@ -117,7 +117,7 @@ test('alcohol metric filter includes drinks and multi-day duration', () => {
     const rt = setup();
     const keys = keysFor(rt, 'alcohol');
     assertHas(keys, [
-        'drinks', 'sessionDuration', 'multiDayDuration', 'useGapPrevious', 'useVsTarget',
+        'drinks', 'sessionDuration', 'multiDayDuration', 'useGapPrevious',
         'purchaseAmount', 'purchaseCount', 'costPerDrink', 'spend', 'store',
         'plannedDrinks', 'actualDrinks', 'difference', 'percentageOfTarget', 'statusLabel'
     ]);
@@ -145,6 +145,7 @@ test('legacy metric keys migrate and payment method stays hidden', () => {
     assert.equal(rt.migrateCcrMetricKey('daysSinceUse'), 'useGapCurrent');
     assert.equal(rt.migrateCcrMetricKey('duration'), 'sessionDuration');
     assert.equal(rt.migrateCcrMetricKey('gPerHour'), 'gramsPerHour');
+    assert.equal(rt.migrateCcrMetricKey('purchaseFrequency'), 'averageGapBetweenPurchases');
 
     const migrated = rt.normalizeConditionalColorRule({
         name: 'legacy streak',
@@ -179,6 +180,10 @@ test('metric select html uses optgroups and substance filtering', () => {
     assert.match(allHtml, /<optgroup label="Previous-period comparison">/);
     assert.match(allHtml, /value="useAmount"/);
     assert.match(allHtml, />Break Between Uses</);
+    assert.match(allHtml, />Average Gap Between Purchases</);
+    assert.match(allHtml, />Purchases Per Week</);
+    assert.match(allHtml, />Purchases Per Month</);
+    assert.doesNotMatch(allHtml, /Purchase frequency \/ average gap/);
     assert.doesNotMatch(allHtml, /value="useGapCurrent"/);
     assert.doesNotMatch(allHtml, /value="gramsPerHour"/);
     assert.doesNotMatch(allHtml, /value="paymentMethod"/);
@@ -194,4 +199,16 @@ test('metric select html uses optgroups and substance filtering', () => {
     assert.match(nicHtml, /value="puffs"/);
     assert.doesNotMatch(nicHtml, /value="gramsPerHour"/);
     assert.match(nicHtml, /<optgroup label="Vape inventory">/);
+});
+
+test('Use vs target only appears when a valid target exists', () => {
+    const rt = setup();
+    assert.equal(keysFor(rt, 'coke').includes('useVsTarget'), false);
+    const data = rt.__getTestAppData();
+    data.taperPlansV2.push({
+        id: 'target-plan',
+        substanceId: 'coke',
+        weeklyTargets: [{ plannedGrams: 1 }]
+    });
+    assert.equal(keysFor(rt, 'coke').includes('useVsTarget'), true);
 });
