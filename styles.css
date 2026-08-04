@@ -9372,6 +9372,76 @@ body > .app-container {
     background: var(--accent);
 }
 
+.metric-progress-cell {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+}
+
+.metric-progress-value {
+    line-height: 1.25;
+}
+
+.metric-progress-track-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 72px;
+}
+
+.metric-progress-track.rd-progress {
+    flex: 1;
+    margin: 0;
+    height: 6px;
+    min-width: 48px;
+    background: rgba(127, 127, 127, 0.28);
+}
+
+:root[data-theme="dark"] .metric-progress-track.rd-progress,
+html[data-theme="dark"] .metric-progress-track.rd-progress {
+    background: rgba(255, 255, 255, 0.14);
+}
+
+:root[data-theme="light"] .metric-progress-track.rd-progress,
+html[data-theme="light"] .metric-progress-track.rd-progress {
+    background: rgba(0, 0, 0, 0.12);
+}
+
+.metric-progress-fill.rd-progress-fill {
+    background: var(--text-secondary, #9e9e9e);
+    border-radius: inherit;
+    min-width: 0;
+    transition: width 0.15s ease;
+}
+
+:root[data-theme="light"] .metric-progress-fill.rd-progress-fill,
+html[data-theme="light"] .metric-progress-fill.rd-progress-fill {
+    background: var(--text-secondary, #6b6b6b);
+}
+
+.metric-progress-track[data-exceeds-target="true"] .metric-progress-fill {
+    background: var(--accent, #4caf50);
+}
+
+.metric-progress-pct {
+    font-size: 0.68rem;
+    color: var(--text-secondary);
+    white-space: nowrap;
+    min-width: 2.4em;
+    text-align: right;
+}
+
+.metric-progress-status-text {
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+}
+
+.metric-progress-value.hidden {
+    display: none;
+}
+
+
 .rd-score-main {
     display: flex;
     align-items: baseline;

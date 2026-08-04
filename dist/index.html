@@ -2571,6 +2571,11 @@
                             <option value="comfortable">Comfortable</option>
                         </select>
                     </div>
+                    <label class="settings-toggle-row" for="appearance-show-progress-bars">
+                        <input type="checkbox" id="appearance-show-progress-bars" checked onchange="setInCellProgressBarsEnabled(this.checked)">
+                        <span>Show progress bars in tables and cards</span>
+                    </label>
+                    <p class="settings-hint">Optional bars under supported values (inventory remaining, taper vs plan, spending vs budget, purchase limits, streak/lifespan/nicotine-free goals). Numeric values stay visible. Bars use conditional-rule colors when a rule matches.</p>
 
                     <div class="ccr-settings-block" id="conditional-color-rules-root">
                         <h3 class="ccr-settings-title">Conditional Color Rules</h3>
