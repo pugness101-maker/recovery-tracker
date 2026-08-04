@@ -2591,6 +2591,31 @@
                         </select>
                     </div>
                     <p class="settings-hint">Target lines show current vs plan/goal/cap with difference and percent of target. Favorable direction depends on the metric (lower is better for use and spending; higher for streaks and lifespan). Default green / amber / red tones apply when no matching conditional color rule exists; custom rules always override. Labels are never invented.</p>
+                    <label class="settings-toggle-row" for="appearance-show-previous-period-compare">
+                        <input type="checkbox" id="appearance-show-previous-period-compare" checked onchange="setPreviousPeriodCompareEnabled(this.checked)">
+                        <span>Show previous-period comparisons</span>
+                    </label>
+                    <div class="form-group">
+                        <label for="appearance-previous-period-mode">Compare against</label>
+                        <select id="appearance-previous-period-mode" onchange="setPreviousPeriodCompareMode(this.value)">
+                            <option value="previous-day">Previous day</option>
+                            <option value="previous-week" selected>Previous week</option>
+                            <option value="previous-month">Previous month</option>
+                            <option value="previous-selected-range">Previous selected date range</option>
+                            <option value="same-period-last-month">Same period last month</option>
+                            <option value="same-period-last-year">Same period last year</option>
+                        </select>
+                    </div>
+                    <div class="form-group">
+                        <label for="appearance-previous-period-color-scope">Previous-period color applies to</label>
+                        <select id="appearance-previous-period-color-scope" onchange="setPreviousPeriodCompareColorScope(this.value)">
+                            <option value="previous">Previous value</option>
+                            <option value="numericChange" selected>Numeric change</option>
+                            <option value="percentageChange">Percentage change</option>
+                            <option value="direction">Increase/decrease direction</option>
+                        </select>
+                    </div>
+                    <p class="settings-hint">Comparisons respect the selected substance and shared date filter, reuse normalized metrics, and skip % change when the previous value is zero. Custom date ranges compare to the immediately preceding range of the same length. Conditional rules can target previous value, numeric change, % change, or direction.</p>
 
                     <div class="ccr-settings-block" id="conditional-color-rules-root">
                         <h3 class="ccr-settings-title">Conditional Color Rules</h3>

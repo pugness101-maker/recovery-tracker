@@ -602,7 +602,9 @@ const TARGET_LINE_METRIC_DIRECTIONS = Object.freeze({
     vapeLifespan: 'higherIsBetter',
     nicotineFreeHours: 'higherIsBetter',
     daysBetweenPurchases: 'higherIsBetter',
-    inventory: 'neutral'
+    inventory: 'neutral',
+    gift: 'neutral',
+    adjustment: 'neutral'
 });
 
 const TARGET_LINE_DEFAULT_COLORS = Object.freeze({
@@ -1021,9 +1023,527 @@ function resetAppearanceSettings() {
     applyAppearanceSpacing('default');
     syncInCellProgressBarsToggle();
     syncTargetLineSettingsUI();
+    if (typeof syncPreviousPeriodCompareSettingsUI === 'function') syncPreviousPeriodCompareSettingsUI();
     if (typeof updateStatsCalendarLayoutForViewMode === 'function') {
         updateStatsCalendarLayoutForViewMode();
     }
+}
+
+// ——— Previous-period comparisons ———
+// Shared current-vs-previous presentation for dashboard, Insights, spending, and taper.
+// Uses normalized metric values from callers — no per-surface recalculation of amounts.
+
+const PREVIOUS_PERIOD_COMPARE_MODES = Object.freeze([
+    { id: 'previous-day', label: 'Previous day' },
+    { id: 'previous-week', label: 'Previous week' },
+    { id: 'previous-month', label: 'Previous month' },
+    { id: 'previous-selected-range', label: 'Previous selected date range' },
+    { id: 'same-period-last-month', label: 'Same period last month' },
+    { id: 'same-period-last-year', label: 'Same period last year' }
+]);
+
+const PREVIOUS_PERIOD_COLOR_SCOPES = Object.freeze([
+    { id: 'previous', label: 'Previous value' },
+    { id: 'numericChange', label: 'Numeric change' },
+    { id: 'percentageChange', label: 'Percentage change' },
+    { id: 'direction', label: 'Increase/decrease direction' }
+]);
+
+const PERIOD_COMPARE_DEFAULT_COLORS = Object.freeze({
+    favorable: { background: 'rgba(76, 175, 80, 0.18)', text: '#2e7d32', border: '#4caf50', fill: '#4caf50' },
+    unfavorable: { background: 'rgba(239, 83, 80, 0.16)', text: '#c62828', border: '#ef5350', fill: '#ef5350' },
+    neutral: { background: '', text: '', border: '', fill: '' },
+    missing: { background: '', text: '', border: '', fill: '' }
+});
+
+function getDefaultPreviousPeriodComparePrefs() {
+    return {
+        enabled: true,
+        mode: 'previous-week',
+        colorScope: 'numericChange'
+    };
+}
+
+function normalizePreviousPeriodCompareMode(mode) {
+    const id = String(mode || '').trim();
+    return PREVIOUS_PERIOD_COMPARE_MODES.some(m => m.id === id) ? id : 'previous-week';
+}
+
+function normalizePreviousPeriodColorScope(scope) {
+    const id = String(scope || '').trim();
+    return PREVIOUS_PERIOD_COLOR_SCOPES.some(s => s.id === id) ? id : 'numericChange';
+}
+
+function ensurePreviousPeriodComparePrefs(data = appData) {
+    if (!data.settings) data.settings = {};
+    const defaults = getDefaultPreviousPeriodComparePrefs();
+    const raw = data.settings.previousPeriodComparePrefs
+        && typeof data.settings.previousPeriodComparePrefs === 'object'
+        ? data.settings.previousPeriodComparePrefs
+        : {};
+    data.settings.previousPeriodComparePrefs = {
+        enabled: raw.enabled === undefined
+            ? (data.settings.showPreviousPeriodCompare === undefined
+                ? defaults.enabled
+                : !!data.settings.showPreviousPeriodCompare)
+            : !!raw.enabled,
+        mode: normalizePreviousPeriodCompareMode(
+            raw.mode ?? data.settings.previousPeriodCompareMode ?? defaults.mode
+        ),
+        colorScope: normalizePreviousPeriodColorScope(
+            raw.colorScope ?? data.settings.previousPeriodCompareColorScope ?? defaults.colorScope
+        )
+    };
+    data.settings.showPreviousPeriodCompare = data.settings.previousPeriodComparePrefs.enabled;
+    data.settings.previousPeriodCompareMode = data.settings.previousPeriodComparePrefs.mode;
+    data.settings.previousPeriodCompareColorScope = data.settings.previousPeriodComparePrefs.colorScope;
+    return data.settings.previousPeriodComparePrefs;
+}
+
+function getPreviousPeriodComparePrefs(data = appData) {
+    return ensurePreviousPeriodComparePrefs(data);
+}
+
+function isPreviousPeriodCompareEnabled(data = appData) {
+    return getPreviousPeriodComparePrefs(data).enabled !== false;
+}
+
+function getPreviousPeriodCompareMode(data = appData) {
+    return getPreviousPeriodComparePrefs(data).mode;
+}
+
+function getPreviousPeriodCompareColorScope(data = appData) {
+    return getPreviousPeriodComparePrefs(data).colorScope;
+}
+
+function setPreviousPeriodCompareEnabled(enabled, data = appData) {
+    const prefs = ensurePreviousPeriodComparePrefs(data);
+    prefs.enabled = !!enabled;
+    data.settings.showPreviousPeriodCompare = prefs.enabled;
+    if (typeof saveData === 'function') saveData(data);
+    syncPreviousPeriodCompareSettingsUI(data);
+    refreshPreviousPeriodCompareDisplays();
+    return prefs.enabled;
+}
+
+function setPreviousPeriodCompareMode(mode, data = appData) {
+    const prefs = ensurePreviousPeriodComparePrefs(data);
+    prefs.mode = normalizePreviousPeriodCompareMode(mode);
+    data.settings.previousPeriodCompareMode = prefs.mode;
+    if (typeof saveData === 'function') saveData(data);
+    syncPreviousPeriodCompareSettingsUI(data);
+    refreshPreviousPeriodCompareDisplays();
+    return prefs.mode;
+}
+
+function setPreviousPeriodCompareColorScope(scope, data = appData) {
+    const prefs = ensurePreviousPeriodComparePrefs(data);
+    prefs.colorScope = normalizePreviousPeriodColorScope(scope);
+    data.settings.previousPeriodCompareColorScope = prefs.colorScope;
+    if (typeof saveData === 'function') saveData(data);
+    syncPreviousPeriodCompareSettingsUI(data);
+    refreshPreviousPeriodCompareDisplays();
+    return prefs.colorScope;
+}
+
+function syncPreviousPeriodCompareSettingsUI(data = appData) {
+    const prefs = getPreviousPeriodComparePrefs(data);
+    const toggle = document.getElementById('appearance-show-previous-period-compare');
+    if (toggle) toggle.checked = prefs.enabled !== false;
+    const mode = document.getElementById('appearance-previous-period-mode');
+    if (mode) mode.value = prefs.mode;
+    const scope = document.getElementById('appearance-previous-period-color-scope');
+    if (scope) scope.value = prefs.colorScope;
+}
+
+function refreshPreviousPeriodCompareDisplays() {
+    try {
+        if (typeof renderRecoveryDashboard === 'function') renderRecoveryDashboard();
+        if (typeof updateDashboard === 'function') updateDashboard();
+        if (typeof renderStats === 'function') renderStats();
+        else if (typeof refreshInsightsView === 'function') refreshInsightsView();
+        if (typeof renderTaperCurrentWeekSummary === 'function' && typeof currentSubstanceId !== 'undefined') {
+            renderTaperCurrentWeekSummary(currentSubstanceId);
+        }
+        if (typeof renderFinancialAnalyticsView === 'function') renderFinancialAnalyticsView();
+    } catch (_) { /* ignore */ }
+}
+
+/**
+ * Resolve previous bounds from a current range + comparison mode.
+ * Custom / selected-range modes use an equal-length immediately preceding window.
+ */
+function resolvePreviousPeriodBounds(currentBounds, mode = 'previous-selected-range') {
+    const startDate = currentBounds?.startDate;
+    const endDate = currentBounds?.endDate;
+    if (!startDate || !endDate) {
+        return { startDate: null, endDate: null, label: 'Previous period', valid: false };
+    }
+    const key = normalizePreviousPeriodCompareMode(mode);
+    const days = typeof countDaysInRange === 'function'
+        ? countDaysInRange(startDate, endDate)
+        : 1;
+
+    if (key === 'previous-day') {
+        return {
+            startDate: addDaysYYYYMMDD(startDate, -1),
+            endDate: addDaysYYYYMMDD(endDate, -1),
+            label: 'Previous day',
+            valid: true,
+            mode: key
+        };
+    }
+    if (key === 'previous-week') {
+        return {
+            startDate: addDaysYYYYMMDD(startDate, -7),
+            endDate: addDaysYYYYMMDD(endDate, -7),
+            label: 'Previous week',
+            valid: true,
+            mode: key
+        };
+    }
+    if (key === 'previous-month') {
+        const anchor = addDaysYYYYMMDD(getMonthStartDateStr(endDate), -1);
+        return {
+            startDate: getMonthStartDateStr(anchor),
+            endDate: getMonthEndDateStr(anchor),
+            label: 'Previous month',
+            valid: true,
+            mode: key
+        };
+    }
+    if (key === 'same-period-last-month') {
+        const prevStart = typeof shiftLocalDateByMonths === 'function'
+            ? shiftLocalDateByMonths(startDate, -1)
+            : addDaysYYYYMMDD(startDate, -30);
+        return {
+            startDate: prevStart,
+            endDate: addDaysYYYYMMDD(prevStart, days - 1),
+            label: 'Same period last month',
+            valid: true,
+            mode: key
+        };
+    }
+    if (key === 'same-period-last-year') {
+        const prevStart = typeof shiftLocalDateByMonths === 'function'
+            ? shiftLocalDateByMonths(startDate, -12)
+            : addDaysYYYYMMDD(startDate, -365);
+        return {
+            startDate: prevStart,
+            endDate: addDaysYYYYMMDD(prevStart, days - 1),
+            label: 'Same period last year',
+            valid: true,
+            mode: key
+        };
+    }
+    // previous-selected-range (default): equal-length window immediately before
+    const prev = typeof getEqualLengthPreviousBounds === 'function'
+        ? getEqualLengthPreviousBounds(startDate, endDate)
+        : {
+            startDate: addDaysYYYYMMDD(startDate, -days),
+            endDate: addDaysYYYYMMDD(startDate, -1),
+            daysInRange: days
+        };
+    return {
+        startDate: prev.startDate,
+        endDate: prev.endDate,
+        label: 'Previous selected range',
+        valid: true,
+        mode: 'previous-selected-range'
+    };
+}
+
+function getCanonicalSpendInRange(substanceId, startDate, endDate, data = appData) {
+    if (!substanceId || !startDate || !endDate) return 0;
+    return (data.purchases || []).reduce((sum, p) => {
+        if (typeof purchaseCountsTowardSpend === 'function' && !purchaseCountsTowardSpend(p)) return sum;
+        if (typeof purchaseMatchesSubstance === 'function') {
+            if (!purchaseMatchesSubstance(p, substanceId, data)) return sum;
+        } else if (getPurchaseSubstanceId(p) !== substanceId) {
+            return sum;
+        }
+        const d = getPurchaseDateStr(p);
+        if (!d || d < startDate || d > endDate) return sum;
+        return sum + (getPurchaseSpendAmount(p) || 0);
+    }, 0);
+}
+
+function getPeriodCompareMetricValue(substanceId, metricKind, bounds, data = appData) {
+    if (!bounds?.startDate || !bounds?.endDate) return null;
+    const kind = metricKind || 'use';
+    if (kind === 'use' || kind === 'taper' || kind === 'nicotineStrength') {
+        return typeof getCanonicalUsageInRange === 'function'
+            ? getCanonicalUsageInRange(substanceId, bounds.startDate, bounds.endDate, data)
+            : null;
+    }
+    if (kind === 'spend') {
+        return getCanonicalSpendInRange(substanceId, bounds.startDate, bounds.endDate, data);
+    }
+    if (kind === 'purchaseCount') {
+        return typeof getPurchaseCountInDateRange === 'function'
+            ? getPurchaseCountInDateRange(substanceId, bounds.startDate, bounds.endDate, null, data)
+            : null;
+    }
+    if (kind === 'inventory' || kind === 'gift' || kind === 'adjustment') {
+        return null; // neutral / snapshot metrics — callers pass explicit previous when available
+    }
+    return typeof getCanonicalUsageInRange === 'function'
+        ? getCanonicalUsageInRange(substanceId, bounds.startDate, bounds.endDate, data)
+        : null;
+}
+
+/**
+ * Build a previous-period comparison model from already-normalized current/previous values.
+ */
+function buildMetricPeriodComparison({
+    current,
+    previous,
+    metricKind = 'use',
+    direction,
+    unit = '',
+    currentLabel = null,
+    previousLabel = null,
+    currentPeriodLabel = 'Current',
+    previousPeriodLabel = 'Previous',
+    currentBounds = null,
+    previousBounds = null
+} = {}) {
+    const dir = normalizeTargetLineDirection(direction || metricKind || 'use');
+    const cur = current == null || current === '' ? null : Number(current);
+    const prev = previous == null || previous === '' ? null : Number(previous);
+    const hasCurrent = cur != null && Number.isFinite(cur);
+    const hasPrevious = prev != null && Number.isFinite(prev);
+    const difference = (hasCurrent && hasPrevious) ? (cur - prev) : null;
+
+    // Never invent a percentage when previous is zero (or missing).
+    let percent = null;
+    if (hasCurrent && hasPrevious && Math.abs(prev) > (typeof INVENTORY_EPS === 'number' ? INVENTORY_EPS : 1e-9)) {
+        percent = (difference / Math.abs(prev)) * 100;
+    }
+
+    let tone = 'neutral';
+    let directionKey = 'unchanged';
+    let directionValue = 0;
+    if (!hasPrevious) {
+        tone = 'missing';
+    } else if (!hasCurrent) {
+        tone = 'missing';
+    } else if (dir === 'neutral') {
+        tone = 'neutral';
+        if (difference != null && Math.abs(difference) > 1e-9) {
+            directionKey = difference > 0 ? 'increase' : 'decrease';
+            directionValue = difference > 0 ? 1 : -1;
+        }
+    } else if (difference != null) {
+        if (Math.abs(difference) <= 1e-9) {
+            tone = 'neutral';
+            directionKey = 'unchanged';
+        } else {
+            directionKey = difference > 0 ? 'increase' : 'decrease';
+            directionValue = difference > 0 ? 1 : -1;
+            const improved = dir === 'higherIsBetter' ? difference > 0 : difference < 0;
+            tone = improved ? 'favorable' : 'unfavorable';
+        }
+    }
+
+    const arrow = directionKey === 'decrease' ? '▼' : directionKey === 'increase' ? '▲' : '►';
+    const absDiffLabel = difference == null
+        ? null
+        : formatMetricTargetLineDifference(Math.abs(difference), unit).replace(/^[+−-]/, '');
+    let changeDisplay;
+    if (!hasPrevious) {
+        changeDisplay = 'No previous value';
+    } else if (difference == null) {
+        changeDisplay = 'No previous value';
+    } else if (percent == null) {
+        // Previous was zero (or non-finite pct) — still show numeric difference.
+        const signed = difference > 0 ? `+${absDiffLabel}` : difference < 0 ? `−${absDiffLabel}` : absDiffLabel;
+        changeDisplay = `${arrow} ${signed}`;
+    } else {
+        const pctAbs = Math.round(Math.abs(percent) * 10) / 10;
+        const lowerHigher = difference < 0 ? 'lower' : difference > 0 ? 'higher' : 'unchanged';
+        changeDisplay = `${arrow} ${absDiffLabel} · ${pctAbs}% ${lowerHigher}`;
+    }
+
+    const curDisplay = currentLabel != null && currentLabel !== ''
+        ? String(currentLabel)
+        : formatMetricTargetLineValue(cur, unit);
+    const prevDisplay = !hasPrevious
+        ? 'No previous value'
+        : (previousLabel != null && previousLabel !== ''
+            ? String(previousLabel)
+            : formatMetricTargetLineValue(prev, unit));
+
+    return {
+        current: hasCurrent ? cur : null,
+        previous: hasPrevious ? prev : null,
+        difference,
+        percent,
+        direction: dir,
+        directionKey,
+        directionValue,
+        tone,
+        unit: unit || '',
+        arrow,
+        currentDisplay: hasCurrent ? curDisplay : '—',
+        previousDisplay: prevDisplay,
+        differenceDisplay: difference == null
+            ? '—'
+            : formatMetricTargetLineDifference(difference, unit),
+        percentDisplay: percent == null ? '—' : `${Math.round(percent * 10) / 10}%`,
+        changeDisplay,
+        currentPeriodLabel: currentPeriodLabel || 'Current',
+        previousPeriodLabel: previousPeriodLabel || 'Previous',
+        currentBounds: currentBounds || null,
+        previousBounds: previousBounds || null,
+        missingPrevious: !hasPrevious,
+        valid: hasCurrent || hasPrevious
+    };
+}
+
+function resolvePeriodCompareColors(comparison, ccrResult = null, colorScope = null, data = appData) {
+    const scope = normalizePreviousPeriodColorScope(colorScope || getPreviousPeriodCompareColorScope(data));
+    const defaults = PERIOD_COMPARE_DEFAULT_COLORS[comparison?.tone] || PERIOD_COMPARE_DEFAULT_COLORS.neutral;
+    const hasCcr = !!(ccrResult?.matched?.length && ccrResult.style);
+    const ccr = hasCcr ? {
+        background: ccrResult.style.background || '',
+        text: ccrResult.style.text || '',
+        border: ccrResult.style.border || '',
+        fill: ccrResult.style.background || ccrResult.style.border || ccrResult.style.text || ''
+    } : null;
+    const active = ccr || defaults;
+    return {
+        scope,
+        hasCustomRule: hasCcr,
+        tone: comparison?.tone || 'neutral',
+        previous: scope === 'previous' ? active : null,
+        numericChange: scope === 'numericChange' ? active : null,
+        percentageChange: scope === 'percentageChange' ? active : null,
+        direction: scope === 'direction' ? active : null,
+        active
+    };
+}
+
+function evaluatePeriodCompareColors(comparison, options = {}, data = appData) {
+    if (typeof evaluateConditionalColorRules !== 'function' || !comparison) {
+        return { matched: [], style: null, labels: [] };
+    }
+    const scope = normalizePreviousPeriodColorScope(
+        options.colorScope || getPreviousPeriodCompareColorScope(data)
+    );
+    let metric = 'periodNumericChange';
+    let value = comparison.difference;
+    let textValue = undefined;
+    if (scope === 'previous') {
+        metric = 'periodPreviousValue';
+        value = comparison.previous;
+    } else if (scope === 'percentageChange') {
+        metric = 'periodPercentageChange';
+        value = comparison.percent;
+    } else if (scope === 'direction') {
+        metric = 'periodChangeDirection';
+        value = comparison.directionValue;
+        textValue = comparison.directionKey;
+    }
+    if (value == null && textValue == null) {
+        return { matched: [], style: null, labels: [] };
+    }
+    return evaluateConditionalColorRules({
+        substanceId: options.substanceId,
+        section: options.section || 'dashboard',
+        metric,
+        value,
+        textValue
+    }, data);
+}
+
+function buildPeriodComparePartStyle(colorSet) {
+    if (!colorSet) return '';
+    return [
+        colorSet.background ? `background:${colorSet.background}` : '',
+        colorSet.text ? `color:${colorSet.text}` : '',
+        colorSet.border ? `border-color:${colorSet.border}` : ''
+    ].filter(Boolean).join(';');
+}
+
+function renderMetricPeriodComparison(comparison, {
+    ccrResult = null,
+    colorScope = null,
+    data = appData,
+    compact = false
+} = {}) {
+    if (!comparison || !isPreviousPeriodCompareEnabled(data)) return '';
+    const colors = resolvePeriodCompareColors(comparison, ccrResult, colorScope, data);
+    const prevStyle = buildPeriodComparePartStyle(colors.previous);
+    const changeStyle = buildPeriodComparePartStyle(colors.numericChange);
+    const pctStyle = buildPeriodComparePartStyle(colors.percentageChange);
+    const dirStyle = buildPeriodComparePartStyle(colors.direction);
+    const compactClass = compact ? ' metric-period-compare--compact' : '';
+    const changeRowStyle = changeStyle || pctStyle || dirStyle;
+
+    return `<div class="metric-period-compare${compactClass} metric-pc-tone-${escapeAttr(comparison.tone || 'neutral')}${colors.hasCustomRule ? ' ccr-applied' : ''}" data-color-scope="${escapeAttr(colors.scope)}">
+        <div class="metric-pc-row metric-pc-current"><span class="metric-pc-label">${escapeHtml(comparison.currentPeriodLabel)}:</span> <span class="metric-pc-value">${escapeHtml(comparison.currentDisplay)}</span></div>
+        <div class="metric-pc-row metric-pc-previous"${prevStyle ? ` style="${escapeAttr(prevStyle)}"` : ''}><span class="metric-pc-label">${escapeHtml(comparison.previousPeriodLabel)}:</span> <span class="metric-pc-value">${escapeHtml(comparison.previousDisplay)}</span></div>
+        <div class="metric-pc-row metric-pc-change"${changeRowStyle ? ` style="${escapeAttr(changeRowStyle)}"` : ''}><span class="metric-pc-value">${escapeHtml(comparison.changeDisplay)}</span></div>
+    </div>`;
+}
+
+/**
+ * High-level helper: fetch previous metric for bounds+mode and render comparison HTML.
+ * Callers pass the already-normalized current value (and optional labels).
+ */
+function renderPreviousPeriodCompareForMetric({
+    substanceId,
+    currentValue,
+    currentBounds,
+    metricKind = 'use',
+    unit = '',
+    currentLabel = null,
+    currentPeriodLabel = 'Current',
+    previousPeriodLabel = null,
+    mode = null,
+    section = 'dashboard',
+    data = appData,
+    compact = false
+} = {}) {
+    if (!isPreviousPeriodCompareEnabled(data)) return '';
+    if (!currentBounds?.startDate || !currentBounds?.endDate) return '';
+    const compareMode = mode || getPreviousPeriodCompareMode(data);
+    const prevBounds = resolvePreviousPeriodBounds(currentBounds, compareMode);
+    if (!prevBounds.valid) {
+        const missing = buildMetricPeriodComparison({
+            current: currentValue,
+            previous: null,
+            metricKind,
+            unit,
+            currentLabel,
+            currentPeriodLabel,
+            previousPeriodLabel: previousPeriodLabel || 'Previous'
+        });
+        return renderMetricPeriodComparison(missing, { data, compact });
+    }
+    const previousValue = getPeriodCompareMetricValue(substanceId, metricKind, prevBounds, data);
+    const modeLabel = PREVIOUS_PERIOD_COMPARE_MODES.find(m => m.id === compareMode)?.label
+        || prevBounds.label
+        || 'Previous';
+    const cmp = buildMetricPeriodComparison({
+        current: currentValue,
+        previous: previousValue,
+        metricKind,
+        unit,
+        currentLabel,
+        previousLabel: null,
+        currentPeriodLabel,
+        previousPeriodLabel: previousPeriodLabel || modeLabel,
+        currentBounds,
+        previousBounds: prevBounds
+    });
+    const ccr = evaluatePeriodCompareColors(cmp, { substanceId, section }, data);
+    return renderMetricPeriodComparison(cmp, {
+        ccrResult: ccr,
+        data,
+        compact
+    });
 }
 
 // ——— Conditional Color Rules ———
@@ -1079,7 +1599,11 @@ const CCR_METRICS = Object.freeze([
     { id: 'store', label: 'Store', valueType: 'string' },
     { id: 'paymentMethod', label: 'Payment method', valueType: 'string' },
     { id: 'statusLabel', label: 'Status label', valueType: 'string' },
-    { id: 'booleanFlag', label: 'Boolean flag', valueType: 'boolean' }
+    { id: 'booleanFlag', label: 'Boolean flag', valueType: 'boolean' },
+    { id: 'periodPreviousValue', label: 'Previous-period value', valueType: 'number' },
+    { id: 'periodNumericChange', label: 'Previous-period numeric change', valueType: 'number' },
+    { id: 'periodPercentageChange', label: 'Previous-period % change', valueType: 'number' },
+    { id: 'periodChangeDirection', label: 'Increase/decrease direction', valueType: 'string' }
 ]);
 
 const CCR_SECTIONS = Object.freeze([
@@ -23741,6 +24265,14 @@ const defaultData = {
             enabled: true,
             colorScope: 'difference'
         },
+        showPreviousPeriodCompare: true,
+        previousPeriodCompareMode: 'previous-week',
+        previousPeriodCompareColorScope: 'numericChange',
+        previousPeriodComparePrefs: {
+            enabled: true,
+            mode: 'previous-week',
+            colorScope: 'numericChange'
+        },
         conditionalColorRules: null
     },
     taperPlans: {},
@@ -24246,6 +24778,7 @@ function ensureAppDataSettings(data) {
         data.settings.showInCellProgressBars = !!data.settings.showInCellProgressBars;
     }
     ensureTargetLinePrefs(data);
+    ensurePreviousPeriodComparePrefs(data);
     if (data.settings.useCustomNamesInCsvExport === undefined) {
         data.settings.useCustomNamesInCsvExport = false;
     } else {
@@ -27438,6 +27971,7 @@ function initializeApp() {
     initAppearanceZoom();
     if (typeof syncInCellProgressBarsToggle === 'function') syncInCellProgressBarsToggle();
     if (typeof syncTargetLineSettingsUI === 'function') syncTargetLineSettingsUI();
+    if (typeof syncPreviousPeriodCompareSettingsUI === 'function') syncPreviousPeriodCompareSettingsUI();
     if (typeof initConditionalColorRulesUi === 'function') initConditionalColorRulesUi();
     setupEventListeners();
     ensureAppDataSubstancesReady(appData);
@@ -39821,6 +40355,11 @@ function buildRecoveryStatusCards(bounds, data = appData, options = {}) {
             usedMonthLabel: weedBreakdown?.month?.length
                 ? weedBreakdown.month.map(w => w.display).join(' · ')
                 : formatRecoveryUsageAmount(sid, metrics.usage.month, data),
+            usedTodayAmount: metrics.usage.today,
+            usedWeekAmount: metrics.usage.week,
+            usedMonthAmount: metrics.usage.month,
+            spentWeekAmount: spentWeek || 0,
+            spentMonthAmount: metrics.spend.month || 0,
             spentWeekLabel: `${cur}${(spentWeek || 0).toFixed(2)}`,
             spentMonthLabel: `${cur}${(metrics.spend.month || 0).toFixed(2)}`,
             monthCapRemainingLabel: metrics.monthRemaining != null
@@ -40727,17 +41266,86 @@ function renderRecoveryStatusCards(cards) {
         const spendHtml = spendCcr?.matched?.length
             ? wrapWithConditionalColor(escapeHtml(card.spentMonthLabel), spendCcr, { keepLabel: true })
             : escapeHtml(card.spentMonthLabel);
+        const today = getLocalDateString();
+        const weekStart = getWeekStartDateStr(today);
+        const monthStart = getMonthStartDateStr(today);
+        const unit = card.unit || '';
+        const todayCompare = typeof renderPreviousPeriodCompareForMetric === 'function'
+            ? renderPreviousPeriodCompareForMetric({
+                substanceId: card.substanceId,
+                currentValue: card.usedTodayAmount,
+                currentBounds: { startDate: today, endDate: today },
+                metricKind: 'use',
+                unit,
+                currentLabel: card.usedTodayLabel,
+                currentPeriodLabel: 'Today',
+                section: 'dashboard',
+                compact: true
+            })
+            : '';
+        const weekCompare = typeof renderPreviousPeriodCompareForMetric === 'function'
+            ? renderPreviousPeriodCompareForMetric({
+                substanceId: card.substanceId,
+                currentValue: card.usedWeekAmount,
+                currentBounds: { startDate: weekStart, endDate: today },
+                metricKind: 'use',
+                unit,
+                currentLabel: card.usedWeekLabel,
+                currentPeriodLabel: 'This week',
+                section: 'dashboard',
+                compact: true
+            })
+            : '';
+        const monthUseCompare = typeof renderPreviousPeriodCompareForMetric === 'function'
+            ? renderPreviousPeriodCompareForMetric({
+                substanceId: card.substanceId,
+                currentValue: card.usedMonthAmount,
+                currentBounds: { startDate: monthStart, endDate: today },
+                metricKind: 'use',
+                unit,
+                currentLabel: card.usedMonthLabel,
+                currentPeriodLabel: 'This month',
+                section: 'dashboard',
+                compact: true
+            })
+            : '';
+        const weekSpendCompare = typeof renderPreviousPeriodCompareForMetric === 'function'
+            ? renderPreviousPeriodCompareForMetric({
+                substanceId: card.substanceId,
+                currentValue: card.spentWeekAmount,
+                currentBounds: { startDate: weekStart, endDate: today },
+                metricKind: 'spend',
+                unit: getCurrencySymbol(),
+                currentLabel: card.spentWeekLabel,
+                currentPeriodLabel: 'This week',
+                section: 'spending',
+                compact: true
+            })
+            : '';
+        const monthSpendCompare = typeof renderPreviousPeriodCompareForMetric === 'function'
+            ? renderPreviousPeriodCompareForMetric({
+                substanceId: card.substanceId,
+                currentValue: card.spentMonthAmount,
+                currentBounds: { startDate: monthStart, endDate: today },
+                metricKind: 'spend',
+                unit: getCurrencySymbol(),
+                currentLabel: card.spentMonthLabel,
+                currentPeriodLabel: 'This month',
+                section: 'spending',
+                compact: true
+            })
+            : '';
         return `
         <article class="rd-status-card" style="border-top-color:${escapeHtml(card.color || 'var(--accent)')}">
             <header class="rd-status-card-head">
                 <h4>${escapeHtml(card.icon || '')} ${escapeHtml(card.name)}</h4>
             </header>
             <dl class="rd-stat-list">
-                <div><dt>Today used</dt><dd>${escapeHtml(card.usedTodayLabel)}</dd></div>
-                <div><dt>This week used</dt><dd>${escapeHtml(card.usedWeekLabel)}</dd></div>
-                <div><dt>This month used</dt><dd>${escapeHtml(card.usedMonthLabel)}</dd></div>
-                <div><dt>Spent this week</dt><dd>${escapeHtml(card.spentWeekLabel)}</dd></div>
-                <div><dt>Spent this month</dt><dd>${spendHtml}</dd></div>
+                <div><dt>Today used</dt><dd>${escapeHtml(card.usedTodayLabel)}${todayCompare}</dd></div>
+                <div><dt>This week used</dt><dd>${escapeHtml(card.usedWeekLabel)}${weekCompare}</dd></div>
+                <div><dt>This month used</dt><dd>${escapeHtml(card.usedMonthLabel)}${monthUseCompare}</dd></div>
+                <div><dt>Spent this week</dt><dd>${escapeHtml(card.spentWeekLabel)}${weekSpendCompare}</dd></div>
+                <div><dt>Spent this month</dt><dd>${spendHtml}${monthSpendCompare}</dd></div>
                 <div><dt>Remaining monthly cap</dt><dd>${escapeHtml(card.monthCapRemainingLabel)}</dd></div>
                 <div><dt>Current break</dt><dd>${escapeHtml(card.currentBreakLabel)}</dd></div>
                 <div><dt>Longest break</dt><dd>${escapeHtml(card.longestBreakLabel)}</dd></div>
@@ -42895,7 +43503,8 @@ function renderSheetMetricCard(label, value, badge, options = {}) {
         })
         : '';
     const style = ccr?.matched?.length ? buildConditionalColorInlineStyle(ccr) : '';
-    return `<div class="sheet-metric-card${ccr?.matched?.length ? ' ccr-applied' : ''}"${style ? ` style="${escapeAttr(style)}"` : ''}><span class="sheet-metric-label">${label}</span><strong class="sheet-metric-value">${value}</strong>${badgeHtml}</div>`;
+    const footer = options.footerHtml ? `<div class="sheet-metric-footer">${options.footerHtml}</div>` : '';
+    return `<div class="sheet-metric-card${ccr?.matched?.length ? ' ccr-applied' : ''}"${style ? ` style="${escapeAttr(style)}"` : ''}><span class="sheet-metric-label">${label}</span><strong class="sheet-metric-value">${value}</strong>${badgeHtml}${footer}</div>`;
 }
 
 function renderConfigurableSheetTable(tableKey, rows, renderCell, substanceId = currentSubstanceId) {
@@ -43730,11 +44339,33 @@ function renderStatsSummaryDashboard(substanceId, useStats, bounds, unit, cur) {
 
     if (isVape) {
         const todayUsed = getStatsUsageOnDate(substanceId, today);
+        const weekCompare = renderPreviousPeriodCompareForMetric({
+            substanceId,
+            currentValue: weekUsed,
+            currentBounds: { startDate: weekStart, endDate: today },
+            metricKind: 'use',
+            unit: 'puffs',
+            currentLabel: `${formatStatsPuffs(weekUsed)} puffs`,
+            currentPeriodLabel: 'This week',
+            section: 'insights',
+            compact: true
+        });
+        const rangeCompare = renderPreviousPeriodCompareForMetric({
+            substanceId,
+            currentValue: useStats.totalAmount,
+            currentBounds: bounds,
+            metricKind: 'use',
+            unit: 'puffs',
+            currentLabel: `${formatStatsPuffs(useStats.totalAmount)} puffs`,
+            currentPeriodLabel: 'Range total',
+            section: 'insights',
+            compact: true
+        });
         container.innerHTML = [
             renderSheetMetricCard('Today\'s use', `${formatStatsPuffs(todayUsed)} puffs`, null),
-            renderSheetMetricCard('This week', `${formatStatsPuffs(weekUsed)} puffs`, weeklyBadge),
+            renderSheetMetricCard('This week', `${formatStatsPuffs(weekUsed)} puffs`, weeklyBadge, { footerHtml: weekCompare }),
             renderSheetMetricCard('Weekly goal', weekGoal != null ? `${formatStatsPuffs(weekGoal)} puffs` : '—', weeklyBadge),
-            renderSheetMetricCard('Range total', `${formatStatsPuffs(useStats.totalAmount)} puffs`, null),
+            renderSheetMetricCard('Range total', `${formatStatsPuffs(useStats.totalAmount)} puffs`, null, { footerHtml: rangeCompare }),
             renderSheetMetricCard('Vape count', String(useStats.vapeCount ?? 0), null),
             renderSheetMetricCard('Avg cost/vape', formatCostPerVape(useStats.avgCostPerVape, cur), null),
             renderSheetMetricCard('Remaining puffs', remaining != null ? `${formatStatsPuffs(remaining)} puffs` : '—', supplyBadge),
@@ -43745,11 +44376,33 @@ function renderStatsSummaryDashboard(substanceId, useStats, bounds, unit, cur) {
 
     const todayStats = getTodayUseStats(substanceId);
     const entriesLabel = isWeedTrackingMode(substanceId) ? 'Entries' : 'Sessions';
+    const weekCompare = renderPreviousPeriodCompareForMetric({
+        substanceId,
+        currentValue: weekUsed,
+        currentBounds: { startDate: weekStart, endDate: today },
+        metricKind: 'use',
+        unit: displayUnit,
+        currentLabel: `${formatAmount(weekUsed)} ${displayUnit}`,
+        currentPeriodLabel: 'This week',
+        section: 'insights',
+        compact: true
+    });
+    const rangeCompare = renderPreviousPeriodCompareForMetric({
+        substanceId,
+        currentValue: useStats.totalAmount,
+        currentBounds: bounds,
+        metricKind: 'use',
+        unit: displayUnit,
+        currentLabel: `${formatAmount(useStats.totalAmount)} ${displayUnit}`,
+        currentPeriodLabel: 'Range total',
+        section: 'insights',
+        compact: true
+    });
     container.innerHTML = [
         renderSheetMetricCard('Today\'s use', `${formatAmount(todayStats.totalAmount)} ${displayUnit}`, null),
-        renderSheetMetricCard('This week', `${formatAmount(weekUsed)} ${displayUnit}`, weeklyBadge),
+        renderSheetMetricCard('This week', `${formatAmount(weekUsed)} ${displayUnit}`, weeklyBadge, { footerHtml: weekCompare }),
         renderSheetMetricCard('Weekly goal', weekGoal != null ? `${formatAmount(weekGoal)} ${displayUnit}` : '—', weeklyBadge),
-        renderSheetMetricCard('Range total', `${formatAmount(useStats.totalAmount)} ${displayUnit}`, null),
+        renderSheetMetricCard('Range total', `${formatAmount(useStats.totalAmount)} ${displayUnit}`, null, { footerHtml: rangeCompare }),
         renderSheetMetricCard(entriesLabel, String(useStats.sessionCount), null),
         renderSheetMetricCard('Use days', String(useStats.useDays), null),
         renderSheetMetricCard('Use day %', `${formatAmount(useStats.useDayPct, 1)}%`, null),
@@ -44194,7 +44847,19 @@ function renderStatsBuyAnalyticsCards(insights) {
                 : (remaining != null ? fmtSheetAmount(remaining, insights.unit) : '—')));
 
     container.innerHTML = [
-        renderSheetMetricCard('Total Cost', fmtSheetMoney(buyTotals.cost, cur), null),
+        renderSheetMetricCard('Total Cost', fmtSheetMoney(buyTotals.cost, cur), null, {
+            footerHtml: renderPreviousPeriodCompareForMetric({
+                substanceId,
+                currentValue: buyTotals.cost,
+                currentBounds: bounds,
+                metricKind: 'spend',
+                unit: cur,
+                currentLabel: fmtSheetMoney(buyTotals.cost, cur),
+                currentPeriodLabel: 'Total Cost',
+                section: 'spending',
+                compact: true
+            })
+        }),
         renderSheetMetricCard('Total Purchased', buyTotals.purchased > 0 ? fmtSheetAmount(buyTotals.purchased, displayUnit) : '—', null),
         renderSheetMetricCard('Avg Cost/g', buyTotals.avgCostPerUnit != null ? fmtAvgCostPerGram(buyTotals.cost, buyTotals.purchased, displayUnit, cur) : '—', null),
         renderSheetMetricCard('Supply Duration', formatSupplyDurationDays(supplyDurationDays), null),
@@ -51720,6 +52385,27 @@ function renderTaperCurrentWeekSummary(substanceId) {
     const changeStr = sum.changeVsLast != null
         ? `${sum.changeVsLast >= 0 ? '+' : ''}${sum.changeVsLast.toFixed(0)}%`
         : '—';
+    const currentWeekRow = getWeekRowForDate(plan, today);
+    const weekBounds = currentWeekRow
+        ? {
+            startDate: currentWeekRow.weekStart,
+            endDate: (today < currentWeekRow.weekEnd) ? today : currentWeekRow.weekEnd
+        }
+        : { startDate: getWeekStartDateStr(today), endDate: today };
+    const weekUsedAmount = getCanonicalUsageInRange(substanceId, weekBounds.startDate, weekBounds.endDate);
+    const taperCompareHtml = renderPreviousPeriodCompareForMetric({
+        substanceId,
+        currentValue: weekUsedAmount,
+        currentBounds: weekBounds,
+        metricKind: isReduceNicotinePlan(plan) ? 'nicotineStrength' : 'taper',
+        unit: displayUnit,
+        currentLabel: isReducePuffsPlan(plan) || isVapeNicotineSubstanceId(substanceId)
+            ? formatTaperActualAmount(weekUsedAmount, 'puffs')
+            : formatTaperActualAmount(weekUsedAmount, unit),
+        currentPeriodLabel: 'This week',
+        section: 'taper',
+        compact: true
+    });
     const avgStr = isReducePuffsPlan(plan) || isVapeNicotineSubstanceId(substanceId)
         ? formatTaperPuffsPerDay(sum.avgThis)
         : formatTaperAmount(sum.avgThis, unit);
@@ -51866,7 +52552,11 @@ function renderTaperCurrentWeekSummary(substanceId) {
         setTaperStatusBadge(document.getElementById('taper-weekly-status'), 'under', '—');
     }
     set('taper-weekly-avg-day', avgStr);
-    set('taper-weekly-change-last', changeStr);
+    const changeEl = document.getElementById('taper-weekly-change-last');
+    if (changeEl) {
+        if (taperCompareHtml) changeEl.innerHTML = taperCompareHtml;
+        else changeEl.textContent = changeStr;
+    }
 }
 
 function renderTaperSpendingPurchases(substanceId) {
@@ -56478,6 +57168,26 @@ function __getRecoveryTrackerTestExports() {
         renderMetricTargetLine,
         TARGET_LINE_COLOR_SCOPES,
         TARGET_LINE_METRIC_DIRECTIONS,
+        getDefaultPreviousPeriodComparePrefs,
+        ensurePreviousPeriodComparePrefs,
+        getPreviousPeriodComparePrefs,
+        isPreviousPeriodCompareEnabled,
+        getPreviousPeriodCompareMode,
+        getPreviousPeriodCompareColorScope,
+        setPreviousPeriodCompareEnabled,
+        setPreviousPeriodCompareMode,
+        setPreviousPeriodCompareColorScope,
+        syncPreviousPeriodCompareSettingsUI,
+        resolvePreviousPeriodBounds,
+        getCanonicalSpendInRange,
+        getPeriodCompareMetricValue,
+        buildMetricPeriodComparison,
+        resolvePeriodCompareColors,
+        evaluatePeriodCompareColors,
+        renderMetricPeriodComparison,
+        renderPreviousPeriodCompareForMetric,
+        PREVIOUS_PERIOD_COMPARE_MODES,
+        PREVIOUS_PERIOD_COLOR_SCOPES,
         escapeHtml,
         escapeAttr,
         renderUseHistoryBodyCell,

@@ -9521,6 +9521,60 @@ html[data-theme="light"] .metric-tl-tone-unfavorable .metric-tl-diff .metric-tl-
     color: #c62828;
 }
 
+.metric-period-compare {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    margin-top: 4px;
+    font-size: 0.82em;
+    line-height: 1.3;
+}
+
+.metric-period-compare--compact {
+    font-size: 0.76em;
+}
+
+.metric-pc-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    align-items: baseline;
+    border-radius: 3px;
+    padding: 0 2px;
+}
+
+.metric-pc-label {
+    color: var(--text-secondary);
+    font-weight: 500;
+}
+
+.metric-pc-value {
+    color: var(--text-primary);
+}
+
+.metric-pc-tone-favorable .metric-pc-change .metric-pc-value {
+    color: #4caf50;
+}
+
+.metric-pc-tone-unfavorable .metric-pc-change .metric-pc-value {
+    color: #ef5350;
+}
+
+:root[data-theme="light"] .metric-pc-tone-favorable .metric-pc-change .metric-pc-value,
+html[data-theme="light"] .metric-pc-tone-favorable .metric-pc-change .metric-pc-value {
+    color: #2e7d32;
+}
+
+:root[data-theme="light"] .metric-pc-tone-unfavorable .metric-pc-change .metric-pc-value,
+html[data-theme="light"] .metric-pc-tone-unfavorable .metric-pc-change .metric-pc-value {
+    color: #c62828;
+}
+
+.sheet-metric-footer {
+    margin-top: 6px;
+    width: 100%;
+}
+
 
 .rd-score-main {
     display: flex;
