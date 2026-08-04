@@ -1719,6 +1719,40 @@ input[type="range"]::-webkit-slider-thumb {
     color: var(--danger);
 }
 
+.stats-period-change-summary {
+    margin: 0 0 12px;
+}
+
+.stats-period-change-summary-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.stats-period-change-summary-empty {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--text-secondary, #666);
+}
+
+.period-change {
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.period-change-improved {
+    color: var(--accent, #2e7d32);
+}
+
+.period-change-worsened {
+    color: var(--danger, #c62828);
+}
+
+.period-change-neutral,
+.period-change-none {
+    color: var(--text-secondary, #666);
+}
+
 .stats-compare-results {
     display: flex;
     flex-direction: column;

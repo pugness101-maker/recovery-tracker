@@ -22852,17 +22852,25 @@ const TABLE_COLUMN_DEFAULTS = {
         }
     },
     statsWeekly: {
-        order: ['week', 'start', 'end', 'usage', 'monthRunning', 'avgBreak', 'sessions', 'useDays', 'duration', 'avgDur', 'gPerSession', 'gPerHour', 'longBreak', 'shortBreak', 'cost', 'status'],
+        order: [
+            'week', 'start', 'end', 'usage', 'usageChangePct', 'monthRunning', 'avgBreak',
+            'sessions', 'sessionsChangePct', 'useDays', 'useDaysChangePct',
+            'duration', 'avgDur', 'gPerSession', 'gPerHour', 'longBreak', 'shortBreak',
+            'cost', 'costChangePct', 'purchaseChangePct', 'status'
+        ],
         hidden: ['duration', 'avgDur', 'gPerSession', 'gPerHour', 'longBreak', 'shortBreak'],
         widths: {
             week: 100,
             start: 100,
             end: 100,
             usage: 110,
+            usageChangePct: 90,
             monthRunning: 120,
             avgBreak: 100,
             sessions: 80,
+            sessionsChangePct: 90,
             useDays: 80,
+            useDaysChangePct: 90,
             duration: 100,
             avgDur: 90,
             gPerSession: 90,
@@ -22870,21 +22878,33 @@ const TABLE_COLUMN_DEFAULTS = {
             longBreak: 100,
             shortBreak: 100,
             cost: 90,
+            costChangePct: 90,
+            purchaseChangePct: 90,
             status: 100
         }
     },
     statsMonthly: {
-        order: ['month', 'start', 'end', 'usage', 'purchased', 'cost', 'sessions', 'useDays', 'usePct', 'avgPerDay', 'avgBreak', 'duration', 'avgDur', 'gPerSession', 'gPerUseDay', 'gPerCalDay', 'gPerHour', 'status'],
+        order: [
+            'month', 'start', 'end', 'usage', 'usageChangePct', 'purchased', 'purchaseChangePct',
+            'cost', 'costChangePct', 'sessions', 'sessionsChangePct', 'useDays', 'useDaysChangePct',
+            'usePct', 'avgPerDay', 'avgBreak', 'duration', 'avgDur', 'gPerSession',
+            'gPerUseDay', 'gPerCalDay', 'gPerHour', 'status'
+        ],
         hidden: ['gPerUseDay', 'gPerCalDay', 'duration', 'avgDur', 'gPerSession', 'gPerHour'],
         widths: {
             month: 120,
             start: 100,
             end: 100,
             usage: 110,
+            usageChangePct: 90,
             purchased: 100,
+            purchaseChangePct: 90,
             cost: 90,
+            costChangePct: 90,
             sessions: 80,
+            sessionsChangePct: 90,
             useDays: 80,
+            useDaysChangePct: 90,
             usePct: 80,
             avgPerDay: 100,
             avgBreak: 100,
@@ -23083,10 +23103,13 @@ const TABLE_COLUMN_LABELS = {
         start: 'Start',
         end: 'End',
         usage: 'Usage',
+        usageChangePct: 'Use %',
         monthRunning: 'Monthly Running Total',
         avgBreak: 'Avg break',
         sessions: 'Sessions',
+        sessionsChangePct: 'Sessions %',
         useDays: 'Use days',
+        useDaysChangePct: 'Use Days %',
         duration: 'Duration',
         avgDur: 'Avg dur',
         gPerSession: 'g/sess',
@@ -23094,6 +23117,8 @@ const TABLE_COLUMN_LABELS = {
         longBreak: 'Long break',
         shortBreak: 'Short break',
         cost: 'Cost',
+        costChangePct: 'Cost %',
+        purchaseChangePct: 'Purchase %',
         status: 'Status'
     },
     statsMonthly: {
@@ -23101,11 +23126,16 @@ const TABLE_COLUMN_LABELS = {
         start: 'Start',
         end: 'End',
         usage: 'Usage',
+        usageChangePct: 'Use %',
         purchased: 'Purchased',
+        purchaseChangePct: 'Purchase %',
         cost: 'Cost',
+        costChangePct: 'Cost %',
         sessions: 'Sessions',
+        sessionsChangePct: 'Sessions %',
         useDays: 'Use days',
-        usePct: 'Use %',
+        useDaysChangePct: 'Use Days %',
+        usePct: 'Use day %',
         avgPerDay: 'Avg / day',
         avgBreak: 'Avg break',
         duration: 'Duration',
@@ -23200,7 +23230,19 @@ const TABLE_COLUMN_LABELS = {
 
 const TABLE_COLUMN_TOOLTIPS = {
     statsWeekly: {
-        monthRunning: 'Cumulative use within the calendar month of this row. Resets on the first day of each month.'
+        monthRunning: 'Cumulative use within the calendar month of this row. Resets on the first day of each month.',
+        usageChangePct: 'Percent change in use vs the previous week in this filtered range.',
+        costChangePct: 'Percent change in cost vs the previous week in this filtered range.',
+        purchaseChangePct: 'Percent change in purchase count vs the previous week in this filtered range.',
+        sessionsChangePct: 'Percent change in sessions vs the previous week in this filtered range.',
+        useDaysChangePct: 'Percent change in use days vs the previous week in this filtered range.'
+    },
+    statsMonthly: {
+        usageChangePct: 'Percent change in use vs the previous month in this filtered range.',
+        costChangePct: 'Percent change in cost vs the previous month in this filtered range.',
+        purchaseChangePct: 'Percent change in purchase count vs the previous month in this filtered range.',
+        sessionsChangePct: 'Percent change in sessions vs the previous month in this filtered range.',
+        useDaysChangePct: 'Percent change in use days vs the previous month in this filtered range.'
     },
     buyWeekly: {
         runningAmountBought: 'Cumulative amount purchased within the calendar month of this row. Resets on the first day of each month.',
@@ -40960,7 +41002,8 @@ function renderConfigurableSheetTable(tableKey, rows, renderCell, substanceId = 
             const cell = renderCell(colId, rowData);
             const label = resolveColumnDisplayLabel(tableKey, colId, { substanceId });
             if (cell && typeof cell === 'object' && cell.html) {
-                html += `<td data-col="${colId}" data-label="${escapeAttr(label)}" title="${escapeAttr(label)}">${cell.html}</td>`;
+                const cellTitle = cell.title != null && cell.title !== '' ? cell.title : label;
+                html += `<td data-col="${colId}" data-label="${escapeAttr(label)}" title="${escapeAttr(cellTitle)}">${cell.html}</td>`;
             } else {
                 html += `<td data-col="${colId}" data-label="${escapeAttr(label)}" title="${escapeAttr(String(cell ?? '—').replace(/<[^>]*>/g, ''))}">${cell ?? '—'}</td>`;
             }
@@ -41072,7 +41115,137 @@ function enrichMonthlySummaryWithBuyData(summary, substanceId, bounds = null) {
     });
     const purchasedAmount = purchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
     const cost = purchases.reduce((s, p) => s + getPurchaseSpendAmount(p), 0);
-    return { ...summary, purchasedAmount, cost };
+    return { ...summary, purchasedAmount, cost, purchaseCount: purchases.length };
+}
+
+function getPurchaseCountInDateRange(substanceId, startDate, endDate, bounds = null, data = appData) {
+    if (!startDate || !endDate) return 0;
+    return getPurchasesForInsightMetrics(substanceId, data).filter(p => {
+        const d = getPurchaseDateStr(p);
+        if (!d) return false;
+        if (bounds?.startDate && d < bounds.startDate) return false;
+        if (bounds?.endDate && d > bounds.endDate) return false;
+        return d >= startDate && d <= endDate;
+    }).length;
+}
+
+/** ISO week number (1–53) for a YYYY-MM-DD date. */
+function getIsoWeekNumber(dateStr) {
+    const d = parseLocalDate(dateStr);
+    if (!d) return null;
+    const tmp = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
+    const dayNum = tmp.getUTCDay() || 7;
+    tmp.setUTCDate(tmp.getUTCDate() + 4 - dayNum);
+    const yearStart = new Date(Date.UTC(tmp.getUTCFullYear(), 0, 1));
+    return Math.ceil((((tmp - yearStart) / 86400000) + 1) / 7);
+}
+
+const USE_SUMMARY_PERIOD_CHANGE_METRICS = [
+    { colId: 'usageChangePct', valueKey: 'totalUsage', higherIsBetter: false, chipLabel: 'Use' },
+    { colId: 'costChangePct', valueKey: 'cost', higherIsBetter: false, chipLabel: 'Cost' },
+    { colId: 'purchaseChangePct', valueKey: 'purchaseCount', higherIsBetter: false, chipLabel: 'Purchases' },
+    { colId: 'sessionsChangePct', valueKey: 'sessions', higherIsBetter: false, chipLabel: 'Sessions' },
+    { colId: 'useDaysChangePct', valueKey: 'useDays', higherIsBetter: false, chipLabel: 'Use Days' }
+];
+
+/**
+ * Format a vs-previous percentage with arrow + color by improvement direction.
+ * higherIsBetter=false → decreases are green (improved); increases are red (worsened).
+ */
+function formatPeriodChangePercent(currentValue, previousValue, {
+    higherIsBetter = false,
+    decimals = 1
+} = {}) {
+    const delta = computeCompareDelta(currentValue, previousValue, { higherIsBetter });
+    if (delta.pct == null) {
+        return { text: '—', html: '—', status: 'none', pct: null, arrow: '' };
+    }
+    const pct = delta.pct;
+    const arrow = pct < -0.0001 ? '↓' : pct > 0.0001 ? '↑' : '→';
+    const text = `${arrow} ${Math.abs(pct).toFixed(decimals)}%`;
+    let status = 'neutral';
+    if (higherIsBetter != null && Math.abs(pct) >= 0.05) {
+        const improved = higherIsBetter ? pct > 0 : pct < 0;
+        status = improved ? 'improved' : 'worsened';
+    }
+    return {
+        text,
+        html: `<span class="period-change period-change-${status}">${escapeHtml(text)}</span>`,
+        status,
+        pct,
+        arrow
+    };
+}
+
+/**
+ * Attach vs-previous-period % cells. Rows must be newest-first (index+1 = older previous).
+ */
+function attachUseSummaryPeriodChanges(rows, getCompareLabel) {
+    const list = Array.isArray(rows) ? rows : [];
+    return list.map((row, index) => {
+        const previous = list[index + 1] || null;
+        const compareLabel = previous ? getCompareLabel(previous) : null;
+        const periodChanges = {};
+        USE_SUMMARY_PERIOD_CHANGE_METRICS.forEach(metric => {
+            if (!previous) {
+                periodChanges[metric.colId] = {
+                    text: '—',
+                    html: '—',
+                    status: 'none',
+                    pct: null,
+                    title: ''
+                };
+                return;
+            }
+            const formatted = formatPeriodChangePercent(
+                row?.[metric.valueKey],
+                previous?.[metric.valueKey],
+                { higherIsBetter: metric.higherIsBetter }
+            );
+            periodChanges[metric.colId] = {
+                ...formatted,
+                title: compareLabel ? `Compared with ${compareLabel}` : ''
+            };
+        });
+        return { ...row, periodChanges, periodCompareLabel: compareLabel || '' };
+    });
+}
+
+function enrichWeeklySummaryWithPurchaseCount(summary, substanceId, bounds = null, data = appData) {
+    const purchaseCount = getPurchaseCountInDateRange(
+        substanceId,
+        summary.weekStart,
+        summary.weekEnd,
+        bounds,
+        data
+    );
+    return { ...summary, purchaseCount };
+}
+
+function buildMonthlyUseChangeSummaryHtml(rows) {
+    const list = Array.isArray(rows) ? rows : [];
+    const row = list.find(r => r?.periodCompareLabel && r.periodChanges);
+    if (!row) {
+        return '<p class="stats-period-change-summary-empty">No prior month in this range to compare.</p>';
+    }
+    const chips = USE_SUMMARY_PERIOD_CHANGE_METRICS.map((metric, index) => {
+        const change = row.periodChanges[metric.colId] || { text: '—', status: 'none', title: '' };
+        const suffix = index === 0 ? ' vs last month' : '';
+        const statusClass = change.status === 'improved'
+            ? 'improved'
+            : (change.status === 'worsened' ? 'worsened' : '');
+        return `<span class="stats-compare-chip ${statusClass}" title="${escapeAttr(change.title || '')}">${escapeHtml(metric.chipLabel)}: ${escapeHtml(change.text)}${escapeHtml(suffix)}</span>`;
+    }).join('');
+    return `<div class="stats-period-change-summary-chips" aria-label="Change versus previous month">${chips}</div>`;
+}
+
+function renderUseSummaryPeriodChangeCell(row, colId) {
+    const change = row?.periodChanges?.[colId];
+    if (!change) return '—';
+    return {
+        html: change.html || escapeHtml(change.text || '—'),
+        title: change.title || change.text || '—'
+    };
 }
 
 function calculateWeeklyTrackingSummary(substanceId, weekStart, weekEnd) {
@@ -41671,19 +41844,30 @@ function renderStatsSummaryDashboard(substanceId, useStats, bounds, unit, cur) {
 
 function renderStatsMonthlySummary(substanceId, insights = null) {
     const container = document.getElementById('stats-monthly-summary');
+    const summaryEl = document.getElementById('stats-monthly-change-summary');
     if (!container) return;
     const sub = getSubstance(substanceId);
     if (!sub) {
         container.innerHTML = '<p class="empty-hint">Select a substance.</p>';
+        if (summaryEl) summaryEl.innerHTML = '';
         return;
     }
     const dataset = insights || buildInsightsDataset(substanceId);
     const unit = sub.defaultUnit || 'units';
     const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
     const cur = getCurrencySymbol();
-    const summaries = dataset.monthlySummaries.map(s =>
+    const baseSummaries = dataset.monthlySummaries.map(s =>
         enrichMonthlySummaryWithBuyData(s, substanceId, dataset.bounds)
     );
+    const summaries = attachUseSummaryPeriodChanges(
+        baseSummaries,
+        prev => prev.monthLabel || formatLocalDate(prev.monthStart)
+    );
+    if (summaryEl) {
+        summaryEl.innerHTML = summaries.length
+            ? buildMonthlyUseChangeSummaryHtml(summaries)
+            : '';
+    }
     if (!summaries.length) {
         container.innerHTML = '<p class="empty-hint">No monthly data yet.</p>';
         return;
@@ -41699,6 +41883,12 @@ function renderStatsMonthlySummary(substanceId, insights = null) {
             case 'end': return formatDate(s.monthEnd);
             case 'usage':
                 return fmtSheetAmount(s.totalUsage, displayUnit);
+            case 'usageChangePct':
+            case 'costChangePct':
+            case 'purchaseChangePct':
+            case 'sessionsChangePct':
+            case 'useDaysChangePct':
+                return renderUseSummaryPeriodChangeCell(s, colId);
             case 'purchased': return fmtSheetAmount(
                 s.purchasedAmount,
                 isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit
@@ -41733,7 +41923,13 @@ function renderStatsWeeklySummary(substanceId, insights = null) {
     const dataset = insights || buildInsightsDataset(substanceId);
     const unit = sub.defaultUnit || 'units';
     const displayUnit = isVapeNicotineSubstanceId(substanceId) ? 'puffs' : unit;
-    const summaries = dataset.weeklySummaries;
+    const baseSummaries = (dataset.weeklySummaries || []).map(s =>
+        enrichWeeklySummaryWithPurchaseCount(s, substanceId, dataset.bounds)
+    );
+    const summaries = attachUseSummaryPeriodChanges(baseSummaries, prev => {
+        const weekNum = getIsoWeekNumber(prev.weekStart);
+        return weekNum != null ? `Week ${weekNum}` : formatDate(prev.weekStart);
+    });
     if (!summaries.length) {
         container.innerHTML = '<p class="empty-hint">No weekly data yet.</p>';
         return;
@@ -41744,6 +41940,12 @@ function renderStatsWeeklySummary(substanceId, insights = null) {
             case 'start': return formatDate(s.weekStart);
             case 'end': return formatDate(s.weekEnd);
             case 'usage': return fmtSheetAmount(s.totalUsage, displayUnit);
+            case 'usageChangePct':
+            case 'costChangePct':
+            case 'purchaseChangePct':
+            case 'sessionsChangePct':
+            case 'useDaysChangePct':
+                return renderUseSummaryPeriodChangeCell(s, colId);
             case 'monthRunning': return fmtSheetAmount(s.runningTotal, displayUnit);
             case 'avgBreak': return formatStatsBreakValue(s.avgBreak, substanceId);
             case 'sessions': return String(s.sessions);
@@ -53868,6 +54070,14 @@ function __getRecoveryTrackerTestExports() {
         setTestReferenceDate,
         invalidateInsightsDatasetCache,
         enrichMonthlySummaryWithBuyData,
+        enrichWeeklySummaryWithPurchaseCount,
+        attachUseSummaryPeriodChanges,
+        formatPeriodChangePercent,
+        buildMonthlyUseChangeSummaryHtml,
+        getIsoWeekNumber,
+        getPurchaseCountInDateRange,
+        USE_SUMMARY_PERIOD_CHANGE_METRICS,
+        getTableColumnLabelForSubstance,
         fmtAvgCostPerGram,
         resolveComparePeriodPair,
         extractComparePeriodMetrics,
