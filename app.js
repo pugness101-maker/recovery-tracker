@@ -21758,29 +21758,20 @@ function applyInventorySourceToPayload(payload) {
 function buildBuySourcePickerHtml(acquisitionType = 'purchased') {
     const label = getBuySourceFieldLabel(acquisitionType);
     const placeholder = getBuySourcePlaceholder(acquisitionType);
-    const kindOptions = INVENTORY_SOURCE_KINDS.map(k =>
-        `<option value="${k}">${invSrcEsc(INVENTORY_SOURCE_KIND_LABELS[k])}</option>`
-    ).join('');
     return `
         <div class="form-group buy-source-group" id="buy-source-group" data-buy-source="1">
             <label for="buy-source-search" id="buy-source-label">${invSrcEsc(label)}</label>
             <div class="buy-source-picker" data-buy-source-picker="1">
                 <input type="hidden" id="buy-source" value="">
                 <input type="hidden" id="buy-source-contact-id" value="">
+                <input type="hidden" id="buy-source-kind" value="">
                 <input type="search" id="buy-source-search" class="buy-source-search"
                     placeholder="${invSrcEsc(placeholder)}" autocomplete="off"
                     onfocus="openBuySourceMenu()"
                     oninput="onBuySourceSearch(this.value)">
                 <div id="buy-source-menu" class="buy-source-menu ct-picker-menu hidden" role="listbox"></div>
             </div>
-            <div class="form-row buy-source-meta">
-                <div class="form-group">
-                    <label for="buy-source-kind">Source type</label>
-                    <select id="buy-source-kind" onchange="onBuySourceKindChange()">
-                        <option value="">Auto</option>
-                        ${kindOptions}
-                    </select>
-                </div>
+            <div class="buy-source-meta">
                 <button type="button" class="secondary-btn btn-sm" id="buy-source-clear-btn" onclick="clearBuySourceSelection()">Clear</button>
             </div>
             <div class="form-group buy-source-new-group hidden" id="buy-source-new-group">
@@ -21838,10 +21829,6 @@ function onBuySourceSearch(value) {
     refreshBuySourceMenu(value);
 }
 
-function onBuySourceKindChange() {
-    /* kind is read on submit */
-}
-
 function onBuySourceNewInput(value) {
     const free = document.getElementById('buy-source');
     const search = document.getElementById('buy-source-search');
@@ -21849,6 +21836,8 @@ function onBuySourceNewInput(value) {
     if (search) search.value = value || '';
     const idEl = document.getElementById('buy-source-contact-id');
     if (idEl) idEl.value = '';
+    const kindEl = document.getElementById('buy-source-kind');
+    if (kindEl && !kindEl.value) kindEl.value = 'business';
 }
 
 function startBuySourceAddNew() {
@@ -21860,12 +21849,10 @@ function startBuySourceAddNew() {
 }
 
 function clearBuySourceSelection() {
-    ['buy-source', 'buy-source-contact-id', 'buy-source-search', 'buy-source-new'].forEach(id => {
+    ['buy-source', 'buy-source-contact-id', 'buy-source-kind', 'buy-source-search', 'buy-source-new'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
     });
-    const kind = document.getElementById('buy-source-kind');
-    if (kind) kind.value = '';
     document.getElementById('buy-source-new-group')?.classList.add('hidden');
     closeBuySourceMenu();
 }

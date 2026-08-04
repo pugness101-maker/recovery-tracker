@@ -9920,6 +9920,5 @@ body > .app-container {
     padding: 8px 12px 4px; font-size: 0.75rem; font-weight: 600;
     color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.04em;
 }
-.buy-source-meta { align-items: end; margin-top: 8px; gap: 8px; }
-.buy-source-meta .form-group { flex: 1; margin-bottom: 0; }
+.buy-source-meta { margin-top: 8px; }
 #buy-source-group .settings-hint { margin-top: 6px; }
