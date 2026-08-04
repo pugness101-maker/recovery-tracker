@@ -66,6 +66,97 @@ let resolvedTheme = 'dark';
 let themeMediaQuery = null;
 let appearanceViewModeMediaQuery = null;
 
+// ——— Shared utilities ———
+// Canonical helpers shared by every feature area. The per-feature aliases
+// (chToday, finRound, paMoney, rtNum, …) delegate here.
+
+function todayLocalDate() {
+    return typeof getLocalDateString === 'function' ? getLocalDateString() : new Date().toISOString().slice(0, 10);
+}
+
+function toFiniteNumber(value, fallback = 0) {
+    const n = typeof value === 'number' ? value : parseFloat(value);
+    return Number.isFinite(n) ? n : fallback;
+}
+
+function trimToString(value) {
+    return String(value ?? '').trim();
+}
+
+function lowerKey(value) {
+    return trimToString(value).toLowerCase();
+}
+
+function roundTo(value, decimals = 2) {
+    const factor = Math.pow(10, decimals);
+    return Math.round((toFiniteNumber(value, 0) + Number.EPSILON) * factor) / factor;
+}
+
+function roundToOrNull(value, decimals = 2) {
+    const n = toFiniteNumber(value, NaN);
+    if (!Number.isFinite(n)) return null;
+    const factor = 10 ** decimals;
+    return Math.round(n * factor) / factor;
+}
+
+function allSubstancesId() {
+    return typeof DASHBOARD_ALL !== 'undefined' ? DASHBOARD_ALL : 'all';
+}
+
+function escapeHtmlSafe(value) {
+    return typeof escapeHtml === 'function' ? escapeHtml(String(value ?? '')) : String(value ?? '');
+}
+
+function meanOrNull(values) {
+    const nums = (values || []).map(v => toFiniteNumber(v, NaN)).filter(Number.isFinite);
+    if (!nums.length) return null;
+    return nums.reduce((sum, n) => sum + n, 0) / nums.length;
+}
+
+function medianOfNumbers(numbers) {
+    if (!numbers || !numbers.length) return null;
+    const sorted = [...numbers].sort((a, b) => a - b);
+    const mid = Math.floor(sorted.length / 2);
+    return sorted.length % 2 ? sorted[mid] : (sorted[mid - 1] + sorted[mid]) / 2;
+}
+
+function daysBetweenDates(startDate, endDate) {
+    const start = typeof parseLocalDate === 'function' ? parseLocalDate(startDate) : null;
+    const end = typeof parseLocalDate === 'function' ? parseLocalDate(endDate) : null;
+    if (!start || !end) return null;
+    return Math.round((end.getTime() - start.getTime()) / 86400000);
+}
+
+function formatLongDateLabel(dateStr) {
+    const d = typeof parseLocalDate === 'function' ? parseLocalDate(dateStr) : null;
+    if (!d) return dateStr || '—';
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+}
+
+function formatNumberOrDash(value, decimals = 2) {
+    if (value == null || !Number.isFinite(toFiniteNumber(value, NaN))) return '—';
+    return formatAmount(value, decimals);
+}
+
+function formatMoneyOrDash(value, decimals = 2) {
+    if (value == null || !Number.isFinite(toFiniteNumber(value, NaN))) return '—';
+    const symbol = typeof getCurrencySymbol === 'function' ? getCurrencySymbol() : '$';
+    return `${symbol}${formatAmount(toFiniteNumber(value, 0), decimals)}`;
+}
+
+function toneClass(prefix, tone) {
+    if (tone === 'good') return `${prefix}-tone-good`;
+    if (tone === 'warn') return `${prefix}-tone-warn`;
+    if (tone === 'bad') return `${prefix}-tone-bad`;
+    return `${prefix}-tone-neutral`;
+}
+
+function describeElapsedMs(ms) {
+    if (ms == null || !Number.isFinite(ms) || ms < 0) return null;
+    const minutes = Math.floor(ms / 60000);
+    return { minutes, hours: minutes / 60, text: formatBreakText(minutes) };
+}
+
 function getSystemTheme() {
     return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
@@ -1173,11 +1264,7 @@ function syncLsdUseDatetimeUI() {
     document.getElementById('use-end-date-group')?.classList.add('hidden');
     const startEl = document.getElementById('use-start-time');
     if (startEl) startEl.required = true;
-    const endTimeEl = document.getElementById('use-end-time');
-    if (endTimeEl) endTimeEl.value = '';
-    const endDateEl = document.getElementById('use-end-date');
-    if (endDateEl) endDateEl.value = '';
-    document.getElementById('use-duration-preview')?.classList.add('hidden');
+    clearUseEndTimeInputs();
 }
 
 function ensureLsdUseFormDefaults() {
@@ -1806,11 +1893,7 @@ function syncXanaxUseDatetimeUI() {
     const startEl = document.getElementById('use-start-time');
     if (startEl) startEl.required = isNonUse;
     if (!isNonUse && startEl) startEl.value = '';
-    const endTimeEl = document.getElementById('use-end-time');
-    if (endTimeEl) endTimeEl.value = '';
-    const endDateEl = document.getElementById('use-end-date');
-    if (endDateEl) endDateEl.value = '';
-    document.getElementById('use-duration-preview')?.classList.add('hidden');
+    clearUseEndTimeInputs();
 }
 
 function updateXanaxUseFormUI() {
@@ -6934,17 +7017,15 @@ function persistGoalSystemPrefs(patch = {}, data = appData) {
 // ——— Goal System: small shared helpers ———
 
 function goalTodayStr() {
-    return getLocalDateString();
+    return todayLocalDate();
 }
 
 function goalToNumber(value, fallback = 0) {
-    const n = parseFloat(value);
-    return Number.isFinite(n) ? n : fallback;
+    return toFiniteNumber(value, fallback);
 }
 
 function goalRoundTo(value, decimals = 2) {
-    const factor = Math.pow(10, decimals);
-    return Math.round(((goalToNumber(value, 0)) + Number.EPSILON) * factor) / factor;
+    return roundTo(value, decimals);
 }
 
 /** Keeps Infinity intact — a zero target with any activity is an infinite ratio, not zero. */
@@ -8684,8 +8765,7 @@ function goalCsvRowsForGoals(data = appData) {
 
 function exportGoalsCsv(data = appData) {
     const { header, rows } = goalCsvRowsForGoals(data);
-    const csv = [header, ...rows].map(row => row.map(csvEscape).join(',')).join('\n');
-    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), `recovery-goals-${goalTodayStr()}.csv`);
+    downloadCsvRows(`recovery-goals-${goalTodayStr()}.csv`, [header, ...rows]);
     return rows.length;
 }
 
@@ -8702,9 +8782,8 @@ function exportGoalHistoryCsv(goalId = null, data = appData) {
             ]);
         });
     });
-    const csv = [header, ...rows].map(row => row.map(csvEscape).join(',')).join('\n');
     const suffix = goalId ? `-${goalId}` : '';
-    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), `recovery-goal-history${suffix}-${goalTodayStr()}.csv`);
+    downloadCsvRows(`recovery-goal-history${suffix}-${goalTodayStr()}.csv`, [header, ...rows]);
     return rows.length;
 }
 
@@ -8784,10 +8863,7 @@ function onGoalFilterChange() {
 }
 
 function goalToneClass(tone) {
-    if (tone === 'good') return 'goal-tone-good';
-    if (tone === 'warn') return 'goal-tone-warn';
-    if (tone === 'bad') return 'goal-tone-bad';
-    return 'goal-tone-neutral';
+    return toneClass('goal', tone);
 }
 
 function renderGoalProgressBar(evaluation) {
@@ -9784,14 +9860,11 @@ const FINANCIAL_DAYS_PER_MONTH = 30.4375;
 // ——— Financial Analytics: tiny shared helpers ———
 
 function finToNumber(value, fallback = 0) {
-    const n = typeof value === 'number' ? value : parseFloat(value);
-    return Number.isFinite(n) ? n : fallback;
+    return toFiniteNumber(value, fallback);
 }
 
 function finRound(value, decimals = 2) {
-    const n = finToNumber(value, 0);
-    const factor = Math.pow(10, decimals);
-    return Math.round((n + Number.EPSILON) * factor) / factor;
+    return roundTo(value, decimals);
 }
 
 function finSum(values) {
@@ -9799,10 +9872,7 @@ function finSum(values) {
 }
 
 function finMedian(values) {
-    const nums = (values || []).map(v => finToNumber(v, 0)).sort((a, b) => a - b);
-    if (!nums.length) return 0;
-    const mid = Math.floor(nums.length / 2);
-    return nums.length % 2 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
+    return medianOfNumbers((values || []).map(v => toFiniteNumber(v, 0))) ?? 0;
 }
 
 function finDivide(numerator, denominator) {
@@ -9820,7 +9890,7 @@ function finStdDev(values) {
 }
 
 function finToday() {
-    return typeof getLocalDateString === 'function' ? getLocalDateString() : new Date().toISOString().slice(0, 10);
+    return todayLocalDate();
 }
 
 function finAddDays(dateStr, days) {
@@ -9866,7 +9936,7 @@ function finMoneyOrDash(value, decimals = 2) {
 }
 
 function finNumberOrDash(value, decimals = 2) {
-    return value == null || !Number.isFinite(finToNumber(value, NaN)) ? '—' : formatAmount(value, decimals);
+    return formatNumberOrDash(value, decimals);
 }
 
 function finPctLabel(value, decimals = 0) {
@@ -9881,9 +9951,7 @@ function finSignedPctLabel(value, decimals = 0) {
 }
 
 function finDateLabel(dateStr) {
-    const d = parseLocalDate(dateStr);
-    if (!d) return dateStr || '—';
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatLongDateLabel(dateStr);
 }
 
 function finShortDateLabel(dateStr) {
@@ -9893,22 +9961,19 @@ function finShortDateLabel(dateStr) {
 }
 
 function finTrim(value) {
-    return String(value ?? '').trim();
+    return trimToString(value);
 }
 
 function finKey(value) {
-    return finTrim(value).toLowerCase();
+    return lowerKey(value);
 }
 
 function finToneClass(tone) {
-    if (tone === 'good') return 'fin-tone-good';
-    if (tone === 'warn') return 'fin-tone-warn';
-    if (tone === 'bad') return 'fin-tone-bad';
-    return 'fin-tone-neutral';
+    return toneClass('fin', tone);
 }
 
 function finAllSubstancesId() {
-    return typeof DASHBOARD_ALL !== 'undefined' ? DASHBOARD_ALL : 'all';
+    return allSubstancesId();
 }
 
 function financialIsAllSubstances(substanceId) {
@@ -11865,8 +11930,7 @@ function buildDashboardFinancialSummary(data = appData, substanceId = null) {
 // ——— Financial Analytics: CSV export ———
 
 function financialCsvDownload(name, header, rows) {
-    const csv = [header, ...rows].map(row => row.map(csvEscape).join(',')).join('\n');
-    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8;' }), `${name}-${finToday()}.csv`);
+    downloadCsvRows(`${name}-${finToday()}.csv`, [header, ...rows]);
     return rows.length;
 }
 
@@ -13648,68 +13712,51 @@ let purchaseAnalyticsCache = null;
 let purchaseAnalyticsCacheKey = '';
 
 function paToNumber(value, fallback = 0) {
-    const n = typeof value === 'number' ? value : parseFloat(value);
-    return Number.isFinite(n) ? n : fallback;
+    return toFiniteNumber(value, fallback);
 }
 
 function paRound(value, decimals = 2) {
-    const n = paToNumber(value, NaN);
-    if (!Number.isFinite(n)) return null;
-    const f = 10 ** decimals;
-    return Math.round(n * f) / f;
+    return roundToOrNull(value, decimals);
 }
 
 function paTrim(value) {
-    return String(value ?? '').trim();
+    return trimToString(value);
 }
 
 function paKey(value) {
-    return paTrim(value).toLowerCase();
+    return lowerKey(value);
 }
 
 function paToday() {
-    return typeof getLocalDateString === 'function' ? getLocalDateString() : new Date().toISOString().slice(0, 10);
+    return todayLocalDate();
 }
 
 function paAllSubstancesId() {
-    return typeof DASHBOARD_ALL !== 'undefined' ? DASHBOARD_ALL : 'all';
+    return allSubstancesId();
 }
 
 function paMoney(value, decimals = 2) {
-    if (value == null || !Number.isFinite(paToNumber(value, NaN))) return '—';
-    const sym = typeof getCurrencySymbol === 'function' ? getCurrencySymbol() : '$';
-    return `${sym}${formatAmount(paToNumber(value, 0), decimals)}`;
+    return formatMoneyOrDash(value, decimals);
 }
 
 function paNumberOrDash(value, decimals = 2) {
-    if (value == null || !Number.isFinite(paToNumber(value, NaN))) return '—';
-    return formatAmount(value, decimals);
+    return formatNumberOrDash(value, decimals);
 }
 
 function paDateLabel(dateStr) {
-    const d = typeof parseLocalDate === 'function' ? parseLocalDate(dateStr) : null;
-    if (!d) return dateStr || '—';
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return formatLongDateLabel(dateStr);
 }
 
 function paDaysBetween(a, b) {
-    const da = typeof parseLocalDate === 'function' ? parseLocalDate(a) : null;
-    const db = typeof parseLocalDate === 'function' ? parseLocalDate(b) : null;
-    if (!da || !db) return null;
-    return Math.round((db.getTime() - da.getTime()) / 86400000);
+    return daysBetweenDates(a, b);
 }
 
 function paMedian(values) {
-    const nums = (values || []).map(v => paToNumber(v, NaN)).filter(Number.isFinite).sort((a, b) => a - b);
-    if (!nums.length) return null;
-    const mid = Math.floor(nums.length / 2);
-    return nums.length % 2 ? nums[mid] : (nums[mid - 1] + nums[mid]) / 2;
+    return medianOfNumbers((values || []).map(v => toFiniteNumber(v, NaN)).filter(Number.isFinite));
 }
 
 function paMean(values) {
-    const nums = (values || []).map(v => paToNumber(v, NaN)).filter(Number.isFinite);
-    if (!nums.length) return null;
-    return nums.reduce((s, n) => s + n, 0) / nums.length;
+    return meanOrNull(values);
 }
 
 function invalidatePurchaseAnalyticsCache() {
@@ -15020,27 +15067,23 @@ let contactsUiState = {
 };
 
 function ctTrim(value) {
-    return String(value ?? '').trim();
+    return trimToString(value);
 }
 
 function ctKey(value) {
-    return ctTrim(value).toLowerCase();
+    return lowerKey(value);
 }
 
 function ctToNumber(value, fallback = 0) {
-    const n = typeof value === 'number' ? value : parseFloat(value);
-    return Number.isFinite(n) ? n : fallback;
+    return toFiniteNumber(value, fallback);
 }
 
 function ctRound(value, decimals = 2) {
-    const n = ctToNumber(value, NaN);
-    if (!Number.isFinite(n)) return null;
-    const f = 10 ** decimals;
-    return Math.round(n * f) / f;
+    return roundToOrNull(value, decimals);
 }
 
 function ctToday() {
-    return typeof getLocalDateString === 'function' ? getLocalDateString() : new Date().toISOString().slice(0, 10);
+    return todayLocalDate();
 }
 
 function ctNowIso() {
@@ -15048,9 +15091,7 @@ function ctNowIso() {
 }
 
 function ctMoney(value) {
-    if (value == null || !Number.isFinite(ctToNumber(value, NaN))) return '—';
-    const sym = typeof getCurrencySymbol === 'function' ? getCurrencySymbol() : '$';
-    return `${sym}${formatAmount(ctToNumber(value, 0), 2)}`;
+    return formatMoneyOrDash(value);
 }
 
 function createContactId() {
@@ -16631,27 +16672,23 @@ let chartSystemUi = {
 };
 
 function chToNumber(value, fallback = 0) {
-    const n = typeof value === 'number' ? value : parseFloat(value);
-    return Number.isFinite(n) ? n : fallback;
+    return toFiniteNumber(value, fallback);
 }
 
 function chRound(value, decimals = 2) {
-    const n = chToNumber(value, NaN);
-    if (!Number.isFinite(n)) return null;
-    const f = 10 ** decimals;
-    return Math.round(n * f) / f;
+    return roundToOrNull(value, decimals);
 }
 
 function chTrim(value) {
-    return String(value ?? '').trim();
+    return trimToString(value);
 }
 
 function chToday() {
-    return typeof getLocalDateString === 'function' ? getLocalDateString() : new Date().toISOString().slice(0, 10);
+    return todayLocalDate();
 }
 
 function chAllId() {
-    return typeof DASHBOARD_ALL !== 'undefined' ? DASHBOARD_ALL : 'all';
+    return allSubstancesId();
 }
 
 function chIsAll(substanceId) {
@@ -16799,9 +16836,9 @@ function chartIncompatibleMix(seriesList) {
     return families.size > 1;
 }
 
-function resolveChartBounds(filters = null, data = appData) {
-    const f = { ...getDefaultChartFilters(), ...(filters || {}) };
-    // Explicit custom window on the filter object always wins (tests + synced Insights bounds)
+// Resolves a {startDate, endDate, label, incomplete} window from filter prefs:
+// explicit custom window first, then the Financial engine, then the Insights toolbar.
+function resolveFilterDateBounds(f, fallbackStartDate, data = appData) {
     if (f.customStart && f.customEnd) {
         return {
             startDate: f.customStart,
@@ -16818,29 +16855,34 @@ function resolveChartBounds(filters = null, data = appData) {
         }, data);
         if (bounds && (bounds.startDate || bounds.endDate)) return bounds;
     }
-    // Fall back to Insights toolbar engine when filter preset has no custom dates yet
     if (typeof getStatsDateRange === 'function') {
         try {
             const range = getStatsDateRange();
             if (range && (range.startDate || range.endDate)) {
                 return {
                     startDate: range.startDate || '',
-                    endDate: range.endDate || chToday(),
+                    endDate: range.endDate || todayLocalDate(),
                     label: range.label || f.dateRangePreset,
                     incomplete: !!range.incomplete
                 };
             }
         } catch (_) { /* fall through */ }
     }
-    const today = chToday();
-    return { startDate: f.customStart || today, endDate: f.customEnd || today, label: f.dateRangePreset, incomplete: false };
+    return {
+        startDate: f.customStart || fallbackStartDate,
+        endDate: f.customEnd || todayLocalDate(),
+        label: f.dateRangePreset,
+        incomplete: false
+    };
+}
+
+function resolveChartBounds(filters = null, data = appData) {
+    const f = { ...getDefaultChartFilters(), ...(filters || {}) };
+    return resolveFilterDateBounds(f, chToday(), data);
 }
 
 function chartDaysBetween(a, b) {
-    const da = typeof parseLocalDate === 'function' ? parseLocalDate(a) : null;
-    const db = typeof parseLocalDate === 'function' ? parseLocalDate(b) : null;
-    if (!da || !db) return null;
-    return Math.round((db.getTime() - da.getTime()) / 86400000);
+    return daysBetweenDates(a, b);
 }
 
 function chartEnumerateDates(startDate, endDate) {
@@ -17689,7 +17731,7 @@ function buildChartDashboardDataset(data = appData, options = {}) {
 // ——— SVG renderers ———
 
 function chEsc(value) {
-    return escapeHtml(String(value ?? ''));
+    return escapeHtmlSafe(value);
 }
 
 function chartScaleLinear(domainMin, domainMax, rangeMin, rangeMax) {
@@ -20036,27 +20078,23 @@ const RUNNING_TOTALS_GROUP_BY = Object.freeze([
 ]);
 
 function rtNum(value, fallback = 0) {
-    const n = parseFloat(value);
-    return Number.isFinite(n) ? n : fallback;
+    return toFiniteNumber(value, fallback);
 }
 
 function rtRound(value, digits = 4) {
-    const n = rtNum(value, null);
-    if (n == null) return null;
-    const f = 10 ** digits;
-    return Math.round(n * f) / f;
+    return roundToOrNull(value, digits);
 }
 
 function rtTrim(value) {
-    return String(value ?? '').trim();
+    return trimToString(value);
 }
 
 function rtEsc(value) {
-    return typeof escapeHtml === 'function' ? escapeHtml(String(value ?? '')) : String(value ?? '');
+    return escapeHtmlSafe(value);
 }
 
 function rtToday() {
-    return typeof getLocalDateString === 'function' ? getLocalDateString() : new Date().toISOString().slice(0, 10);
+    return todayLocalDate();
 }
 
 function rtIsAll(substanceId) {
@@ -20131,42 +20169,7 @@ function persistRunningTotalsPrefs(patch = {}, data = appData) {
 
 function resolveRunningTotalsBounds(filters, data = appData) {
     const f = { ...getDefaultRunningTotalsPrefs().filters, ...(filters || {}) };
-    // Explicit custom window wins (tests + synced Insights bounds)
-    if (f.customStart && f.customEnd) {
-        return {
-            startDate: f.customStart,
-            endDate: f.customEnd,
-            label: f.dateRangePreset || 'custom',
-            incomplete: false
-        };
-    }
-    if (typeof resolveFinancialBounds === 'function') {
-        const bounds = resolveFinancialBounds({
-            dateRangePreset: f.dateRangePreset,
-            customStart: f.customStart,
-            customEnd: f.customEnd
-        }, data);
-        if (bounds && (bounds.startDate || bounds.endDate)) return bounds;
-    }
-    if (typeof getStatsDateRange === 'function') {
-        try {
-            const range = getStatsDateRange();
-            if (range && (range.startDate || range.endDate)) {
-                return {
-                    startDate: range.startDate || '',
-                    endDate: range.endDate || rtToday(),
-                    label: range.label || f.dateRangePreset,
-                    incomplete: !!range.incomplete
-                };
-            }
-        } catch (_) { /* fall through */ }
-    }
-    return {
-        startDate: f.customStart || '',
-        endDate: f.customEnd || rtToday(),
-        label: f.dateRangePreset,
-        incomplete: false
-    };
+    return resolveFilterDateBounds(f, '', data);
 }
 
 function runningTotalsWeekStartPref(data = appData) {
@@ -24307,7 +24310,11 @@ function setupUseStatsSettingsModal() {
     document.getElementById('use-stats-settings-apply')?.addEventListener('click', applyUseStatsSettingsFromModal);
     document.getElementById('use-stats-settings-reset')?.addEventListener('click', resetUseStatsSettingsFromModal);
 
-    const list = document.getElementById('use-stats-settings-list');
+    setupColumnSettingsDragReorder(document.getElementById('use-stats-settings-list'), 'statId');
+}
+
+// Drag-to-reorder wiring shared by the column settings and use-stats settings lists.
+function setupColumnSettingsDragReorder(list, dragIdKey) {
     if (!list) return;
 
     let dragItem = null;
@@ -24322,7 +24329,7 @@ function setupUseStatsSettingsModal() {
         dragItem = item;
         item.classList.add('column-settings-dragging');
         e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', item.dataset.statId);
+        e.dataTransfer.setData('text/plain', item.dataset[dragIdKey]);
     });
 
     list.addEventListener('dragend', () => {
@@ -24857,48 +24864,7 @@ function setupColumnSettingsModal() {
         resetColumnCustomNameInModal(btn.dataset.colId);
     });
 
-    let dragItem = null;
-
-    list.addEventListener('dragstart', e => {
-        if (!e.target.closest('.column-drag-handle')) {
-            e.preventDefault();
-            return;
-        }
-        const item = e.target.closest('.column-settings-item');
-        if (!item) return;
-        dragItem = item;
-        item.classList.add('column-settings-dragging');
-        e.dataTransfer.effectAllowed = 'move';
-        e.dataTransfer.setData('text/plain', item.dataset.colId);
-    });
-
-    list.addEventListener('dragend', () => {
-        dragItem?.classList.remove('column-settings-dragging');
-        dragItem = null;
-        list.querySelectorAll('.column-settings-item').forEach(el => el.classList.remove('column-settings-drop-target'));
-    });
-
-    list.addEventListener('dragover', e => {
-        e.preventDefault();
-        const item = e.target.closest('.column-settings-item');
-        if (!item || item === dragItem) return;
-        list.querySelectorAll('.column-settings-item').forEach(el => el.classList.remove('column-settings-drop-target'));
-        item.classList.add('column-settings-drop-target');
-    });
-
-    list.addEventListener('drop', e => {
-        e.preventDefault();
-        const target = e.target.closest('.column-settings-item');
-        if (!target || !dragItem || target === dragItem) return;
-        const items = [...list.querySelectorAll('.column-settings-item')];
-        const dragIdx = items.indexOf(dragItem);
-        const targetIdx = items.indexOf(target);
-        // Remove from old position first, then insert at the drop target (no duplicate nodes).
-        dragItem.remove();
-        if (dragIdx < targetIdx) target.after(dragItem);
-        else target.before(dragItem);
-        target.classList.remove('column-settings-drop-target');
-    });
+    setupColumnSettingsDragReorder(list, 'colId');
 
     setupCustomizableTableColumnResize();
     setupCustomizableTableColumnDrag();
@@ -25539,6 +25505,13 @@ function setText(id, text) {
 function setInputValue(id, value) {
     const el = document.getElementById(id);
     if (el != null) el.value = value;
+}
+
+// Clears the optional session end date/time inputs on the Use form.
+function clearUseEndTimeInputs({ hideDurationPreview = true } = {}) {
+    setInputValue('use-end-time', '');
+    setInputValue('use-end-date', '');
+    if (hideDurationPreview) document.getElementById('use-duration-preview')?.classList.add('hidden');
 }
 
 function getMainSubstance() {
@@ -26872,6 +26845,30 @@ function formatBreakText(minutes) {
     return `${mins}m`;
 }
 
+const USE_BREAK_FIELDS = Object.freeze(['breakMinutes', 'breakHours', 'breakText']);
+const BUY_BREAK_FIELDS = Object.freeze(['buyBreakMinutes', 'buyBreakHours', 'buyBreakText']);
+
+function clearUseBreakFields(log) {
+    USE_BREAK_FIELDS.forEach(field => delete log[field]);
+}
+
+function clearBuyBreakFields(purchase) {
+    BUY_BREAK_FIELDS.forEach(field => delete purchase[field]);
+}
+
+// Last ten gaps of a chronologically sorted record list, for break trend sparklines.
+function buildBreakTrend(records, hoursField, textField) {
+    return records
+        .filter(r => r[hoursField] != null)
+        .slice(-10)
+        .map(r => ({
+            date: r.date,
+            hours: r[hoursField],
+            text: r[textField],
+            label: formatDate(r.date)
+        }));
+}
+
 function getBreakColorClass(hours) {
     if (hours == null || isNaN(hours)) return '';
     if (hours < 1) return 'break-red';
@@ -26881,12 +26878,7 @@ function getBreakColorClass(hours) {
 }
 
 function medianBreakHours(values) {
-    if (!values.length) return null;
-    const sorted = [...values].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    return sorted.length % 2 === 1
-        ? sorted[mid]
-        : (sorted[mid - 1] + sorted[mid]) / 2;
+    return medianOfNumbers(values);
 }
 
 function recalculateBreaksForData(substanceId, data) {
@@ -26896,36 +26888,22 @@ function recalculateBreaksForData(substanceId, data) {
 
     logs.forEach((log, index) => {
         if (index === 0) {
-            delete log.breakMinutes;
-            delete log.breakHours;
-            delete log.breakText;
+            clearUseBreakFields(log);
             return;
         }
 
         const previous = logs[index - 1];
 
         if (isWeedTrackingMode(substanceId, data)) {
-            const prevDate = previous.date;
-            const curDate = log.date;
-            if (!prevDate || !curDate) {
-                delete log.breakMinutes;
-                delete log.breakHours;
-                delete log.breakText;
-                return;
-            }
-            const prevDay = parseLocalDate(prevDate);
-            const curDay = parseLocalDate(curDate);
+            const prevDay = parseLocalDate(previous.date);
+            const curDay = parseLocalDate(log.date);
             if (!prevDay || !curDay) {
-                delete log.breakMinutes;
-                delete log.breakHours;
-                delete log.breakText;
+                clearUseBreakFields(log);
                 return;
             }
             const dayGap = Math.round((curDay.getTime() - prevDay.getTime()) / 86400000);
             if (dayGap <= 0) {
-                delete log.breakMinutes;
-                delete log.breakHours;
-                delete log.breakText;
+                clearUseBreakFields(log);
                 return;
             }
             const breakMinutes = dayGap * 24 * 60;
@@ -26939,17 +26917,13 @@ function recalculateBreaksForData(substanceId, data) {
         const currentStartMs = getLogDatetimeMs(log);
 
         if (!previousEnd || !currentStartMs) {
-            delete log.breakMinutes;
-            delete log.breakHours;
-            delete log.breakText;
+            clearUseBreakFields(log);
             return;
         }
 
         const breakMs = currentStartMs - previousEnd.getTime();
         if (breakMs < 0) {
-            delete log.breakMinutes;
-            delete log.breakHours;
-            delete log.breakText;
+            clearUseBreakFields(log);
             return;
         }
 
@@ -26985,51 +26959,24 @@ function getBreakMetrics(substanceId) {
         ? { hours: currentLog.breakHours, text: currentLog.breakText || formatBreakText(currentLog.breakMinutes) }
         : null;
 
-    let streakWithoutUse = null;
-    if (logs.length) {
-        const lastEnd = getUseEndDatetime(logs[logs.length - 1]);
-        if (lastEnd) {
-            const ms = Date.now() - lastEnd.getTime();
-            if (ms >= 0) {
-                const minutes = Math.floor(ms / 60000);
-                streakWithoutUse = {
-                    minutes,
-                    hours: minutes / 60,
-                    text: formatBreakText(minutes)
-                };
-            }
-        }
-    }
+    const lastEnd = logs.length ? getUseEndDatetime(logs[logs.length - 1]) : null;
+    const streakWithoutUse = lastEnd ? describeElapsedMs(Date.now() - lastEnd.getTime()) : null;
 
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
     const recentBreakHours = logs
         .filter(l => l.breakHours != null && getLogDatetimeMs(l) >= thirtyDaysAgo)
         .map(l => l.breakHours);
 
-    const trend = logs
-        .filter(l => l.breakHours != null)
-        .slice(-10)
-        .map(l => ({
-            date: l.date,
-            hours: l.breakHours,
-            text: l.breakText,
-            label: formatDate(l.date)
-        }));
-
     return {
         count: breakHoursList.length,
         current: currentBreak,
         longest: breakHoursList.length ? Math.max(...breakHoursList) : null,
-        average: breakHoursList.length
-            ? breakHoursList.reduce((sum, h) => sum + h, 0) / breakHoursList.length
-            : null,
+        average: meanOrNull(breakHoursList),
         median: medianBreakHours(breakHoursList),
         shortest: breakHoursList.length ? Math.min(...breakHoursList) : null,
-        avg30Days: recentBreakHours.length
-            ? recentBreakHours.reduce((sum, h) => sum + h, 0) / recentBreakHours.length
-            : null,
+        avg30Days: meanOrNull(recentBreakHours),
         streakWithoutUse,
-        trend
+        trend: buildBreakTrend(logs, 'breakHours', 'breakText')
     };
 }
 
@@ -27055,29 +27002,12 @@ function recalculateBuyBreaksForData(substanceId, data) {
     const purchases = getPurchasesForSubstance(substanceId, data, { sortAsc: true });
 
     purchases.forEach((purchase, index) => {
-        if (index === 0) {
-            delete purchase.buyBreakMinutes;
-            delete purchase.buyBreakHours;
-            delete purchase.buyBreakText;
-            return;
-        }
-
-        const previous = purchases[index - 1];
-        const previousMs = getPurchaseDatetimeMs(previous);
+        const previousMs = index > 0 ? getPurchaseDatetimeMs(purchases[index - 1]) : null;
         const currentMs = getPurchaseDatetimeMs(purchase);
+        const buyBreakMs = previousMs && currentMs ? currentMs - previousMs : null;
 
-        if (!previousMs || !currentMs) {
-            delete purchase.buyBreakMinutes;
-            delete purchase.buyBreakHours;
-            delete purchase.buyBreakText;
-            return;
-        }
-
-        const buyBreakMs = currentMs - previousMs;
-        if (buyBreakMs < 0) {
-            delete purchase.buyBreakMinutes;
-            delete purchase.buyBreakHours;
-            delete purchase.buyBreakText;
+        if (buyBreakMs == null || buyBreakMs < 0) {
+            clearBuyBreakFields(purchase);
             return;
         }
 
@@ -27111,85 +27041,14 @@ function getBuyBreakMetrics(substanceId, bounds = null, data = appData) {
     const purchases = bounds
         ? filterPurchasesByStatsBounds(getPurchasesForInsightMetrics(substanceId, data), bounds)
         : getPurchasesForSubstance(substanceId, data, { sortAsc: true });
-    if (bounds) {
-        return getBuyBreakMetricsFromPurchases(substanceId, purchases, data);
-    }
-
-    const breakHoursList = purchases
-        .filter(p => p.buyBreakHours != null && !isNaN(p.buyBreakHours))
-        .map(p => p.buyBreakHours);
-
-    const lastPurchase = purchases.length ? purchases[purchases.length - 1] : null;
-    let timeSinceLastBuy = null;
-    if (lastPurchase) {
-        const lastMs = getPurchaseDatetimeMs(lastPurchase);
-        if (lastMs) {
-            const ms = Date.now() - lastMs;
-            if (ms >= 0) {
-                const minutes = Math.floor(ms / 60000);
-                timeSinceLastBuy = {
-                    minutes,
-                    hours: minutes / 60,
-                    text: formatBreakText(minutes)
-                };
-            }
-        }
-    }
-
-    const currentBuyBreak = lastPurchase?.buyBreakHours != null
-        ? {
-            hours: lastPurchase.buyBreakHours,
-            text: lastPurchase.buyBreakText || formatBreakText(lastPurchase.buyBreakMinutes)
-        }
-        : null;
+    const metrics = getBuyBreakMetricsFromPurchases(substanceId, purchases, data);
+    if (bounds) return metrics;
 
     const thirtyDaysAgo = Date.now() - 30 * 24 * 60 * 60 * 1000;
     const recentBreakHours = purchases
         .filter(p => p.buyBreakHours != null && getPurchaseDatetimeMs(p) >= thirtyDaysAgo)
         .map(p => p.buyBreakHours);
-
-    const average = breakHoursList.length
-        ? breakHoursList.reduce((sum, h) => sum + h, 0) / breakHoursList.length
-        : null;
-
-    let estimatedNextBuy = null;
-    if (lastPurchase && average != null) {
-        const lastMs = getPurchaseDatetimeMs(lastPurchase);
-        if (lastMs) {
-            const nextMs = lastMs + average * 60 * 60 * 1000;
-            const nextDate = new Date(nextMs);
-            estimatedNextBuy = {
-                date: nextDate,
-                label: formatDate(getLocalDateString(nextDate))
-            };
-        }
-    }
-
-    const trend = purchases
-        .filter(p => p.buyBreakHours != null)
-        .slice(-10)
-        .map(p => ({
-            date: p.date,
-            hours: p.buyBreakHours,
-            text: p.buyBreakText,
-            label: formatDate(p.date)
-        }));
-
-    return {
-        count: breakHoursList.length,
-        purchases: purchases.length,
-        lastPurchase,
-        current: currentBuyBreak,
-        timeSinceLastBuy,
-        longest: breakHoursList.length ? Math.max(...breakHoursList) : null,
-        average,
-        shortest: breakHoursList.length ? Math.min(...breakHoursList) : null,
-        avg30Days: recentBreakHours.length
-            ? recentBreakHours.reduce((sum, h) => sum + h, 0) / recentBreakHours.length
-            : null,
-        estimatedNextBuy,
-        trend
-    };
+    return { ...metrics, avg30Days: meanOrNull(recentBreakHours) };
 }
 
 function renderBuyBreakSincePreviousCell(purchase) {
@@ -27986,11 +27845,7 @@ function ensureWeedUseFormDefaults() {
         startEl.value = '';
         startEl.required = false;
     }
-    const endTimeEl = document.getElementById('use-end-time');
-    if (endTimeEl) endTimeEl.value = '';
-    const endDateEl = document.getElementById('use-end-date');
-    if (endDateEl) endDateEl.value = '';
-    document.getElementById('use-duration-preview')?.classList.add('hidden');
+    clearUseEndTimeInputs();
 }
 
 function setDefaultWeedUseLogDate() {
@@ -28002,10 +27857,7 @@ function setDefaultWeedUseLogDate() {
         startEl.value = '';
         startEl.required = false;
     }
-    const endTimeEl = document.getElementById('use-end-time');
-    if (endTimeEl) endTimeEl.value = '';
-    const endDateEl = document.getElementById('use-end-date');
-    if (endDateEl) endDateEl.value = '';
+    clearUseEndTimeInputs({ hideDurationPreview: false });
 }
 
 function setDefaultVapeUseLogDate() {
@@ -28470,11 +28322,7 @@ function ensureVapeUseFormDefaults() {
         startEl.value = '';
         startEl.required = false;
     }
-    const endTimeEl = document.getElementById('use-end-time');
-    if (endTimeEl) endTimeEl.value = '';
-    const endDateEl = document.getElementById('use-end-date');
-    if (endDateEl) endDateEl.value = '';
-    document.getElementById('use-duration-preview')?.classList.add('hidden');
+    clearUseEndTimeInputs();
 }
 
 function isGiftGivenLog(log) {
@@ -39981,24 +39829,11 @@ function getBuyBreakMetricsFromPurchases(substanceId, purchases, data = appData)
         .map(p => p.buyBreakHours);
 
     const lastPurchase = sorted.length ? sorted[sorted.length - 1] : null;
-    let timeSinceLastBuy = null;
-    if (lastPurchase) {
-        const lastMs = getPurchaseDatetimeMs(lastPurchase);
-        if (lastMs) {
-            const refMs = testReferenceDateStr
-                ? parseLocalDate(testReferenceDateStr)?.getTime() ?? Date.now()
-                : Date.now();
-            const ms = refMs - lastMs;
-            if (ms >= 0) {
-                const minutes = Math.floor(ms / 60000);
-                timeSinceLastBuy = {
-                    minutes,
-                    hours: minutes / 60,
-                    text: formatBreakText(minutes)
-                };
-            }
-        }
-    }
+    const lastMs = lastPurchase ? getPurchaseDatetimeMs(lastPurchase) : null;
+    const referenceMs = testReferenceDateStr
+        ? parseLocalDate(testReferenceDateStr)?.getTime() ?? Date.now()
+        : Date.now();
+    const timeSinceLastBuy = lastMs ? describeElapsedMs(referenceMs - lastMs) : null;
 
     const currentBuyBreak = lastPurchase?.buyBreakHours != null
         ? {
@@ -40007,32 +39842,16 @@ function getBuyBreakMetricsFromPurchases(substanceId, purchases, data = appData)
         }
         : null;
 
-    const average = breakHoursList.length
-        ? breakHoursList.reduce((sum, h) => sum + h, 0) / breakHoursList.length
-        : null;
+    const average = meanOrNull(breakHoursList);
 
     let estimatedNextBuy = null;
-    if (lastPurchase && average != null) {
-        const lastMs = getPurchaseDatetimeMs(lastPurchase);
-        if (lastMs) {
-            const nextMs = lastMs + average * 60 * 60 * 1000;
-            const nextDate = new Date(nextMs);
-            estimatedNextBuy = {
-                date: nextDate,
-                label: formatDate(getLocalDateString(nextDate))
-            };
-        }
+    if (lastMs && average != null) {
+        const nextDate = new Date(lastMs + average * 60 * 60 * 1000);
+        estimatedNextBuy = {
+            date: nextDate,
+            label: formatDate(getLocalDateString(nextDate))
+        };
     }
-
-    const trend = sorted
-        .filter(p => p.buyBreakHours != null)
-        .slice(-10)
-        .map(p => ({
-            date: p.date,
-            hours: p.buyBreakHours,
-            text: p.buyBreakText,
-            label: formatDate(p.date)
-        }));
 
     return {
         count: breakHoursList.length,
@@ -40045,7 +39864,7 @@ function getBuyBreakMetricsFromPurchases(substanceId, purchases, data = appData)
         shortest: breakHoursList.length ? Math.min(...breakHoursList) : null,
         avg30Days: null,
         estimatedNextBuy,
-        trend
+        trend: buildBreakTrend(sorted, 'buyBreakHours', 'buyBreakText')
     };
 }
 
@@ -40807,14 +40626,10 @@ function exportStatsComparePeriodsCsv() {
         alert('No comparison data to export.');
         return;
     }
-    const csvRows = matrix.map(row => row.map(csvEscape).join(','));
     const safeName = substanceId
-        ? getSubstanceDisplayName(getSubstance(substanceId)).replace(/[^\w.-]+/g, '_')
+        ? csvFilenamePart(getSubstanceDisplayName(getSubstance(substanceId)))
         : 'all-substances';
-    downloadBlob(
-        new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8' }),
-        `recovery-tracker-compare-periods-${safeName}-${getLocalDateString()}.csv`
-    );
+    downloadCsvRows(`recovery-tracker-compare-periods-${safeName}-${getLocalDateString()}.csv`, matrix);
 }
 
 function countDaysInRange(startDate, endDate) {
@@ -42645,66 +42460,37 @@ function buildBuyWeeklySummaryCsvRows(substanceId, bounds = null, data = appData
 }
 
 function exportStatsBuyWeekSummaryCsv() {
-    const substanceId = isAllSubstancesView() ? null : currentSubstanceId;
-    if (!substanceId) {
-        alert('Select a specific substance to export Week Summary.');
-        return;
-    }
-    const sub = getSubstance(substanceId);
-    if (!sub) {
-        alert('Select a substance to export.');
-        return;
-    }
+    const target = requireExportSubstance('Select a specific substance to export Week Summary.');
+    if (!target) return;
+    const { substanceId, sub } = target;
     const insights = buildInsightsDataset(substanceId);
     const csvMatrix = buildBuyWeeklySummaryCsvRows(substanceId, insights.bounds);
     if (csvMatrix.length <= 1) {
         alert('No weekly purchase data to export.');
         return;
     }
-    const csvRows = csvMatrix.map(row => row.map(csvEscape).join(','));
-    const safeName = getSubstanceDisplayName(sub).replace(/[^\w.-]+/g, '_');
-    downloadBlob(
-        new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8' }),
-        `recovery-tracker-spending-week-summary-${safeName}-${getLocalDateString()}.csv`
-    );
+    const safeName = csvFilenamePart(getSubstanceDisplayName(sub));
+    downloadCsvRows(`recovery-tracker-spending-week-summary-${safeName}-${getLocalDateString()}.csv`, csvMatrix);
 }
 
 function exportStatsWeeklySummaryCsv() {
-    const substanceId = isAllSubstancesView() ? null : currentSubstanceId;
-    if (!substanceId) {
-        alert('Select a specific substance to export Weekly Use Summary.');
-        return;
-    }
-    const sub = getSubstance(substanceId);
-    if (!sub) {
-        alert('Select a substance to export.');
-        return;
-    }
+    const target = requireExportSubstance('Select a specific substance to export Weekly Use Summary.');
+    if (!target) return;
+    const { substanceId, sub } = target;
     const insights = buildInsightsDataset(substanceId);
     const csvMatrix = buildStatsWeeklySummaryCsvRows(substanceId, insights.bounds);
     if (csvMatrix.length <= 1) {
         alert('No weekly data to export.');
         return;
     }
-    const csvRows = csvMatrix.map(row => row.map(csvEscape).join(','));
-    const safeName = getSubstanceDisplayName(sub).replace(/[^\w.-]+/g, '_');
-    downloadBlob(
-        new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8' }),
-        `recovery-tracker-weekly-use-summary-${safeName}-${getLocalDateString()}.csv`
-    );
+    const safeName = csvFilenamePart(getSubstanceDisplayName(sub));
+    downloadCsvRows(`recovery-tracker-weekly-use-summary-${safeName}-${getLocalDateString()}.csv`, csvMatrix);
 }
 
 function exportStatsBuyMonthSummaryCsv() {
-    const substanceId = isAllSubstancesView() ? null : currentSubstanceId;
-    if (!substanceId) {
-        alert('Select a specific substance to export Spending & Purchases.');
-        return;
-    }
-    const sub = getSubstance(substanceId);
-    if (!sub) {
-        alert('Select a substance to export.');
-        return;
-    }
+    const target = requireExportSubstance('Select a specific substance to export Spending & Purchases.');
+    if (!target) return;
+    const { substanceId, sub } = target;
     const insights = buildInsightsDataset(substanceId);
     const rows = insights.buyMonthRows;
     if (!rows.length) {
@@ -42735,7 +42521,7 @@ function exportStatsBuyMonthSummaryCsv() {
                 : 'Running Amount Spent'
         );
     }
-    const csvRows = [headers.map(csvEscape).join(',')];
+    const csvMatrix = [headers];
     rows.slice().reverse().forEach(row => {
         const line = [
             row.monthLabel || row.rowLabel,
@@ -42751,13 +42537,10 @@ function exportStatsBuyMonthSummaryCsv() {
                 row.runningSpent != null ? row.runningSpent.toFixed(2) : ''
             );
         }
-        csvRows.push(line.map(csvEscape).join(','));
+        csvMatrix.push(line);
     });
-    const safeName = substanceName.replace(/[^\w.-]+/g, '_');
-    downloadBlob(
-        new Blob([csvRows.join('\n')], { type: 'text/csv;charset=utf-8' }),
-        `recovery-tracker-spending-month-summary-${safeName}-${getLocalDateString()}.csv`
-    );
+    const safeName = csvFilenamePart(substanceName);
+    downloadCsvRows(`recovery-tracker-spending-month-summary-${safeName}-${getLocalDateString()}.csv`, csvMatrix);
 }
 
 function renderStatsBuyStoreBreakdown(insights) {
@@ -43823,8 +43606,7 @@ function exportStatsCalendarCsv() {
         filename = `calendar-year-${sub.name}-${year}`;
     }
 
-    const csv = rows.map(r => r.map(c => `"${String(c ?? '').replace(/"/g, '""')}"`).join(',')).join('\n');
-    downloadBlob(new Blob([csv], { type: 'text/csv' }), `${filename}.csv`);
+    downloadCsvRows(`${filename}.csv`, rows);
 }
 
 function updateStatsCalendarLayoutForViewMode() {
@@ -51019,6 +50801,32 @@ function csvEscape(value) {
     return s;
 }
 
+function csvRowsToText(rows) {
+    return (rows || []).map(row => row.map(csvEscape).join(',')).join('\n');
+}
+
+function downloadCsvRows(filename, rows) {
+    downloadBlob(new Blob([csvRowsToText(rows)], { type: 'text/csv;charset=utf-8' }), filename);
+}
+
+function csvFilenamePart(value) {
+    return String(value ?? '').replace(/[^\w.-]+/g, '_');
+}
+
+function requireExportSubstance(missingSelectionMessage) {
+    const substanceId = isAllSubstancesView() ? null : currentSubstanceId;
+    if (!substanceId) {
+        alert(missingSelectionMessage);
+        return null;
+    }
+    const sub = getSubstance(substanceId);
+    if (!sub) {
+        alert('Select a substance to export.');
+        return null;
+    }
+    return { substanceId, sub };
+}
+
 function buildUseHistoryCsvRows(options = {}) {
     const substanceId = options.substanceId !== undefined
         ? options.substanceId
@@ -51098,10 +50906,7 @@ function buildUseHistoryCsvRows(options = {}) {
 
 function exportUseHistoryCsv(options = {}) {
     const { headers, body } = buildUseHistoryCsvRows(options);
-    const lines = [headers.map(csvEscape).join(',')];
-    body.forEach(row => lines.push(row.map(v => csvEscape(v)).join(',')));
-    const blob = new Blob([lines.join('\n')], { type: 'text/csv;charset=utf-8' });
-    downloadBlob(blob, `use-history-${getLocalDateString()}.csv`);
+    downloadCsvRows(`use-history-${getLocalDateString()}.csv`, [headers, ...body]);
 }
 
 function exportDataCsv() {
@@ -52861,8 +52666,7 @@ function exportCalendarCsv() {
         if (includeNotes) row.push(ev.notes || '');
         rows.push(row);
     });
-    const csv = rows.map(r => r.map(csvEscape).join(',')).join('\n');
-    downloadBlob(new Blob([csv], { type: 'text/csv;charset=utf-8' }), `recovery-calendar-${bounds.startDate}-${bounds.endDate}.csv`);
+    downloadCsvRows(`recovery-calendar-${bounds.startDate}-${bounds.endDate}.csv`, rows);
 }
 
 function exportCalendarIcs() {
