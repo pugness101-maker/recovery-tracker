@@ -1952,7 +1952,15 @@ const CCR_PRESET_COLORS = Object.freeze({
     highSpending: { background: 'rgba(244, 67, 54, 0.22)', text: '#b71c1c', border: '#ef5350' },
     belowTaper: { background: 'rgba(76, 175, 80, 0.22)', text: '#1b5e20', border: '#66bb6a' },
     taperExceeded: { background: 'rgba(244, 67, 54, 0.22)', text: '#b71c1c', border: '#e57373' },
-    recoveryStreak: { background: 'rgba(33, 150, 243, 0.22)', text: '#0d47a1', border: '#2196f3' }
+    recoveryStreak: { background: 'rgba(33, 150, 243, 0.22)', text: '#0d47a1', border: '#2196f3' },
+    // Light-theme defaults (subtle; text stays theme default)
+    giftGiven: { background: '#EDE7F6', text: '', border: '#7E57C2' },
+    giftReceived: { background: '#E3F2FD', text: '', border: '#42A5F5' }
+});
+
+const CCR_DARK_GIFT_COLOR_OVERRIDES = Object.freeze({
+    giftGiven: { background: 'rgba(126, 87, 194, 0.22)', text: '', border: '#9575CD' },
+    giftReceived: { background: 'rgba(66, 165, 245, 0.22)', text: '', border: '#64B5F6' }
 });
 
 const CCR_LIGHT_TEXT_OVERRIDES = Object.freeze({
@@ -1985,10 +1993,19 @@ function ccrNewId(prefix = 'ccr') {
 
 function getConditionalColorPresetRules(theme = 'dark') {
     const textMap = theme === 'light' ? CCR_LIGHT_TEXT_OVERRIDES : CCR_DARK_TEXT_OVERRIDES;
-    const color = (key) => ({
-        ...CCR_PRESET_COLORS[key],
-        ...(textMap[key] || {})
-    });
+    const color = (key) => {
+        if (key === 'giftGiven' || key === 'giftReceived') {
+            const base = { ...(CCR_PRESET_COLORS[key] || {}) };
+            if (theme === 'dark') {
+                return { ...base, ...(CCR_DARK_GIFT_COLOR_OVERRIDES[key] || {}) };
+            }
+            return base;
+        }
+        return {
+            ...CCR_PRESET_COLORS[key],
+            ...(textMap[key] || {})
+        };
+    };
     return [
         {
             id: 'preset-on-track',
@@ -2132,6 +2149,38 @@ function getConditionalColorPresetRules(theme = 'dark') {
             value: 7,
             colors: color('recoveryStreak'),
             priority: 85,
+            stopProcessing: false,
+            statusLabel: ''
+        },
+        {
+            id: 'preset-gift-given',
+            name: 'Gift Given',
+            enabled: true,
+            isPreset: true,
+            presetId: 'giftGiven',
+            substanceScope: 'all',
+            sectionScope: ['useHistory'],
+            metric: 'transactionType',
+            operator: 'eq',
+            value: 'gift_given',
+            colors: color('giftGiven'),
+            priority: 40,
+            stopProcessing: false,
+            statusLabel: ''
+        },
+        {
+            id: 'preset-gift-received',
+            name: 'Gift Received',
+            enabled: true,
+            isPreset: true,
+            presetId: 'giftReceived',
+            substanceScope: 'all',
+            sectionScope: ['useHistory'],
+            metric: 'transactionType',
+            operator: 'eq',
+            value: 'gift_received',
+            colors: color('giftReceived'),
+            priority: 40,
             stopProcessing: false,
             statusLabel: ''
         }
@@ -2359,6 +2408,26 @@ function normalizeConditionalColorRule(raw, index = 0) {
     };
 }
 
+function ensureMissingGiftTransactionColorPresets(state, theme = 'dark') {
+    if (!state || !Array.isArray(state.rules)) return false;
+    const giftPresets = getConditionalColorPresetRules(theme)
+        .filter(p => p.presetId === 'giftGiven' || p.presetId === 'giftReceived');
+    const byPresetId = new Set(state.rules.map(r => r.presetId).filter(Boolean));
+    const byName = new Set(state.rules.map(r => String(r.name || '').toLowerCase()));
+    let added = false;
+    giftPresets.forEach(preset => {
+        if (byPresetId.has(preset.presetId)) return;
+        if (byName.has(String(preset.name || '').toLowerCase())) return;
+        state.rules.push(normalizeConditionalColorRule({
+            ...preset,
+            id: ccrNewId('preset'),
+            lastModified: new Date().toISOString()
+        }));
+        added = true;
+    });
+    return added;
+}
+
 function ensureConditionalColorRules(data = appData, options = {}) {
     if (!data.settings) data.settings = {};
     const theme = options.theme
@@ -2378,6 +2447,7 @@ function ensureConditionalColorRules(data = appData, options = {}) {
         state.rules = state.rules
             .map((r, i) => normalizeConditionalColorRule(r, i))
             .filter(Boolean);
+        ensureMissingGiftTransactionColorPresets(state, theme);
     }
     return state;
 }
@@ -2477,15 +2547,35 @@ function ccrIsEmpty(value) {
     return false;
 }
 
+function normalizeCcrTransactionTypeToken(value) {
+    const raw = String(value ?? '').trim().toLowerCase();
+    if (!raw) return '';
+    const compact = raw.replace(/[\s-]+/g, '_');
+    if (compact === 'gift_given' || compact === 'giftgiven') return 'gift_given';
+    if (compact === 'gift_received' || compact === 'giftreceived') return 'gift_received';
+    if (compact === 'inventory_adjustment' || compact === 'inventory_adj' || compact === 'adjustment') {
+        return 'inventory_adjustment';
+    }
+    if (compact === 'shared_use' || compact === 'legacy_shared_use') return 'shared_use';
+    if (compact === 'use' || compact === 'personal_use') return 'use';
+    return compact;
+}
+
 function compareConditionalColorRule(rule, context = {}) {
     if (!rule || !rule.enabled) return false;
     const operator = rule.operator;
-    const rawValue = context.value;
-    const textValue = context.textValue != null ? String(context.textValue) : (rawValue == null ? '' : String(rawValue));
+    let rawValue = context.value;
+    let textValue = context.textValue != null ? String(context.textValue) : (rawValue == null ? '' : String(rawValue));
+    let ruleValue = rule.value;
+    if (rule.metric === 'transactionType') {
+        rawValue = normalizeCcrTransactionTypeToken(rawValue);
+        ruleValue = normalizeCcrTransactionTypeToken(rule.value);
+        textValue = normalizeCcrTransactionTypeToken(textValue || rawValue);
+    }
     const numValue = ccrCoerceNumber(rawValue);
     const compare = isCcrDurationMetric(rule.metric)
         ? getCcrRuleCompareMinutes(rule, 'value')
-        : ccrCoerceNumber(rule.value);
+        : ccrCoerceNumber(ruleValue);
     const compareTo = isCcrDurationMetric(rule.metric)
         ? getCcrRuleCompareMinutes(rule, 'valueTo')
         : ccrCoerceNumber(rule.valueTo);
@@ -2502,13 +2592,17 @@ function compareConditionalColorRule(rule, context = {}) {
             case 'false':
                 return rawValue === false || rawValue === 0 || String(rawValue).toLowerCase() === 'false';
             case 'contains':
-                return textValue.toLowerCase().includes(String(rule.value ?? '').toLowerCase());
+                return textValue.toLowerCase().includes(String(ruleValue ?? '').toLowerCase());
             case 'eq':
-                if (numValue != null && compare != null) return Math.abs(numValue - compare) < 1e-9;
-                return String(rawValue ?? '').toLowerCase() === String(rule.value ?? '').toLowerCase();
+                if (numValue != null && compare != null && rule.metric !== 'transactionType') {
+                    return Math.abs(numValue - compare) < 1e-9;
+                }
+                return String(rawValue ?? '').toLowerCase() === String(ruleValue ?? '').toLowerCase();
             case 'neq':
-                if (numValue != null && compare != null) return Math.abs(numValue - compare) >= 1e-9;
-                return String(rawValue ?? '').toLowerCase() !== String(rule.value ?? '').toLowerCase();
+                if (numValue != null && compare != null && rule.metric !== 'transactionType') {
+                    return Math.abs(numValue - compare) >= 1e-9;
+                }
+                return String(rawValue ?? '').toLowerCase() !== String(ruleValue ?? '').toLowerCase();
             case 'gt':
                 return numValue != null && compare != null && numValue > compare;
             case 'gte':
@@ -2663,6 +2757,49 @@ function buildConditionalColorInlineStyle(result) {
         s.text ? `color:${s.text}` : '',
         s.border ? `border:1px solid ${s.border}` : ''
     ].filter(Boolean).join(';');
+}
+
+/** Row-level CCR for Use History (Gift Given / Gift Received presets + custom overrides). */
+function evaluateUseHistoryRowConditionalColor(entry, substanceId = null, data = appData) {
+    if (!entry || typeof evaluateConditionalColorRules !== 'function') return null;
+    const tx = typeof getLogTransactionType === 'function'
+        ? getLogTransactionType(entry)
+        : (entry.transactionType || 'use');
+    const sid = substanceId || (typeof getUseSubstanceId === 'function'
+        ? getUseSubstanceId(entry, data)
+        : entry.substanceId);
+    return evaluateConditionalColorRules({
+        substanceId: sid,
+        section: 'useHistory',
+        metric: 'transactionType',
+        value: tx,
+        textValue: tx,
+        log: entry
+    }, data);
+}
+
+function buildUseHistoryRowInlineStyle(ccrResult) {
+    if (!ccrResult?.matched?.length || !ccrResult.style) return '';
+    const s = ccrResult.style;
+    const parts = [];
+    if (s.background) {
+        parts.push(`--ccr-row-bg:${s.background}`);
+    }
+    if (s.border) {
+        parts.push(`--ccr-row-border:${s.border}`);
+    }
+    if (s.text) {
+        parts.push(`--ccr-row-text:${s.text}`);
+    }
+    return parts.join(';');
+}
+
+function getUseHistoryRowColorClassNames(entry, ccrResult) {
+    const classes = [];
+    if (ccrResult?.matched?.length) classes.push('ccr-row-colored');
+    if (typeof isGiftGivenLog === 'function' && isGiftGivenLog(entry)) classes.push('gift-given-row');
+    else if (typeof isGiftReceivedLog === 'function' && isGiftReceivedLog(entry)) classes.push('gift-received-row');
+    return classes;
 }
 
 function renderConditionalColorLabels(result, { fallbackLabel = '' } = {}) {
@@ -29122,11 +29259,11 @@ function renderUseHistoryHeaderCell(colId, substanceId = getUseLogViewSubstanceI
     return `<th data-col="${colId}" title="${escapeAttr(label)}"><span class="customizable-th-label">${escapeHtml(label)}</span>${resize}</th>`;
 }
 
-function formatUseHistoryTransactionType(log) {
+function formatUseHistoryTransactionType(log, { withIcon = false } = {}) {
     const tx = getLogTransactionType(log);
     if (tx === 'shared_use') return 'Legacy Shared Use';
-    if (tx === 'gift_given') return 'Gift given';
-    if (tx === 'gift_received') return 'Gift received';
+    if (tx === 'gift_given') return withIcon ? '🎁 Gift given' : 'Gift given';
+    if (tx === 'gift_received') return withIcon ? '📦 Gift received' : 'Gift received';
     if (tx === 'inventory_adjustment') return 'Inventory adj.';
     return 'Use';
 }
@@ -29178,7 +29315,7 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
             }
             return `<td data-col="${colId}"${dataLabel}>${getNicotineProductTypeLabel(getNicotineProductType(entry))}</td>`;
         case 'transactionType':
-            return `<td data-col="${colId}"${dataLabel}>${formatUseHistoryTransactionType(entry)}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${formatUseHistoryTransactionType(entry, { withIcon: true })}</td>`;
         case 'amount': {
             let amountHtml = formatUseHistoryAmountHtml(entry);
             if (typeof evaluateConditionalColorRules === 'function') {
@@ -38660,6 +38797,9 @@ function renderUseLogBadge(log) {
 
 function renderUseHistoryCard(entry, sub, avgRate) {
     const warnings = getUseRowWarnings(entry, sub.id, avgRate);
+    const rowCcr = evaluateUseHistoryRowConditionalColor(entry, sub.id);
+    const rowColorClasses = getUseHistoryRowColorClassNames(entry, rowCcr);
+    const rowStyle = buildUseHistoryRowInlineStyle(rowCcr);
     const isWeedSimple = isWeedDateOnlyUseLog(entry);
     const isVapeDateOnly = isVapeDateOnlyUseLog(entry);
     const isLsdDateOnly = isLsdDateOnlyUseLog(entry);
@@ -38688,6 +38828,8 @@ function renderUseHistoryCard(entry, sub, avgRate) {
         amountDisplay = formatAlcoholUseSummary(entry, sub);
     }
     const warningClass = warnings.length ? ` ${warnings.join(' ')}` : '';
+    const colorClass = rowColorClasses.length ? ` ${rowColorClasses.join(' ')}` : '';
+    const colorStyle = rowStyle ? ` style="${escapeAttr(rowStyle)}"` : '';
 
     const splitNote = formatOvernightSplitNote(entry, sub.id);
     const splitHtml = splitNote ? `<div class="use-history-split-note cal-muted">${splitNote}</div>` : '';
@@ -38699,7 +38841,7 @@ function renderUseHistoryCard(entry, sub, avgRate) {
            </div>`
         : '';
 
-    return `<article class="use-history-card${warningClass}" data-log-id="${escapeAttr(entry.id)}">
+    return `<article class="use-history-card${warningClass}${colorClass}" data-log-id="${escapeAttr(entry.id)}"${colorStyle}>
         <div class="use-history-card-top">
             <label class="use-history-card-check">
                 <input type="checkbox" class="use-history-row-cb" data-log-id="${escapeAttr(entry.id)}" aria-label="Select entry" ${checked}>
@@ -38884,7 +39026,11 @@ function renderUseHistoryTable(options = {}) {
             }
         }
         const warnings = getUseRowWarnings(entry, sub.id, avgRate);
-        tableHtml += `<tr class="${warnings.join(' ')}">`;
+        const rowCcr = evaluateUseHistoryRowConditionalColor(entry, sub.id);
+        const rowColorClasses = getUseHistoryRowColorClassNames(entry, rowCcr);
+        const rowClasses = [...warnings, ...rowColorClasses].filter(Boolean).join(' ');
+        const rowStyle = buildUseHistoryRowInlineStyle(rowCcr);
+        tableHtml += `<tr class="${escapeAttr(rowClasses)}"${rowStyle ? ` style="${escapeAttr(rowStyle)}"` : ''}>`;
         useColumns.forEach(colId => {
             tableHtml += renderUseHistoryBodyCell(colId, entry, sub, avgRate);
         });
@@ -59000,6 +59146,13 @@ function __getRecoveryTrackerTestExports() {
         formatCcrDurationThresholdLabel,
         updateCcrDurationValueLabels,
         onCcrMetricChanged,
+        evaluateUseHistoryRowConditionalColor,
+        buildUseHistoryRowInlineStyle,
+        getUseHistoryRowColorClassNames,
+        normalizeCcrTransactionTypeToken,
+        ensureMissingGiftTransactionColorPresets,
+        CCR_DARK_GIFT_COLOR_OVERRIDES,
+        formatUseHistoryTransactionType,
         updateAppearanceZoomLayoutMetrics,
         normalizeAppearanceSpacing,
         getAppearanceSpacing,

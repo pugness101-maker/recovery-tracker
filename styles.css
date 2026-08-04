@@ -4925,6 +4925,18 @@ body.table-col-resizing {
     background: rgba(255, 235, 59, 0.12);
 }
 
+.session-table tr.ccr-row-colored > td {
+    background: var(--ccr-row-bg, transparent);
+    color: var(--ccr-row-text, inherit);
+    box-shadow: inset 3px 0 0 0 var(--ccr-row-border, transparent);
+}
+
+.session-table tr.ccr-row-colored.gift-given-row > td,
+.session-table tr.ccr-row-colored.gift-received-row > td {
+    /* Keep gift row tones quieter than warning red/amber/green */
+    background: var(--ccr-row-bg, transparent);
+}
+
 .session-legend {
     display: flex;
     flex-wrap: wrap;
@@ -5718,6 +5730,13 @@ body.table-col-resizing {
     border-color: rgba(255, 235, 59, 0.45);
 }
 
+.use-history-card.ccr-row-colored {
+    background: var(--ccr-row-bg, var(--bg-card));
+    border-color: var(--ccr-row-border, var(--border));
+    color: var(--ccr-row-text, inherit);
+    box-shadow: inset 3px 0 0 0 var(--ccr-row-border, transparent);
+}
+
 .use-history-card-top {
     display: flex;
     gap: 10px;
@@ -6457,6 +6476,13 @@ body.table-col-resizing {
 
 .use-history-card.taper-close {
     border-color: rgba(255, 235, 59, 0.45);
+}
+
+.use-history-card.ccr-row-colored {
+    background: var(--ccr-row-bg, var(--bg-card));
+    border-color: var(--ccr-row-border, var(--border));
+    color: var(--ccr-row-text, inherit);
+    box-shadow: inset 3px 0 0 0 var(--ccr-row-border, transparent);
 }
 
 .use-history-card-top {
