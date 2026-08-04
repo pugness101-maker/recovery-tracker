@@ -13,13 +13,13 @@ function setup() {
     return rt;
 }
 
-test('markup uses combined nav tabs and keeps legacy content ids', () => {
+test('markup uses combined nav tabs and keeps taper content ids', () => {
     const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
     assert.match(html, /data-tab="goals-plans-tab"/);
     assert.match(html, /data-tab="insights-calendar-tab"/);
     assert.match(html, /id="goals-plans-tab"/);
     assert.match(html, /id="insights-calendar-tab"/);
-    assert.match(html, /id="goals-tab"/);
+    assert.match(html, /id="tapers-root"/);
     assert.match(html, /id="taper-tab"/);
     assert.match(html, /id="stats-tab"/);
     assert.match(html, /id="calendar-tab"/);
@@ -27,7 +27,9 @@ test('markup uses combined nav tabs and keeps legacy content ids', () => {
     assert.doesNotMatch(html, /data-tab="taper-tab"/);
     assert.doesNotMatch(html, /data-tab="stats-tab"/);
     assert.doesNotMatch(html, /data-tab="calendar-tab"/);
-    assert.match(html, /Goals &amp; Plans|Goals & Plans/);
+    assert.match(html, />Tapers</);
+    assert.match(html, /Tapers define a gradual reduction path/);
+    assert.doesNotMatch(html, /Goals &amp; Plans|New Goal|Convert Taper to Goal|goals define the target/i);
     assert.match(html, /Insights &amp; Calendar|Insights & Calendar/);
 });
 
@@ -87,7 +89,6 @@ test('saved combined nav view state persists in settings', () => {
     prefs.insightsCalendarView = 'money';
     assert.equal(data.settings.combinedNav.goalsPlansView, 'templates');
     assert.equal(data.settings.combinedNav.insightsCalendarView, 'money');
-    // Legacy Insights views migrate into the simplified 5-tab set
     prefs.insightsCalendarView = 'financial';
     rt.ensureCombinedNavPrefs(data);
     assert.equal(data.settings.combinedNav.insightsCalendarView, 'money');
@@ -107,10 +108,9 @@ test('migrate activeTab from legacy goals/plan/insights/calendar', () => {
     assert.equal(data.settings.combinedNav.insightsCalendarView, 'calendar');
 });
 
-test('goals and plans remain separate record types with multi-goal plan links', () => {
+test('unified records are taper-only and existing tapers still load', () => {
     const rt = setup();
     const data = rt.__getTestAppData();
-    rt.ensureGoals(data);
     if (typeof rt.ensureTaperPlansV2 === 'function') rt.ensureTaperPlansV2(data);
 
     const planId = 'plan-link-1';
@@ -119,60 +119,32 @@ test('goals and plans remain separate record types with multi-goal plan links', 
         id: planId,
         name: 'Weekly taper',
         substanceId: 'coke',
+        status: 'active',
         weeklyTargets: [{ weekStart: '2026-07-28', weekEnd: '2026-08-03', targetAmount: 1 }],
         archived: false
     });
+    data.goals = [{ id: 'legacy-goal', name: 'Ignored', status: 'active' }];
 
-    const g1 = rt.normalizeGoalRecord({
-        id: 'g1',
-        name: 'Weekly max',
-        type: 'max_weekly_use',
-        substanceId: 'coke',
-        targetValue: 1,
-        period: 'weekly',
-        status: 'active',
-        linkedPlanId: planId
-    });
-    const g2 = rt.normalizeGoalRecord({
-        id: 'g2',
-        name: 'No buy 14d',
-        type: 'no_purchase_streak',
-        substanceId: 'coke',
-        targetValue: 14,
-        period: 'entire',
-        status: 'active',
-        linkedPlanId: planId
-    });
-    data.goals.push(g1, g2);
-
-    const linked = rt.goalsLinkedToPlan(planId, data);
-    assert.equal(linked.length, 2);
-    assert.ok(Array.isArray(data.goals));
-    assert.ok(Array.isArray(data.taperPlansV2));
-    assert.notEqual(data.goals[0].id, data.taperPlansV2[0].id);
     const unified = rt.getUnifiedGoalsPlansRecords(data);
-    assert.ok(unified.some(record => record.id === 'g1' && record.type === 'goal'));
-    assert.ok(unified.some(record => record.id === planId && record.type === 'taper'));
-
-    rt.unlinkGoalFromPlan('g1', data);
-    assert.equal(rt.getGoalById('g1', data).linkedPlanId, '');
-    assert.equal(rt.goalsLinkedToPlan(planId, data).length, 1);
+    assert.equal(unified.length, 1);
+    assert.equal(unified[0].type, 'taper');
+    assert.equal(unified[0].id, planId);
+    assert.equal(rt.goalsLinkedToPlan(planId, data).length, 0);
+    assert.equal(rt.createGoalsFromPlanAndOpen(planId).length, 0);
+    assert.equal(rt.GOAL_TEMPLATES.length, 0);
 });
 
-test('goals-plans overview includes required summary fields', () => {
+test('tapers overview includes required summary fields', () => {
     const rt = setup();
     const overview = rt.buildGoalsPlansOverview(rt.__getTestAppData());
     assert.ok('activeTotal' in overview);
     assert.ok('activeGoalCount' in overview);
     assert.ok('activePlanCount' in overview);
     assert.ok('activeTaperCount' in overview);
-    assert.ok('goalsOnTrack' in overview);
-    assert.ok('goalsNearLimit' in overview);
     assert.ok('plansOnTrack' in overview);
     assert.ok('plansAboveTarget' in overview);
-    assert.ok('closestGoalDeadline' in overview);
     assert.ok('currentPlanWeek' in overview);
     assert.ok(Array.isArray(overview.activeRecords));
-    assert.ok(Array.isArray(overview.recentlyCompletedGoals));
     assert.ok(Array.isArray(overview.recentlyCompletedPlans));
+    assert.equal(overview.activeGoalCount, 0);
 });

@@ -4,7 +4,7 @@ import { loadRecoveryTrackerApp } from './harness.mjs';
 
 const REFERENCE_DATE = '2026-08-01';
 
-function setup({ goals = [], taperPlansV2 = [], settings = {} } = {}) {
+function setup({ taperPlansV2 = [], settings = {} } = {}) {
     const rt = loadRecoveryTrackerApp();
     rt.setTestReferenceDate(REFERENCE_DATE);
     rt.__setTestAppData({
@@ -22,7 +22,7 @@ function setup({ goals = [], taperPlansV2 = [], settings = {} } = {}) {
         logs: [],
         purchases: [],
         cravings: [],
-        goals,
+        goals: [],
         taperPlans: {},
         taperPlansV2,
         settings: { currency: '$', substanceSettings: {}, ...settings },
@@ -32,20 +32,6 @@ function setup({ goals = [], taperPlansV2 = [], settings = {} } = {}) {
     });
     rt.ensureGoals();
     return rt;
-}
-
-function makeGoal(rt, overrides) {
-    return rt.saveGoalRecord(rt.normalizeGoalRecord({
-        ...rt.getDefaultGoalRecord(),
-        substanceId: 'coke',
-        type: 'max_weekly_use',
-        targetValue: 2,
-        period: 'weekly',
-        startDate: '2026-07-01',
-        endDate: '2026-08-31',
-        status: 'active',
-        ...overrides
-    })).goal;
 }
 
 const PLAN = {
@@ -112,7 +98,6 @@ test('subview aliases normalize onto the canonical combined views', () => {
     assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active');
     rt.setGoalsPlansView('goals', { skipRoute: true });
     assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active');
-    // Unknown views keep the current one rather than resetting the tab.
     rt.setGoalsPlansView('not-a-view', { skipRoute: true });
     assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active');
 
@@ -133,58 +118,23 @@ test('setGoalsPlansView can skip persisting the preference', () => {
     assert.equal(saved, 'overview');
 });
 
-test('goals link to and unlink from a plan', () => {
+test('goal conversion helpers are no-ops after goals removal', () => {
     const rt = setup({ taperPlansV2: [PLAN] });
-    const goal = makeGoal(rt, { name: 'Weekly cap' });
-
-    assert.equal(rt.goalsLinkedToPlan('').length, 0);
     assert.equal(rt.goalsLinkedToPlan('plan-1').length, 0);
-
-    const linked = rt.linkGoalToPlan(goal.id, 'plan-1');
-    assert.equal(linked.linkedPlanId, 'plan-1');
-    assert.equal(rt.goalsLinkedToPlan('plan-1').length, 1);
-    assert.ok(linked.changeHistory.some(entry => entry.action === 'plan-linked'));
-    assert.equal(rt.linkGoalToPlan('missing-goal', 'plan-1'), null);
-
-    const unlinked = rt.unlinkGoalFromPlan(goal.id);
-    assert.equal(unlinked.linkedPlanId, '');
-    assert.equal(rt.goalsLinkedToPlan('plan-1').length, 0);
+    assert.equal(rt.linkGoalToPlan('any', 'plan-1'), null);
+    assert.equal(rt.createGoalsFromPlanAndOpen('plan-1').length, 0);
+    assert.equal(rt.createPlanFromGoal('any'), null);
+    assert.equal(rt.getGoalById('any'), null);
+    assert.equal(rt.evaluateAllGoals().length, 0);
 });
 
-test('creating goals from a plan activates every suggestion and links them to the plan', () => {
-    const rt = setup({ taperPlansV2: [PLAN] });
-    assert.equal(rt.createGoalsFromPlanAndOpen('missing-plan').length, 0);
-    assert.equal(rt.getGoals().length, 0);
-
-    const created = rt.createGoalsFromPlanAndOpen('plan-1');
-    assert.ok(created.length >= 3);
-    assert.ok(created.every(g => g.status === 'active' && g.linkedPlanId === 'plan-1'));
-    assert.equal(rt.getGoals().length, created.length);
-    assert.equal(rt.goalsLinkedToPlan('plan-1').length, created.length);
-});
-
-test('createPlanFromGoal returns the goal and needs no plan form to be open', () => {
-    const rt = setup({ taperPlansV2: [PLAN] });
-    const goal = makeGoal(rt, { name: 'Weekly cap' });
-    assert.equal(rt.createPlanFromGoal(goal.id).id, goal.id);
-    assert.equal(rt.createPlanFromGoal('missing-goal'), null);
-});
-
-test('goals and plans overview counts goals, plans and the closest deadline', () => {
+test('tapers overview counts active plans without goals', () => {
     const rt = setup({
         taperPlansV2: [PLAN, { ...PLAN, id: 'plan-2', name: 'Archived taper', archived: true, status: 'archived' }]
     });
-    makeGoal(rt, { name: 'Ends first', endDate: '2026-08-10' });
-    makeGoal(rt, { name: 'Ends later', endDate: '2026-08-20' });
-    makeGoal(rt, { name: 'Done', status: 'completed', completedAt: '2026-07-20T00:00:00.000Z' });
-
     const overview = rt.buildGoalsPlansOverview();
-    assert.equal(overview.activePlanCount, 1);
-    assert.equal(overview.plansOnTrack + overview.plansAboveTarget, 1);
-    assert.equal(overview.activeGoalCount, 2);
-    assert.equal(overview.closestGoalDeadline.name, 'Ends first');
-    assert.equal(overview.recentlyCompletedGoals.length, 1);
-    assert.equal(overview.recentlyCompletedPlans.length, 1);
-    assert.equal(overview.evaluations.length, 3);
-    assert.equal(overview.goalsOnTrack + overview.goalsNearLimit <= overview.evaluations.length, true);
+    assert.equal(overview.activeTaperCount, 1);
+    assert.equal(overview.activeGoalCount, 0);
+    assert.equal(overview.activeTotal, 1);
+    assert.ok(overview.activeRecords.some(r => r.id === 'plan-1' && r.type === 'taper'));
 });

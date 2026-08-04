@@ -304,17 +304,6 @@
                             </div>
                         </section>
 
-                        <section class="rd-section collapsible-section" data-rd-section="goals" aria-labelledby="rd-goals-heading">
-                            <button type="button" class="section-toggle rd-section-toggle" id="rd-goals-heading" onclick="toggleRecoveryDashboardSection('goals')" aria-expanded="true" aria-controls="rd-goals-body">
-                                <span>Goals</span>
-                                <span class="chevron" aria-hidden="true">⌄</span>
-                            </button>
-                            <div id="rd-goals-body" class="section-content rd-section-body">
-                                <p class="rd-section-hint">Active goals for the selected substance. Creating or deleting a goal never changes logs, purchases, or plans.</p>
-                                <div id="rd-goals-overview" class="rd-goals-overview"></div>
-                            </div>
-                        </section>
-
                         <section class="rd-section collapsible-section" data-rd-section="inventory" aria-labelledby="rd-inventory-heading">
                             <button type="button" class="section-toggle rd-section-toggle" id="rd-inventory-heading" onclick="toggleRecoveryDashboardSection('inventory')" aria-expanded="false" aria-controls="rd-inventory-body">
                                 <span>Inventory Overview</span>
@@ -800,24 +789,24 @@
             </section>
 
             <!-- Calendar Tab -->
-            <!-- Goals & Plans Tab -->
+            <!-- Tapers Tab -->
             <section id="goals-plans-tab" class="tab combined-page goals-plans-page">
                 <div class="page-header-row combined-page-header">
                     <div>
-                        <h2>Goals &amp; Plans</h2>
-                        <p class="settings-hint">Goals define the target. Tapers define the gradual path.</p>
+                        <h2>Tapers</h2>
+                        <p class="settings-hint">Tapers define a gradual reduction path.</p>
                     </div>
                 </div>
 
                 <div class="combined-subnav-wrap">
                     <label class="combined-subnav-mobile-label" for="gp-subnav-select">View</label>
-                    <select id="gp-subnav-select" class="combined-subnav-select" aria-label="Goals and Plans view" onchange="setGoalsPlansView(this.value)">
+                    <select id="gp-subnav-select" class="combined-subnav-select" aria-label="Tapers view" onchange="setGoalsPlansView(this.value)">
                         <option value="overview">Overview</option>
                         <option value="active">Active</option>
                         <option value="history">History</option>
                         <option value="templates">Templates</option>
                     </select>
-                    <nav class="combined-subnav" id="gp-subnav" aria-label="Goals and Plans sections" role="tablist">
+                    <nav class="combined-subnav" id="gp-subnav" aria-label="Tapers sections" role="tablist">
                         <button type="button" class="combined-subnav-btn active" data-gp-view="overview" onclick="setGoalsPlansView('overview')">Overview</button>
                         <button type="button" class="combined-subnav-btn" data-gp-view="active" onclick="setGoalsPlansView('active')">Active</button>
                         <button type="button" class="combined-subnav-btn" data-gp-view="history" onclick="setGoalsPlansView('history')">History</button>
@@ -829,11 +818,9 @@
                     <div id="gp-overview-root" class="combined-overview-root" aria-live="polite"></div>
                 </div>
 
-                <div id="goals-tab" class="combined-subview goals-page" data-gp-view="active history templates" role="tabpanel" hidden>
-                    <div id="goals-root" class="goals-root" aria-live="polite"></div>
-                </div>
+                <div id="tapers-root" class="combined-subview combined-records-root" data-gp-view="active history templates" role="tabpanel" hidden aria-live="polite"></div>
 
-                <div id="taper-tab" class="combined-subview taper-page" data-gp-view="" role="tabpanel" hidden>
+                <div id="taper-tab" class="taper-page taper-workspace" hidden>
                     <div class="page-header-row taper-page-header">
                     <h2>Plan</h2>
                     <div class="page-substance-selector substance-select-card taper-toolbar">
@@ -861,7 +848,6 @@
                         <button type="button" class="taper-chip-btn" onclick="archiveSelectedTaperPlan()">Archive</button>
                         <button type="button" class="taper-chip-btn" onclick="setSelectedTaperPlanPrimary()">Set Primary</button>
                         <button type="button" class="taper-chip-btn" onclick="openManageTaperPlansModal()">Manage Plans</button>
-                        <button type="button" class="taper-chip-btn" onclick="(function(){ const id = (typeof selectedTaperPlanId !== 'undefined' && selectedTaperPlanId) || document.getElementById('taper-plan-select')?.value; if (id) createGoalsFromPlanAndOpen(id); })()">Create goals from plan</button>
                     </div>
                 </div>
 
@@ -1314,9 +1300,27 @@
                                 <p class="field-hint">Optional monthly limit for your taper plan.</p>
                             </div>
                         </div>
+                        <div class="form-row" id="taper-priority-status-row">
+                            <div class="form-group">
+                                <label for="taper-priority">Priority</label>
+                                <select id="taper-priority">
+                                    <option value="low">Low</option>
+                                    <option value="normal" selected>Normal</option>
+                                    <option value="high">High</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="taper-status">Status</label>
+                                <select id="taper-status">
+                                    <option value="active" selected>Active</option>
+                                    <option value="paused">Paused</option>
+                                    <option value="draft">Draft</option>
+                                </select>
+                            </div>
+                        </div>
                         <div class="form-group" id="taper-notes-group">
-                            <label for="taper-notes">Optional taper notes</label>
-                            <textarea id="taper-notes" rows="2" placeholder="Personal reminders for this disposable taper..."></textarea>
+                            <label for="taper-notes">Notes</label>
+                            <textarea id="taper-notes" rows="2" placeholder="Optional notes for this taper..."></textarea>
                         </div>
                         <div id="taper-warn-toggles">
                         <div class="form-group toggle-row">
@@ -1477,9 +1481,9 @@
                 </div>
                 </div>
 
-                <div id="gp-loading" class="rd-state rd-loading hidden">Loading Goals &amp; Plans…</div>
+                <div id="gp-loading" class="rd-state rd-loading hidden">Loading Tapers…</div>
                 <div id="gp-error" class="rd-state rd-error hidden">
-                    <p id="gp-error-message">Could not load Goals &amp; Plans.</p>
+                    <p id="gp-error-message">Could not load Tapers.</p>
                     <button type="button" class="secondary-btn btn-sm" onclick="renderGoalsPlansCombinedView()">Retry</button>
                 </div>
             </section>
@@ -1587,7 +1591,7 @@
                             <label><input type="checkbox" id="cal-filter-purchases-only" onchange="onCalendarFilterChange()"> Purchases only</label>
                             <label><input type="checkbox" id="cal-filter-gifts-only" onchange="onCalendarFilterChange()"> Gifts only</label>
                             <label><input type="checkbox" id="cal-filter-plans-only" onchange="onCalendarFilterChange()"> Plans only</label>
-                            <label><input type="checkbox" id="cal-filter-goals-only" onchange="onCalendarFilterChange()"> Goals only</label>
+                            <label><input type="checkbox" id="cal-filter-goals-only" onchange="onCalendarFilterChange()"> Tapers only</label>
                             <label><input type="checkbox" id="cal-filter-milestones-only" onchange="onCalendarFilterChange()"> Milestones only</label>
                         </div>
                     </div>
@@ -3007,7 +3011,7 @@
                     <div class="section-content">
                         <div class="settings-section">
                             <h3>Manage Contacts</h3>
-                            <p class="settings-hint">Shared contacts for Log, Inventory, Goals &amp; Plans, and Insights. Archiving never deletes history.</p>
+                            <p class="settings-hint">Shared contacts for Log, Inventory, Tapers, and Insights. Archiving never deletes history.</p>
                             <div id="contacts-root" class="contacts-root" aria-live="polite"></div>
                         </div>
                     </div>
@@ -3071,8 +3075,8 @@
         </button>
         <button class="nav-btn" data-tab="goals-plans-tab" onclick="switchTab('goals-plans-tab')">
             <span>🎯</span>
-            <span class="nav-btn-label-full">Goals &amp; Plans</span>
-            <span class="nav-btn-label-short">Goals</span>
+            <span class="nav-btn-label-full">Tapers</span>
+            <span class="nav-btn-label-short">Tapers</span>
         </button>
         <button class="nav-btn" data-tab="insights-calendar-tab" onclick="switchTab('insights-calendar-tab')">
             <span>📈</span>

@@ -96,7 +96,7 @@ test('Vape Taper is default recommended option for nicotine', () => {
     assert.equal(types[0], 'nicotine-vape-purchase');
     assert.equal(rt.TAPER_REDUCTION_LABELS['reduce-puffs'], 'Puff-only Taper');
     assert.equal(rt.TAPER_REDUCTION_LABELS['nicotine-vape-purchase'], 'Vape Taper');
-    assert.equal(rt.TAPER_REDUCTION_LABELS['manual-weekly'], 'Custom Plan');
+    assert.equal(rt.TAPER_REDUCTION_LABELS['manual-weekly'], 'Manual steps');
     assert.ok(!types.includes('reduce-nicotine'));
     assert.ok(!types.includes('reduce-buying'));
     assert.ok(!String(rt.TAPER_REDUCTION_LABELS['reduce-puffs']).toLowerCase().includes('legacy'));
