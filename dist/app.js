@@ -1601,6 +1601,9 @@ const CCR_COLOR_CHANNEL_DEFAULTS = Object.freeze({
 
 const CCR_METRICS = Object.freeze([
     { id: 'useAmount', label: 'Use amount', valueType: 'number' },
+    { id: 'sessionDuration', label: 'Duration', valueType: 'number' },
+    { id: 'gramsPerHour', label: 'g/hr', valueType: 'number' },
+    { id: 'breakSincePreviousUse', label: 'Break since previous use', valueType: 'number' },
     { id: 'useVsTarget', label: 'Use vs target ratio', valueType: 'ratio' },
     { id: 'puffs', label: 'Puffs', valueType: 'number' },
     { id: 'percentLeft', label: 'Percent left', valueType: 'number' },
@@ -2754,6 +2757,42 @@ function buildConditionalColorRuleMatchContexts(data = appData, { maxSamples = 2
                 section: 'useHistory',
                 metric: 'useAmount',
                 value: amount
+            });
+        }
+        const durationMinutes = typeof getNormalizedSessionDurationMinutes === 'function'
+            ? getNormalizedSessionDurationMinutes(log)
+            : null;
+        if (durationMinutes != null) {
+            push({
+                substanceId: log.substanceId,
+                section: 'useHistory',
+                metric: 'sessionDuration',
+                value: durationMinutes,
+                log
+            });
+        }
+        const gph = typeof getNormalizedGramsPerHour === 'function'
+            ? getNormalizedGramsPerHour(log)
+            : null;
+        if (gph != null && Number.isFinite(gph)) {
+            push({
+                substanceId: log.substanceId,
+                section: 'useHistory',
+                metric: 'gramsPerHour',
+                value: gph,
+                log
+            });
+        }
+        const breakHours = typeof computeBreakSincePreviousUseHours === 'function'
+            ? computeBreakSincePreviousUseHours(log, data)
+            : null;
+        if (breakHours != null && Number.isFinite(breakHours)) {
+            push({
+                substanceId: log.substanceId,
+                section: 'useHistory',
+                metric: 'breakSincePreviousUse',
+                value: breakHours,
+                log
             });
         }
         if (log.transactionType) {
@@ -26317,11 +26356,11 @@ const TABLE_COLUMN_DEFAULTS = {
             'transactionType', 'amount', 'unit', 'tabs', 'ug', 'pills', 'mg', 'thcUsed', 'cbdUsed', 'strength',
             'enteredAmount', 'normalizedAmount', 'percentBefore', 'percentAfter', 'percentUsed',
             'contact', 'cost', 'gPerHour', 'sharedAmount', 'multiDayRange', 'dailyBreakdown',
-            'count', 'rate', 'inventory', 'notes', 'actions'
+            'count', 'rate', 'breakBetweenUses', 'inventory', 'notes', 'actions'
         ],
         // Family-specific columns are gated by getUseHistoryColumnCatalog / getUseHistoryVisibleColumns.
         // Only keep rarely used generic metrics hidden by default.
-        hidden: ['count', 'rate'],
+        hidden: ['count', 'rate', 'breakBetweenUses'],
         widths: {
             select: 50,
             date: 130,
@@ -26353,6 +26392,7 @@ const TABLE_COLUMN_DEFAULTS = {
             dailyBreakdown: 180,
             count: 80,
             rate: 100,
+            breakBetweenUses: 130,
             inventory: 160,
             notes: 180,
             actions: 150
@@ -26604,8 +26644,9 @@ const TABLE_COLUMN_LABELS = {
         dailyBreakdown: 'Daily Breakdown',
         count: 'Count',
         rate: 'Rate',
+        breakBetweenUses: 'Break Between Uses',
+        break: 'Break Between Uses',
         inventory: 'Linked Inventory',
-        break: 'Break Since Previous',
         supply: 'Supply',
         notes: 'Notes',
         actions: 'Actions'
@@ -26823,7 +26864,7 @@ const PURCHASE_HISTORY_COLUMNS_STORAGE_KEY = 'recoveryTracker.purchaseHistoryCol
 
 const USE_HISTORY_COLUMN_ALIASES = {
     supply: 'inventory',
-    break: 'break'
+    break: 'breakBetweenUses'
 };
 
 const PURCHASE_HISTORY_WIDTH_MAP = {
@@ -28495,6 +28536,86 @@ function formatUseHistoryAmountHtml(entry) {
     return `${formatAmount(entry.amount)}`;
 }
 
+let useHistorySortState = {
+    col: null,
+    dir: 'desc'
+};
+
+function getUseHistorySortState() {
+    return useHistorySortState;
+}
+
+function setUseHistorySort(colId, dir = null) {
+    const sortable = new Set(['date', 'start', 'end', 'duration', 'amount', 'gPerHour', 'breakBetweenUses', 'break']);
+    if (!sortable.has(colId)) return useHistorySortState;
+    if (useHistorySortState.col === colId) {
+        useHistorySortState.dir = dir || (useHistorySortState.dir === 'asc' ? 'desc' : 'asc');
+    } else {
+        useHistorySortState.col = colId;
+        useHistorySortState.dir = dir || (colId === 'breakBetweenUses' || colId === 'break' || colId === 'duration' || colId === 'gPerHour' || colId === 'amount'
+            ? 'desc'
+            : 'desc');
+    }
+    return useHistorySortState;
+}
+
+function onUseHistorySortClick(colId) {
+    setUseHistorySort(colId);
+    renderUseHistoryTable();
+}
+
+function compareUseHistoryBreakSort(aEntry, bEntry, dir, data = appData) {
+    const ah = computeBreakSincePreviousUseHours(aEntry, data);
+    const bh = computeBreakSincePreviousUseHours(bEntry, data);
+    const aNull = ah == null || !Number.isFinite(ah);
+    const bNull = bh == null || !Number.isFinite(bh);
+    if (aNull && bNull) return getLogDatetimeMs(bEntry) - getLogDatetimeMs(aEntry);
+    if (aNull) return 1;
+    if (bNull) return -1;
+    return dir === 'asc' ? ah - bh : bh - ah;
+}
+
+function sortUseHistoryDisplayRows(rows, sortState = useHistorySortState, data = appData) {
+    const list = (rows || []).slice();
+    const col = sortState?.col;
+    const dir = sortState?.dir === 'asc' ? 'asc' : 'desc';
+    if (!col) return list;
+    list.sort((a, b) => {
+        if (col === 'breakBetweenUses' || col === 'break') {
+            return compareUseHistoryBreakSort(a.entry, b.entry, dir, data);
+        }
+        if (col === 'duration') {
+            const ah = getNormalizedSessionDurationMinutes(a.entry);
+            const bh = getNormalizedSessionDurationMinutes(b.entry);
+            const aNull = ah == null;
+            const bNull = bh == null;
+            if (aNull && bNull) return getLogDatetimeMs(b.entry) - getLogDatetimeMs(a.entry);
+            if (aNull) return 1;
+            if (bNull) return -1;
+            return dir === 'asc' ? ah - bh : bh - ah;
+        }
+        if (col === 'gPerHour') {
+            const ah = getNormalizedGramsPerHour(a.entry);
+            const bh = getNormalizedGramsPerHour(b.entry);
+            const aNull = ah == null;
+            const bNull = bh == null;
+            if (aNull && bNull) return getLogDatetimeMs(b.entry) - getLogDatetimeMs(a.entry);
+            if (aNull) return 1;
+            if (bNull) return -1;
+            return dir === 'asc' ? ah - bh : bh - ah;
+        }
+        if (col === 'amount') {
+            const ah = typeof getLogStatsAmount === 'function' ? getLogStatsAmount(a.entry) : (parseFloat(a.entry.amount) || 0);
+            const bh = typeof getLogStatsAmount === 'function' ? getLogStatsAmount(b.entry) : (parseFloat(b.entry.amount) || 0);
+            return dir === 'asc' ? ah - bh : bh - ah;
+        }
+        const da = getLogDatetimeMs(a.entry);
+        const db = getLogDatetimeMs(b.entry);
+        return dir === 'asc' ? da - db : db - da;
+    });
+    return list;
+}
+
 function renderUseHistoryHeaderCell(colId, substanceId = getUseLogViewSubstanceId()) {
     const label = resolveColumnDisplayLabel('useHistory', colId, {
         substanceId,
@@ -28506,6 +28627,15 @@ function renderUseHistoryHeaderCell(colId, substanceId = getUseLogViewSubstanceI
     }
     if (colId === 'actions') {
         return `<th class="actions-cell use-history-actions-header" data-col="${colId}" title="${escapeAttr(label)}"><span class="customizable-th-label">${escapeHtml(label)}</span>${resize}</th>`;
+    }
+    const sortable = ['date', 'start', 'end', 'duration', 'amount', 'gPerHour', 'breakBetweenUses'].includes(colId);
+    if (sortable) {
+        const active = useHistorySortState.col === colId;
+        const ind = active ? (useHistorySortState.dir === 'asc' ? ' ↑' : ' ↓') : '';
+        const ariaSort = active
+            ? (useHistorySortState.dir === 'asc' ? 'ascending' : 'descending')
+            : 'none';
+        return `<th data-col="${colId}" class="use-history-sortable" data-sort-col="${escapeAttr(colId)}" role="columnheader" aria-sort="${ariaSort}" tabindex="0" title="${escapeAttr(label)}"><button type="button" class="use-history-sort-btn" onclick="onUseHistorySortClick('${escapeAttr(colId)}')" aria-label="Sort by ${escapeAttr(label)}"><span class="customizable-th-label">${escapeHtml(label)}${ind}</span></button>${resize}</th>`;
     }
     return `<th data-col="${colId}" title="${escapeAttr(label)}"><span class="customizable-th-label">${escapeHtml(label)}</span>${resize}</th>`;
 }
@@ -28537,8 +28667,27 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
             return `<td data-col="${colId}"${dataLabel}>${hideTimeStats ? '—' : (entry.startTime || entry.time || '—')}</td>`;
         case 'end':
             return `<td data-col="${colId}"${dataLabel}>${hideTimeStats ? '—' : (entry.endTime || '—')}</td>`;
-        case 'duration':
-            return `<td data-col="${colId}"${dataLabel}>${hideTimeStats ? '—' : formatDurationHours(entry.durationHours)}</td>`;
+        case 'duration': {
+            if (hideTimeStats) {
+                return `<td data-col="${colId}"${dataLabel}>—</td>`;
+            }
+            const minutes = typeof getNormalizedSessionDurationMinutes === 'function'
+                ? getNormalizedSessionDurationMinutes(entry)
+                : null;
+            let durationHtml = minutes != null
+                ? formatNormalizedSessionDuration(minutes)
+                : (entry.durationHours != null ? formatDurationHours(entry.durationHours) : '—');
+            if (minutes != null) {
+                durationHtml = applyConditionalColorToMetricHtml(durationHtml, {
+                    substanceId: getUseSubstanceId(entry),
+                    section: 'useHistory',
+                    metric: 'sessionDuration',
+                    value: minutes,
+                    log: entry
+                });
+            }
+            return `<td data-col="${colId}"${dataLabel}>${durationHtml}</td>`;
+        }
         case 'substance':
             return `<td data-col="${colId}"${dataLabel}>${escapeHtml(sub.icon || '')} ${escapeHtml(sub.name)}</td>`;
         case 'productType':
@@ -28628,8 +28777,22 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
             const cost = entry.estimatedCost;
             return `<td data-col="${colId}"${dataLabel}>${cost != null && Number.isFinite(parseFloat(cost)) ? fmtSheetMoney(parseFloat(cost), getCurrencySymbol()) : '—'}</td>`;
         }
-        case 'gPerHour':
-            return `<td data-col="${colId}"${dataLabel}>${formatUseHistoryGramsPerHour(entry)}</td>`;
+        case 'gPerHour': {
+            const rate = typeof getNormalizedGramsPerHour === 'function'
+                ? getNormalizedGramsPerHour(entry)
+                : computeUseHistoryGramsPerHour(entry);
+            let rateHtml = rate == null || !Number.isFinite(rate) ? '—' : Number(rate).toFixed(2);
+            if (rate != null && Number.isFinite(rate)) {
+                rateHtml = applyConditionalColorToMetricHtml(rateHtml, {
+                    substanceId: getUseSubstanceId(entry),
+                    section: 'useHistory',
+                    metric: 'gramsPerHour',
+                    value: rate,
+                    log: entry
+                });
+            }
+            return `<td data-col="${colId}"${dataLabel}>${rateHtml}</td>`;
+        }
         case 'contact': {
             const label = typeof resolveLogContactLabel === 'function' ? resolveLogContactLabel(entry) : (entry.sharedWithName || entry.giftPartyName || '');
             const cid = entry.sharedWithContactId || entry.giftPartyContactId || '';
@@ -28658,6 +28821,7 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
         case 'rate':
             return `<td data-col="${colId}"${dataLabel}>${rateStr}</td>`;
         case 'break':
+        case 'breakBetweenUses':
             return `<td data-col="${colId}"${dataLabel}>${renderBreakSincePreviousCell(entry)}</td>`;
         case 'inventory':
         case 'supply':
@@ -33112,37 +33276,37 @@ function getPurchaseHistoryVisibleColumns(substanceId = getInventorySubstanceFil
 const USE_HISTORY_FAMILY_COLUMNS = {
     all: [
         'select', 'date', 'start', 'end', 'duration', 'substance', 'transactionType',
-        'amount', 'unit', 'contact', 'inventory', 'notes', 'actions'
+        'amount', 'unit', 'contact', 'breakBetweenUses', 'inventory', 'notes', 'actions'
     ],
     nicotine: [
         'select', 'date', 'start', 'end', 'duration', 'productType', 'transactionType',
-        'amount', 'unit', 'contact', 'sharedAmount', 'inventory', 'notes', 'actions'
+        'amount', 'unit', 'contact', 'sharedAmount', 'breakBetweenUses', 'inventory', 'notes', 'actions'
     ],
     cocaine: [
         'select', 'date', 'start', 'end', 'duration', 'transactionType',
-        'amount', 'unit', 'gPerHour', 'inventory', 'notes', 'actions'
+        'amount', 'unit', 'gPerHour', 'breakBetweenUses', 'inventory', 'notes', 'actions'
     ],
     cannabis: [
         'select', 'date', 'productType', 'transactionType', 'amount', 'unit',
-        'thcUsed', 'cbdUsed', 'strength', 'cost', 'contact', 'sharedAmount', 'inventory', 'notes', 'actions'
+        'thcUsed', 'cbdUsed', 'strength', 'cost', 'contact', 'sharedAmount', 'breakBetweenUses', 'inventory', 'notes', 'actions'
     ],
     ketamine: [
         'select', 'date', 'start', 'end', 'duration', 'transactionType',
-        'amount', 'unit', 'cost', 'inventory', 'notes', 'actions'
+        'amount', 'unit', 'cost', 'breakBetweenUses', 'inventory', 'notes', 'actions'
     ],
     lsd: [
-        'select', 'date', 'transactionType', 'tabs', 'ug', 'amount', 'inventory', 'notes', 'actions'
+        'select', 'date', 'transactionType', 'tabs', 'ug', 'amount', 'breakBetweenUses', 'inventory', 'notes', 'actions'
     ],
     xanax: [
-        'select', 'date', 'transactionType', 'pills', 'mg', 'strength', 'amount', 'inventory', 'notes', 'actions'
+        'select', 'date', 'transactionType', 'pills', 'mg', 'strength', 'amount', 'breakBetweenUses', 'inventory', 'notes', 'actions'
     ],
     alcohol: [
         'select', 'date', 'transactionType', 'amount', 'unit',
-        'multiDayRange', 'dailyBreakdown', 'inventory', 'notes', 'actions'
+        'multiDayRange', 'dailyBreakdown', 'breakBetweenUses', 'inventory', 'notes', 'actions'
     ],
     generic: [
         'select', 'date', 'start', 'end', 'duration', 'transactionType',
-        'amount', 'unit', 'inventory', 'notes', 'actions'
+        'amount', 'unit', 'breakBetweenUses', 'inventory', 'notes', 'actions'
     ]
 };
 
@@ -33335,6 +33499,161 @@ function formatUseHistoryGramsPerHour(entry) {
     const rate = computeUseHistoryGramsPerHour(entry);
     if (rate == null || !Number.isFinite(rate)) return '—';
     return rate.toFixed(2);
+}
+
+/** Normalized session duration in minutes. Null when missing or zero. */
+function getNormalizedSessionDurationMinutes(entry) {
+    const hours = getUseHistorySessionDurationHours(entry);
+    if (hours == null || !(hours > 0) || !Number.isFinite(hours)) return null;
+    return hours * 60;
+}
+
+function formatNormalizedSessionDuration(minutes) {
+    if (minutes == null || !Number.isFinite(minutes) || !(minutes > 0)) return '—';
+    return formatDurationHours(minutes / 60);
+}
+
+/** Shared Coke-style g/hr (personal grams ÷ session hours). */
+function getNormalizedGramsPerHour(entry) {
+    return computeUseHistoryGramsPerHour(entry);
+}
+
+function isQualifyingBreakUseLog(log, data = appData) {
+    if (!log) return false;
+    if (log.isDistributedChild) return false;
+    if (typeof isAlcoholMultiDayChildLog === 'function' && isAlcoholMultiDayChildLog(log)) return false;
+    if (log.parentPercentLogId != null && log.isEstimatedDailyUse) return false;
+    if (isGiftGivenLog(log) || isGiftReceivedLog(log) || isInventoryAdjustmentLog(log)) return false;
+    if (isSharedUseLog(log)) {
+        const personal = getLogPersonalAmount(log);
+        return Number.isFinite(personal) && personal > 0;
+    }
+    return isPersonalUseLog(log);
+}
+
+/**
+ * Break between this qualifying personal-use entry and the previous one
+ * for the same substance (previous end → current start).
+ * Returns null hours for first use / non-qualifying rows.
+ */
+function getBreakBetweenUsesDetails(entry, data = appData) {
+    if (!isQualifyingBreakUseLog(entry, data)) {
+        return { hours: null, minutes: null, text: '—', previous: null, previousEndedAt: null };
+    }
+    const substanceId = getUseSubstanceId(entry, data);
+    const currentStart = typeof getUseLogStartedAt === 'function'
+        ? getUseLogStartedAt(entry)
+        : null;
+    const currentMs = currentStart
+        ? currentStart.getTime()
+        : getLogDatetimeMs(entry);
+    if (!currentMs) {
+        return { hours: null, minutes: null, text: '—', previous: null, previousEndedAt: null };
+    }
+
+    let previous = null;
+    let previousEndedAt = null;
+    (typeof getUseEntries === 'function' ? getUseEntries(data) : (data.logs || [])).forEach(log => {
+        if (!log || log === entry) return;
+        if (entry.id != null && log.id != null && String(log.id) === String(entry.id)) return;
+        if (!logMatchesSubstance(log, substanceId, data)) return;
+        if (!isQualifyingBreakUseLog(log, data)) return;
+        const end = typeof getUseEndDatetime === 'function'
+            ? getUseEndDatetime(log)
+            : (typeof getUseLogEndedAt === 'function' ? getUseLogEndedAt(log) : null);
+        if (!end) return;
+        const endMs = end.getTime();
+        if (!(endMs < currentMs)) return;
+        if (!previousEndedAt || endMs > previousEndedAt.getTime()) {
+            previous = log;
+            previousEndedAt = end;
+        }
+    });
+    if (!previous || !previousEndedAt) {
+        return { hours: null, minutes: null, text: '—', previous: null, previousEndedAt: null };
+    }
+    const breakMs = currentMs - previousEndedAt.getTime();
+    if (!(breakMs >= 0)) {
+        return { hours: null, minutes: null, text: '—', previous: null, previousEndedAt: null };
+    }
+    const hours = breakMs / 3600000;
+    const minutes = Math.floor(breakMs / 60000);
+    return {
+        hours,
+        minutes,
+        text: formatBreakSincePreviousUse(hours),
+        previous,
+        previousEndedAt
+    };
+}
+
+function computeBreakSincePreviousUseHours(entry, data = appData) {
+    const details = getBreakBetweenUsesDetails(entry, data);
+    return details.hours;
+}
+
+function formatBreakSincePreviousUse(hours) {
+    if (hours == null || !Number.isFinite(hours) || hours < 0) return '—';
+    return formatBreakFromHours(hours);
+}
+
+function formatBreakBetweenUsesTooltip(details) {
+    if (!details || details.hours == null || !details.previousEndedAt) return '';
+    const prevLabel = typeof formatDatetimeLong === 'function'
+        ? formatDatetimeLong(details.previousEndedAt)
+        : String(details.previousEndedAt);
+    const breakLabel = details.text || formatBreakSincePreviousUse(details.hours);
+    return `Previous use:\n${prevLabel}\n\nBreak:\n${breakLabel}`;
+}
+
+/**
+ * Shared resolver for log-level normalized metrics used by CCR and tables.
+ * Duration → minutes; g/hr → grams/hour; break → hours.
+ */
+function resolveNormalizedLogMetric(metricId, log, data = appData) {
+    if (!log || !metricId) return null;
+    switch (metricId) {
+        case 'sessionDuration':
+        case 'duration':
+            return getNormalizedSessionDurationMinutes(log);
+        case 'gramsPerHour':
+        case 'gPerHour':
+            return getNormalizedGramsPerHour(log);
+        case 'breakSincePreviousUse':
+            return computeBreakSincePreviousUseHours(log, data);
+        default:
+            return null;
+    }
+}
+
+function applyConditionalColorToMetricHtml(html, context = {}, data = appData) {
+    if (html == null) return html;
+    const value = context.value;
+    if (value == null || !Number.isFinite(Number(value))) return html;
+    if (typeof evaluateConditionalColorRules !== 'function') return html;
+    const ccr = evaluateConditionalColorRules({
+        substanceId: context.substanceId,
+        section: context.section || 'useHistory',
+        metric: context.metric,
+        value,
+        log: context.log
+    }, data);
+    if (!ccr.matched.length) return html;
+    return wrapWithConditionalColor(html, ccr, { keepLabel: true });
+}
+
+function renderNormalizedDurationDetailHtml(entry, { section = 'useHistory' } = {}) {
+    const minutes = getNormalizedSessionDurationMinutes(entry);
+    if (minutes == null) return '';
+    const text = formatNormalizedSessionDuration(minutes);
+    const colored = applyConditionalColorToMetricHtml(text, {
+        substanceId: getUseSubstanceId(entry),
+        section,
+        metric: 'sessionDuration',
+        value: minutes,
+        log: entry
+    });
+    return `<div class="use-recent-detail">${colored}</div>`;
 }
 
 function getVapePurchaseProductName(purchase) {
@@ -33976,6 +34295,54 @@ function formatStatsBreakValue(hours, substanceId) {
     if (hours == null || Number.isNaN(hours)) return '—';
     if (isVapeNicotineSubstanceId(substanceId)) return formatBreakFromHours(hours);
     return formatDurationHMS(hours);
+}
+
+function applyCcrToInsightsMetricCell(displayHtml, {
+    substanceId,
+    metric,
+    value,
+    section = 'insights'
+} = {}) {
+    if (value == null || !Number.isFinite(Number(value))) return displayHtml;
+    return applyConditionalColorToMetricHtml(displayHtml, {
+        substanceId,
+        section,
+        metric,
+        value
+    });
+}
+
+function formatInsightsDurationCell(hours, substanceId, section = 'insights') {
+    const display = formatStatsDurationValue(hours, substanceId);
+    if (hours == null || !Number.isFinite(hours) || !(hours > 0)) return display;
+    return applyCcrToInsightsMetricCell(display, {
+        substanceId,
+        metric: 'sessionDuration',
+        value: hours * 60,
+        section
+    });
+}
+
+function formatInsightsGramsPerHourCell(rate, unit, substanceId, section = 'insights') {
+    const display = fmtSheetRate(rate, unit, '/hr');
+    if (rate == null || !Number.isFinite(rate)) return display;
+    return applyCcrToInsightsMetricCell(display, {
+        substanceId,
+        metric: 'gramsPerHour',
+        value: rate,
+        section
+    });
+}
+
+function formatInsightsBreakCell(hours, substanceId, section = 'insights') {
+    const display = formatStatsBreakValue(hours, substanceId);
+    if (hours == null || !Number.isFinite(hours)) return display;
+    return applyCcrToInsightsMetricCell(display, {
+        substanceId,
+        metric: 'breakSincePreviousUse',
+        value: hours,
+        section
+    });
 }
 
 function formatStatsDurationValue(hours, substanceId, { soFar = false } = {}) {
@@ -36452,11 +36819,29 @@ function buildEnrichedUseEntries(substanceId) {
     return enriched;
 }
 
-function renderBreakSincePreviousCell(entry) {
-    const hours = entry.breakHours ?? entry.breakDurationHours;
-    const text = entry.breakText || (hours != null ? formatBreakFromHours(hours) : '—');
-    if (text === '—' || hours == null) return '—';
-    return `<span class="break-cell ${getBreakColorClass(hours)}">${text}</span>`;
+function renderBreakSincePreviousCell(entry, data = appData) {
+    const details = typeof getBreakBetweenUsesDetails === 'function'
+        ? getBreakBetweenUsesDetails(entry, data)
+        : null;
+    const hours = details?.hours ?? entry.breakHours ?? entry.breakDurationHours;
+    const text = details?.text
+        || (hours != null && Number.isFinite(hours)
+            ? formatBreakSincePreviousUse(hours)
+            : '—');
+    const title = details ? formatBreakBetweenUsesTooltip(details) : '';
+    let html = (text === '—' || hours == null)
+        ? '—'
+        : `<span class="break-cell ${getBreakColorClass(hours)}"${title ? ` title="${escapeAttr(title)}"` : ''}>${escapeHtml(text)}</span>`;
+    if (hours != null && Number.isFinite(hours)) {
+        html = applyConditionalColorToMetricHtml(html, {
+            substanceId: getUseSubstanceId(entry, data),
+            section: 'useHistory',
+            metric: 'breakSincePreviousUse',
+            value: hours,
+            log: entry
+        }, data);
+    }
+    return html;
 }
 
 function getUseRowWarnings(entry, substanceId, avgRate) {
@@ -37425,7 +37810,7 @@ function buildUseHistoryRows(substanceIdOverride = undefined) {
         const db = getLogDatetimeMs(b.entry);
         return db - da;
     });
-    return allRows;
+    return sortUseHistoryDisplayRows(allRows, useHistorySortState);
 }
 
 function getVisibleUseHistoryLogIds() {
@@ -37933,7 +38318,7 @@ function renderRecentUseList() {
                 <div class="use-recent-date">${formatDate(log.date || '')}</div>
                 <div class="use-recent-time">${timeRange}</div>
                 ${amountDisplay ? `<div class="use-recent-amount-line">${amountDisplay}</div>` : ''}
-                ${enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}`
+                ${renderNormalizedDurationDetailHtml(log, { section: 'useHistory' })}`
             : `<div class="use-recent-sub">${escapeHtml(sub?.icon || '')} ${escapeHtml(sub?.name || 'Unknown')} · ${formatDate(log.date || '')}${timeRange && timeRange !== '—' ? ` · ${escapeHtml(timeRange)}` : ''}</div>`;
         const item = document.createElement('div');
         item.className = `use-recent-card${isCheckpoint || isMultiDayParent ? ' use-recent-checkpoint' : ''}`;
@@ -37948,7 +38333,7 @@ function renderRecentUseList() {
                 ${weedDetailHtml}
                 ${distDaysHtml}
                 ${multiDayHtml}
-                ${!isSessionLog && !isVape && enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}
+                ${!isSessionLog && !isVape ? renderNormalizedDurationDetailHtml(log, { section: 'useHistory' }) : ''}
                 ${!isVape && formatSecondaryCountDisplay(substanceId, countStr) ? `<div class="use-recent-detail">${formatSecondaryCountDisplay(substanceId, countStr)}</div>` : ''}
                 ${log.notes ? `<div class="use-recent-notes">${escapeHtml(log.notes)}</div>` : ''}
                 ${log.mood ? `<div class="use-recent-detail">Mood: ${escapeHtml(log.mood)}</div>` : ''}
@@ -45805,13 +46190,13 @@ function renderStatsMonthlySummary(substanceId, insights = null) {
             case 'useDays': return String(s.useDays);
             case 'usePct': return `${formatAmount(s.useDayPct, 1)}%`;
             case 'avgPerDay': return fmtSheetAmount(avgPerDay, displayUnit);
-            case 'avgBreak': return formatStatsBreakValue(s.avgBreak, substanceId);
-            case 'duration': return formatStatsDurationValue(s.totalDurationHours, substanceId);
-            case 'avgDur': return formatStatsDurationValue(s.avgDurationHours, substanceId);
+            case 'avgBreak': return formatInsightsBreakCell(s.avgBreak, substanceId);
+            case 'duration': return formatInsightsDurationCell(s.totalDurationHours, substanceId);
+            case 'avgDur': return formatInsightsDurationCell(s.avgDurationHours, substanceId);
             case 'gPerSession': return fmtSheetAmount(s.avgPerSession, displayUnit);
             case 'gPerUseDay': return fmtSheetAmount(s.avgPerUseDay, displayUnit);
             case 'gPerCalDay': return fmtSheetAmount(s.avgPerCalendarDay, displayUnit);
-            case 'gPerHour': return fmtSheetRate(s.gPerHour, unit, '/hr');
+            case 'gPerHour': return formatInsightsGramsPerHourCell(s.gPerHour, unit, substanceId);
             case 'status':
                 return { html: renderStatusBadge(usageBadge.level, usageBadge.label, { used: usageBadge.used, target: usageBadge.target, ccrResult: usageBadge.ccrResult, section: 'insights' }) };
             default: return '—';
@@ -45854,15 +46239,15 @@ function renderStatsWeeklySummary(substanceId, insights = null) {
             case 'useDaysChangePct':
                 return renderUseSummaryPeriodChangeCell(s, colId);
             case 'monthRunning': return fmtSheetAmount(s.runningTotal, displayUnit);
-            case 'avgBreak': return formatStatsBreakValue(s.avgBreak, substanceId);
+            case 'avgBreak': return formatInsightsBreakCell(s.avgBreak, substanceId);
             case 'sessions': return String(s.sessions);
             case 'useDays': return String(s.useDays ?? 0);
-            case 'duration': return formatStatsDurationValue(s.totalDurationHours, substanceId);
-            case 'avgDur': return formatStatsDurationValue(s.avgDurationHours, substanceId);
+            case 'duration': return formatInsightsDurationCell(s.totalDurationHours, substanceId);
+            case 'avgDur': return formatInsightsDurationCell(s.avgDurationHours, substanceId);
             case 'gPerSession': return fmtSheetAmount(s.avgPerSession, displayUnit);
-            case 'gPerHour': return fmtSheetRate(s.gPerHour, unit, '/hr');
-            case 'longBreak': return formatStatsBreakValue(s.longestBreak, substanceId);
-            case 'shortBreak': return formatStatsBreakValue(s.shortestBreak, substanceId);
+            case 'gPerHour': return formatInsightsGramsPerHourCell(s.gPerHour, unit, substanceId);
+            case 'longBreak': return formatInsightsBreakCell(s.longestBreak, substanceId);
+            case 'shortBreak': return formatInsightsBreakCell(s.shortestBreak, substanceId);
             case 'cost': return fmtSheetMoney(s.cost || 0, getCurrencySymbol());
             case 'status':
                 return { html: renderStatusBadge(s.usageBadge.level, s.usageBadge.label, { used: s.usageBadge.used, target: s.usageBadge.target, ccrResult: s.usageBadge.ccrResult, section: 'insights' }) };
@@ -54207,23 +54592,23 @@ function renderTaperMonthlyTrendBadge(trend) {
     return '<span class="taper-month-trend taper-month-trend-none">— No prior month</span>';
 }
 
-function renderTaperMonthlyTrackingCard(summary, unit) {
+function renderTaperMonthlyTrackingCard(summary, unit, substanceId) {
     const metrics = [
         ['Month start', formatDate(summary.monthStart)],
         ['Month end', formatDate(summary.monthEnd)],
         ['Total usage', formatTaperMonthlyAmount(summary.totalUsage, unit)],
-        ['Average break', formatDurationHMS(summary.avgBreak)],
+        ['Average break', formatInsightsBreakCell(summary.avgBreak, substanceId, 'taper')],
         ['Sessions', summary.sessions ? String(summary.sessions) : '0'],
         ['Use days', summary.useDays ? String(summary.useDays) : '0'],
         ['Use day %', summary.useDays ? `${summary.useDayPct.toFixed(2)}%` : '0.00%'],
-        ['Total duration', formatDurationHMS(summary.totalDurationHours)],
-        ['Average duration', formatDurationHMS(summary.avgDurationHours)],
+        ['Total duration', formatInsightsDurationCell(summary.totalDurationHours, substanceId, 'taper')],
+        ['Average duration', formatInsightsDurationCell(summary.avgDurationHours, substanceId, 'taper')],
         [`Avg ${unit} / session`, formatTaperMonthlyAmount(summary.avgPerSession, unit)],
         [`Avg ${unit} / use day`, formatTaperMonthlyAmount(summary.avgPerUseDay, unit)],
         [`Avg ${unit} / calendar day`, formatTaperMonthlyAmount(summary.avgPerCalendarDay, unit)],
-        ['Longest break', formatDurationHMS(summary.longestBreak)],
-        ['Shortest break', formatDurationHMS(summary.shortestBreak)],
-        [`${unit} / hour`, formatTaperMonthlyRate(summary.gPerHour, unit, '/hr')]
+        ['Longest break', formatInsightsBreakCell(summary.longestBreak, substanceId, 'taper')],
+        ['Shortest break', formatInsightsBreakCell(summary.shortestBreak, substanceId, 'taper')],
+        [`${unit} / hour`, formatInsightsGramsPerHourCell(summary.gPerHour, unit, substanceId, 'taper')]
     ];
 
     return `
@@ -54260,7 +54645,7 @@ function renderMonthlyTracking(substanceId) {
     }
 
     const unit = sub.defaultUnit || 'units';
-    container.innerHTML = summaries.map(summary => renderTaperMonthlyTrackingCard(summary, unit)).join('');
+    container.innerHTML = summaries.map(summary => renderTaperMonthlyTrackingCard(summary, unit, substanceId)).join('');
 }
 
 function renderTaperPlanSummary(substanceId) {
@@ -55759,6 +56144,13 @@ function buildUseHistoryCsvRows(options = {}) {
                     : '';
             case 'count': return entry.count ?? '';
             case 'rate': return entry.useRate != null ? entry.useRate : '';
+            case 'break':
+            case 'breakBetweenUses': {
+                const details = typeof getBreakBetweenUsesDetails === 'function'
+                    ? getBreakBetweenUsesDetails(entry)
+                    : null;
+                return details?.text && details.text !== '—' ? details.text : '';
+            }
             case 'inventory':
             case 'supply':
                 return String(formatInventoryLinkDisplay(entry)).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
@@ -57637,6 +58029,22 @@ function __getRecoveryTrackerTestExports() {
         filterUseHistoryColumnSettingsToCatalog,
         computeUseHistoryGramsPerHour,
         formatUseHistoryGramsPerHour,
+        getNormalizedSessionDurationMinutes,
+        formatNormalizedSessionDuration,
+        getNormalizedGramsPerHour,
+        getBreakBetweenUsesDetails,
+        computeBreakSincePreviousUseHours,
+        formatBreakSincePreviousUse,
+        formatBreakBetweenUsesTooltip,
+        renderBreakSincePreviousCell,
+        sortUseHistoryDisplayRows,
+        setUseHistorySort,
+        getUseHistorySortState,
+        onUseHistorySortClick,
+        compareUseHistoryBreakSort,
+        resolveNormalizedLogMetric,
+        isQualifyingBreakUseLog,
+        applyConditionalColorToMetricHtml,
         getUseHistorySessionDurationHours,
         getUseLogAmountInGramsForRate,
         getUseLogTotalsForView,
