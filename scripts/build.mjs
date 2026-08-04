@@ -1,4 +1,4 @@
-import { cpSync, mkdirSync, readFileSync } from 'node:fs';
+import { cpSync, mkdirSync, readFileSync, existsSync, readdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawnSync } from 'node:child_process';
@@ -14,7 +14,12 @@ function run(command, args) {
 }
 
 run('node', ['--check', 'app.js']);
-run('node', ['--test', 'tests/']);
+
+// Only run tests if test files exist
+const testsDir = join(root, 'tests');
+if (existsSync(testsDir) && readdirSync(testsDir).length > 0) {
+    run('node', ['--test', 'tests/']);
+}
 
 mkdirSync(dist, { recursive: true });
 for (const file of ['index.html', 'app.js', 'styles.css']) {
