@@ -127,6 +127,7 @@ test('rule-based colors tint the fill; no invented labels', () => {
     const data = rt.__getTestAppData();
     rt.setTargetLinesEnabled(false, data);
     rt.ensureConditionalColorRules(data);
+    rt.loadRecoveryColorRulePresets(data, { replace: true, theme: 'dark' });
     const ccr = rt.evaluateInventoryColors(15, { section: 'inventory' });
     assert.ok(ccr.matched.length >= 1);
 

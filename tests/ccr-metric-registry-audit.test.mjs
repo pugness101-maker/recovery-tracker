@@ -208,9 +208,9 @@ test('metric audit report flags missing data and keeps text/status operators non
     const store = rt.getDefaultCcrMetricSettings('store');
     const transactionType = rt.getDefaultCcrMetricSettings('transactionType');
     const taperStatus = rt.getDefaultCcrMetricSettings('taperStatus');
-    assert.equal(store.allowedOperators.join('|'), 'eq|neq|contains|empty|notEmpty');
-    assert.equal(transactionType.allowedOperators.join('|'), 'eq|neq|contains|empty|notEmpty');
-    assert.equal(taperStatus.allowedOperators.join('|'), 'eq|neq|contains|empty|notEmpty');
+    assert.equal(store.allowedOperators.join('|'), 'eq|neq|contains|notContains|empty|notEmpty');
+    assert.equal(transactionType.allowedOperators.join('|'), 'eq|neq|contains|notContains|empty|notEmpty');
+    assert.equal(taperStatus.allowedOperators.join('|'), 'eq|neq|contains|notContains|empty|notEmpty');
     assert.equal(store.allowedOperators.includes('gt'), false);
     assert.equal(transactionType.allowedOperators.includes('between'), false);
     assert.equal(taperStatus.allowedOperators.includes('between'), false);

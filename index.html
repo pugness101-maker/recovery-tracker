@@ -2813,6 +2813,15 @@
                                     <label for="ccr-rule-value-to" id="ccr-rule-value-to-label">Range end</label>
                                     <input type="text" id="ccr-rule-value-to" oninput="updateCcrLivePreview()">
                                 </div>
+                                <div class="form-group" id="ccr-boundary-row">
+                                    <label for="ccr-rule-boundary">Boundary</label>
+                                    <select id="ccr-rule-boundary" onchange="updateCcrLivePreview(); updateCcrRangeVisualizer();">
+                                        <option value="inclusiveExclusive">Inclusive lower, exclusive upper</option>
+                                        <option value="inclusive">Inclusive both</option>
+                                        <option value="exclusive">Exclusive both</option>
+                                        <option value="exclusiveInclusive">Exclusive lower, inclusive upper</option>
+                                    </select>
+                                </div>
                             </div>
                             <div class="form-row hidden" id="ccr-target-row">
                                 <div class="form-group">
@@ -2829,6 +2838,14 @@
                                     <label for="ccr-rule-status-label">Visible status label (optional)</label>
                                     <input type="text" id="ccr-rule-status-label" maxlength="40" placeholder="Optional label — leave blank for color only" oninput="updateCcrLivePreview()">
                                     <p class="field-hint">Labels stay optional. Nothing is auto-added to charts, rows, cards, badges, or tables.</p>
+                                </div>
+                                <div class="form-group">
+                                    <label for="ccr-rule-visual-target">Rule target</label>
+                                    <select id="ccr-rule-visual-target" onchange="updateCcrLivePreview()">
+                                        <option value="valueCell">Value cell only</option>
+                                        <option value="row">Entire row</option>
+                                        <option value="accent">Border/accent only</option>
+                                    </select>
                                 </div>
                             </div>
                             <label class="settings-toggle-row" for="ccr-rule-stop">

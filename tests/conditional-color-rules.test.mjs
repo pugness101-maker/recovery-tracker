@@ -10,7 +10,7 @@ function setup() {
     return rt;
 }
 
-test('seeds editable default presets', () => {
+test('presets are available but not auto-loaded', () => {
     const rt = setup();
     const presets = rt.getConditionalColorPresetRules('dark');
     const names = presets.map(p => p.name);
@@ -29,7 +29,27 @@ test('seeds editable default presets', () => {
     ].join('|'));
     const state = rt.getConditionalColorRulesState();
     assert.equal(state.enabled, true);
-    assert.ok(state.rules.length >= 11);
+    assert.equal(state.rules.length, 0);
+    rt.loadRecoveryColorRulePresets(rt.__getTestAppData(), { replace: true, theme: 'dark' });
+    assert.ok(rt.getConditionalColorRulesState().rules.length >= 11);
+    assert.ok(rt.getConditionalColorRulesState().rules.every(r => r.createdByUser === true));
+});
+
+test('comparison settings are simplified by value type', () => {
+    const rt = setup();
+    assert.equal(rt.getDefaultCcrMetricSettings('useAmount').allowedOperators.join('|'), 'lt|lte|gt|gte|between|eq');
+    assert.equal(rt.getDefaultCcrMetricSettings('transactionType').allowedOperators.join('|'), 'eq|neq|contains|notContains|empty|notEmpty');
+    assert.equal(rt.compareConditionalColorRule({
+        id: 'text',
+        name: 'text',
+        enabled: true,
+        metric: 'transactionType',
+        operator: 'notContains',
+        value: 'gift',
+        sectionScope: ['all'],
+        substanceScope: 'all',
+        colors: { background: '#111' }
+    }, { textValue: 'Personal use' }), true);
 });
 
 test('comparisons: eq/neq/gt/lt/between/contains/empty/boolean/pct/daysSince', () => {
@@ -190,6 +210,7 @@ test('priority and stop-processing override lower rules', () => {
 
 test('usage vs target presets keep visible labels', () => {
     const rt = setup();
+    rt.loadRecoveryColorRulePresets(rt.__getTestAppData(), { replace: true, theme: 'dark' });
     const over = rt.getUsageVsTargetBadge(12, 10);
     assert.equal(over.level, 'risk');
     assert.match(over.label, /Over/i);
@@ -206,6 +227,7 @@ test('usage vs target presets keep visible labels', () => {
 
 test('inventory and taper helpers evaluate without mutating data', () => {
     const rt = setup();
+    rt.loadRecoveryColorRulePresets(rt.__getTestAppData(), { replace: true, theme: 'dark' });
     const before = JSON.stringify(rt.__getTestAppData().logs);
     const low = rt.evaluateInventoryColors(20, { section: 'inventory' });
     assert.ok(low.matched.some(r => /Low inventory|Depleted/i.test(r.statusLabel || r.name)));

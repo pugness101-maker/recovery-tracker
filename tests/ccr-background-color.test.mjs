@@ -117,7 +117,7 @@ test('saved rgba background applies to matched evaluations', () => {
     assert.match(rt.buildConditionalColorInlineStyle(result), /background:rgba\(76, 175, 80, 0\.22\)/);
 });
 
-test('missing background key still gets legacy default; explicit empty does not', () => {
+test('missing and explicit empty background keys do not create fallback colors', () => {
     const rt = setup();
     const legacy = rt.normalizeConditionalColorRule({
         name: 'Legacy',
@@ -126,7 +126,7 @@ test('missing background key still gets legacy default; explicit empty does not'
         value: 1,
         colors: { text: '#fff', border: '#000' }
     });
-    assert.equal(legacy.colors.background, 'rgba(76, 175, 80, 0.22)');
+    assert.equal(legacy.colors.background, '');
     const empty = rt.normalizeConditionalColorRule({
         name: 'Empty',
         metric: 'useAmount',

@@ -1558,17 +1558,18 @@ const CCR_STORAGE_KEY = 'conditionalColorRules';
 
 const CCR_OPERATORS = Object.freeze([
     { id: 'eq', label: 'Equals' },
-    { id: 'neq', label: 'Not equals' },
-    { id: 'gt', label: 'Greater than' },
-    { id: 'gte', label: 'Greater than or equal' },
     { id: 'lt', label: 'Less than' },
     { id: 'lte', label: 'Less than or equal' },
-    { id: 'between', label: 'Between (inclusive)' },
+    { id: 'gt', label: 'Greater than' },
+    { id: 'gte', label: 'Greater than or equal' },
+    { id: 'between', label: 'Between' },
+    { id: 'neq', label: 'Does not equal' },
     { id: 'betweenInclusive', label: 'Between inclusive' },
     { id: 'betweenExclusive', label: 'Between (exclusive)' },
     { id: 'contains', label: 'Contains' },
-    { id: 'empty', label: 'Empty' },
-    { id: 'notEmpty', label: 'Not empty' },
+    { id: 'notContains', label: 'Does not contain' },
+    { id: 'empty', label: 'Is empty' },
+    { id: 'notEmpty', label: 'Is not empty' },
     { id: 'true', label: 'True' },
     { id: 'false', label: 'False' },
     { id: 'pctAboveTarget', label: 'Percentage above target' },
@@ -1758,7 +1759,7 @@ const CCR_METRICS = Object.freeze([
         substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'],
         sections: CCR_TAPER_METRIC_SECTIONS,
         valueType: 'string',
-        allowedOperators: ['eq', 'neq', 'contains', 'empty', 'notEmpty']
+        allowedOperators: ['eq', 'neq', 'contains', 'notContains', 'empty', 'notEmpty']
     }),
     ccrMetricDef({ key: 'plannedAmount', label: 'Planned amount', group: 'taper', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], sections: CCR_TAPER_METRIC_SECTIONS, unitType: 'amount' }),
     ccrMetricDef({ key: 'actualAmount', label: 'Actual amount', group: 'taper', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], sections: CCR_TAPER_METRIC_SECTIONS, unitType: 'amount' }),
@@ -1888,9 +1889,38 @@ function getCcrMetricDef(metricKey) {
 
 const CCR_TIME_INPUT_UNITS = Object.freeze(['minutes', 'hours', 'days']);
 const CCR_FAVORABLE_DIRECTIONS = Object.freeze(['higher', 'lower', 'neutral']);
-const CCR_NUMERIC_OPERATORS = Object.freeze(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'between', 'betweenExclusive', 'empty', 'notEmpty']);
-const CCR_TEXT_OPERATORS = Object.freeze(['eq', 'neq', 'contains', 'empty', 'notEmpty']);
+const CCR_NUMERIC_OPERATORS = Object.freeze(['lt', 'lte', 'gt', 'gte', 'between', 'eq']);
+const CCR_TEXT_OPERATORS = Object.freeze(['eq', 'neq', 'contains', 'notContains', 'empty', 'notEmpty']);
 const CCR_BOOLEAN_OPERATORS = Object.freeze(['true', 'false', 'empty', 'notEmpty']);
+const CCR_RANGE_BOUNDARIES = Object.freeze([
+    { id: 'inclusiveExclusive', label: 'Inclusive lower, exclusive upper' },
+    { id: 'inclusive', label: 'Inclusive both' },
+    { id: 'exclusive', label: 'Exclusive both' },
+    { id: 'exclusiveInclusive', label: 'Exclusive lower, inclusive upper' }
+]);
+const CCR_VISUAL_TARGETS = Object.freeze([
+    { id: 'valueCell', label: 'Value cell only' },
+    { id: 'row', label: 'Entire row' },
+    { id: 'accent', label: 'Border/accent only' }
+]);
+
+function normalizeCcrRangeBoundary(value, operator = 'between') {
+    const raw = String(value || '').trim();
+    if (CCR_RANGE_BOUNDARIES.some(b => b.id === raw)) return raw;
+    if (operator === 'betweenExclusive') return 'exclusive';
+    if (operator === 'betweenInclusive') return 'inclusive';
+    return 'inclusiveExclusive';
+}
+
+function getCcrRuleRangeBoundary(rule) {
+    if (rule?.rangeBoundary == null && rule?.operator === 'between') return 'inclusive';
+    return normalizeCcrRangeBoundary(rule?.rangeBoundary, rule?.operator);
+}
+
+function normalizeCcrVisualTarget(value) {
+    const raw = String(value || '').trim();
+    return CCR_VISUAL_TARGETS.some(t => t.id === raw) ? raw : 'valueCell';
+}
 
 function getDefaultCcrMetricSettings(metricKey) {
     const def = getCcrMetricDef(metricKey);
@@ -2558,9 +2588,7 @@ function getDefaultConditionalColorRulesState(theme = 'dark') {
     return {
         enabled: true,
         version: 1,
-        rules: getConditionalColorPresetRules(theme)
-            .map((r, i) => normalizeConditionalColorRule(r, i))
-            .filter(Boolean),
+        rules: [],
         metricSettings: {}
     };
 }
@@ -2768,10 +2796,18 @@ function normalizeConditionalColorRule(raw, index = 0) {
         durationValueVersion = null;
     }
     const metricDefaults = getDefaultCcrMetricSettings(metric);
-    const allowedMetricOps = new Set(metricDefaults?.allowedOperators || CCR_OPERATORS.map(o => o.id));
-    if (!allowedMetricOps.has(operator)) {
-        operator = metricDefaults?.defaultOperator || [...allowedMetricOps][0] || 'gt';
+    if (!opIds.has(operator)) {
+        operator = metricDefaults?.defaultOperator || metricDefaults?.allowedOperators?.[0] || 'gt';
     }
+    const normalizedBoundary = raw.rangeBoundary == null && operator === 'between'
+        ? 'inclusive'
+        : normalizeCcrRangeBoundary(raw.rangeBoundary, operator);
+    const hasVisualTarget = raw.visualTarget != null || raw.targetArea != null || raw.target != null;
+    let visualTarget = normalizeCcrVisualTarget(raw.visualTarget || raw.targetArea || raw.target);
+    if (!hasVisualTarget && metric === 'transactionType' && sectionScope.includes('useHistory')) {
+        visualTarget = 'row';
+    }
+    const createdByUser = raw.createdByUser === true || (!raw.isPreset && raw.createdByUser !== false);
     const normalized = {
         id: String(raw.id || ccrNewId()),
         name: String(raw.name || `Rule ${index + 1}`).slice(0, 80),
@@ -2782,6 +2818,7 @@ function normalizeConditionalColorRule(raw, index = 0) {
         sectionScope,
         metric,
         operator,
+        rangeBoundary: normalizedBoundary,
         value,
         valueTo,
         targetValue,
@@ -2791,15 +2828,19 @@ function normalizeConditionalColorRule(raw, index = 0) {
             // Empty string = no background override. Missing key keeps legacy default.
             background: Object.prototype.hasOwnProperty.call(colors, 'background')
                 ? String(colors.background ?? '').trim()
-                : 'rgba(76, 175, 80, 0.22)',
+                : '',
             text: Object.prototype.hasOwnProperty.call(colors, 'text') && String(colors.text ?? '').trim() === ''
                 ? ''
-                : normalizeHexColor(colors.text, '#81c784'),
+                : (Object.prototype.hasOwnProperty.call(colors, 'text') ? normalizeHexColor(colors.text, '') : ''),
             border: Object.prototype.hasOwnProperty.call(colors, 'border') && String(colors.border ?? '').trim() === ''
                 ? ''
-                : border,
-            accent: normalizeHexColor(colors.accent || colors.border, border || '#4caf50')
+                : (Object.prototype.hasOwnProperty.call(colors, 'border') ? border : ''),
+            accent: Object.prototype.hasOwnProperty.call(colors, 'accent')
+                ? normalizeHexColor(colors.accent, '')
+                : ''
         },
+        visualTarget,
+        createdByUser,
         priority: Number.isFinite(Number(raw.priority)) ? Number(raw.priority) : (100 - index),
         stopProcessing: !!raw.stopProcessing,
         statusLabel: raw.statusLabel != null ? String(raw.statusLabel).slice(0, 40) : '',
@@ -2843,26 +2884,6 @@ function normalizeCcrManagerPersistedUi(raw = {}) {
     return { groupBy, collapsedGroups, expandedRuleIds };
 }
 
-function ensureMissingGiftTransactionColorPresets(state, theme = 'dark') {
-    if (!state || !Array.isArray(state.rules)) return false;
-    const giftPresets = getConditionalColorPresetRules(theme)
-        .filter(p => p.presetId === 'giftGiven' || p.presetId === 'giftReceived');
-    const byPresetId = new Set(state.rules.map(r => r.presetId).filter(Boolean));
-    const byName = new Set(state.rules.map(r => String(r.name || '').toLowerCase()));
-    let added = false;
-    giftPresets.forEach(preset => {
-        if (byPresetId.has(preset.presetId)) return;
-        if (byName.has(String(preset.name || '').toLowerCase())) return;
-        state.rules.push(normalizeConditionalColorRule({
-            ...preset,
-            id: ccrNewId('preset'),
-            lastModified: new Date().toISOString()
-        }));
-        added = true;
-    });
-    return added;
-}
-
 function ensureConditionalColorRules(data = appData, options = {}) {
     if (!data.settings) data.settings = {};
     const theme = options.theme
@@ -2881,15 +2902,12 @@ function ensureConditionalColorRules(data = appData, options = {}) {
         : [];
     state.ui = normalizeCcrManagerPersistedUi(state.ui);
     state.metricSettings = normalizeCcrMetricSettingsMap(state.metricSettings);
-    if (!Array.isArray(state.rules) || !state.rules.length) {
-        state.rules = getConditionalColorPresetRules(theme)
-            .map((r, i) => normalizeConditionalColorRule(r, i))
-            .filter(Boolean);
+    if (!Array.isArray(state.rules)) {
+        state.rules = [];
     } else {
         state.rules = state.rules
             .map((r, i) => normalizeConditionalColorRule(r, i))
             .filter(Boolean);
-        ensureMissingGiftTransactionColorPresets(state, theme);
     }
     return state;
 }
@@ -3638,6 +3656,8 @@ function compareConditionalColorRule(rule, context = {}) {
                 return rawValue === false || rawValue === 0 || String(rawValue).toLowerCase() === 'false';
             case 'contains':
                 return textValue.toLowerCase().includes(String(ruleValue ?? '').toLowerCase());
+            case 'notContains':
+                return !textValue.toLowerCase().includes(String(ruleValue ?? '').toLowerCase());
             case 'eq':
                 if (numValue != null && compare != null && rule.metric !== 'transactionType') {
                     return Math.abs(numValue - compare) < 1e-9;
@@ -3661,7 +3681,16 @@ function compareConditionalColorRule(rule, context = {}) {
                 if (numValue == null || compare == null || compareTo == null) return false;
                 const lo = Math.min(compare, compareTo);
                 const hi = Math.max(compare, compareTo);
-                return numValue >= lo && numValue <= hi;
+                const boundary = rule.operator === 'betweenInclusive'
+                    ? 'inclusive'
+                    : getCcrRuleRangeBoundary(rule);
+                const lowerOk = boundary === 'exclusive' || boundary === 'exclusiveInclusive'
+                    ? numValue > lo
+                    : numValue >= lo;
+                const upperOk = boundary === 'inclusive' || boundary === 'exclusiveInclusive'
+                    ? numValue <= hi
+                    : numValue < hi;
+                return lowerOk && upperOk;
             }
             case 'betweenExclusive': {
                 if (numValue == null || compare == null || compareTo == null) return false;
@@ -3740,6 +3769,8 @@ function evaluateConditionalColorRules(context = {}, data = appData) {
     let style = null;
 
     for (const rule of rules) {
+        if (context.section === 'useHistory' && rule.createdByUser !== true) continue;
+        if (context.visualTarget && normalizeCcrVisualTarget(rule.visualTarget) !== normalizeCcrVisualTarget(context.visualTarget)) continue;
         if (!ruleMatchesSubstanceScope(rule, context.substanceId)) continue;
         if (!ruleMatchesSectionScope(rule, context.section)) continue;
         if (!ruleMatchesMetric(rule, context.metric)) continue;
@@ -3752,15 +3783,19 @@ function evaluateConditionalColorRules(context = {}, data = appData) {
         matched.push(rule);
         if (!style) {
             style = {
-                background: rule.colors.background,
-                text: rule.colors.text,
-                border: rule.colors.border
+                background: normalizeCcrVisualTarget(rule.visualTarget) === 'accent' ? '' : rule.colors.background,
+                text: normalizeCcrVisualTarget(rule.visualTarget) === 'accent' ? '' : rule.colors.text,
+                border: rule.colors.border || rule.colors.accent,
+                accent: rule.colors.accent || rule.colors.border
             };
         } else {
             // Higher priority already applied; lower-priority rules may fill missing slots only.
-            style.background = style.background || rule.colors.background;
-            style.text = style.text || rule.colors.text;
-            style.border = style.border || rule.colors.border;
+            if (normalizeCcrVisualTarget(rule.visualTarget) !== 'accent') {
+                style.background = style.background || rule.colors.background;
+                style.text = style.text || rule.colors.text;
+            }
+            style.border = style.border || rule.colors.border || rule.colors.accent;
+            style.accent = style.accent || rule.colors.accent || rule.colors.border;
         }
         if (rule.stopProcessing) break;
     }
@@ -3813,14 +3848,41 @@ function evaluateUseHistoryRowConditionalColor(entry, substanceId = null, data =
     const sid = substanceId || (typeof getUseSubstanceId === 'function'
         ? getUseSubstanceId(entry, data)
         : entry.substanceId);
-    return evaluateConditionalColorRules({
+    const contexts = [{
         substanceId: sid,
         section: 'useHistory',
+        visualTarget: 'row',
         metric: 'transactionType',
         value: tx,
         textValue: tx,
         log: entry
-    }, data);
+    }];
+    const amount = typeof getLogStatsAmount === 'function' ? getLogStatsAmount(entry) : ccrCoerceNumber(entry.amount);
+    if (amount != null) contexts.push({ substanceId: sid, section: 'useHistory', visualTarget: 'row', metric: 'useAmount', value: amount, log: entry });
+    const duration = typeof getNormalizedSessionDurationMinutes === 'function' ? getNormalizedSessionDurationMinutes(entry) : null;
+    if (duration != null) contexts.push({ substanceId: sid, section: 'useHistory', visualTarget: 'row', metric: 'sessionDuration', value: duration, log: entry });
+    const gph = typeof getNormalizedGramsPerHour === 'function' ? getNormalizedGramsPerHour(entry) : null;
+    if (gph != null && Number.isFinite(gph)) contexts.push({ substanceId: sid, section: 'useHistory', visualTarget: 'row', metric: 'gramsPerHour', value: gph, log: entry });
+    const breakHours = typeof computeBreakSincePreviousUseHours === 'function' ? computeBreakSincePreviousUseHours(entry, data) : null;
+    if (breakHours != null && Number.isFinite(breakHours)) contexts.push({ substanceId: sid, section: 'useHistory', visualTarget: 'row', metric: 'useGapPrevious', value: breakHours, log: entry });
+
+    const results = contexts.map(ctx => evaluateConditionalColorRules(ctx, data)).filter(r => r?.matched?.length);
+    if (!results.length) return { matched: [], style: null, className: '', labels: [], cssText: '', attrs: '' };
+    const matched = results.flatMap(r => r.matched || []);
+    const style = results.reduce((acc, result) => {
+        if (!result.style) return acc;
+        if (!acc) return { ...result.style };
+        acc.background = acc.background || result.style.background;
+        acc.text = acc.text || result.style.text;
+        acc.border = acc.border || result.style.border;
+        acc.accent = acc.accent || result.style.accent;
+        return acc;
+    }, null);
+    const labels = matched
+        .map(r => (r.statusLabel || '').trim())
+        .filter(Boolean)
+        .filter((v, i, arr) => arr.indexOf(v) === i);
+    return { matched, style, className: style ? 'ccr-row-colored' : '', labels, cssText: '', attrs: '' };
 }
 
 function buildUseHistoryRowInlineStyle(ccrResult) {
@@ -3833,6 +3895,9 @@ function buildUseHistoryRowInlineStyle(ccrResult) {
     if (s.border) {
         parts.push(`--ccr-row-border:${s.border}`);
     }
+    if (s.accent && !s.border) {
+        parts.push(`--ccr-row-border:${s.accent}`);
+    }
     if (s.text) {
         parts.push(`--ccr-row-text:${s.text}`);
     }
@@ -3841,9 +3906,7 @@ function buildUseHistoryRowInlineStyle(ccrResult) {
 
 function getUseHistoryRowColorClassNames(entry, ccrResult) {
     const classes = [];
-    if (ccrResult?.matched?.length) classes.push('ccr-row-colored');
-    if (typeof isGiftGivenLog === 'function' && isGiftGivenLog(entry)) classes.push('gift-given-row');
-    else if (typeof isGiftReceivedLog === 'function' && isGiftReceivedLog(entry)) classes.push('gift-received-row');
+    if (ccrResult?.matched?.length && buildUseHistoryRowInlineStyle(ccrResult)) classes.push('ccr-row-colored');
     return classes;
 }
 
@@ -4223,7 +4286,10 @@ function formatCcrConditionSummary(rule) {
         }
     }
     if (rule.operator === 'between' || rule.operator === 'betweenInclusive' || rule.operator === 'betweenExclusive') {
-        return `${opLabel} ${rule.value ?? '—'} – ${rule.valueTo ?? '—'}`;
+        const boundary = getCcrRuleRangeBoundary(rule);
+        const lower = boundary === 'exclusive' || boundary === 'exclusiveInclusive' ? '<' : '<=';
+        const upper = boundary === 'inclusive' || boundary === 'exclusiveInclusive' ? '<=' : '<';
+        return `${rule.value ?? '—'} ${lower} value ${upper} ${rule.valueTo ?? '—'}`;
     }
     if (rule.operator === 'empty' || rule.operator === 'notEmpty'
         || rule.operator === 'true' || rule.operator === 'false') {
@@ -4298,11 +4364,14 @@ function ccrNumericRange(rule) {
         case 'between':
         case 'betweenInclusive': {
             if (v == null || v2 == null) return null;
+            const boundary = rule.operator === 'betweenInclusive'
+                ? 'inclusive'
+                : getCcrRuleRangeBoundary(rule);
             return {
                 lo: Math.min(v, v2),
                 hi: Math.max(v, v2),
-                loExclusive: false,
-                hiExclusive: false
+                loExclusive: boundary === 'exclusive' || boundary === 'exclusiveInclusive',
+                hiExclusive: boundary === 'exclusive' || boundary === 'inclusiveExclusive'
             };
         }
         case 'betweenExclusive': {
@@ -4338,6 +4407,26 @@ function ccrRangesOverlap(a, b) {
     return true;
 }
 
+function ccrRangeOverlapPoint(a, b) {
+    if (!ccrRangesOverlap(a, b)) return null;
+    if (a.hi === b.lo && Number.isFinite(a.hi)) return a.hi;
+    if (b.hi === a.lo && Number.isFinite(b.hi)) return b.hi;
+    const lo = Math.max(a.lo, b.lo);
+    const hi = Math.min(a.hi, b.hi);
+    if (Number.isFinite(lo)) return lo;
+    if (Number.isFinite(hi)) return hi;
+    return null;
+}
+
+function buildCcrConflictEntry(otherRule, overlapValue = null) {
+    const valueText = overlapValue == null ? 'an overlapping range' : `value ${formatAmount(overlapValue)}`;
+    return {
+        ...otherRule,
+        conflictAt: overlapValue,
+        message: `Overlaps with '${otherRule.name}' at ${valueText}.`
+    };
+}
+
 /**
  * Detect rules that share metric + substance + section with overlapping conditions.
  */
@@ -4351,7 +4440,9 @@ function detectConditionalColorRuleConflicts(rules = null, data = appData) {
             const a = list[i];
             const b = list[j];
             if (!a || !b) continue;
+            if (!a.enabled || !b.enabled) continue;
             if (a.metric !== b.metric) continue;
+            if (normalizeCcrVisualTarget(a.visualTarget) !== normalizeCcrVisualTarget(b.visualTarget)) continue;
             if (!scopesOverlapSubstances(a.substanceScope, b.substanceScope)) continue;
             if (!scopesOverlapSections(a.sectionScope, b.sectionScope)) continue;
             if (a.operator === 'contains' || b.operator === 'contains'
@@ -4360,14 +4451,17 @@ function detectConditionalColorRuleConflicts(rules = null, data = appData) {
                 || a.operator === 'true' || b.operator === 'true'
                 || a.operator === 'false' || b.operator === 'false') {
                 if (a.operator === b.operator) {
-                    byId[a.id].push(b);
-                    byId[b.id].push(a);
+                    byId[a.id].push(buildCcrConflictEntry(b));
+                    byId[b.id].push(buildCcrConflictEntry(a));
                 }
                 continue;
             }
-            if (ccrRangesOverlap(ccrNumericRange(a), ccrNumericRange(b))) {
-                byId[a.id].push(b);
-                byId[b.id].push(a);
+            const rangeA = ccrNumericRange(a);
+            const rangeB = ccrNumericRange(b);
+            if (ccrRangesOverlap(rangeA, rangeB)) {
+                const overlap = ccrRangeOverlapPoint(rangeA, rangeB);
+                byId[a.id].push(buildCcrConflictEntry(b, overlap));
+                byId[b.id].push(buildCcrConflictEntry(a, overlap));
             }
         }
     }
@@ -4964,6 +5058,7 @@ function loadRecoveryColorRulePresets(data = appData, { replace = false, theme =
         || 'dark';
     const presets = getConditionalColorPresetRules(resolved).map((r, i) => normalizeConditionalColorRule({
         ...r,
+        createdByUser: true,
         lastModified: new Date().toISOString()
     }, i));
     const state = ensureConditionalColorRules(data);
@@ -5051,6 +5146,8 @@ function getCcrEditorDraftFromForm() {
         sectionScope: sections.length ? sections : ['all'],
         metric,
         operator: get('ccr-rule-operator')?.value || 'gt',
+        rangeBoundary: get('ccr-rule-boundary')?.value || 'inclusiveExclusive',
+        visualTarget: get('ccr-rule-visual-target')?.value || 'valueCell',
         value: get('ccr-rule-value')?.value ?? '',
         valueTo: get('ccr-rule-value-to')?.value ?? '',
         targetValue: get('ccr-rule-target')?.value ?? '',
@@ -5115,6 +5212,7 @@ function fillCcrEditorForm(rule) {
         name: 'New rule',
         metric: 'useAmount',
         operator: 'gt',
+        visualTarget: 'valueCell',
         value: 0,
         priority: 100,
         colors: { background: 'rgba(76, 175, 80, 0.22)', text: '#81c784', border: '#4caf50' },
@@ -5138,7 +5236,11 @@ function fillCcrEditorForm(rule) {
         });
     }
     populateCcrMetricSelect(r.metric);
+    const opEl = document.getElementById('ccr-rule-operator');
+    if (opEl) opEl.value = r.operator;
+    populateCcrOperatorSelectForMetric(r.metric);
     set('ccr-rule-operator', r.operator);
+    set('ccr-rule-boundary', r.rangeBoundary || normalizeCcrRangeBoundary(null, r.operator));
     if (isCcrDurationMetric(r.metric)) {
         const editorVals = getCcrDurationEditorValues(r);
         set('ccr-rule-value', editorVals.value);
@@ -5155,6 +5257,7 @@ function fillCcrEditorForm(rule) {
     set('ccr-rule-priority', r.priority);
     set('ccr-rule-stop', r.stopProcessing, 'checked');
     set('ccr-rule-status-label', r.statusLabel);
+    set('ccr-rule-visual-target', r.visualTarget || 'valueCell');
     applyCcrBackgroundControlsFromValue(r.colors.background);
     set('ccr-rule-text', r.colors.text);
     set('ccr-rule-text-hex', r.colors.text.startsWith('#') ? r.colors.text.slice(0, 7) : '#81c784');
@@ -5208,9 +5311,18 @@ function populateCcrOperatorSelectForMetric(metric = null) {
     const current = opEl.value;
     const settings = getCcrMetricSettings(metric || document.getElementById('ccr-rule-metric')?.value || 'useAmount');
     const allowed = new Set(settings?.allowedOperators || CCR_OPERATORS.map(o => o.id));
-    opEl.innerHTML = CCR_OPERATORS
-        .filter(o => o.id !== 'betweenInclusive' && allowed.has(o.id))
-        .map(o => `<option value="${o.id}">${escapeHtml(o.label)}</option>`).join('');
+    const optionIds = CCR_OPERATORS
+        .map(o => o.id)
+        .filter(id => id !== 'betweenInclusive' && allowed.has(id));
+    if (current && !optionIds.includes(current) && CCR_OPERATORS.some(o => o.id === current)) {
+        optionIds.push(current);
+    }
+    opEl.innerHTML = optionIds
+        .map(id => {
+            const o = CCR_OPERATORS.find(item => item.id === id);
+            const legacy = allowed.has(id) ? '' : ' (legacy)';
+            return `<option value="${id}">${escapeHtml((o?.label || id) + legacy)}</option>`;
+        }).join('');
     if ([...opEl.options].some(o => o.value === current)) opEl.value = current;
     else if (settings?.defaultOperator && [...opEl.options].some(o => o.value === settings.defaultOperator)) opEl.value = settings.defaultOperator;
 }
@@ -5233,12 +5345,14 @@ function updateCcrOperatorFieldsVisibility() {
     const op = document.getElementById('ccr-rule-operator')?.value;
     const valueRow = document.getElementById('ccr-value-row');
     const valueToRow = document.getElementById('ccr-value-to-row');
+    const boundaryRow = document.getElementById('ccr-boundary-row');
     const targetRow = document.getElementById('ccr-target-row');
     const needsValue = !['empty', 'notEmpty', 'true', 'false'].includes(op);
     const needsTo = op === 'between' || op === 'betweenInclusive' || op === 'betweenExclusive';
     const needsTarget = op === 'pctAboveTarget' || op === 'pctBelowTarget';
     valueRow?.classList.toggle('hidden', !needsValue);
     valueToRow?.classList.toggle('hidden', !needsTo);
+    boundaryRow?.classList.toggle('hidden', !needsTo);
     targetRow?.classList.toggle('hidden', !needsTarget);
     updateCcrDurationValueLabels();
     updateCcrRangeVisualizer();
@@ -5387,7 +5501,7 @@ function renderCcrRuleManagerCard(rule, { conflicts, matchCounts, selected } = {
     const conflictList = conflicts[rule.id] || [];
     const expanded = isCcrRuleCardExpanded(rule.id);
     const conflictHtml = conflictList.length
-        ? `<button type="button" class="ccr-conflict-btn" title="${escapeAttr(conflictList.map(c => c.name).join(', '))}" aria-label="May conflict with ${escapeAttr(conflictList.map(c => c.name).join(', '))}" onclick="jumpToConflictingColorRule('${escapeAttr(conflictList[0].id)}')">Conflict${conflictList.length > 1 ? ` +${conflictList.length - 1}` : ''}</button>`
+        ? `<span class="ccr-conflict-group"><button type="button" class="ccr-conflict-btn" title="${escapeAttr(conflictList.map(c => c.message || c.name).join(' '))}" aria-label="${escapeAttr(conflictList[0].message || `May conflict with ${conflictList[0].name}`)}" onclick="jumpToConflictingColorRule('${escapeAttr(conflictList[0].id)}')">Conflict${conflictList.length > 1 ? ` +${conflictList.length - 1}` : ''}</button><button type="button" class="secondary-btn btn-sm" onclick="fixCcrRangeBoundariesForRule('${escapeAttr(rule.id)}')">Fix range boundaries</button></span>`
         : '';
     const reviewHtml = rule.needsReview
         ? `<span class="ccr-conflict-btn" title="${escapeAttr(rule.reviewReason || 'Needs review')}">Needs review</span>`
@@ -6001,6 +6115,7 @@ function getCcrSiblingRangeRules(seedRule = null, data = appData) {
     if (!draft) return [];
     return getConditionalColorRules(data)
         .filter(rule => rule.metric === draft.metric
+            && normalizeCcrVisualTarget(rule.visualTarget) === normalizeCcrVisualTarget(draft.visualTarget)
             && scopesOverlapSubstances(rule.substanceScope, draft.substanceScope)
             && scopesOverlapSections(rule.sectionScope, draft.sectionScope)
             && ccrNumericRange(rule))
@@ -6010,6 +6125,29 @@ function getCcrSiblingRangeRules(seedRule = null, data = appData) {
             const br = ccrNumericRange(b);
             return (ar.lo - br.lo) || (ar.hi - br.hi);
         });
+}
+
+function fixCcrRangeBoundariesForRule(ruleId, data = appData) {
+    const state = ensureConditionalColorRules(data);
+    const source = state.rules.find(r => String(r.id) === String(ruleId));
+    if (!source) return [];
+    const siblings = getCcrSiblingRangeRules(source, data)
+        .filter(r => ['between', 'betweenInclusive', 'betweenExclusive'].includes(r.operator));
+    const ids = new Set(siblings.map(r => String(r.id)));
+    state.rules = state.rules.map(rule => {
+        if (!ids.has(String(rule.id))) return rule;
+        return normalizeConditionalColorRule({
+            ...rule,
+            operator: 'between',
+            rangeBoundary: 'inclusiveExclusive',
+            lastModified: new Date().toISOString()
+        });
+    }).filter(Boolean);
+    persistConditionalColorRulesState({ rules: state.rules }, data);
+    invalidateConditionalColorRuleMatchCache();
+    if (typeof renderConditionalColorRulesSettings === 'function') renderConditionalColorRulesSettings();
+    if (typeof showToast === 'function') showToast('Range boundaries set to inclusive lower, exclusive upper');
+    return state.rules.filter(r => ids.has(String(r.id)));
 }
 
 function formatCcrRangeTick(n, rule = null) {
@@ -6095,14 +6233,14 @@ function buildNextCcrRangeDraft(src) {
     const range = ccrNumericRange(source);
     let nextValue = 0;
     let nextValueTo = 1;
-    let operator = 'betweenExclusive';
+    let operator = 'between';
+    let rangeBoundary = 'inclusiveExclusive';
     if (range && Number.isFinite(range.hi)) {
         nextValue = range.hi;
         nextValueTo = Number.isFinite(range.hi) ? range.hi + Math.max(1, Math.abs(range.hi - range.lo) || 1) : range.hi + 1;
-        // Adjacent to an inclusive upper bound → exclusive lower next range
-        operator = range.hiExclusive ? 'between' : 'betweenExclusive';
     } else if (range && range.hi === Infinity && Number.isFinite(range.lo)) {
         operator = 'gt';
+        rangeBoundary = 'inclusiveExclusive';
         nextValue = range.lo;
         nextValueTo = '';
     }
@@ -6122,6 +6260,7 @@ function buildNextCcrRangeDraft(src) {
         id: ccrNewId(),
         name: `${source.name.replace(/\s*\(copy\)\s*$/i, '').replace(/\s*range\s*\d*$/i, '').trim()} range`,
         operator,
+        rangeBoundary,
         value: nextValue,
         valueTo: operator.startsWith('between') ? nextValueTo : '',
         valueUnit,
@@ -31231,7 +31370,21 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
             }
             return `<td data-col="${colId}"${dataLabel}>${getNicotineProductTypeLabel(getNicotineProductType(entry))}</td>`;
         case 'transactionType':
-            return `<td data-col="${colId}"${dataLabel}>${formatUseHistoryTransactionType(entry, { withIcon: true })}</td>`;
+            {
+                let txHtml = formatUseHistoryTransactionType(entry, { withIcon: true });
+                const tx = getLogTransactionType(entry);
+                const ccr = evaluateConditionalColorRules({
+                    substanceId: getUseSubstanceId(entry),
+                    section: 'useHistory',
+                    visualTarget: 'valueCell',
+                    metric: 'transactionType',
+                    value: tx,
+                    textValue: tx,
+                    log: entry
+                });
+                if (ccr.matched.length) txHtml = wrapWithConditionalColor(txHtml, ccr, { keepLabel: true });
+                return `<td data-col="${colId}"${dataLabel}>${txHtml}</td>`;
+            }
         case 'amount': {
             let amountHtml = formatUseHistoryAmountHtml(entry);
             if (typeof evaluateConditionalColorRules === 'function') {
@@ -31239,6 +31392,7 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
                 const ccr = evaluateConditionalColorRules({
                     substanceId: getUseSubstanceId(entry),
                     section: 'useHistory',
+                    visualTarget: 'valueCell',
                     metric: 'useAmount',
                     value: amount
                 });
@@ -36197,6 +36351,7 @@ function applyConditionalColorToMetricHtml(html, context = {}, data = appData) {
     const ccr = evaluateConditionalColorRules({
         substanceId: context.substanceId,
         section: context.section || 'useHistory',
+        visualTarget: context.visualTarget || 'valueCell',
         metric: context.metric,
         value,
         log: context.log
@@ -39394,7 +39549,7 @@ function renderBreakSincePreviousCell(entry, data = appData) {
     const title = details ? formatBreakBetweenUsesTooltip(details) : '';
     let html = (text === '—' || hours == null)
         ? '—'
-        : `<span class="break-cell ${getBreakColorClass(hours)}"${title ? ` title="${escapeAttr(title)}"` : ''}>${escapeHtml(text)}</span>`;
+        : `<span class="break-cell"${title ? ` title="${escapeAttr(title)}"` : ''}>${escapeHtml(text)}</span>`;
     if (hours != null && Number.isFinite(hours)) {
         html = applyConditionalColorToMetricHtml(html, {
             substanceId: getUseSubstanceId(entry, data),
@@ -39408,21 +39563,7 @@ function renderBreakSincePreviousCell(entry, data = appData) {
 }
 
 function getUseRowWarnings(entry, substanceId, avgRate) {
-    const warnings = [];
-    if (!isPersonalUseLog(entry)) return warnings;
-    const today = getLocalDateString();
-    const limit = getDailyLimitForDate(substanceId, today);
-    const used = getUsedAmount(substanceId, today);
-
-    if (entry.useRate != null && avgRate != null && avgRate > 0 && entry.useRate >= avgRate * SESSION_RATE_HIGH_MULTIPLIER) {
-        warnings.push('high-rate');
-    }
-    if (entry.breakDurationHours != null) {
-        if (entry.breakDurationHours < SESSION_SHORT_BREAK_HOURS) warnings.push('short-break');
-        if (entry.breakDurationHours >= SESSION_LONG_BREAK_HOURS) warnings.push('long-break');
-    }
-    if (limit != null && used >= limit * 0.8) warnings.push('taper-close');
-    return warnings;
+    return [];
 }
 
 function isNonUseTransactionType(tx) {
@@ -60920,9 +61061,16 @@ function __getRecoveryTrackerTestExports() {
         resetCcrColorChannel,
         CCR_QUICK_COLOR_PRESETS,
         CCR_COLOR_CHANNEL_DEFAULTS,
+        CCR_RANGE_BOUNDARIES,
+        CCR_VISUAL_TARGETS,
+        normalizeCcrRangeBoundary,
+        getCcrRuleRangeBoundary,
+        normalizeCcrVisualTarget,
         ccrNumericRange,
         ccrRangesOverlap,
+        ccrRangeOverlapPoint,
         getCcrSiblingRangeRules,
+        fixCcrRangeBoundariesForRule,
         renderCcrRangeVisualizer,
         buildNextCcrRangeDraft,
         duplicateConditionalColorRuleChangeRange,
@@ -60974,7 +61122,6 @@ function __getRecoveryTrackerTestExports() {
         buildUseHistoryRowInlineStyle,
         getUseHistoryRowColorClassNames,
         normalizeCcrTransactionTypeToken,
-        ensureMissingGiftTransactionColorPresets,
         CCR_DARK_GIFT_COLOR_OVERRIDES,
         formatUseHistoryTransactionType,
         updateAppearanceZoomLayoutMetrics,

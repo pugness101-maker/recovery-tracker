@@ -8,7 +8,6 @@ function setup() {
     rt.__setTestAppData(data);
     rt.ensureConditionalColorRules(data);
     rt.persistConditionalColorRulesState({ rules: [] });
-    // Empty rules re-seed presets — replace with empty by saving a placeholder then deleting is awkward.
     // Use a dedicated isolated set via persist of custom rules only for range tests.
     return rt;
 }
@@ -21,7 +20,6 @@ function setupClean() {
         enabled: true,
         rules: []
     });
-    // ensure re-seeds presets when empty — wipe after by replacing with our rules only
     const state = rt.ensureConditionalColorRules(data);
     state.rules = [];
     rt.persistConditionalColorRulesState({ rules: [] }, data);
@@ -55,6 +53,10 @@ test('between inclusive and exclusive boundaries', () => {
     };
     assert.equal(rt.compareConditionalColorRule({ ...base, operator: 'between', value: 1, valueTo: 2 }, { value: 1 }), true);
     assert.equal(rt.compareConditionalColorRule({ ...base, operator: 'between', value: 1, valueTo: 2 }, { value: 2 }), true);
+    assert.equal(rt.compareConditionalColorRule({ ...base, operator: 'between', rangeBoundary: 'inclusiveExclusive', value: 1, valueTo: 2 }, { value: 1 }), true);
+    assert.equal(rt.compareConditionalColorRule({ ...base, operator: 'between', rangeBoundary: 'inclusiveExclusive', value: 1, valueTo: 2 }, { value: 2 }), false);
+    assert.equal(rt.compareConditionalColorRule({ ...base, operator: 'between', rangeBoundary: 'exclusiveInclusive', value: 1, valueTo: 2 }, { value: 1 }), false);
+    assert.equal(rt.compareConditionalColorRule({ ...base, operator: 'between', rangeBoundary: 'exclusiveInclusive', value: 1, valueTo: 2 }, { value: 2 }), true);
     assert.equal(rt.compareConditionalColorRule({ ...base, operator: 'betweenExclusive', value: 1, valueTo: 2 }, { value: 1 }), false);
     assert.equal(rt.compareConditionalColorRule({ ...base, operator: 'betweenExclusive', value: 1, valueTo: 2 }, { value: 1.5 }), true);
     assert.equal(rt.compareConditionalColorRule({ ...base, operator: 'betweenExclusive', value: 1, valueTo: 2 }, { value: 2 }), false);
@@ -69,6 +71,7 @@ test('adjacent non-overlapping ranges are not conflicts; overlapping ranges are'
         name: '0-1 green',
         metric: 'useAmount',
         operator: 'between',
+        rangeBoundary: 'inclusiveExclusive',
         value: 0,
         valueTo: 1,
         sectionScope: ['dashboard'],
@@ -91,6 +94,7 @@ test('adjacent non-overlapping ranges are not conflicts; overlapping ranges are'
         name: '2-3 orange',
         metric: 'useAmount',
         operator: 'between',
+        rangeBoundary: 'inclusiveExclusive',
         value: 2,
         valueTo: 3,
         sectionScope: ['dashboard'],
@@ -120,11 +124,18 @@ test('adjacent non-overlapping ranges are not conflicts; overlapping ranges are'
         ...yellow,
         id: 'yi',
         operator: 'between',
+        rangeBoundary: 'inclusive',
         value: 1,
         valueTo: 2
     });
-    conflicts = rt.detectConditionalColorRuleConflicts([green, yellowInclusive]);
-    assert.ok(conflicts.g.some(r => r.id === 'yi'));
+    const greenInclusive = rt.normalizeConditionalColorRule({
+        ...green,
+        id: 'gi',
+        rangeBoundary: 'inclusive'
+    });
+    conflicts = rt.detectConditionalColorRuleConflicts([greenInclusive, yellowInclusive]);
+    assert.ok(conflicts.gi.some(r => r.id === 'yi'));
+    assert.match(conflicts.gi[0].message, /value 1/);
 });
 
 test('multiple range rules for same metric evaluate by priority', () => {
@@ -182,13 +193,14 @@ test('sort by range lower bound', () => {
     assert.equal(sorted.map(r => r.id).join(','), 'a,b,c');
 });
 
-test('build next range drafts adjacent exclusive continuation', () => {
+test('build next range drafts use recommended inclusive-lower exclusive-upper continuation', () => {
     const rt = setup();
     const src = rt.normalizeConditionalColorRule({
         id: 'src',
         name: 'Use Amount',
         metric: 'useAmount',
         operator: 'between',
+        rangeBoundary: 'inclusiveExclusive',
         value: 0,
         valueTo: 1,
         sectionScope: ['dashboard'],
@@ -198,7 +210,8 @@ test('build next range drafts adjacent exclusive continuation', () => {
     });
     const next = rt.buildNextCcrRangeDraft(src);
     assert.equal(next.statusLabel, '');
-    assert.equal(next.operator, 'betweenExclusive');
+    assert.equal(next.operator, 'between');
+    assert.equal(next.rangeBoundary, 'inclusiveExclusive');
     assert.equal(Number(next.value), 1);
     assert.ok(Number(next.valueTo) > 1);
     assert.equal(next.metric, 'useAmount');

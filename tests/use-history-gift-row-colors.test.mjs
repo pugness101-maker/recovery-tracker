@@ -92,17 +92,52 @@ test('gift presets exist with light/dark theme colors', () => {
     assert.equal(darkRecv.colors.text, '');
 });
 
-test('Gift Given rows render purple; Gift Received rows render blue', () => {
+test('Gift rows stay neutral until presets are explicitly loaded', () => {
     const given = makeLog({ id: 1, transactionType: 'gift_given' });
     const received = makeLog({ id: 2, transactionType: 'gift_received' });
-    const { rt } = setup([given, received]);
+    const { rt, data } = setup([given, received]);
 
     const givenCcr = rt.evaluateUseHistoryRowConditionalColor(given, COKE_ID);
+    assert.equal(givenCcr.matched.length, 0);
+    assert.equal(rt.buildUseHistoryRowInlineStyle(givenCcr), '');
+    assert.equal(rt.getUseHistoryRowColorClassNames(given, givenCcr).includes('ccr-row-colored'), false);
+
+    rt.loadRecoveryColorRulePresets(data, { replace: true, theme: 'light' });
+    const loadedGivenCcr = rt.evaluateUseHistoryRowConditionalColor(given, COKE_ID, data);
+    assert.ok(loadedGivenCcr.matched.some(r => r.presetId === 'giftGiven' || r.name === 'Gift Given'));
+    assert.match(String(loadedGivenCcr.style.background), /#EDE7F6|rgba\(126,\s*87,\s*194/i);
+    assert.match(String(loadedGivenCcr.style.border), /#7E57C2|#9575CD/i);
+
+    const recvCcr = rt.evaluateUseHistoryRowConditionalColor(received, COKE_ID, data);
+    assert.ok(recvCcr.matched.some(r => r.presetId === 'giftReceived' || r.name === 'Gift Received'));
+    assert.match(String(recvCcr.style.background), /#E3F2FD|rgba\(66,\s*165,\s*245/i);
+    assert.match(String(recvCcr.style.border), /#42A5F5|#64B5F6/i);
+
+    const givenStyle = rt.buildUseHistoryRowInlineStyle(loadedGivenCcr);
+    assert.match(givenStyle, /--ccr-row-bg:/);
+    assert.match(givenStyle, /--ccr-row-border:/);
+    assert.ok(rt.getUseHistoryRowColorClassNames(given, loadedGivenCcr).includes('ccr-row-colored'));
+    assert.equal(rt.getUseHistoryRowColorClassNames(given, loadedGivenCcr).includes('gift-given-row'), false);
+    assert.equal(rt.getUseHistoryRowColorClassNames(received, recvCcr).includes('gift-received-row'), false);
+
+    assert.match(rt.formatUseHistoryTransactionType(given, { withIcon: true }), /🎁/);
+    assert.match(rt.formatUseHistoryTransactionType(received, { withIcon: true }), /📦/);
+    assert.equal(rt.formatUseHistoryTransactionType(given), 'Gift given');
+    assert.equal(rt.formatUseHistoryTransactionType(received), 'Gift received');
+});
+
+test('explicitly loaded Gift presets render purple and blue', () => {
+    const given = makeLog({ id: 1, transactionType: 'gift_given' });
+    const received = makeLog({ id: 2, transactionType: 'gift_received' });
+    const { rt, data } = setup([given, received]);
+    rt.loadRecoveryColorRulePresets(data, { replace: true, theme: 'light' });
+
+    const givenCcr = rt.evaluateUseHistoryRowConditionalColor(given, COKE_ID, data);
     assert.ok(givenCcr.matched.some(r => r.presetId === 'giftGiven' || r.name === 'Gift Given'));
     assert.match(String(givenCcr.style.background), /#EDE7F6|rgba\(126,\s*87,\s*194/i);
     assert.match(String(givenCcr.style.border), /#7E57C2|#9575CD/i);
 
-    const recvCcr = rt.evaluateUseHistoryRowConditionalColor(received, COKE_ID);
+    const recvCcr = rt.evaluateUseHistoryRowConditionalColor(received, COKE_ID, data);
     assert.ok(recvCcr.matched.some(r => r.presetId === 'giftReceived' || r.name === 'Gift Received'));
     assert.match(String(recvCcr.style.background), /#E3F2FD|rgba\(66,\s*165,\s*245/i);
     assert.match(String(recvCcr.style.border), /#42A5F5|#64B5F6/i);
@@ -111,8 +146,8 @@ test('Gift Given rows render purple; Gift Received rows render blue', () => {
     assert.match(givenStyle, /--ccr-row-bg:/);
     assert.match(givenStyle, /--ccr-row-border:/);
     assert.ok(rt.getUseHistoryRowColorClassNames(given, givenCcr).includes('ccr-row-colored'));
-    assert.ok(rt.getUseHistoryRowColorClassNames(given, givenCcr).includes('gift-given-row'));
-    assert.ok(rt.getUseHistoryRowColorClassNames(received, recvCcr).includes('gift-received-row'));
+    assert.equal(rt.getUseHistoryRowColorClassNames(given, givenCcr).includes('gift-given-row'), false);
+    assert.equal(rt.getUseHistoryRowColorClassNames(received, recvCcr).includes('gift-received-row'), false);
 
     assert.match(rt.formatUseHistoryTransactionType(given, { withIcon: true }), /🎁/);
     assert.match(rt.formatUseHistoryTransactionType(received, { withIcon: true }), /📦/);
@@ -188,7 +223,7 @@ test('theme switching keeps gift presets readable without forced text color', ()
     assert.match(dark.colors.background, /^rgba\(/i);
 });
 
-test('missing gift presets are restored for existing rule sets', () => {
+test('missing gift presets are not restored automatically for existing rule sets', () => {
     const { rt, data } = setup();
     // Simulate older save without gift presets
     data.settings.conditionalColorRules = {
@@ -209,6 +244,6 @@ test('missing gift presets are restored for existing rule sets', () => {
         ]
     };
     const state = rt.ensureConditionalColorRules(data);
-    assert.ok(state.rules.some(r => r.presetId === 'giftGiven'));
-    assert.ok(state.rules.some(r => r.presetId === 'giftReceived'));
+    assert.equal(state.rules.some(r => r.presetId === 'giftGiven'), false);
+    assert.equal(state.rules.some(r => r.presetId === 'giftReceived'), false);
 });
