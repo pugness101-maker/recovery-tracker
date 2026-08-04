@@ -61,6 +61,103 @@ const RECOVERY_DASHBOARD_SECTION_DEFAULTS = Object.freeze({
     alerts: false
 });
 
+// ——— Error reporting ———
+const APP_ERROR_LOG_LIMIT = 100;
+const APP_ERROR_BANNER_ID = 'app-error-banner';
+const appErrorLog = [];
+let lastAppErrorBannerMessage = '';
+
+function describeError(err) {
+    if (err == null) return 'Unknown error';
+    if (typeof err === 'string') return err;
+    const message = err.message || String(err);
+    return message || 'Unknown error';
+}
+
+function isStorageQuotaError(err) {
+    if (!err) return false;
+    const name = err.name || '';
+    if (name === 'QuotaExceededError' || name === 'NS_ERROR_DOM_QUOTA_REACHED') return true;
+    if (err.code === 22 || err.code === 1014) return true;
+    return /quota|storage is full|exceeded the quota/i.test(describeError(err));
+}
+
+function recordAppError(context, err, options = {}) {
+    const entry = {
+        context,
+        message: describeError(err),
+        name: err?.name || null,
+        severity: options.severity === 'warn' ? 'warn' : 'error',
+        at: new Date().toISOString()
+    };
+    appErrorLog.push(entry);
+    if (appErrorLog.length > APP_ERROR_LOG_LIMIT) appErrorLog.splice(0, appErrorLog.length - APP_ERROR_LOG_LIMIT);
+    // Tolerated failures log at debug level so they stay out of the way but remain
+    // inspectable (console verbose logging, or getAppErrorLog()).
+    if (entry.severity === 'warn') console.debug(`[${context}]`, err);
+    else console.error(`[${context}]`, err);
+    return entry;
+}
+
+function getAppErrorLog() {
+    return appErrorLog.map(entry => ({ ...entry }));
+}
+
+function clearAppErrorLog() {
+    appErrorLog.length = 0;
+}
+
+// Failures the app can genuinely continue past (optional modules, missing DOM,
+// preference reads). Recorded and logged so they are never fully invisible.
+function logSuppressedError(context, err) {
+    return recordAppError(context, err, { severity: 'warn' });
+}
+
+function showAppErrorBanner(message) {
+    const text = String(message || '').trim();
+    if (!text) return false;
+    if (typeof document === 'undefined' || !document.body) {
+        lastAppErrorBannerMessage = text;
+        return false;
+    }
+    if (text === lastAppErrorBannerMessage && document.getElementById?.(APP_ERROR_BANNER_ID)) return true;
+    lastAppErrorBannerMessage = text;
+    let banner = document.getElementById?.(APP_ERROR_BANNER_ID) || null;
+    if (!banner) {
+        banner = document.createElement('div');
+        banner.id = APP_ERROR_BANNER_ID;
+        banner.className = 'app-error-banner';
+        banner.setAttribute('role', 'alert');
+        document.body.appendChild(banner);
+    }
+    banner.textContent = text;
+    banner.classList?.remove('hidden');
+    return true;
+}
+
+function dismissAppErrorBanner() {
+    lastAppErrorBannerMessage = '';
+    const banner = typeof document !== 'undefined' ? document.getElementById?.(APP_ERROR_BANNER_ID) : null;
+    banner?.remove?.();
+}
+
+// Failures the user must know about: recorded, logged and surfaced in the UI.
+function reportUserFacingError(context, err, userMessage) {
+    const entry = recordAppError(context, err);
+    showAppErrorBanner(userMessage || `Something went wrong (${context}): ${entry.message}`);
+    return entry;
+}
+
+// Runs `fn`, surfacing any failure to the user instead of losing it in a handler.
+function runWithUserFacingErrors(context, fn, userMessage) {
+    try {
+        return { ok: true, value: fn() };
+    } catch (err) {
+        reportUserFacingError(context, err, userMessage);
+        return { ok: false, error: err };
+    }
+}
+
 let themePreference = 'dark';
 let resolvedTheme = 'dark';
 let themeMediaQuery = null;
@@ -88,7 +185,7 @@ function loadThemePreference() {
         if (saved === 'dark' || saved === 'light' || saved === 'system') {
             themePreference = saved;
         }
-    } catch (_) { /* ignore */ }
+    } catch (err) { logSuppressedError('loadThemePreference', err); }
     applyResolvedTheme(resolveTheme(themePreference));
 }
 
@@ -138,7 +235,7 @@ function setThemePreference(preference) {
     themePreference = preference;
     try {
         localStorage.setItem(THEME_PREFERENCE_KEY, preference);
-    } catch (_) { /* ignore */ }
+    } catch (err) { logSuppressedError('setThemePreference', err); }
     applyResolvedTheme(resolveTheme(preference));
     setupThemeSystemListener();
 }
@@ -165,7 +262,7 @@ function resolveAppearanceViewLayout(mode = getAppearanceViewMode()) {
         if (typeof window !== 'undefined' && window.matchMedia?.(APPEARANCE_VIEW_MODE_LAPTOP_MQ)?.matches) {
             return 'laptop';
         }
-    } catch (_) { /* ignore */ }
+    } catch (err) { logSuppressedError('resolveAppearanceViewLayout', err); }
     return 'phone';
 }
 
@@ -2779,7 +2876,7 @@ function scanDataHealth(data = appData) {
                     payload: { purchaseId: purchase.id, before, after }
                 });
             }
-        } catch (_) { /* ignore recalc errors in scan */ }
+        } catch (err) { logSuppressedError('scanDataHealth', err); }
     });
 
     const counts = {
@@ -4807,7 +4904,7 @@ function loadInventoryFiltersPanelState() {
         if (localStorage.getItem(INVENTORY_FILTERS_PANEL_KEY) === '1') {
             inventoryFiltersPanelOpen = true;
         }
-    } catch (_) { /* ignore */ }
+    } catch (err) { logSuppressedError('loadInventoryFiltersPanelState', err); }
     if (hasActiveInventoryFilters()) inventoryFiltersPanelOpen = true;
     syncInventoryStatusFilterUI();
     const searchEl = document.getElementById('inventory-search');
@@ -4829,7 +4926,7 @@ function loadInventoryFiltersPanelState() {
 function saveInventoryFiltersPanelState() {
     try {
         localStorage.setItem(INVENTORY_FILTERS_PANEL_KEY, inventoryFiltersPanelOpen ? '1' : '0');
-    } catch (_) { /* ignore */ }
+    } catch (err) { logSuppressedError('saveInventoryFiltersPanelState', err); }
 }
 
 function saveInventoryFilterState() {
@@ -4845,7 +4942,7 @@ function saveInventoryFilterState() {
             hasCost: inventoryListFilters.hasCost,
             vapeOnly: inventoryListFilters.vapeOnly
         }));
-    } catch (_) { /* ignore */ }
+    } catch (err) { logSuppressedError('saveInventoryFilterState', err); }
 }
 
 function toggleInventoryFiltersPanel() {
@@ -5871,7 +5968,7 @@ function migrateInventorySubstanceFields(data) {
         try {
             syncAlcoholPurchaseFields(purchase);
             stripIrrelevantPurchaseFields(purchase);
-        } catch (_) { /* keep old entries loadable */ }
+        } catch (err) { logSuppressedError('migrateInventorySubstanceFields', err); }
     });
 }
 
@@ -6957,7 +7054,7 @@ function goalClampRatio(value) {
 function goalFormatDate(dateStr) {
     if (!dateStr) return '—';
     if (typeof formatDate === 'function') {
-        try { return formatDate(dateStr); } catch (_err) { /* fall through */ }
+        try { return formatDate(dateStr); } catch (err) { logSuppressedError('goalFormatDate', err); }
     }
     return dateStr;
 }
@@ -11105,7 +11202,7 @@ function buildFinancialSavings(bounds = null, purchases = null, data = appData, 
                         estimate: false
                     });
                 });
-        } catch (_) { /* goals are optional */ }
+        } catch (err) { logSuppressedError('buildFinancialSavings', err); }
     }
 
     return {
@@ -11800,7 +11897,7 @@ function mapFinancialCalendarEvents(bounds = null, data = appData) {
                         searchable: `spending goal ${ev.goal.name}`
                     }));
                 });
-        } catch (_) { /* goals are optional */ }
+        } catch (err) { logSuppressedError('mapFinancialCalendarEvents', err); }
     }
 
     return events;
@@ -13231,6 +13328,7 @@ function buildGoalsPlansOverview(data = appData) {
     const archivedPlans = (data.taperPlansV2 || []).filter(p => p && (p.archived || p.status === 'archived'));
     let plansOnTrack = 0;
     let plansAbove = 0;
+    let plansWithErrors = 0;
     let currentPlanWeek = '—';
     plans.forEach(plan => {
         try {
@@ -13254,8 +13352,10 @@ function buildGoalsPlansOverview(data = appData) {
             } else {
                 plansOnTrack += 1;
             }
-        } catch (_) {
-            plansOnTrack += 1;
+        } catch (err) {
+            // A plan whose progress cannot be evaluated is not evidence of being on track.
+            plansWithErrors += 1;
+            logSuppressedError('buildGoalsPlansOverview:plan', err);
         }
     });
 
@@ -13271,6 +13371,7 @@ function buildGoalsPlansOverview(data = appData) {
         goalsNearLimit: nearLimit.length,
         plansOnTrack,
         plansAboveTarget: plansAbove,
+        plansWithErrors,
         closestGoalDeadline: closestDeadline ? { id: closestDeadline.id, name: closestDeadline.name, endDate: closestDeadline.endDate } : null,
         currentPlanWeek,
         recentlyCompletedGoals: completedRecent,
@@ -13396,26 +13497,26 @@ function buildInsightsCalendarOverview(data = appData) {
             spendSummary = fin?.spentThisMonth != null ? `$${Number(fin.spentThisMonth).toFixed(2)} this month` : '—';
             purchaseSummary = fin?.purchaseCount != null ? `${fin.purchaseCount} purchases in range` : '—';
         }
-    } catch (_) { /* overview soft-fail */ }
+    } catch (err) { logSuppressedError('buildInsightsCalendarOverview', err); }
 
     try {
         if (typeof buildGoalDashboardSummary === 'function') {
             const g = buildGoalDashboardSummary({ data });
             goalPerf = `${g.counts?.active || 0} active · ${g.counts?.atRisk || 0} needing attention`;
         }
-    } catch (_) { /* overview soft-fail */ }
+    } catch (err) { logSuppressedError('buildInsightsCalendarOverview', err); }
 
     try {
         const gp = buildGoalsPlansOverview(data);
         planPerf = `${gp.plansOnTrack} on track · ${gp.plansAboveTarget} above target`;
         useSummary = `${gp.activeGoalCount} goals linked to recovery focus`;
-    } catch (_) { /* overview soft-fail */ }
+    } catch (err) { logSuppressedError('buildInsightsCalendarOverview', err); }
 
     try {
         if (typeof buildFinancialDataQualityIssues === 'function') {
             warnings = (buildFinancialDataQualityIssues(data) || []).slice(0, 5);
         }
-    } catch (_) { /* overview soft-fail */ }
+    } catch (err) { logSuppressedError('buildInsightsCalendarOverview', err); }
 
     return {
         rangeLabel,
@@ -14665,9 +14766,7 @@ function exportPurchaseAnalyticsCsv(data = appData) {
         const s = String(cell ?? '');
         return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     }).join(',')).join('\n');
-    if (typeof downloadTextFile === 'function') {
-        downloadTextFile(`purchase-analytics-${paToday()}.csv`, csv, 'text/csv');
-    }
+    downloadTextFile(`purchase-analytics-${paToday()}.csv`, csv, 'text/csv');
     return csv;
 }
 
@@ -14940,7 +15039,7 @@ function purchaseHistoryInventoryLifespanLabel(purchase, data = appData) {
             const m = getBuyBreakMetricsForPurchase(purchase);
             if (m?.supplyDurationLabel) return m.supplyDurationLabel;
         }
-    } catch (_) { /* soft */ }
+    } catch (err) { logSuppressedError('purchaseHistoryInventoryLifespanLabel', err); }
     return '—';
 }
 
@@ -15272,7 +15371,7 @@ function contactAfterMutation(data = appData) {
     ensureContacts(data);
     if (typeof saveData === 'function') saveData(data);
     if (typeof renderContactsView === 'function') {
-        try { renderContactsView(); } catch (_) { /* ignore */ }
+        try { renderContactsView(); } catch (err) { logSuppressedError('contactAfterMutation', err); }
     }
 }
 
@@ -15495,7 +15594,7 @@ function migrateContactsFromFreeText(data = appData, options = {}) {
 
     data.migrations.contactsFromFreeTextV1 = true;
     if (options.persist !== false && typeof saveData === 'function') {
-        try { saveData(data); } catch (_) { /* avoid TDZ during early load */ }
+        try { saveData(data); } catch (err) { logSuppressedError('migrateContactsFromFreeText', err); }
     }
     return { created, linked, scanned: names.length };
 }
@@ -16029,9 +16128,7 @@ function exportContactsCsv(data = appData) {
         const s = String(cell ?? '');
         return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     }).join(',')).join('\n');
-    if (typeof downloadTextFile === 'function') {
-        downloadTextFile(`contacts-${ctToday()}.csv`, csv, 'text/csv');
-    }
+    downloadTextFile(`contacts-${ctToday()}.csv`, csv, 'text/csv');
     return csv;
 }
 
@@ -16050,9 +16147,7 @@ function exportContactAnalyticsCsv(data = appData) {
     push('most_gifts_exchanged', analytics.mostGiftsExchanged);
     push('most_interactions', analytics.mostInteractions);
     const csv = rows.map(r => r.join(',')).join('\n');
-    if (typeof downloadTextFile === 'function') {
-        downloadTextFile(`contact-analytics-${ctToday()}.csv`, csv, 'text/csv');
-    }
+    downloadTextFile(`contact-analytics-${ctToday()}.csv`, csv, 'text/csv');
     return csv;
 }
 
@@ -16830,7 +16925,7 @@ function resolveChartBounds(filters = null, data = appData) {
                     incomplete: !!range.incomplete
                 };
             }
-        } catch (_) { /* fall through */ }
+        } catch (err) { logSuppressedError('resolveChartBounds', err); }
     }
     const today = chToday();
     return { startDate: f.customStart || today, endDate: f.customEnd || today, label: f.dateRangePreset, incomplete: false };
@@ -17616,7 +17711,7 @@ function buildChartDatasetForMetric(metricId, filters, data = appData, options =
                     const ds = buildRecoveryDashboardDataset(data, { substanceId: f.substanceId });
                     score = ds?.score?.total ?? ds?.score;
                 }
-            } catch (_) { /* optional */ }
+            } catch (err) { logSuppressedError('buildChartDatasetForMetric', err); }
             const value = chToNumber(score?.total ?? score, NaN);
             return {
                 state: Number.isFinite(value) ? 'ok' : 'insufficient',
@@ -18213,7 +18308,7 @@ function exportChartWidgetCsv(widgetId) {
         const s = String(c ?? '');
         return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     }).join(',')).join('\n');
-    if (typeof downloadTextFile === 'function') downloadTextFile(`chart-${widgetId}-${chToday()}.csv`, csv, 'text/csv');
+    downloadTextFile(`chart-${widgetId}-${chToday()}.csv`, csv, 'text/csv');
     return csv;
 }
 
@@ -18232,7 +18327,7 @@ function exportChartDashboardCsv() {
         const s = String(c ?? '');
         return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
     }).join(',')).join('\n');
-    if (typeof downloadTextFile === 'function') downloadTextFile(`chart-dashboard-${chToday()}.csv`, csv, 'text/csv');
+    downloadTextFile(`chart-dashboard-${chToday()}.csv`, csv, 'text/csv');
     return csv;
 }
 
@@ -18243,38 +18338,55 @@ function downloadChartWidgetPng(widgetId) {
         if (typeof showToast === 'function') showToast('No SVG chart to export for this widget.', 'info');
         return;
     }
+    const fallbackToSvg = (err) => {
+        logSuppressedError('downloadChartWidgetPng', err);
+        try {
+            downloadTextFile(
+                `chart-${widgetId}.svg`,
+                new XMLSerializer().serializeToString(svg),
+                'image/svg+xml'
+            );
+        } catch (svgErr) {
+            reportUserFacingError('downloadChartWidgetPng:svgFallback', svgErr,
+                `Could not export this chart: ${describeError(svgErr)}`);
+        }
+    };
+
     try {
         const clone = svg.cloneNode(true);
         if (!clone.getAttribute('xmlns')) clone.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
         const blob = new Blob([new XMLSerializer().serializeToString(clone)], { type: 'image/svg+xml;charset=utf-8' });
         const url = URL.createObjectURL(blob);
         const img = new Image();
-        img.onload = () => {
-            const canvas = document.createElement('canvas');
-            canvas.width = 1280;
-            canvas.height = 720;
-            const ctx = canvas.getContext('2d');
-            ctx.fillStyle = '#ffffff';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        img.onerror = () => {
             URL.revokeObjectURL(url);
-            canvas.toBlob(png => {
-                if (!png) return;
-                const a = document.createElement('a');
-                a.href = URL.createObjectURL(png);
-                a.download = `chart-${widgetId}.png`;
-                a.click();
-            }, 'image/png');
+            fallbackToSvg(new Error('Chart image could not be rasterized'));
+        };
+        img.onload = () => {
+            try {
+                const canvas = document.createElement('canvas');
+                canvas.width = 1280;
+                canvas.height = 720;
+                const ctx = canvas.getContext('2d');
+                ctx.fillStyle = '#ffffff';
+                ctx.fillRect(0, 0, canvas.width, canvas.height);
+                ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+                URL.revokeObjectURL(url);
+                canvas.toBlob(png => {
+                    if (!png) {
+                        fallbackToSvg(new Error('Chart PNG encoding returned no data'));
+                        return;
+                    }
+                    downloadBlob(png, `chart-${widgetId}.png`);
+                }, 'image/png');
+            } catch (err) {
+                URL.revokeObjectURL(url);
+                fallbackToSvg(err);
+            }
         };
         img.src = url;
     } catch (err) {
-        // Fallback: download SVG
-        const blob = new Blob([new XMLSerializer().serializeToString(svg)], { type: 'image/svg+xml' });
-        if (typeof downloadTextFile === 'function') {
-            const reader = new FileReader();
-            reader.onload = () => downloadTextFile(`chart-${widgetId}.svg`, reader.result, 'image/svg+xml');
-            reader.readAsText(blob);
-        }
+        fallbackToSvg(err);
     }
 }
 
@@ -19740,7 +19852,7 @@ function ensureInsightsFilters(data = appData) {
             }
             if (typeof statsCustomStartDate === 'string') seeded.customStart = statsCustomStartDate;
             if (typeof statsCustomEndDate === 'string') seeded.customEnd = statsCustomEndDate;
-        } catch (_) { /* optional */ }
+        } catch (err) { logSuppressedError('ensureInsightsFilters', err); }
         data.settings[INSIGHTS_FILTERS_KEY] = seeded;
     }
     const prefs = data.settings[INSIGHTS_FILTERS_KEY];
@@ -19801,7 +19913,7 @@ function loadInsightsFiltersIntoState(data = appData) {
         statsDateRangePreset = f.dateRangePreset || 'last-7';
         statsCustomStartDate = f.customStart || '';
         statsCustomEndDate = f.customEnd || '';
-    } catch (_) { /* Temporal Dead Zone / early init */ }
+    } catch (err) { logSuppressedError('loadInsightsFiltersIntoState', err); }
     return f;
 }
 
@@ -19856,7 +19968,7 @@ function syncSectionFiltersFromInsights(data = appData) {
                 datePatch.customEnd = bounds.endDate;
                 datePatch.dateRangePreset = 'custom';
             }
-        } catch (_) { /* optional */ }
+        } catch (err) { logSuppressedError('syncSectionFiltersFromInsights', err); }
     }
 
     if (typeof ensureRunningTotalsPrefs === 'function') {
@@ -19909,15 +20021,15 @@ function persistInsightsFilters(patch = {}, options = {}) {
         statsDateRangePreset = prefs.dateRangePreset || 'last-7';
         statsCustomStartDate = prefs.customStart || '';
         statsCustomEndDate = prefs.customEnd || '';
-    } catch (_) { /* ignore */ }
+    } catch (err) { logSuppressedError('persistInsightsFilters', err); }
 
     if (typeof saveDashboardViewSubstanceId === 'function') {
-        try { saveDashboardViewSubstanceId(prefs.substanceId); } catch (_) { /* ignore */ }
+        try { saveDashboardViewSubstanceId(prefs.substanceId); } catch (err) { logSuppressedError('persistInsightsFilters', err); }
     }
     if (typeof persistRecoveryDashboardPrefs === 'function') {
         try {
             persistRecoveryDashboardPrefs({ selectedDashboardSubstance: prefs.substanceId }, data);
-        } catch (_) { /* ignore */ }
+        } catch (err) { logSuppressedError('persistInsightsFilters', err); }
     }
 
     if (syncSections) syncSectionFiltersFromInsights(data);
@@ -20159,7 +20271,7 @@ function resolveRunningTotalsBounds(filters, data = appData) {
                     incomplete: !!range.incomplete
                 };
             }
-        } catch (_) { /* fall through */ }
+        } catch (err) { logSuppressedError('resolveRunningTotalsBounds', err); }
     }
     return {
         startDate: f.customStart || '',
@@ -20175,7 +20287,7 @@ function runningTotalsWeekStartPref(data = appData) {
             const ws = getCalendarViewPrefs(data)?.weekStarts;
             if (ws === 'monday' || ws === 'sunday') return ws;
         }
-    } catch (_) { /* optional */ }
+    } catch (err) { logSuppressedError('runningTotalsWeekStartPref', err); }
     return data?.settings?.calendarView?.weekStarts === 'monday' ? 'monday' : 'sunday';
 }
 
@@ -20369,7 +20481,7 @@ function getRunningTotalsTarget(substanceId, data = appData) {
             if (week?.targetAmount != null) return { value: rtNum(week.targetAmount, null), label: 'Weekly taper target' };
             if (plan?.currentWeeklyTarget != null) return { value: rtNum(plan.currentWeeklyTarget, null), label: 'Plan target' };
         }
-    } catch (_) { /* optional */ }
+    } catch (err) { logSuppressedError('getRunningTotalsTarget', err); }
     return null;
 }
 
@@ -20806,9 +20918,7 @@ function exportRunningTotalsCsv() {
         lines.push(vals.join(','));
     });
     const csv = lines.join('\n');
-    if (typeof downloadTextFile === 'function') {
-        downloadTextFile(`running-totals-${rtToday()}.csv`, csv, 'text/csv');
-    }
+    downloadTextFile(`running-totals-${rtToday()}.csv`, csv, 'text/csv');
     return csv;
 }
 
@@ -20903,7 +21013,7 @@ function applyInsightsSimplifyNavMigration(data = appData) {
                 INSIGHTS_CALENDAR_VIEWS.splice(0, INSIGHTS_CALENDAR_VIEWS.length, ...next);
             }
         }
-    } catch (_) { /* ignore */ }
+    } catch (err) { logSuppressedError('applyInsightsSimplifyNavMigration', err); }
 
     if (!data?.settings) return;
     const prefs = typeof ensureCombinedNavPrefs === 'function'
@@ -21069,7 +21179,7 @@ function renderCompactInsightsSummaryCards(substanceId, useStats, bounds, unit, 
             const purchases = ds?.purchases || [];
             spend = purchases.reduce((s, p) => s + (parseFloat(p.totalCost) || 0), 0);
         }
-    } catch (_) { /* optional */ }
+    } catch (err) { logSuppressedError('renderCompactInsightsSummaryCards', err); }
 
     const fmtAmt = (n) => (typeof formatAmount === 'function' ? formatAmount(n) : String(n ?? 0));
     const fmtPuffs = (n) => (typeof formatStatsPuffs === 'function' ? formatStatsPuffs(n) : fmtAmt(n));
@@ -21271,7 +21381,7 @@ if (typeof document !== 'undefined') {
             try { initInsightsSimplify(); } catch (err) { console.error('[insights-simplify] init failed', err); }
         });
     } else {
-        try { initInsightsSimplify(); } catch (_) { /* ignore early */ }
+        try { initInsightsSimplify(); } catch (err) { logSuppressedError('initInsightsSimplify', err); }
     }
 }
 
@@ -22069,7 +22179,7 @@ function patchInventorySourceHistoryColumns() {
             TABLE_COLUMN_LABELS.purchaseHistory.store = 'Source';
             TABLE_COLUMN_LABELS.purchaseHistory.supplier = 'Source (legacy)';
         }
-    } catch (_) { /* optional */ }
+    } catch (err) { logSuppressedError('patchInventorySourceHistoryColumns', err); }
 
     // Hide supplier by default going forward
     try {
@@ -22079,7 +22189,7 @@ function patchInventorySourceHistoryColumns() {
                 TABLE_COLUMN_DEFAULTS.purchaseHistory.hidden = [...hidden, 'supplier'];
             }
         }
-    } catch (_) { /* optional */ }
+    } catch (err) { logSuppressedError('patchInventorySourceHistoryColumns', err); }
 }
 
 function initInventorySource() {
@@ -22105,7 +22215,7 @@ if (typeof document !== 'undefined') {
             try { initInventorySource(); } catch (err) { console.error('[inventory-source] init failed', err); }
         });
     } else {
-        try { initInventorySource(); } catch (_) { /* tests / early */ }
+        try { initInventorySource(); } catch (err) { logSuppressedError('initInventorySource', err); }
     }
 }
 
@@ -23427,13 +23537,22 @@ function loadColumnSettingsStore() {
     try {
         const raw = localStorage.getItem(COLUMN_SETTINGS_STORAGE_KEY);
         return raw ? JSON.parse(raw) : {};
-    } catch {
+    } catch (err) {
+        logSuppressedError('loadColumnSettingsStore', err);
         return {};
     }
 }
 
 function saveColumnSettingsStore(store) {
-    localStorage.setItem(COLUMN_SETTINGS_STORAGE_KEY, JSON.stringify(store));
+    try {
+        localStorage.setItem(COLUMN_SETTINGS_STORAGE_KEY, JSON.stringify(store));
+        return true;
+    } catch (err) {
+        reportUserFacingError('saveColumnSettingsStore', err, isStorageQuotaError(err)
+            ? 'Could not save your table layout: browser storage is full.'
+            : `Could not save your table layout: ${describeError(err)}`);
+        return false;
+    }
 }
 
 function isValidPurchaseHistoryColumnSettings(stored) {
@@ -23454,7 +23573,8 @@ function loadPurchaseHistoryColumnSettingsRaw() {
         const raw = localStorage.getItem(PURCHASE_HISTORY_COLUMNS_STORAGE_KEY);
         if (!raw) return null;
         return JSON.parse(raw);
-    } catch {
+    } catch (err) {
+        logSuppressedError('loadPurchaseHistoryColumnSettingsRaw', err);
         return null;
     }
 }
@@ -23463,13 +23583,19 @@ function savePurchaseHistoryColumnSettings(config) {
     const normalized = normalizeStoredColumnSettings('purchaseHistory', config);
     try {
         localStorage.setItem(PURCHASE_HISTORY_COLUMNS_STORAGE_KEY, JSON.stringify(normalized));
-    } catch (_) { /* ignore quota */ }
+    } catch (err) {
+        reportUserFacingError('savePurchaseHistoryColumnSettings', err, isStorageQuotaError(err)
+            ? 'Could not save your Purchase History column layout: browser storage is full.'
+            : `Could not save your Purchase History column layout: ${describeError(err)}`);
+    }
     // Keep legacy shared-store mirror for older builds; never treat it as filter state.
     try {
         const store = loadColumnSettingsStore();
         store.purchaseHistory = normalized;
         saveColumnSettingsStore(store);
-    } catch (_) { /* ignore */ }
+    } catch (err) {
+        logSuppressedError('savePurchaseHistoryColumnSettings:legacyMirror', err);
+    }
     return normalized;
 }
 
@@ -23487,7 +23613,9 @@ function loadPurchaseHistoryColumnSettings() {
         const defaults = getDefaultColumnSettings('purchaseHistory');
         try {
             localStorage.setItem(PURCHASE_HISTORY_COLUMNS_STORAGE_KEY, JSON.stringify(defaults));
-        } catch (_) { /* ignore */ }
+        } catch (err) {
+            logSuppressedError('loadPurchaseHistoryColumnSettings:resetCorrupt', err);
+        }
         return defaults;
     }
     // Migrate once from shared columnSettings store when dedicated key is missing.
@@ -23496,7 +23624,9 @@ function loadPurchaseHistoryColumnSettings() {
         if (isValidPurchaseHistoryColumnSettings(store.purchaseHistory)) {
             return savePurchaseHistoryColumnSettings(store.purchaseHistory);
         }
-    } catch (_) { /* ignore */ }
+    } catch (err) {
+        logSuppressedError('loadPurchaseHistoryColumnSettings:migrate', err);
+    }
     return savePurchaseHistoryColumnSettings(getDefaultColumnSettings('purchaseHistory'));
 }
 
@@ -25401,6 +25531,13 @@ function normalizeMainSubstances(data) {
     });
 }
 
+function describeSaveFailure(err) {
+    if (isStorageQuotaError(err)) {
+        return 'Could not save your changes: browser storage is full. Export a JSON backup, then clear old data to free space.';
+    }
+    return `Could not save your changes: ${describeError(err)}. Your latest edits exist only in this tab — export a JSON backup before closing it.`;
+}
+
 function saveData(data) {
     try {
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
@@ -25408,12 +25545,22 @@ function saveData(data) {
         localStorage.setItem(LAST_SAVED_KEY, savedAt);
         invalidateInsightsDatasetCache();
         updateLastSavedDisplay(savedAt);
+        if (lastAppErrorBannerMessage.startsWith('Could not save your changes')) dismissAppErrorBanner();
         console.log('Saved recovery data');
         return true;
     } catch (err) {
-        console.error('Failed to save recovery data:', err);
+        reportUserFacingError('saveData', err, describeSaveFailure(err));
+        showSaveFailedIndicator();
         return false;
     }
+}
+
+function showSaveFailedIndicator() {
+    if (typeof document === 'undefined') return;
+    ['dashboard-last-saved', 'settings-last-saved'].forEach(id => {
+        const el = document.getElementById?.(id);
+        if (el) el.textContent = 'Last Saved: save failed — changes are not stored';
+    });
 }
 
 function persistLoadedAppDataIfNeeded() {
@@ -25452,7 +25599,9 @@ function createAutoBackup(reason = 'auto') {
         updateAutoBackupDisplay();
         return true;
     } catch (err) {
-        console.error('Auto backup failed', err);
+        reportUserFacingError('createAutoBackup', err, isStorageQuotaError(err)
+            ? 'Automatic backup failed: browser storage is full. Export a JSON backup before making more changes.'
+            : `Automatic backup failed: ${describeError(err)}. Export a JSON backup before making more changes.`);
         return false;
     }
 }
@@ -25467,7 +25616,9 @@ function createAutoBackupFromData(data, reason = 'migration') {
         localStorage.setItem(AUTO_BACKUP_KEY, JSON.stringify(payload));
         return true;
     } catch (err) {
-        console.error('Auto backup failed', err);
+        reportUserFacingError('createAutoBackupFromData', err, isStorageQuotaError(err)
+            ? 'Automatic backup failed: browser storage is full. Export a JSON backup before making more changes.'
+            : `Automatic backup failed: ${describeError(err)}. Export a JSON backup before making more changes.`);
         return false;
     }
 }
@@ -25478,7 +25629,8 @@ function getAutoBackupInfo() {
         if (!raw) return null;
         const parsed = JSON.parse(raw);
         return parsed?.savedAt ? { savedAt: parsed.savedAt, reason: parsed.reason || 'auto' } : null;
-    } catch {
+    } catch (err) {
+        logSuppressedError('getAutoBackupInfo', err);
         return null;
     }
 }
@@ -25499,8 +25651,9 @@ function restoreLastAutoBackup() {
     let parsed;
     try {
         parsed = JSON.parse(raw);
-    } catch {
-        alert('Could not read the automatic backup.');
+    } catch (err) {
+        recordAppError('restoreLastAutoBackup', err);
+        alert('Could not read the automatic backup: the stored backup is not valid JSON.');
         return;
     }
     const backupData = parsed?.data;
@@ -25514,9 +25667,11 @@ function restoreLastAutoBackup() {
     appData = validation.data;
     normalizeAppData(appData);
     repairAppDataAfterImport(appData);
-    saveData(appData);
+    const saved = saveData(appData);
     refreshAppAfterDataChange();
-    alert('Restored from last automatic backup.');
+    alert(saved
+        ? 'Restored from last automatic backup.'
+        : 'Restored the automatic backup in this tab, but saving it failed. Export a JSON backup now — the restore will be lost on refresh.');
 }
 
 function repairAppData() {
@@ -25585,15 +25740,17 @@ let appData;
 try {
     appData = loadData();
 } catch (error) {
-    console.error('Failed to load app data:', error);
+    recordAppError('loadData', error);
     const hasStoredData = !!localStorage.getItem(STORAGE_KEY) || !!localStorage.getItem(STORAGE_KEY_V1);
     const backup = loadAutoBackupAppData();
     if (backup) {
         appDataLoadedFromStorage = true;
         appData = normalizeAppDataSafe(backup);
+        showAppErrorBanner('Your saved data could not be read, so the last automatic backup was loaded instead. Check your recent entries before making changes.');
         console.log('Loaded saved recovery data');
     } else if (hasStoredData) {
-        console.error('Saved data exists but could not be loaded. Defaults shown in memory only — storage was not overwritten.');
+        reportUserFacingError('loadData:unreadable', error,
+            'Your saved data could not be read and no automatic backup was available. This screen shows empty defaults — your stored data has NOT been overwritten, so do not add entries until you have exported a copy of it.');
         appData = normalizeAppDataSafe(getDefaultAppData());
     } else {
         appData = normalizeAppDataSafe(getDefaultAppData());
@@ -25624,10 +25781,10 @@ if (typeof loadInsightsFiltersIntoState === 'function') {
     loadInsightsFiltersIntoState(appData);
 }
 if (typeof initInsightsSimplify === 'function') {
-    try { initInsightsSimplify(); } catch (_) { /* DOM may be absent in tests */ }
+    try { initInsightsSimplify(); } catch (err) { logSuppressedError('bootstrap:initInsightsSimplify', err); }
 }
 if (typeof initInventorySource === 'function') {
-    try { initInventorySource(); } catch (_) { /* DOM may be absent in tests */ }
+    try { initInventorySource(); } catch (err) { logSuppressedError('bootstrap:initInventorySource', err); }
 }
 
 const STATS_CALENDAR_STORAGE_KEY = 'recoveryTracker.statsCalendar.v1';
@@ -25651,7 +25808,8 @@ document.addEventListener('DOMContentLoaded', () => {
     try {
         initializeApp();
     } catch (error) {
-        console.error('Error initializing app:', error);
+        reportUserFacingError('initializeApp', error,
+            `Recovery Tracker could not finish loading: ${describeError(error)}. Reload the page; if it keeps failing, export a JSON backup from Settings.`);
     }
 });
 
@@ -25725,7 +25883,7 @@ function refreshAppAfterDataChange() {
     renderPurchaseHistory(null);
     renderDashboardRecoveryInsights();
     if (typeof renderGoalsView === 'function' && document.getElementById('goals-root')) {
-        try { renderGoalsView(); } catch (_) { /* ignore */ }
+        try { renderGoalsView(); } catch (err) { logSuppressedError('refreshAppAfterDataChange', err); }
     }
     updateLastSavedDisplay();
     applyCollapsedSections();
@@ -36816,7 +36974,7 @@ function renderPurchaseHistory(substanceId, containerId = null) {
                 .filter(ev => ev.budget.status === 'active');
             const worst = activeBudgets.slice().sort((a, b) => (b.pct || 0) - (a.pct || 0))[0];
             if (worst) budgetStatusLabel = worst.statusLabel || worst.status || '—';
-        } catch (_) { /* ignore */ }
+        } catch (err) { logSuppressedError('renderPurchaseHistory', err); }
     }
 
     purchases.forEach(purchase => {
@@ -38849,7 +39007,7 @@ function buildRecoverySummary(statusCards, goalStatuses, activePlans, milestones
                 finProjectedMonth: `${curSym}${Number(fin.projectedMonthSpend || 0).toFixed(2)} (Estimate)`,
                 finLargestPurchase: largest ? `${curSym}${largest.cost.toFixed(2)} · ${largest.date}` : '—'
             };
-        } catch (_) { /* use base */ }
+        } catch (err) { logSuppressedError('buildRecoverySummary', err); }
     }
     return baseSummary;
 }
@@ -43023,7 +43181,7 @@ function loadStatsCalendarPrefs() {
         if (prefs.yearViewType) statsCalendarYearViewType = prefs.yearViewType;
         if (typeof prefs.compact === 'boolean') statsCalendarCompact = prefs.compact;
         if (prefs.show) statsCalendarShow = { ...statsCalendarShow, ...prefs.show };
-    } catch (_) { /* ignore */ }
+    } catch (err) { logSuppressedError('loadStatsCalendarPrefs', err); }
 }
 
 function saveStatsCalendarPrefs() {
@@ -43035,7 +43193,7 @@ function saveStatsCalendarPrefs() {
             compact: statsCalendarCompact,
             show: statsCalendarShow
         }));
-    } catch (_) { /* ignore */ }
+    } catch (err) { logSuppressedError('saveStatsCalendarPrefs', err); }
 }
 
 function iterateDatesInRange(startDate, endDate) {
@@ -43840,7 +43998,7 @@ function updateStatsCalendarLayoutForViewMode() {
     const container = document.getElementById('stats-calendar-grid');
     if (container) container.classList.toggle('compact', statsCalendarCompact);
     if (document.getElementById('stats-calendar-view')) {
-        try { renderStatsCalendarView(); } catch (_) { /* ignore during early init */ }
+        try { renderStatsCalendarView(); } catch (err) { logSuppressedError('updateStatsCalendarLayoutForViewMode', err); }
     }
 }
 
@@ -43981,7 +44139,7 @@ function updateStats() {
         loadInsightsFiltersIntoState(appData);
         syncSectionFiltersFromInsights(appData);
     }
-    try { renderGoalInsightsPanel(); } catch (_) { /* ignore */ }
+    try { renderGoalInsightsPanel(); } catch (err) { logSuppressedError('updateStats', err); }
     if (isAllSubstancesView()) {
         document.querySelector('.stats-date-range-toolbar')?.classList.remove('hidden');
         renderSubstanceStatsBreakdown();
@@ -43991,11 +44149,11 @@ function updateStats() {
         try {
             const insightsAll = buildInsightsDataset(DASHBOARD_ALL);
             renderGiftAnalytics(insightsAll.bounds);
-        } catch (_) { /* ignore */ }
+        } catch (err) { logSuppressedError('updateStats', err); }
         if (typeof renderInsightsFilteredSections === 'function') renderInsightsFilteredSections();
         else {
-            try { if (typeof renderRunningTotalsView === 'function') renderRunningTotalsView(); } catch (_) {}
-            try { if (typeof renderChartDashboardView === 'function') renderChartDashboardView(); } catch (_) {}
+            try { if (typeof renderRunningTotalsView === 'function') renderRunningTotalsView(); } catch (err) { logSuppressedError('updateStats', err); }
+            try { if (typeof renderChartDashboardView === 'function') renderChartDashboardView(); } catch (err) { logSuppressedError('updateStats', err); }
         }
         renderStatsComparePeriods();
         applyCollapsedSections();
@@ -50754,12 +50912,47 @@ function formatDate(dateStr) {
     return formatLocalDate(dateStr);
 }
 
+function isFileDownloadSupported() {
+    return typeof document !== 'undefined'
+        && typeof document.createElement === 'function'
+        && typeof Blob === 'function'
+        && typeof URL !== 'undefined'
+        && typeof URL.createObjectURL === 'function';
+}
+
 function downloadBlob(blob, filename) {
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(a.href);
+    if (!isFileDownloadSupported()) {
+        logSuppressedError('downloadBlob', new Error(`File downloads are unavailable in this environment (${filename})`));
+        return false;
+    }
+    let url = null;
+    try {
+        const a = document.createElement('a');
+        url = URL.createObjectURL(blob);
+        a.href = url;
+        a.download = filename;
+        a.click();
+        return true;
+    } catch (err) {
+        reportUserFacingError('downloadBlob', err, `Could not download ${filename}: ${describeError(err)}`);
+        return false;
+    } finally {
+        if (url) {
+            try {
+                URL.revokeObjectURL(url);
+            } catch (err) {
+                logSuppressedError('downloadBlob:revokeObjectURL', err);
+            }
+        }
+    }
+}
+
+function downloadTextFile(filename, text, mimeType = 'text/plain') {
+    if (!isFileDownloadSupported()) {
+        logSuppressedError('downloadTextFile', new Error(`File downloads are unavailable in this environment (${filename})`));
+        return false;
+    }
+    return downloadBlob(new Blob([text], { type: `${mimeType};charset=utf-8` }), filename);
 }
 
 function cleanExportData(data) {
@@ -50973,22 +51166,37 @@ function cleanExportData(data) {
 }
 
 function exportJsonBackup() {
-    const appDataExport = cleanExportData(appData);
-    const exportObject = {
-        app: 'recovery-tracker',
-        version: 2,
-        exportedAt: new Date().toISOString(),
-        appData: appDataExport,
-        columnSettings: loadColumnSettingsStore(),
-        purchaseHistoryColumns: loadPurchaseHistoryColumnSettings()
-    };
-    const dataStr = JSON.stringify(exportObject, null, 2);
-    JSON.parse(dataStr);
-    const blob = new Blob([dataStr], { type: 'application/json' });
-    downloadBlob(blob, `recovery-tracker-backup-${getLocalDateString()}.json`);
+    let dataStr;
+    try {
+        const exportObject = {
+            app: 'recovery-tracker',
+            version: 2,
+            exportedAt: new Date().toISOString(),
+            appData: cleanExportData(appData),
+            columnSettings: loadColumnSettingsStore(),
+            purchaseHistoryColumns: loadPurchaseHistoryColumnSettings()
+        };
+        dataStr = JSON.stringify(exportObject, null, 2);
+        JSON.parse(dataStr);
+    } catch (err) {
+        reportUserFacingError('exportJsonBackup', err,
+            `Could not build the JSON backup: ${describeError(err)}. Your data was not exported.`);
+        return false;
+    }
+    return downloadBlob(new Blob([dataStr], { type: 'application/json' }), `recovery-tracker-backup-${getLocalDateString()}.json`);
 }
 
 function applyImportedColumnSettings(parsed) {
+    try {
+        applyImportedColumnSettingsUnsafe(parsed);
+    } catch (err) {
+        // Column layout is cosmetic: never let it abort an otherwise successful import.
+        reportUserFacingError('applyImportedColumnSettings', err,
+            `Your data was imported, but the saved table layouts could not be applied: ${describeError(err)}`);
+    }
+}
+
+function applyImportedColumnSettingsUnsafe(parsed) {
     if (!parsed || typeof parsed !== 'object') return;
     if (parsed.columnSettings && typeof parsed.columnSettings === 'object' && !Array.isArray(parsed.columnSettings)) {
         const nextStore = { ...parsed.columnSettings };
@@ -51382,8 +51590,12 @@ function confirmImportPreview(mode) {
     const extras = pendingImportExtras;
     closeImportPreviewModal();
     pushChangeHistory(`before-import-${mode}`, { summary: `Before ${mode} import` });
-    applyImportedBackup(imported, mode, extras);
-    alert(mode === 'merge' ? 'Backup merged successfully.' : 'Backup replaced current data.');
+    const saved = applyImportedBackup(imported, mode, extras);
+    if (saved) {
+        alert(mode === 'merge' ? 'Backup merged successfully.' : 'Backup replaced current data.');
+    } else {
+        alert(`The backup was ${mode === 'merge' ? 'merged' : 'applied'} in this tab, but saving it failed. Export a JSON backup now — the import will be lost on refresh.`);
+    }
     renderChangeHistoryPanel();
 }
 
@@ -51397,12 +51609,13 @@ function applyImportedBackup(imported, mode, extras = null) {
     }
     normalizeAppData(appData);
     repairAppDataAfterImport(appData);
-    saveData(appData);
+    const saved = saveData(appData);
     if (extras) applyImportedColumnSettings(extras);
     else if (imported && (imported.columnSettings || imported.purchaseHistoryColumns)) {
         applyImportedColumnSettings(imported);
     }
     refreshAppAfterDataChange();
+    return saved;
 }
 
 async function handleImportJsonFile(event) {
@@ -51421,8 +51634,8 @@ async function handleImportJsonFile(event) {
         try {
             parsed = JSON.parse(raw);
         } catch (parseErr) {
-            console.error('Import JSON parse failed:', parseErr);
-            alert('This file is not valid JSON. Export a fresh JSON backup from Recovery Tracker and try again.');
+            recordAppError('handleImportJsonFile:parse', parseErr);
+            alert(`This file is not valid JSON (${describeError(parseErr)}). Export a fresh JSON backup from Recovery Tracker and try again.`);
             return;
         }
 
@@ -51448,8 +51661,8 @@ async function handleImportJsonFile(event) {
             purchaseHistoryColumns: parsed.purchaseHistoryColumns || null
         });
     } catch (err) {
-        console.error('Import failed:', err);
-        alert('Import failed. Check the console for details.');
+        recordAppError('handleImportJsonFile', err);
+        alert(`Import failed: ${describeError(err)}`);
     } finally {
         input.value = '';
     }
@@ -51466,9 +51679,11 @@ function clearAllData() {
     createAutoBackup('before-clear');
     appData = getDefaultAppData();
     appData.substances = getDefaultSubstances();
-    saveData(appData);
+    const saved = saveData(appData);
     refreshAppAfterDataChange();
-    alert('All data cleared.');
+    alert(saved
+        ? 'All data cleared.'
+        : 'Data was cleared in this tab, but writing the empty state failed. Your old data may come back on refresh.');
 }
 
 // Legacy global aliases
@@ -51488,6 +51703,8 @@ if (typeof window !== 'undefined') {
         restoreSubstance,
         deleteSubstance,
         restoreLastAutoBackup,
+        getAppErrorLog,
+        dismissAppErrorBanner,
         exportJsonBackup,
         triggerImportJsonBackup,
         handleImportJsonFile,
@@ -52985,6 +53202,19 @@ function __getRecoveryTrackerTestExports() {
         saveData,
         loadData,
         normalizeAppDataSafe,
+        describeError,
+        describeSaveFailure,
+        isStorageQuotaError,
+        recordAppError,
+        logSuppressedError,
+        reportUserFacingError,
+        runWithUserFacingErrors,
+        getAppErrorLog,
+        clearAppErrorLog,
+        isFileDownloadSupported,
+        downloadBlob,
+        downloadTextFile,
+        saveColumnSettingsStore,
         getWeeklyTrackingSummaries,
         sumPersonalUseAmountThroughDate,
         sumMonthlyRunningTotalThroughDate,

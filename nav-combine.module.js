@@ -335,6 +335,7 @@ function buildGoalsPlansOverview(data = appData) {
     const archivedPlans = (data.taperPlansV2 || []).filter(p => p && (p.archived || p.status === 'archived'));
     let plansOnTrack = 0;
     let plansAbove = 0;
+    let plansWithErrors = 0;
     let currentPlanWeek = '—';
     plans.forEach(plan => {
         try {
@@ -358,8 +359,10 @@ function buildGoalsPlansOverview(data = appData) {
             } else {
                 plansOnTrack += 1;
             }
-        } catch (_) {
-            plansOnTrack += 1;
+        } catch (err) {
+            // A plan whose progress cannot be evaluated is not evidence of being on track.
+            plansWithErrors += 1;
+            logSuppressedError('buildGoalsPlansOverview:plan', err);
         }
     });
 
@@ -375,6 +378,7 @@ function buildGoalsPlansOverview(data = appData) {
         goalsNearLimit: nearLimit.length,
         plansOnTrack,
         plansAboveTarget: plansAbove,
+        plansWithErrors,
         closestGoalDeadline: closestDeadline ? { id: closestDeadline.id, name: closestDeadline.name, endDate: closestDeadline.endDate } : null,
         currentPlanWeek,
         recentlyCompletedGoals: completedRecent,

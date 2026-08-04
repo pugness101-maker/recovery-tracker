@@ -9922,3 +9922,20 @@ body > .app-container {
 }
 .buy-source-meta { margin-top: 8px; }
 #buy-source-group .settings-hint { margin-top: 6px; }
+
+/* Error banner for failures the user must know about */
+.app-error-banner {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 9999;
+    padding: 12px 16px;
+    background: var(--danger, #ef5350);
+    color: var(--on-accent, #fff);
+    font-size: 0.9rem;
+    line-height: 1.35;
+    text-align: center;
+    box-shadow: 0 2px 8px var(--shadow, rgba(0, 0, 0, 0.35));
+}
+.app-error-banner.hidden { display: none; }

@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const appPath = path.join(root, 'app.js');
 
-export function loadRecoveryTrackerApp() {
+export function loadRecoveryTrackerApp(options = {}) {
+    const failStorageWrites = options.failStorageWrites || null;
     const sandbox = {
         console,
         setTimeout,
@@ -53,6 +54,7 @@ export function loadRecoveryTrackerApp() {
                 return this.store[key] ?? null;
             },
             setItem(key, value) {
+                if (failStorageWrites) throw failStorageWrites();
                 this.store[key] = String(value);
             },
             removeItem(key) {
