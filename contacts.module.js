@@ -3,41 +3,6 @@
 // Local-only. Spliced into app.js ahead of `const defaultData`.
 // Free-text names remain valid; contactId links are additive and never delete history.
 
-const CONTACT_ROLES = Object.freeze([
-    'friend',
-    'family',
-    'partner',
-    'dealer_supplier',
-    'dispensary',
-    'pharmacy',
-    'doctor',
-    'therapist',
-    'sponsor',
-    'accountability_partner',
-    'recovery_group',
-    'emergency_contact',
-    'other'
-]);
-
-const CONTACT_ROLE_LABELS = Object.freeze({
-    friend: 'Friend',
-    family: 'Family',
-    partner: 'Partner',
-    dealer_supplier: 'Dealer/Supplier',
-    dispensary: 'Dispensary',
-    pharmacy: 'Pharmacy',
-    doctor: 'Doctor',
-    therapist: 'Therapist',
-    sponsor: 'Sponsor',
-    accountability_partner: 'Accountability Partner',
-    recovery_group: 'Recovery Group',
-    emergency_contact: 'Emergency Contact',
-    other: 'Other'
-});
-
-const CONTACT_SUPPLIER_ROLES = Object.freeze(['dealer_supplier', 'dispensary', 'pharmacy']);
-const CONTACT_SUPPORT_ROLES = Object.freeze(['sponsor', 'accountability_partner', 'therapist', 'doctor', 'recovery_group']);
-const CONTACT_FRIEND_ROLES = Object.freeze(['friend', 'family', 'partner']);
 
 let contactsUiState = {
     loading: false,
@@ -133,27 +98,6 @@ function getDefaultContactRecord() {
     };
 }
 
-function normalizeContactRoles(roles) {
-    const list = Array.isArray(roles) ? roles : [];
-    const out = [];
-    list.forEach(role => {
-        const key = ctKey(role).replace(/\s+/g, '_').replace(/\//g, '_');
-        const aliases = {
-            dealer: 'dealer_supplier',
-            supplier: 'dealer_supplier',
-            'dealer_supplier': 'dealer_supplier',
-            accountability: 'accountability_partner',
-            'accountability_partner': 'accountability_partner',
-            emergency: 'emergency_contact',
-            'emergency_contact': 'emergency_contact',
-            group: 'recovery_group',
-            'recovery_group': 'recovery_group'
-        };
-        const normalized = aliases[key] || key;
-        if (CONTACT_ROLES.includes(normalized) && !out.includes(normalized)) out.push(normalized);
-    });
-    return out;
-}
 
 function normalizeContactRecord(raw = {}) {
     const base = getDefaultContactRecord();
@@ -166,9 +110,11 @@ function normalizeContactRecord(raw = {}) {
         ? contact.tags.map(ctTrim).filter(Boolean)
         : ctTrim(contact.tags).split(',').map(ctTrim).filter(Boolean);
     contact.relationship = ctTrim(contact.relationship);
-    contact.roles = normalizeContactRoles(contact.roles);
-    if (!contact.roles.length && contact.relationship) {
-        contact.roles = normalizeContactRoles([contact.relationship]);
+    // Legacy roles data is preserved but ignored
+    if (Array.isArray(contact.roles)) {
+        // Keep existing roles for backward compatibility, but don't process them
+    } else {
+        contact.roles = [];
     }
     contact.phone = ctTrim(contact.phone);
     contact.email = ctTrim(contact.email);
@@ -218,16 +164,13 @@ function getContacts(data = appData, options = {}) {
     if (!options.includeHidden) list = list.filter(c => !c.hidden);
     if (options.onlyActive) list = list.filter(c => c.active);
     if (options.favorites) list = list.filter(c => c.favorite);
-    if (options.role) list = list.filter(c => (c.roles || []).includes(options.role));
-    if (options.supplier) list = list.filter(c => (c.roles || []).some(r => CONTACT_SUPPLIER_ROLES.includes(r)));
-    if (options.friend) list = list.filter(c => (c.roles || []).some(r => CONTACT_FRIEND_ROLES.includes(r)));
-    if (options.support) list = list.filter(c => (c.roles || []).some(r => CONTACT_SUPPORT_ROLES.includes(r)));
+    // Role-based filtering removed - legacy role options ignored for backward compatibility
     if (options.search) {
         const q = ctKey(options.search);
         list = list.filter(c => {
             const hay = [
                 c.name, c.nickname, c.relationship, c.notes, c.phone, c.email, c.address,
-                ...(c.tags || []), ...(c.roles || []).map(r => CONTACT_ROLE_LABELS[r] || r)
+                ...(c.tags || [])
             ].join(' ').toLowerCase();
             return hay.includes(q);
         });
@@ -260,17 +203,6 @@ function resolveContactDisplayName(contactId, fallback = '', data = appData) {
     return ctTrim(fallback);
 }
 
-function contactHasRole(contact, role) {
-    return !!(contact && Array.isArray(contact.roles) && contact.roles.includes(role));
-}
-
-function isSupplierContact(contact) {
-    return !!(contact && (contact.roles || []).some(r => CONTACT_SUPPLIER_ROLES.includes(r)));
-}
-
-function isSupportContact(contact) {
-    return !!(contact && (contact.roles || []).some(r => CONTACT_SUPPORT_ROLES.includes(r)));
-}
 
 function getDefaultContactsPrefs() {
     return {
@@ -385,9 +317,7 @@ function mergeContacts(sourceId, targetId, data = appData) {
     const target = getContactById(targetId, data);
     if (!source || !target || source.id === target.id) return null;
 
-    const roles = normalizeContactRoles([...(target.roles || []), ...(source.roles || [])]);
     const tags = [...new Set([...(target.tags || []), ...(source.tags || [])].map(ctTrim).filter(Boolean))];
-    target.roles = roles;
     target.tags = tags;
     if (!target.nickname && source.nickname) target.nickname = source.nickname;
     if (!target.phone && source.phone) target.phone = source.phone;
@@ -450,16 +380,6 @@ function collectFreeTextContactNames(data = appData) {
     })).sort((a, b) => b.count - a.count);
 }
 
-function inferRolesFromContexts(contexts = []) {
-    const roles = new Set();
-    contexts.forEach(ctx => {
-        if (ctx.includes('gift_source') || ctx.includes('dealer') || ctx.includes('store')) roles.add('dealer_supplier');
-        if (ctx.includes('gift_recipient') || ctx.includes('shared')) roles.add('friend');
-        if (ctx.includes('gift')) roles.add('friend');
-    });
-    if (!roles.size) roles.add('other');
-    return [...roles];
-}
 
 function migrateContactsFromFreeText(data = appData, options = {}) {
     if (!data.migrations || typeof data.migrations !== 'object') data.migrations = {};
@@ -474,15 +394,12 @@ function migrateContactsFromFreeText(data = appData, options = {}) {
             contact = normalizeContactRecord({
                 id: createContactId(),
                 name: row.name,
-                roles: inferRolesFromContexts(row.contexts),
                 source: 'migration:free-text',
                 createdAt: ctNowIso(),
                 updatedAt: ctNowIso()
             });
             data.contacts.push(contact);
             created += 1;
-        } else {
-            contact.roles = normalizeContactRoles([...(contact.roles || []), ...inferRolesFromContexts(row.contexts)]);
         }
     });
 
@@ -840,10 +757,6 @@ function buildContactsDashboard(data = appData) {
     });
     return {
         totalContacts: visible.length,
-        friends: visible.filter(c => (c.roles || []).some(r => CONTACT_FRIEND_ROLES.includes(r))).length,
-        suppliers: visible.filter(isSupplierContact).length,
-        sponsors: visible.filter(c => contactHasRole(c, 'sponsor')).length,
-        therapists: visible.filter(c => contactHasRole(c, 'therapist')).length,
         activeThisMonth,
         newThisYear: visible.filter(c => String(c.createdAt || '').startsWith(year)).length,
         favorites: visible.filter(c => c.favorite).length
@@ -852,29 +765,16 @@ function buildContactsDashboard(data = appData) {
 
 function buildContactAnalytics(data = appData) {
     ensureContactsMigrated(data);
-    const suppliers = getContacts(data, { supplier: true, includeArchived: false });
-    const rows = suppliers.map(c => {
-        const metrics = buildContactRecoveryMetrics(c.id, data);
-        const supplier = buildContactSupplierProfile(c.id, data);
-        return { contact: c, metrics, supplier };
-    });
-    const bySpend = rows.filter(r => (r.metrics?.moneySpent || 0) > 0).sort((a, b) => b.metrics.moneySpent - a.metrics.moneySpent);
-    const byFreq = rows.filter(r => (r.metrics?.interactionCount || 0) > 0).sort((a, b) => b.metrics.interactionCount - a.metrics.interactionCount);
-    const byCheap = rows.filter(r => r.supplier?.averagePrices != null).sort((a, b) => a.supplier.averagePrices - b.supplier.averagePrices);
-    const byLongest = rows.filter(r => r.metrics?.firstInteraction).sort((a, b) => String(a.metrics.firstInteraction).localeCompare(String(b.metrics.firstInteraction)));
     const allContacts = getContacts(data, { includeArchived: false });
-    const giftRows = allContacts.map(c => ({ contact: c, metrics: buildContactRecoveryMetrics(c.id, data) }));
-    const byGifts = giftRows.sort((a, b) => ((b.metrics?.giftsGiven || 0) + (b.metrics?.giftsReceived || 0)) - ((a.metrics?.giftsGiven || 0) + (a.metrics?.giftsReceived || 0)));
-    const byShared = giftRows.sort((a, b) => (b.metrics?.sharedSessions || 0) - (a.metrics?.sharedSessions || 0));
+    const rows = allContacts.map(c => ({ contact: c, metrics: buildContactRecoveryMetrics(c.id, data) }));
+    const byGifts = rows.sort((a, b) => ((b.metrics?.giftsGiven || 0) + (b.metrics?.giftsReceived || 0)) - ((a.metrics?.giftsGiven || 0) + (a.metrics?.giftsReceived || 0)));
+    const byShared = rows.sort((a, b) => (b.metrics?.sharedSessions || 0) - (a.metrics?.sharedSessions || 0));
+    const byInteractions = rows.sort((a, b) => (b.metrics?.interactionCount || 0) - (a.metrics?.interactionCount || 0));
 
     return {
-        mostFrequentSupplier: byFreq[0]?.contact || null,
-        highestSpendingSupplier: bySpend[0]?.contact || null,
-        cheapestSupplier: byCheap[0]?.contact || null,
-        longestSupplierRelationship: byLongest[0]?.contact || null,
         mostSharedSessions: byShared[0]?.contact || null,
         mostGiftsExchanged: byGifts[0]?.contact || null,
-        mostInteractions: giftRows.sort((a, b) => (b.metrics?.interactionCount || 0) - (a.metrics?.interactionCount || 0))[0]?.contact || null,
+        mostInteractions: byInteractions[0]?.contact || null,
         rows
     };
 }
@@ -924,31 +824,6 @@ function buildContactSuggestions(data = appData) {
         }
     });
 
-    const suppliers = getContacts(data, { supplier: true });
-    suppliers.forEach(c => {
-        const metrics = buildContactRecoveryMetrics(c.id, data);
-        if (metrics?.lastInteraction) {
-            const last = typeof parseLocalDate === 'function' ? parseLocalDate(metrics.lastInteraction) : null;
-            const today = typeof parseLocalDate === 'function' ? parseLocalDate(ctToday()) : null;
-            if (last && today && ((today - last) / 86400000) > 90) {
-                suggestions.push({
-                    type: 'inactive_supplier',
-                    severity: 'info',
-                    message: `Supplier “${c.name}” has no interactions in 90+ days.`,
-                    contactId: c.id
-                });
-            }
-        }
-    });
-
-    const hasAccountability = (data.contacts || []).some(c => !c.archived && contactHasRole(c, 'accountability_partner'));
-    if (!hasAccountability) {
-        suggestions.push({
-            type: 'missing_accountability_partner',
-            severity: 'info',
-            message: 'No accountability partner contact yet.'
-        });
-    }
 
     return suggestions.slice(0, 40);
 }
@@ -1033,14 +908,13 @@ function mapContactsToCalendarEvents(bounds = null, data = appData) {
 
 function buildContactsCsvRows(data = appData) {
     ensureContacts(data);
-    const rows = [['id', 'name', 'nickname', 'roles', 'tags', 'phone', 'email', 'favorite', 'active', 'archived', 'hidden', 'birthday', 'notes']];
+    const rows = [['id', 'name', 'nickname', 'tags', 'phone', 'email', 'favorite', 'active', 'archived', 'hidden', 'birthday', 'notes']];
     (data.contacts || []).forEach(c => {
         if (c.excludeFromExport) return;
         rows.push([
             c.id,
             c.name,
             c.nickname,
-            (c.roles || []).join('|'),
             (c.tags || []).join('|'),
             c.phone,
             c.email,
@@ -1074,10 +948,6 @@ function exportContactAnalyticsCsv(data = appData) {
         if (!contact) return;
         rows.push([metric, contact.id, contact.name]);
     };
-    push('most_frequent_supplier', analytics.mostFrequentSupplier);
-    push('highest_spending_supplier', analytics.highestSpendingSupplier);
-    push('cheapest_supplier', analytics.cheapestSupplier);
-    push('longest_supplier_relationship', analytics.longestSupplierRelationship);
     push('most_shared_sessions', analytics.mostSharedSessions);
     push('most_gifts_exchanged', analytics.mostGiftsExchanged);
     push('most_interactions', analytics.mostInteractions);
@@ -1088,11 +958,6 @@ function exportContactAnalyticsCsv(data = appData) {
     return csv;
 }
 
-function contactRoleChipsHtml(contact) {
-    return (contact.roles || []).map(role =>
-        `<span class="ct-role-chip">${escapeHtml(CONTACT_ROLE_LABELS[role] || role)}</span>`
-    ).join('') || '<span class="settings-hint">No roles</span>';
-}
 
 function renderContactsDashboardHtml(data = appData) {
     const dash = buildContactsDashboard(data);
@@ -1101,10 +966,6 @@ function renderContactsDashboardHtml(data = appData) {
         <div class="ct-dashboard">
             <div class="ct-summary-grid">
                 <article class="ct-card"><span>Total contacts</span><strong>${dash.totalContacts}</strong></article>
-                <article class="ct-card"><span>Friends</span><strong>${dash.friends}</strong></article>
-                <article class="ct-card"><span>Suppliers</span><strong>${dash.suppliers}</strong></article>
-                <article class="ct-card"><span>Sponsors</span><strong>${dash.sponsors}</strong></article>
-                <article class="ct-card"><span>Therapists</span><strong>${dash.therapists}</strong></article>
                 <article class="ct-card"><span>Active this month</span><strong>${dash.activeThisMonth}</strong></article>
                 <article class="ct-card"><span>New this year</span><strong>${dash.newThisYear}</strong></article>
                 <article class="ct-card"><span>Favorites</span><strong>${dash.favorites}</strong></article>
@@ -1132,10 +993,7 @@ function renderContactsListHtml(data = appData) {
         search: contactsUiState.search,
         includeArchived: filter === 'archived' || prefs.showArchived,
         includeHidden: prefs.showHidden,
-        favorites: filter === 'favorites',
-        supplier: filter === 'supplier',
-        friend: filter === 'friend',
-        support: filter === 'support'
+        favorites: filter === 'favorites'
     };
     if (filter === 'active') options.onlyActive = true;
     if (filter === 'archived') {
@@ -1147,14 +1005,11 @@ function renderContactsListHtml(data = appData) {
     return `
         <div class="ct-list-view">
             <div class="ct-toolbar">
-                <input type="search" id="ct-search" class="ct-search" placeholder="Search name, role, tags, notes…" value="${escapeHtml(contactsUiState.search || '')}" oninput="onContactsSearchInput(this.value)">
+                <input type="search" id="ct-search" class="ct-search" placeholder="Search name, tags, notes…" value="${escapeHtml(contactsUiState.search || '')}" oninput="onContactsSearchInput(this.value)">
                 <select id="ct-filter" onchange="onContactsFilterChange(this.value)">
                     <option value="all"${filter === 'all' ? ' selected' : ''}>All</option>
                     <option value="favorites"${filter === 'favorites' ? ' selected' : ''}>Favorites</option>
                     <option value="active"${filter === 'active' ? ' selected' : ''}>Active</option>
-                    <option value="supplier"${filter === 'supplier' ? ' selected' : ''}>Suppliers</option>
-                    <option value="friend"${filter === 'friend' ? ' selected' : ''}>Friends</option>
-                    <option value="support"${filter === 'support' ? ' selected' : ''}>Recovery support</option>
                     <option value="archived"${filter === 'archived' ? ' selected' : ''}>Archived</option>
                 </select>
                 <button type="button" class="btn-primary" onclick="openContactCreateForm()">Add</button>
@@ -1166,7 +1021,6 @@ function renderContactsListHtml(data = appData) {
                         <strong>${escapeHtml(c.name)}${c.favorite ? ' ★' : ''}</strong>
                         <span class="ct-status">${c.archived ? 'Archived' : (c.active ? 'Active' : 'Inactive')}</span>
                     </div>
-                    <div class="ct-role-row">${contactRoleChipsHtml(c)}</div>
                     <p class="settings-hint">${metrics?.interactionCount || 0} interactions · Last ${escapeHtml(metrics?.lastInteraction || '—')}</p>
                 </button>`;
             }).join('')}</div>` : '<div class="ct-empty"><p>No contacts match these filters.</p><button type="button" class="btn-primary" onclick="openContactCreateForm()">Add contact</button></div>'}
@@ -1177,8 +1031,6 @@ function renderContactDetailHtml(contactId, data = appData) {
     const contact = getContactById(contactId, data);
     if (!contact) return '<div class="ct-error">Contact not found.</div>';
     const metrics = buildContactRecoveryMetrics(contactId, data);
-    const supplier = isSupplierContact(contact) ? buildContactSupplierProfile(contactId, data) : null;
-    const support = isSupportContact(contact) ? buildContactSupportProfile(contactId, data) : null;
     const timeline = buildContactTimeline(contactId, data).slice(0, 30);
     const duplicates = detectDuplicateContacts(data).find(g => g.some(c => c.id === contactId));
 
@@ -1187,7 +1039,6 @@ function renderContactDetailHtml(contactId, data = appData) {
             <header class="ct-detail-head">
                 <div>
                     <h3>${escapeHtml(contact.name)}${contact.nickname ? ` <span class="settings-hint">(${escapeHtml(contact.nickname)})</span>` : ''}</h3>
-                    <div class="ct-role-row">${contactRoleChipsHtml(contact)}</div>
                 </div>
                 <div class="ct-detail-actions">
                     <button type="button" class="btn-small" onclick="openContactEditForm('${escapeHtml(contact.id)}')">Edit</button>
@@ -1208,16 +1059,6 @@ function renderContactDetailHtml(contactId, data = appData) {
                 <article class="ct-card"><span>First</span><strong class="ct-text">${escapeHtml(metrics?.firstInteraction || '—')}</strong></article>
                 <article class="ct-card"><span>Last</span><strong class="ct-text">${escapeHtml(metrics?.lastInteraction || '—')}</strong></article>
             </div>
-            ${supplier ? `<section class="ct-panel"><h4>Supplier profile</h4>
-                <p>Reliability: <strong>${supplier.reliability ?? '—'}</strong> · Avg price: <strong>${supplier.averagePrices == null ? '—' : ctMoney(supplier.averagePrices)}</strong> · Frequency: <strong>${supplier.purchaseFrequencyDays ?? '—'} days</strong></p>
-                <p class="settings-hint">Products: ${escapeHtml((supplier.mostCommonProducts || []).map(p => p.name).join(', ') || '—')}</p>
-                <p class="settings-hint">${escapeHtml(supplier.availabilityNotes || 'No availability notes.')}</p>
-            </section>` : ''}
-            ${support ? `<section class="ct-panel"><h4>Recovery support</h4>
-                <p>Next appointment: <strong>${escapeHtml(support.nextAppointment || '—')}</strong></p>
-                <p class="settings-hint">Goals: ${escapeHtml((support.goalsDiscussed || []).join(', ') || '—')}</p>
-                <p class="settings-hint">${escapeHtml(support.notes || '')}</p>
-            </section>` : ''}
             <section class="ct-panel">
                 <h4>Profile</h4>
                 <p>${escapeHtml(contact.phone || 'No phone')} · ${escapeHtml(contact.email || 'No email')}</p>
@@ -1240,36 +1081,18 @@ function renderContactDetailHtml(contactId, data = appData) {
 
 function renderContactFormHtml(data = appData) {
     const draft = contactsUiState.formDraft || normalizeContactRecord({ id: createContactId() });
-    const roleChecks = CONTACT_ROLES.map(role => `
-        <label class="ct-role-check"><input type="checkbox" name="ct-role" value="${role}"${draft.roles.includes(role) ? ' checked' : ''}> ${escapeHtml(CONTACT_ROLE_LABELS[role])}</label>
-    `).join('');
     return `
         <form class="ct-form" onsubmit="submitContactForm(event)">
             <h3>${getContactById(draft.id, data) ? 'Edit contact' : 'New contact'}</h3>
             <div class="ct-form-grid">
                 <label>Name<input id="ct-form-name" required value="${escapeHtml(draft.name)}"></label>
                 <label>Nickname<input id="ct-form-nickname" value="${escapeHtml(draft.nickname)}"></label>
-                <label>Phone<input id="ct-form-phone" value="${escapeHtml(draft.phone)}"></label>
-                <label>Email<input id="ct-form-email" value="${escapeHtml(draft.email)}"></label>
-                <label>Birthday<input type="date" id="ct-form-birthday" value="${escapeHtml(draft.birthday)}"></label>
-                <label>Color<label><input id="ct-form-color" value="${escapeHtml(draft.colorLabel)}" placeholder="e.g. teal"></label>
-                <label class="ct-span-2">Address<input id="ct-form-address" value="${escapeHtml(draft.address)}"></label>
-                <label class="ct-span-2">Tags<input id="ct-form-tags" value="${escapeHtml((draft.tags || []).join(', '))}" placeholder="comma separated"></label>
-                <label class="ct-span-2">Notes<textarea id="ct-form-notes" rows="3">${escapeHtml(draft.notes)}</textarea></label>
-                <label class="ct-span-2">Availability / supplier notes<input id="ct-form-availability" value="${escapeHtml(draft.supplierProfile?.availabilityNotes || '')}"></label>
-                <label>Next appointment<input type="date" id="ct-form-next-appt" value="${escapeHtml(draft.supportProfile?.nextAppointment || '')}"></label>
-                <label>Typical response time<input id="ct-form-response" value="${escapeHtml(draft.supplierProfile?.typicalResponseTime || '')}"></label>
             </div>
-            <fieldset class="ct-roles-fieldset"><legend>Roles</legend><div class="ct-roles-grid">${roleChecks}</div></fieldset>
             <div class="ct-form-toggles">
                 <label><input type="checkbox" id="ct-form-favorite"${draft.favorite ? ' checked' : ''}> Favorite</label>
-                <label><input type="checkbox" id="ct-form-active"${draft.active !== false ? ' checked' : ''}> Active</label>
-                <label><input type="checkbox" id="ct-form-hidden"${draft.hidden ? ' checked' : ''}> Hidden</label>
-                <label><input type="checkbox" id="ct-form-exclude-export"${draft.excludeFromExport ? ' checked' : ''}> Exclude from export</label>
-                <label><input type="checkbox" id="ct-form-local-notes"${draft.localNotesOnly ? ' checked' : ''}> Local-only notes</label>
             </div>
             <div class="ct-actions">
-                <button type="submit" class="btn-primary">Save contact</button>
+                <button type="submit" class="btn-primary">Save</button>
                 <button type="button" class="secondary-btn" onclick="closeContactForm()">Cancel</button>
             </div>
             <input type="hidden" id="ct-form-id" value="${escapeHtml(draft.id)}">
@@ -1286,10 +1109,6 @@ function renderContactsAnalyticsHtml(data = appData) {
                 <button type="button" class="secondary-btn" onclick="setContactsView('dashboard')">Back</button>
             </div>
             <div class="ct-summary-grid">
-                <article class="ct-card"><span>Most frequent supplier</span><strong class="ct-text">${label(analytics.mostFrequentSupplier)}</strong></article>
-                <article class="ct-card"><span>Highest spending supplier</span><strong class="ct-text">${label(analytics.highestSpendingSupplier)}</strong></article>
-                <article class="ct-card"><span>Cheapest supplier</span><strong class="ct-text">${label(analytics.cheapestSupplier)}</strong></article>
-                <article class="ct-card"><span>Longest supplier relationship</span><strong class="ct-text">${label(analytics.longestSupplierRelationship)}</strong></article>
                 <article class="ct-card"><span>Most shared sessions</span><strong class="ct-text">${label(analytics.mostSharedSessions)}</strong></article>
                 <article class="ct-card"><span>Most gifts exchanged</span><strong class="ct-text">${label(analytics.mostGiftsExchanged)}</strong></article>
                 <article class="ct-card"><span>Most interactions</span><strong class="ct-text">${label(analytics.mostInteractions)}</strong></article>
@@ -1426,31 +1245,11 @@ function closeContactDetail() {
 function submitContactForm(event) {
     event?.preventDefault?.();
     try {
-        const roles = [...(document.querySelectorAll('input[name="ct-role"]:checked') || [])].map(el => el.value);
         const saved = saveContactRecord({
             id: document.getElementById('ct-form-id')?.value,
             name: document.getElementById('ct-form-name')?.value,
             nickname: document.getElementById('ct-form-nickname')?.value,
-            phone: document.getElementById('ct-form-phone')?.value,
-            email: document.getElementById('ct-form-email')?.value,
-            birthday: document.getElementById('ct-form-birthday')?.value,
-            colorLabel: document.getElementById('ct-form-color')?.value,
-            address: document.getElementById('ct-form-address')?.value,
-            tags: (document.getElementById('ct-form-tags')?.value || '').split(','),
-            notes: document.getElementById('ct-form-notes')?.value,
-            favorite: !!document.getElementById('ct-form-favorite')?.checked,
-            active: !!document.getElementById('ct-form-active')?.checked,
-            hidden: !!document.getElementById('ct-form-hidden')?.checked,
-            excludeFromExport: !!document.getElementById('ct-form-exclude-export')?.checked,
-            localNotesOnly: !!document.getElementById('ct-form-local-notes')?.checked,
-            roles,
-            supplierProfile: {
-                availabilityNotes: document.getElementById('ct-form-availability')?.value || '',
-                typicalResponseTime: document.getElementById('ct-form-response')?.value || ''
-            },
-            supportProfile: {
-                nextAppointment: document.getElementById('ct-form-next-appt')?.value || ''
-            }
+            favorite: !!document.getElementById('ct-form-favorite')?.checked
         });
         contactsUiState.formDraft = null;
         openContactDetail(saved.id);
@@ -1479,10 +1278,8 @@ function convertFreeTextNameToContact(name, data = appData) {
         openContactDetail(existing.id);
         return existing;
     }
-    const contexts = collectFreeTextContactNames(data).find(r => ctKey(r.name) === ctKey(name))?.contexts || [];
     const contact = saveContactRecord({
         name: ctTrim(name),
-        roles: inferRolesFromContexts(contexts),
         source: 'suggestion:convert'
     }, data);
     migrateContactsFromFreeText(data);

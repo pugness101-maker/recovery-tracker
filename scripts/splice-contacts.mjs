@@ -240,8 +240,6 @@ if (!app.includes('ensureContacts,')) {
         convertFreeTextNameToContact,
         resolveContactDisplayName,
         resolvePurchaseSupplierContact,
-        CONTACT_ROLES,
-        CONTACT_ROLE_LABELS,`,
         'contacts test exports');
 }
 

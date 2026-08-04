@@ -30,25 +30,11 @@ function getContactDisplayName(contactOrId, data = appData) {
 function rankContactsForPicker(contacts, query = '', roleFilter = null) {
     const q = String(query || '').trim().toLowerCase();
     let list = [...(contacts || [])];
-    if (roleFilter) {
-        list = list.filter(c => {
-            if (roleFilter === 'supplier') return typeof isSupplierContact === 'function' && isSupplierContact(c);
-            if (roleFilter === 'support') return typeof isSupportContact === 'function' && isSupportContact(c);
-            if (roleFilter === 'friend') return (c.roles || []).includes('friend');
-            if (roleFilter === 'gift') {
-                return (c.roles || []).some(r => ['gift_giver', 'gift_recipient', 'friend', 'family', 'partner'].includes(r));
-            }
-            if (roleFilter === 'shared') {
-                return (c.roles || []).some(r => ['shared_use_contact', 'friend', 'partner', 'family'].includes(r));
-            }
-            return (c.roles || []).includes(roleFilter);
-        });
-    }
+    // Role-based filtering removed - legacy roleFilter parameter ignored for backward compatibility
     if (q) {
         list = list.filter(c => {
             const hay = [
                 c.name, c.nickname, c.phone, c.email,
-                ...(c.roles || []).map(r => CONTACT_ROLE_LABELS?.[r] || r),
                 ...(c.tags || [])
             ].join(' ').toLowerCase();
             return hay.includes(q);
@@ -191,18 +177,10 @@ function getContactPickerSelection(fieldId) {
 
 function openContactPickerCreate(fieldId, roleFilter = '') {
     CONTACT_PICKER_STATE.createForFieldId = fieldId;
-    const roles = [];
-    if (roleFilter === 'supplier') roles.push('dealer_supplier');
-    else if (roleFilter === 'shared') roles.push('shared_use_contact', 'friend');
-    else if (roleFilter === 'gift') roles.push('gift_recipient', 'friend');
-    else if (roleFilter === 'support') roles.push('accountability_partner');
-    else if (roleFilter) roles.push(roleFilter);
-    else roles.push('friend');
-    CONTACT_PICKER_STATE.createRoles = roles;
+    // Role-based creation removed - legacy roleFilter parameter ignored for backward compatibility
     const nameHint = document.getElementById(`${fieldId}-search`)?.value || '';
     openContactCreateModal({
         name: nameHint,
-        roles,
         onSaved: (contact) => {
             selectContactPickerValue(fieldId, contact.id);
         }
@@ -219,13 +197,6 @@ function openContactCreateModal(options = {}) {
     modal.setAttribute('aria-hidden', 'false');
     const nameEl = document.getElementById('ct-quick-name');
     if (nameEl) nameEl.value = options.name || '';
-    const rolesWrap = document.getElementById('ct-quick-roles');
-    if (rolesWrap && typeof CONTACT_ROLES !== 'undefined') {
-        const selected = new Set(options.roles || ['friend']);
-        rolesWrap.innerHTML = CONTACT_ROLES.map(role =>
-            `<label class="ct-role-check"><input type="checkbox" name="ct-quick-role" value="${role}"${selected.has(role) ? ' checked' : ''}> ${escapeHtml(CONTACT_ROLE_LABELS[role] || role)}</label>`
-        ).join('');
-    }
     CONTACT_PICKER_STATE._onSaved = options.onSaved || null;
     nameEl?.focus();
 }
@@ -245,11 +216,9 @@ function submitContactQuickCreate(event) {
         if (typeof showToast === 'function') showToast('Enter a contact name.', 'error');
         return;
     }
-    const roles = [...(document.querySelectorAll('input[name="ct-quick-role"]:checked') || [])].map(el => el.value);
     const saved = saveContactRecord({
         name,
         nickname: document.getElementById('ct-quick-nickname')?.value || '',
-        roles: roles.length ? roles : ['friend'],
         favorite: !!document.getElementById('ct-quick-favorite')?.checked,
         source: 'quick-create'
     });
@@ -473,12 +442,6 @@ function buildHomeContactCardsHtml(data = appData) {
         pushCard('Recent shared-use', c, sharedLogs[0].date || '');
     }
 
-    pushCard('Top supplier this month', analytics.mostFrequentSupplier);
-    pushCard('Highest spending supplier', analytics.highestSpendingSupplier);
-
-    const support = visible.find(c => typeof isSupportContact === 'function' && isSupportContact(c) && c.supportProfile?.nextAppointment);
-    if (support) pushCard('Upcoming support', support, `Appt ${support.supportProfile.nextAppointment}`);
-
     const giftRecv = (data.purchases || [])
         .filter(p => (typeof getPurchaseAcquisitionType === 'function' ? getPurchaseAcquisitionType(p) : p.acquisitionType) === 'gift_received')
         .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))[0];
@@ -516,12 +479,6 @@ function renderHomeContactCards() {
 function buildInsightsContactAnalyticsHtml(data = appData) {
     if (typeof buildContactAnalytics !== 'function') return '';
     const analytics = buildContactAnalytics(data);
-    const suppliers = (typeof getContacts === 'function' ? getContacts(data, { includeArchived: false }) : [])
-        .filter(c => typeof isSupplierContact === 'function' && isSupplierContact(c))
-        .map(c => ({ contact: c, profile: buildContactSupplierProfile(c.id, data) }))
-        .filter(row => (row.profile?.purchaseCount || 0) > 0)
-        .sort((a, b) => (b.profile.totalSpent || 0) - (a.profile.totalSpent || 0))
-        .slice(0, 8);
     const label = c => c ? `<button type="button" class="link-btn" onclick="openContactDetailPanel('${ctEscAttr(c.id)}')">${escapeHtml(c.name)}</button>` : '—';
     return `
         <div class="ct-insights">
@@ -537,20 +494,10 @@ function buildInsightsContactAnalyticsHtml(data = appData) {
                 <button type="button" class="secondary-btn btn-sm" onclick="openManageContactsSettings()">Manage contacts</button>
             </div>
             <div class="ct-summary-grid">
-                <article class="ct-card"><span>Most frequent supplier</span><strong class="ct-text">${label(analytics.mostFrequentSupplier)}</strong></article>
-                <article class="ct-card"><span>Highest spending supplier</span><strong class="ct-text">${label(analytics.highestSpendingSupplier)}</strong></article>
                 <article class="ct-card"><span>Most shared sessions</span><strong class="ct-text">${label(analytics.mostSharedSessions)}</strong></article>
                 <article class="ct-card"><span>Most gifts exchanged</span><strong class="ct-text">${label(analytics.mostGiftsExchanged)}</strong></article>
+                <article class="ct-card"><span>Most interactions</span><strong class="ct-text">${label(analytics.mostInteractions)}</strong></article>
             </div>
-            ${suppliers.length ? `<div class="table-scroll"><table class="sheet-table"><thead><tr>
-                <th>Supplier</th><th>Purchases</th><th>Total spent</th><th>Avg cost</th><th>Avg days between</th>
-            </tr></thead><tbody>${suppliers.map(row => `<tr>
-                <td>${label(row.contact)}</td>
-                <td>${row.profile.purchaseCount || 0}</td>
-                <td>${typeof ctMoney === 'function' ? ctMoney(row.profile.totalSpent) : row.profile.totalSpent}</td>
-                <td>${row.profile.averagePrices == null ? '—' : (typeof ctMoney === 'function' ? ctMoney(row.profile.averagePrices) : row.profile.averagePrices)}</td>
-                <td>${row.profile.purchaseFrequencyDays ?? '—'}</td>
-            </tr>`).join('')}</tbody></table></div>` : '<p class="settings-hint">No supplier purchase history yet.</p>'}
         </div>`;
 }
 
