@@ -2887,6 +2887,126 @@ input[type="range"]::-webkit-slider-thumb {
     margin: 0;
 }
 
+.taper-suggest-banner,
+.taper-current-metrics,
+.taper-type-suggestions {
+    margin: 0 0 14px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    background: color-mix(in srgb, var(--bg-card) 88%, var(--accent) 12%);
+}
+
+.taper-suggest-banner.hidden,
+.taper-current-metrics.hidden,
+.taper-type-suggestions.hidden,
+.taper-inline-suggest.hidden {
+    display: none;
+}
+
+.taper-suggest-banner h4,
+.taper-current-metrics-head h4,
+.taper-type-suggestions h4 {
+    margin: 0 0 8px;
+    font-size: 0.95rem;
+}
+
+.taper-suggest-banner ul {
+    margin: 0 0 10px;
+    padding-left: 1.1rem;
+    color: var(--text-secondary);
+    font-size: 0.88rem;
+}
+
+.taper-suggest-banner-actions,
+.taper-suggest-chip-row,
+.taper-inline-suggest {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+}
+
+.taper-suggest-chip {
+    border: 1px solid var(--border);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 0.82rem;
+    cursor: pointer;
+}
+
+.taper-suggest-chip.active,
+.taper-suggest-chip:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+}
+
+.taper-current-metrics-head {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.taper-current-metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: 8px 12px;
+}
+
+.taper-metric-item {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.taper-metric-item span {
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+
+.taper-metric-item strong {
+    font-size: 0.92rem;
+}
+
+.taper-suggest-preview {
+    margin-top: 10px;
+    display: grid;
+    gap: 4px;
+    font-size: 0.85rem;
+    color: var(--text-secondary);
+}
+
+.taper-suggest-empty {
+    margin: 0;
+    font-size: 0.88rem;
+    color: var(--text-secondary);
+}
+
+.settings-radio-fieldset {
+    border: none;
+    margin: 12px 0 0;
+    padding: 0;
+}
+
+.settings-radio-fieldset legend {
+    font-weight: 600;
+    margin-bottom: 6px;
+}
+
+.settings-radio-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 4px 0;
+    font-size: 0.92rem;
+}
+
 .taper-setup,
 .taper-plan,
 .today-target,

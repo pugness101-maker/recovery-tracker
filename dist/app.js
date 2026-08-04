@@ -26111,7 +26111,11 @@ const defaultData = {
             mode: 'previous-week',
             colorScope: 'numericChange'
         },
-        conditionalColorRules: null
+        conditionalColorRules: null,
+        taperSuggestions: {
+            autoSuggestEnabled: true,
+            lookbackDays: 30
+        }
     },
     taperPlans: {},
     taperPlansV2: [],
@@ -26648,6 +26652,7 @@ function ensureAppDataSettings(data) {
     ensureTableColumnSettings(data);
     ensureUseStatsConfig(data);
     ensureCollapsedSections(data);
+    ensureTaperSuggestPrefs(data);
     if (data.settings.activeTab === 'history-tab'
         || data.settings.activeTab === 'history') {
         data.settings.activeTab = 'use-log-tab';
@@ -29985,6 +29990,7 @@ function initializeApp() {
     initAppearanceViewMode();
     initAppearanceZoom();
     if (typeof syncInCellProgressBarsToggle === 'function') syncInCellProgressBarsToggle();
+    if (typeof syncTaperSuggestSettingsUI === 'function') syncTaperSuggestSettingsUI();
     if (typeof syncTargetLineSettingsUI === 'function') syncTargetLineSettingsUI();
     if (typeof syncPreviousPeriodCompareSettingsUI === 'function') syncPreviousPeriodCompareSettingsUI();
     if (typeof initConditionalColorRulesUi === 'function') initConditionalColorRulesUi();
@@ -53272,6 +53278,12 @@ function onTaperSubstanceChange() {
     populateTaperReductionTypeSelect(getTaperSubstanceId());
     toggleTaperPlanTypeFields();
     prefillVapeTaperDefaults(getTaperSubstanceId());
+    if (typeof refreshTaperSuggestions === 'function') {
+        refreshTaperSuggestions({
+            autoFill: isTaperAutoSuggestEnabled() && !taperFormPlanId,
+            forceRender: true
+        });
+    }
     refreshTaperDashboard();
     if (columnSettingsTableKey === 'taperByWeek') {
         openColumnSettingsModal(
@@ -53333,6 +53345,681 @@ function populateTaperPlanDropdown() {
     if (toolbar) toolbar.classList.remove('hidden');
 }
 
+
+// ——— Taper auto-suggestions from recent data ———
+
+const TAPER_SUGGEST_MIN_SESSIONS = 3;
+const TAPER_SUGGEST_FIELD_IDS = Object.freeze([
+    'current-avg',
+    'goal-avg',
+    'reduction-percent',
+    'reduction-amount',
+    'weekly-max',
+    'monthly-max',
+    'end-date',
+    'taper-duration-weeks',
+    'purchase-interval-days',
+    'vape-current-buy-days',
+    'vape-goal-buy-days',
+    'nicotine-vape-current-puffs',
+    'nicotine-vape-goal-puffs'
+]);
+
+let taperSuggestTouchedFields = new Set();
+let taperSuggestAutoValues = Object.create(null);
+let taperSuggestLastMetrics = null;
+let taperSuggestTrackingBound = false;
+let taperSuggestSelectedPercent = 10;
+let taperSuggestSelectedSpendPct = 20;
+let taperSuggestCustomizeMode = false;
+
+function getDefaultTaperSuggestPrefs() {
+    return {
+        autoSuggestEnabled: true,
+        lookbackDays: 30
+    };
+}
+
+function ensureTaperSuggestPrefs(data = appData) {
+    if (!data.settings || typeof data.settings !== 'object') data.settings = {};
+    const defaults = getDefaultTaperSuggestPrefs();
+    if (!data.settings.taperSuggestions || typeof data.settings.taperSuggestions !== 'object') {
+        data.settings.taperSuggestions = { ...defaults };
+    }
+    const prefs = data.settings.taperSuggestions;
+    if (prefs.autoSuggestEnabled === undefined) prefs.autoSuggestEnabled = defaults.autoSuggestEnabled;
+    else prefs.autoSuggestEnabled = !!prefs.autoSuggestEnabled;
+    const lookback = prefs.lookbackDays;
+    if (lookback === 'all' || lookback === 'entire' || lookback === Infinity) {
+        prefs.lookbackDays = 'all';
+    } else {
+        const n = Number(lookback);
+        prefs.lookbackDays = [7, 30, 90].includes(n) ? n : defaults.lookbackDays;
+    }
+    return prefs;
+}
+
+function isTaperAutoSuggestEnabled(data = appData) {
+    return ensureTaperSuggestPrefs(data).autoSuggestEnabled !== false;
+}
+
+function getTaperSuggestLookbackDays(data = appData) {
+    return ensureTaperSuggestPrefs(data).lookbackDays;
+}
+
+function setTaperAutoSuggestEnabled(enabled, data = appData) {
+    const prefs = ensureTaperSuggestPrefs(data);
+    prefs.autoSuggestEnabled = !!enabled;
+    if (typeof saveData === 'function') saveData(data);
+    syncTaperSuggestSettingsUI(data);
+    if (typeof refreshTaperSuggestions === 'function') {
+        refreshTaperSuggestions({ autoFill: !!enabled && !taperFormPlanId });
+    }
+    return prefs.autoSuggestEnabled;
+}
+
+function setTaperSuggestLookbackDays(value, data = appData) {
+    const prefs = ensureTaperSuggestPrefs(data);
+    if (value === 'all' || value === 'entire') prefs.lookbackDays = 'all';
+    else {
+        const n = Number(value);
+        prefs.lookbackDays = [7, 30, 90].includes(n) ? n : 30;
+    }
+    if (typeof saveData === 'function') saveData(data);
+    syncTaperSuggestSettingsUI(data);
+    if (typeof refreshTaperSuggestions === 'function') {
+        refreshTaperSuggestions({ autoFill: isTaperAutoSuggestEnabled(data) && !taperFormPlanId });
+    }
+    return prefs.lookbackDays;
+}
+
+function syncTaperSuggestSettingsUI(data = appData) {
+    const prefs = ensureTaperSuggestPrefs(data);
+    const enabledEl = typeof document !== 'undefined'
+        ? document.getElementById('settings-taper-auto-suggest')
+        : null;
+    if (enabledEl) enabledEl.checked = prefs.autoSuggestEnabled !== false;
+    const lookback = prefs.lookbackDays === 'all' ? 'all' : String(prefs.lookbackDays || 30);
+    if (typeof document !== 'undefined') {
+        document.querySelectorAll('input[name="taper-suggest-lookback"]').forEach(el => {
+            el.checked = el.value === lookback;
+        });
+    }
+}
+
+function resetTaperSuggestTouchState() {
+    taperSuggestTouchedFields = new Set();
+    taperSuggestAutoValues = Object.create(null);
+    taperSuggestSelectedPercent = 10;
+    taperSuggestSelectedSpendPct = 20;
+    taperSuggestCustomizeMode = false;
+}
+
+function markTaperSuggestFieldTouched(fieldId) {
+    if (!fieldId || !TAPER_SUGGEST_FIELD_IDS.includes(fieldId)) return;
+    const el = typeof document !== 'undefined' ? document.getElementById(fieldId) : null;
+    const current = el ? String(el.value ?? '') : '';
+    const autoVal = taperSuggestAutoValues[fieldId];
+    if (autoVal != null && current === String(autoVal)) return;
+    taperSuggestTouchedFields.add(fieldId);
+}
+
+function bindTaperSuggestTracking() {
+    const form = typeof document !== 'undefined' ? document.getElementById('taper-form') : null;
+    if (!form || taperSuggestTrackingBound) return;
+    taperSuggestTrackingBound = true;
+    const onChange = (e) => {
+        const id = e?.target?.id;
+        if (id) markTaperSuggestFieldTouched(id);
+    };
+    form.addEventListener('input', onChange);
+    form.addEventListener('change', onChange);
+}
+
+function resolveTaperSuggestLookbackBounds(data = appData, today = getLocalDateString()) {
+    const lookback = getTaperSuggestLookbackDays(data);
+    let startDate;
+    if (lookback === 'all') {
+        const dates = [];
+        (data.logs || []).forEach(log => {
+            const d = getLogDateStr(log);
+            if (d) dates.push(d);
+        });
+        (data.purchases || []).forEach(p => {
+            const d = typeof getPurchaseDateStr === 'function' ? getPurchaseDateStr(p) : (p?.date || '');
+            if (d) dates.push(d);
+        });
+        dates.sort();
+        startDate = dates[0] || today;
+    } else {
+        const days = Number(lookback) || 30;
+        startDate = addDaysToDateStr(today, -(days - 1));
+    }
+    return { startDate, endDate: today, lookbackDays: lookback };
+}
+
+function getTaperSuggestLookbackLabel(lookbackDays) {
+    if (lookbackDays === 'all') return 'entire history';
+    return `last ${lookbackDays} days`;
+}
+
+function roundTaperSuggestValue(value, decimals = 2) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return null;
+    const factor = Math.pow(10, decimals);
+    return Math.round((n + Number.EPSILON) * factor) / factor;
+}
+
+function formatTaperSuggestMoney(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return '—';
+    const symbol = typeof getCurrencySymbol === 'function' ? getCurrencySymbol() : '$';
+    return `${symbol}${formatAmount(n, 0)}`;
+}
+
+function formatTaperSuggestDurationMinutes(minutes) {
+    if (minutes == null || !Number.isFinite(minutes) || minutes < 0) return '—';
+    return formatDurationHours(minutes / 60);
+}
+
+function computeAveragePurchaseIntervalDays(substanceId, startDate, endDate, data = appData) {
+    const purchases = (typeof getPurchasesInDateRange === 'function'
+        ? getPurchasesInDateRange(substanceId, startDate, endDate, data)
+        : (data.purchases || []).filter(p => {
+            const sid = typeof getPurchaseSubstanceId === 'function' ? getPurchaseSubstanceId(p) : p?.substanceId;
+            const d = typeof getPurchaseDateStr === 'function' ? getPurchaseDateStr(p) : p?.date;
+            return sid === substanceId && d && d >= startDate && d <= endDate;
+        }))
+        .map(p => (typeof getPurchaseDateStr === 'function' ? getPurchaseDateStr(p) : p?.date) || '')
+        .filter(Boolean)
+        .sort();
+    if (purchases.length < 2) return null;
+    let totalGap = 0;
+    for (let i = 1; i < purchases.length; i += 1) {
+        totalGap += Math.max(1, countDaysInRange(purchases[i - 1], purchases[i]) - 1);
+    }
+    return roundTaperSuggestValue(totalGap / (purchases.length - 1), 1);
+}
+
+function computeTaperCurrentMetrics(substanceId, options = {}, data = appData) {
+    if (!substanceId) {
+        return {
+            ok: false,
+            reason: 'missing-substance',
+            message: 'Not enough recent data to generate recommendations.'
+        };
+    }
+    const today = options.today || (typeof getLocalDateString === 'function' ? getLocalDateString() : '');
+    const bounds = options.bounds || resolveTaperSuggestLookbackBounds(data, today);
+    const { startDate, endDate, lookbackDays } = bounds;
+    const daysInRange = countDaysInRange(startDate, endDate);
+    const unit = typeof getSubstanceDisplayUnit === 'function'
+        ? getSubstanceDisplayUnit(substanceId, data)
+        : (getSubstance(substanceId, data)?.defaultUnit || 'units');
+    const isVape = typeof isVapeNicotineSubstanceId === 'function' && isVapeNicotineSubstanceId(substanceId, data);
+
+    const logs = (data.logs || []).filter(log => {
+        if (typeof isPersonalUseLog === 'function' && !isPersonalUseLog(log)) return false;
+        const sid = typeof getUseSubstanceId === 'function' ? getUseSubstanceId(log, data) : log?.substanceId;
+        if (sid !== substanceId) return false;
+        const d = getLogDateStr(log);
+        return d && d >= startDate && d <= endDate;
+    });
+
+    const totalUsage = typeof getCanonicalUsageInRange === 'function'
+        ? getCanonicalUsageInRange(substanceId, startDate, endDate, data)
+        : 0;
+    const sessionStats = typeof calculateUseStats === 'function'
+        ? calculateUseStats(logs)
+        : { sessionCount: logs.length, avgPerSession: null, avgDurationMinutes: null };
+    const sessionCount = sessionStats.sessionCount || 0;
+    const avgPerDay = daysInRange > 0 ? totalUsage / daysInRange : null;
+    const avgPerWeek = avgPerDay != null ? avgPerDay * 7 : null;
+    const avgPerMonth = avgPerDay != null ? avgPerDay * 30 : null;
+    const spendTotal = typeof getCanonicalSpendInRange === 'function'
+        ? getCanonicalSpendInRange(substanceId, startDate, endDate, data)
+        : 0;
+    const spendPerDay = daysInRange > 0 ? spendTotal / daysInRange : null;
+    const spendPerWeek = spendPerDay != null ? spendPerDay * 7 : null;
+    const spendPerMonth = spendPerDay != null ? spendPerDay * 30 : null;
+    const inventory = typeof getTotalRemainingSupply === 'function'
+        ? getTotalRemainingSupply(substanceId)
+        : null;
+    const estimatedSupplyDays = (avgPerDay > 0 && inventory != null && Number.isFinite(inventory))
+        ? roundTaperSuggestValue(inventory / avgPerDay, 0)
+        : null;
+    const purchaseIntervalDays = computeAveragePurchaseIntervalDays(substanceId, startDate, endDate, data);
+    const sessionsPerDay = daysInRange > 0 ? sessionCount / daysInRange : null;
+    const enough = sessionCount >= TAPER_SUGGEST_MIN_SESSIONS || (isVape && totalUsage > 0 && daysInRange >= 3);
+
+    const recommendedPercent = 10;
+    const estimatedWeeks = avgPerDay > 0
+        ? Math.max(4, Math.min(16, Math.ceil(Math.log(0.45) / Math.log(1 - recommendedPercent / 100))))
+        : 8;
+
+    return {
+        ok: enough,
+        reason: enough ? null : 'insufficient-data',
+        message: enough ? null : 'Not enough recent data to generate recommendations.',
+        substanceId,
+        unit,
+        isVape,
+        startDate,
+        endDate,
+        lookbackDays,
+        lookbackLabel: getTaperSuggestLookbackLabel(lookbackDays),
+        daysInRange,
+        sessionCount,
+        totalUsage: roundTaperSuggestValue(totalUsage, 3),
+        avgPerDay: roundTaperSuggestValue(avgPerDay, 3),
+        avgPerWeek: roundTaperSuggestValue(avgPerWeek, 3),
+        avgPerMonth: roundTaperSuggestValue(avgPerMonth, 2),
+        avgSession: roundTaperSuggestValue(sessionStats.avgPerSession, 3),
+        sessionsPerDay: roundTaperSuggestValue(sessionsPerDay, 2),
+        avgDurationMinutes: sessionStats.avgDurationMinutes != null
+            ? roundTaperSuggestValue(sessionStats.avgDurationMinutes, 1)
+            : null,
+        spendPerWeek: roundTaperSuggestValue(spendPerWeek, 2),
+        spendPerMonth: roundTaperSuggestValue(spendPerMonth, 2),
+        inventory: inventory != null && Number.isFinite(inventory) ? roundTaperSuggestValue(inventory, 2) : null,
+        estimatedSupplyDays,
+        purchaseIntervalDays,
+        recommendedPercent,
+        estimatedWeeks,
+        recommendationLabel: `Reduce ${recommendedPercent}% weekly`
+    };
+}
+
+function buildPercentTaperPreview(avgPerDay, percent, weeks = 3) {
+    const rate = 1 - (Number(percent) || 0) / 100;
+    if (!(avgPerDay > 0) || !(rate > 0 && rate < 1)) return [];
+    const rows = [];
+    let current = avgPerDay;
+    for (let i = 1; i <= weeks; i += 1) {
+        current *= rate;
+        rows.push({ week: i, daily: roundTaperSuggestValue(current, 3) });
+    }
+    return rows;
+}
+
+function canWriteTaperSuggestField(fieldId, { force = false } = {}) {
+    if (force) return true;
+    if (taperSuggestTouchedFields.has(fieldId)) return false;
+    const el = typeof document !== 'undefined' ? document.getElementById(fieldId) : null;
+    if (!el) return false;
+    const current = String(el.value ?? '').trim();
+    if (!current) return true;
+    return taperSuggestAutoValues[fieldId] != null && current === String(taperSuggestAutoValues[fieldId]);
+}
+
+function writeTaperSuggestField(fieldId, value, { force = false } = {}) {
+    if (value == null || value === '') return false;
+    if (!canWriteTaperSuggestField(fieldId, { force })) return false;
+    const str = typeof value === 'number' ? String(roundTaperSuggestValue(value, 3)) : String(value);
+    setInputValue(fieldId, str);
+    taperSuggestAutoValues[fieldId] = str;
+    if (force) taperSuggestTouchedFields.delete(fieldId);
+    return true;
+}
+
+function setTaperSuggestFieldValue(fieldId, value) {
+    writeTaperSuggestField(fieldId, value, { force: true });
+}
+
+function applyTaperRecommendation(options = {}) {
+    const force = options.force !== false;
+    const metrics = taperSuggestLastMetrics || computeTaperCurrentMetrics(getTaperSubstanceId());
+    if (!metrics?.ok || !(metrics.avgPerDay > 0)) {
+        if (typeof showToast === 'function') showToast(metrics?.message || 'Not enough recent data to generate recommendations.', 'info');
+        return false;
+    }
+    taperSuggestCustomizeMode = false;
+    const percent = options.percent != null ? Number(options.percent) : taperSuggestSelectedPercent || metrics.recommendedPercent || 10;
+    taperSuggestSelectedPercent = percent;
+    const typeEl = document.getElementById('reduction-type');
+    if (typeEl) {
+        const preferred = metrics.isVape ? 'reduce-puffs' : 'reduce-percent';
+        if (force || !typeEl.value) {
+            if (typeof populateTaperReductionTypeSelect === 'function') {
+                populateTaperReductionTypeSelect(metrics.substanceId, preferred);
+            }
+            typeEl.value = preferred;
+            if (typeof toggleTaperPlanTypeFields === 'function') {
+                toggleTaperPlanTypeFields({ selectedType: preferred, skipPrefill: true, skipPurchaseToggle: true });
+            }
+        }
+    }
+    writeTaperSuggestField('current-avg', metrics.avgPerDay, { force });
+    if (metrics.isVape) {
+        writeTaperSuggestField('nicotine-vape-current-puffs', metrics.avgPerDay, { force });
+        const goalPuffs = Math.max(0, roundTaperSuggestValue(metrics.avgPerDay * Math.pow(1 - percent / 100, 4), 0));
+        writeTaperSuggestField('goal-avg', goalPuffs, { force });
+        writeTaperSuggestField('nicotine-vape-goal-puffs', goalPuffs, { force });
+        writeTaperSuggestField('reduction-percent', percent, { force });
+    } else {
+        writeTaperSuggestField('reduction-percent', percent, { force });
+        const goal = roundTaperSuggestValue(metrics.avgPerDay * 0.45, 3);
+        writeTaperSuggestField('goal-avg', goal, { force });
+    }
+    writeTaperSuggestField('weekly-max', metrics.avgPerWeek, { force });
+    writeTaperSuggestField('monthly-max', metrics.avgPerMonth, { force });
+    if (metrics.purchaseIntervalDays != null) {
+        const nextGap = Math.max(metrics.purchaseIntervalDays + 2, Math.ceil(metrics.purchaseIntervalDays * 1.25));
+        writeTaperSuggestField('purchase-interval-days', nextGap, { force });
+        writeTaperSuggestField('vape-current-buy-days', metrics.purchaseIntervalDays, { force });
+        writeTaperSuggestField('vape-goal-buy-days', nextGap, { force });
+    }
+    const weeks = metrics.estimatedWeeks || 8;
+    writeTaperSuggestField('taper-duration-weeks', weeks, { force });
+    if (metrics.endDate) {
+        writeTaperSuggestField('end-date', addDaysToDateStr(metrics.endDate, weeks * 7 - 1), { force });
+    }
+    refreshTaperSuggestions({ autoFill: false });
+    if (typeof showToast === 'function') showToast('Applied suggested taper values.', 'success');
+    return true;
+}
+
+function customizeTaperManually() {
+    taperSuggestCustomizeMode = true;
+    refreshTaperSuggestions({ autoFill: false });
+}
+
+function applyTaperPercentSuggestion(percent, options = {}) {
+    taperSuggestSelectedPercent = Number(percent) || 10;
+    const force = !!options.force;
+    writeTaperSuggestField('reduction-percent', taperSuggestSelectedPercent, { force: true });
+    const metrics = taperSuggestLastMetrics;
+    if (metrics?.avgPerDay > 0) {
+        writeTaperSuggestField('current-avg', metrics.avgPerDay, { force });
+        const goal = roundTaperSuggestValue(metrics.avgPerDay * Math.pow(1 - taperSuggestSelectedPercent / 100, 4), 3);
+        writeTaperSuggestField('goal-avg', goal, { force });
+    }
+    refreshTaperSuggestions({ autoFill: false });
+}
+
+function applyTaperWeeklyAverageSuggestion() {
+    const metrics = taperSuggestLastMetrics;
+    if (!(metrics?.avgPerWeek > 0)) return;
+    setTaperSuggestFieldValue('weekly-max', metrics.avgPerWeek);
+    refreshTaperSuggestions({ autoFill: false });
+}
+
+function applyTaperMonthlyAverageSuggestion() {
+    const metrics = taperSuggestLastMetrics;
+    if (!(metrics?.avgPerMonth > 0)) return;
+    setTaperSuggestFieldValue('monthly-max', metrics.avgPerMonth);
+    refreshTaperSuggestions({ autoFill: false });
+}
+
+function applyTaperSpendSuggestion(percent) {
+    taperSuggestSelectedSpendPct = Number(percent) || 20;
+    const metrics = taperSuggestLastMetrics;
+    if (!(metrics?.spendPerWeek > 0)) return;
+    const weekly = roundTaperSuggestValue(metrics.spendPerWeek * (1 - taperSuggestSelectedSpendPct / 100), 2);
+    const monthly = metrics.spendPerMonth != null
+        ? roundTaperSuggestValue(metrics.spendPerMonth * (1 - taperSuggestSelectedSpendPct / 100), 2)
+        : null;
+    const purchaseEnabled = document.getElementById('purchase-taper-enabled');
+    if (purchaseEnabled) {
+        purchaseEnabled.checked = true;
+        if (typeof togglePurchaseTaperFields === 'function') togglePurchaseTaperFields();
+    }
+    const weeklyLimit = document.getElementById('br-weekly-spend-limit');
+    if (weeklyLimit) weeklyLimit.checked = true;
+    const monthlyCap = document.getElementById('br-monthly-spend-cap');
+    if (monthlyCap && monthly != null) monthlyCap.checked = true;
+    if (typeof togglePurchaseTaperFields === 'function') togglePurchaseTaperFields();
+    const weeklyInput = document.getElementById('br-weekly-spend-amount') || document.getElementById('vape-weekly-spend-cap');
+    if (weeklyInput) weeklyInput.value = String(weekly);
+    const monthlyInput = document.getElementById('br-monthly-spend-amount') || document.getElementById('nicotine-vape-monthly-spend-cap');
+    if (monthlyInput && monthly != null) monthlyInput.value = String(monthly);
+    refreshTaperSuggestions({ autoFill: false });
+}
+
+function applyTaperPuffSuggestion(value) {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return;
+    setTaperSuggestFieldValue('goal-avg', n);
+    setTaperSuggestFieldValue('nicotine-vape-goal-puffs', n);
+    refreshTaperSuggestions({ autoFill: false });
+}
+
+function applyTaperPurchaseFrequencySuggestion(days) {
+    const n = Number(days);
+    if (!Number.isFinite(n) || n <= 0) return;
+    setTaperSuggestFieldValue('purchase-interval-days', n);
+    setTaperSuggestFieldValue('vape-goal-buy-days', n);
+    refreshTaperSuggestions({ autoFill: false });
+}
+
+function applyTaperSessionSuggestion(mode) {
+    const metrics = taperSuggestLastMetrics;
+    if (!(metrics?.avgSession > 0)) return;
+    let daily;
+    if (mode === '1-day') daily = metrics.avgSession;
+    else if (mode === 'every-other') daily = metrics.avgSession * 0.5;
+    else if (mode === 'weekends') daily = metrics.avgSession * (2 / 7);
+    else return;
+    setTaperSuggestFieldValue('goal-avg', roundTaperSuggestValue(daily, 3));
+    refreshTaperSuggestions({ autoFill: false });
+}
+
+function reapplyTaperSuggestions(options = {}) {
+    resetTaperSuggestTouchState();
+    refreshTaperSuggestions({ autoFill: true, force: !!options.force });
+    if (options.force) applyTaperRecommendation({ force: true });
+}
+
+function autoFillTaperFieldsFromMetrics(metrics, { force = false } = {}) {
+    if (!metrics?.ok || !isTaperAutoSuggestEnabled()) return;
+    if (!(metrics.avgPerDay > 0)) return;
+    writeTaperSuggestField('current-avg', metrics.avgPerDay, { force });
+    writeTaperSuggestField('weekly-max', metrics.avgPerWeek, { force });
+    writeTaperSuggestField('monthly-max', metrics.avgPerMonth, { force });
+    const type = document.getElementById('reduction-type')?.value;
+    if (type === 'reduce-percent' || type === 'reduce-amount' || type === 'fixed') {
+        writeTaperSuggestField('reduction-percent', taperSuggestSelectedPercent || 10, { force });
+    }
+    if (type === 'reduce-puffs' || metrics.isVape) {
+        writeTaperSuggestField('nicotine-vape-current-puffs', metrics.avgPerDay, { force });
+        const goal = Math.max(0, roundTaperSuggestValue(metrics.avgPerDay - 10, 0));
+        writeTaperSuggestField('goal-avg', goal, { force });
+    }
+    if (metrics.purchaseIntervalDays != null) {
+        writeTaperSuggestField('vape-current-buy-days', metrics.purchaseIntervalDays, { force });
+        writeTaperSuggestField('purchase-interval-days', metrics.purchaseIntervalDays, { force });
+    }
+}
+
+function renderTaperCurrentMetricsCard(metrics) {
+    const root = document.getElementById('taper-current-metrics');
+    const body = document.getElementById('taper-current-metrics-body');
+    const title = document.getElementById('taper-current-metrics-title');
+    if (!root || !body) return;
+    if (!isTaperAutoSuggestEnabled()) {
+        root.classList.add('hidden');
+        return;
+    }
+    root.classList.remove('hidden');
+    if (title) title.textContent = `Current Usage (${metrics?.lookbackLabel || 'last 30 days'})`;
+    if (!metrics?.ok) {
+        body.innerHTML = `<p class="taper-suggest-empty">${escapeHtml(metrics?.message || 'Not enough recent data to generate recommendations.')}</p>`;
+        return;
+    }
+    const unit = escapeHtml(metrics.unit || '');
+    const amount = (v) => (v == null ? '—' : `${escapeHtml(formatAmount(v))} ${unit}`.trim());
+    body.innerHTML = `
+        <div class="taper-current-metrics-grid">
+            <div class="taper-metric-item"><span>Average/day</span><strong>${amount(metrics.avgPerDay)}</strong></div>
+            <div class="taper-metric-item"><span>Average/week</span><strong>${amount(metrics.avgPerWeek)}</strong></div>
+            <div class="taper-metric-item"><span>Average/month</span><strong>${amount(metrics.avgPerMonth)}</strong></div>
+            <div class="taper-metric-item"><span>Average session</span><strong>${amount(metrics.avgSession)}</strong></div>
+            <div class="taper-metric-item"><span>Sessions/day</span><strong>${metrics.sessionsPerDay == null ? '—' : escapeHtml(formatAmount(metrics.sessionsPerDay))}</strong></div>
+            <div class="taper-metric-item"><span>Average duration</span><strong>${escapeHtml(formatTaperSuggestDurationMinutes(metrics.avgDurationMinutes))}</strong></div>
+            <div class="taper-metric-item"><span>Average spending/week</span><strong>${escapeHtml(formatTaperSuggestMoney(metrics.spendPerWeek))}</strong></div>
+            <div class="taper-metric-item"><span>Average spending/month</span><strong>${escapeHtml(formatTaperSuggestMoney(metrics.spendPerMonth))}</strong></div>
+            <div class="taper-metric-item"><span>Current inventory</span><strong>${amount(metrics.inventory)}</strong></div>
+            <div class="taper-metric-item"><span>Estimated supply</span><strong>${metrics.estimatedSupplyDays == null ? '—' : `${escapeHtml(String(metrics.estimatedSupplyDays))} days`}</strong></div>
+        </div>`;
+}
+
+function renderTaperSuggestBanner(metrics) {
+    const root = document.getElementById('taper-suggest-banner');
+    if (!root) return;
+    if (!isTaperAutoSuggestEnabled()) {
+        root.classList.add('hidden');
+        return;
+    }
+    root.classList.remove('hidden');
+    if (!metrics?.ok) {
+        root.innerHTML = `<p class="taper-suggest-empty">${escapeHtml(metrics?.message || 'Not enough recent data to generate recommendations.')}</p>`;
+        return;
+    }
+    const unit = escapeHtml(metrics.unit || '');
+    root.innerHTML = `
+        <h4>Suggested taper</h4>
+        <p class="settings-hint">Based on your ${escapeHtml(metrics.lookbackLabel)}:</p>
+        <ul>
+            <li>Average: ${escapeHtml(formatAmount(metrics.avgPerDay))} ${unit}/day</li>
+            <li>Average/week: ${escapeHtml(formatAmount(metrics.avgPerWeek))} ${unit}</li>
+            <li>Average session: ${escapeHtml(formatAmount(metrics.avgSession))} ${unit}</li>
+        </ul>
+        <p><strong>Recommended taper:</strong> ${escapeHtml(metrics.recommendationLabel)}</p>
+        <p><strong>Estimated completion:</strong> ${escapeHtml(String(metrics.estimatedWeeks))} weeks</p>
+        <div class="taper-suggest-banner-actions">
+            <button type="button" class="btn-primary btn-small" onclick="applyTaperRecommendation()">Apply recommendation</button>
+            <button type="button" class="secondary-btn btn-small" onclick="customizeTaperManually()">Customize manually</button>
+        </div>`;
+}
+
+function renderTaperTypeSuggestions(metrics) {
+    const root = document.getElementById('taper-type-suggestions');
+    const weekly = document.getElementById('taper-weekly-suggest');
+    const monthly = document.getElementById('taper-monthly-suggest');
+    if (!root) return;
+    if (!isTaperAutoSuggestEnabled() || !metrics) {
+        root.classList.add('hidden');
+        weekly?.classList.add('hidden');
+        monthly?.classList.add('hidden');
+        return;
+    }
+    if (!metrics.ok) {
+        root.classList.remove('hidden');
+        root.innerHTML = `<p class="taper-suggest-empty">${escapeHtml(metrics.message)}</p>`;
+        weekly?.classList.add('hidden');
+        monthly?.classList.add('hidden');
+        return;
+    }
+
+    const type = document.getElementById('reduction-type')?.value || '';
+    const unit = escapeHtml(metrics.unit || '');
+    let html = '';
+
+    if (type === 'reduce-percent' || type === 'reduce-amount') {
+        const percents = [10, 15, 20, 25];
+        const preview = buildPercentTaperPreview(metrics.avgPerDay, taperSuggestSelectedPercent || 10, 3);
+        html += `
+            <h4>Current average/day</h4>
+            <p><strong>${escapeHtml(formatAmount(metrics.avgPerDay))} ${unit}/day</strong></p>
+            <h4>Suggested reduction</h4>
+            <div class="taper-suggest-chip-row">
+                ${percents.map(p => `<button type="button" class="taper-suggest-chip${taperSuggestSelectedPercent === p ? ' active' : ''}" onclick="applyTaperPercentSuggestion(${p}, { force: true })">${p}%</button>`).join('')}
+                <button type="button" class="taper-suggest-chip" onclick="customizeTaperManually()">Custom</button>
+            </div>
+            <div class="taper-suggest-preview">
+                ${preview.map(row => `<div>Week ${row.week}<br><strong>${escapeHtml(formatAmount(row.daily))} ${unit}/day</strong></div>`).join('')}
+            </div>`;
+    }
+
+    if (type === 'reduce-puffs' || (metrics.isVape && type === 'nicotine-vape-purchase')) {
+        const base = Math.round(metrics.avgPerDay || 0);
+        const suggestions = [base - 10, base - 20, base - 30].filter(v => v > 0);
+        html += `
+            <h4>Average puffs/day</h4>
+            <p><strong>${escapeHtml(formatAmount(metrics.avgPerDay))}</strong></p>
+            <h4>Suggested</h4>
+            <div class="taper-suggest-chip-row">
+                ${suggestions.map(v => `<button type="button" class="taper-suggest-chip" onclick="applyTaperPuffSuggestion(${v})">${v}</button>`).join('')}
+                <button type="button" class="taper-suggest-chip" onclick="customizeTaperManually()">Custom</button>
+            </div>`;
+    }
+
+    if (type === 'reduce-buying' || type === 'nicotine-vape-purchase') {
+        html += `
+            <h4>Average purchases</h4>
+            <p><strong>${metrics.purchaseIntervalDays == null ? '—' : `Every ${escapeHtml(formatAmount(metrics.purchaseIntervalDays))} days`}</strong></p>
+            <div class="taper-suggest-chip-row">
+                ${[10, 14, 21, 30].map(d => `<button type="button" class="taper-suggest-chip" onclick="applyTaperPurchaseFrequencySuggestion(${d})">${d} days</button>`).join('')}
+            </div>`;
+        if (metrics.spendPerWeek != null || metrics.spendPerMonth != null) {
+            html += `
+                <h4>Current spending</h4>
+                <p>Week <strong>${escapeHtml(formatTaperSuggestMoney(metrics.spendPerWeek))}</strong> · Month <strong>${escapeHtml(formatTaperSuggestMoney(metrics.spendPerMonth))}</strong></p>
+                <div class="taper-suggest-chip-row">
+                    ${[10, 20, 30].map(p => `<button type="button" class="taper-suggest-chip${taperSuggestSelectedSpendPct === p ? ' active' : ''}" onclick="applyTaperSpendSuggestion(${p})">Reduce ${p}%</button>`).join('')}
+                    <button type="button" class="taper-suggest-chip" onclick="customizeTaperManually()">Custom</button>
+                </div>`;
+        }
+    }
+
+    if (metrics.sessionsPerDay != null) {
+        html += `
+            <h4>Session reduction</h4>
+            <p>Current <strong>${escapeHtml(formatAmount(metrics.sessionsPerDay))} sessions/day</strong></p>
+            <div class="taper-suggest-chip-row">
+                <button type="button" class="taper-suggest-chip" onclick="applyTaperSessionSuggestion('1-day')">1/day</button>
+                <button type="button" class="taper-suggest-chip" onclick="applyTaperSessionSuggestion('every-other')">Every other day</button>
+                <button type="button" class="taper-suggest-chip" onclick="applyTaperSessionSuggestion('weekends')">Weekends only</button>
+                <button type="button" class="taper-suggest-chip" onclick="customizeTaperManually()">Custom</button>
+            </div>`;
+    }
+
+    if (html) {
+        root.classList.remove('hidden');
+        root.innerHTML = html;
+    } else {
+        root.classList.add('hidden');
+        root.innerHTML = '';
+    }
+
+    if (weekly) {
+        if (metrics.avgPerWeek != null) {
+            weekly.classList.remove('hidden');
+            weekly.innerHTML = `
+                <span class="settings-hint">Suggested: <strong>${escapeHtml(formatAmount(metrics.avgPerWeek))} ${unit}/week</strong></span>
+                <button type="button" class="taper-chip-btn" onclick="applyTaperWeeklyAverageSuggestion()">Use current average</button>`;
+        } else weekly.classList.add('hidden');
+    }
+    if (monthly) {
+        if (metrics.avgPerMonth != null) {
+            monthly.classList.remove('hidden');
+            monthly.innerHTML = `
+                <span class="settings-hint">Suggested: <strong>${escapeHtml(formatAmount(metrics.avgPerMonth))} ${unit}/month</strong></span>
+                <button type="button" class="taper-chip-btn" onclick="applyTaperMonthlyAverageSuggestion()">Use current average</button>`;
+        } else monthly.classList.add('hidden');
+    }
+}
+
+function refreshTaperSuggestions(options = {}) {
+    bindTaperSuggestTracking();
+    const setup = typeof document !== 'undefined' ? document.getElementById('taper-setup') : null;
+    if (setup?.classList.contains('hidden') && options.requireVisible !== false) {
+        // Still allow headless/test refresh when explicitly requested.
+        if (!options.forceRender) return taperSuggestLastMetrics;
+    }
+    ensureTaperSuggestPrefs();
+    const substanceId = options.substanceId || (typeof getTaperSubstanceId === 'function' ? getTaperSubstanceId() : null);
+    const metrics = computeTaperCurrentMetrics(substanceId, options);
+    taperSuggestLastMetrics = metrics;
+    renderTaperSuggestBanner(metrics);
+    renderTaperCurrentMetricsCard(metrics);
+    renderTaperTypeSuggestions(metrics);
+    if (options.autoFill && isTaperAutoSuggestEnabled() && !taperSuggestCustomizeMode) {
+        autoFillTaperFieldsFromMetrics(metrics, { force: !!options.force });
+    }
+    return metrics;
+}
+
 function showNewTaperPlan() {
     if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return;
     taperFormPlanId = null;
@@ -53353,9 +54040,11 @@ function showNewTaperPlan() {
         setPrimaryEl.checked = !getTaperPlansForSubstance(substanceId).some(p => p.isPrimary && p.status === 'active');
     }
     setDefaultTaperEndDate();
+    resetTaperSuggestTouchState();
     toggleTaperPlanTypeFields({ skipPrefill: false });
     prefillVapeTaperDefaults(substanceId);
     bindTaperFormDirtyTracking();
+    bindTaperSuggestTracking();
     markTaperFormClean();
     const purchaseEnabledEl = document.getElementById('purchase-taper-enabled');
     if (purchaseEnabledEl) purchaseEnabledEl.checked = false;
@@ -53363,6 +54052,9 @@ function showNewTaperPlan() {
     setInputValue('taper-priority', 'normal');
     setInputValue('taper-status', 'active');
     togglePurchaseTaperFields();
+    if (typeof refreshTaperSuggestions === 'function') {
+        refreshTaperSuggestions({ autoFill: true, forceRender: true });
+    }
 }
 
 function duplicateSelectedTaperPlan() {
@@ -53774,6 +54466,12 @@ function toggleTaperPlanTypeFields(options = {}) {
     }
     if (!options.skipPurchaseToggle) togglePurchaseTaperFields();
     if (taperFormInitialized) markTaperFormDirtyFromUi();
+    if (typeof refreshTaperSuggestions === 'function') {
+        refreshTaperSuggestions({
+            autoFill: !options.skipPrefill && !taperFormPlanId && isTaperAutoSuggestEnabled(),
+            forceRender: true
+        });
+    }
 }
 
 function formatTaperFormNumber(value) {
@@ -54182,6 +54880,10 @@ function fillTaperFormFromPlan(plan) {
     }
     togglePurchaseTaperFields();
     markTaperFormClean();
+    resetTaperSuggestTouchState();
+    if (typeof refreshTaperSuggestions === 'function') {
+        refreshTaperSuggestions({ autoFill: false, forceRender: true, substanceId });
+    }
 }
 
 function setDefaultTaperDates() {
@@ -59147,6 +59849,20 @@ function __getRecoveryTrackerTestExports() {
         tapersRootEl,
         renderGoalsPlansRecordsView,
         applyTaperTemplate,
+        ensureTaperSuggestPrefs,
+        isTaperAutoSuggestEnabled,
+        setTaperAutoSuggestEnabled,
+        setTaperSuggestLookbackDays,
+        getTaperSuggestLookbackDays,
+        computeTaperCurrentMetrics,
+        buildPercentTaperPreview,
+        refreshTaperSuggestions,
+        applyTaperRecommendation,
+        writeTaperSuggestField,
+        canWriteTaperSuggestField,
+        resetTaperSuggestTouchState,
+        markTaperSuggestFieldTouched,
+        syncTaperSuggestSettingsUI,
         migrateLegacyGoals,
         ensureFinancialAnalyticsPrefs,
         getFinancialAnalyticsPrefs,

@@ -993,6 +993,7 @@
                     </div>
                     <form id="taper-form" class="taper-form-compact" novalidate>
                         <input type="hidden" id="taper-editing-plan-id" value="">
+                        <div id="taper-suggest-banner" class="taper-suggest-banner hidden" aria-live="polite"></div>
                         <div class="form-group">
                             <label for="taper-plan-name">Plan name</label>
                             <input type="text" id="taper-plan-name" required placeholder="e.g. June manual weekly plan">
@@ -1021,6 +1022,15 @@
                                 <input type="number" id="goal-avg" min="0" step="0.1" required>
                             </div>
                         </div>
+
+                        <div id="taper-current-metrics" class="taper-current-metrics hidden" aria-live="polite">
+                            <div class="taper-current-metrics-head">
+                                <h4 id="taper-current-metrics-title">Current Usage (last 30 days)</h4>
+                                <button type="button" class="taper-chip-btn" onclick="reapplyTaperSuggestions({ force: true })">Reapply suggestions</button>
+                            </div>
+                            <div id="taper-current-metrics-body" class="taper-current-metrics-body"></div>
+                        </div>
+
                         <div class="form-group">
                             <label for="reduction-type">Reduction Target</label>
                             <select id="reduction-type" onchange="toggleTaperPlanTypeFields()">
@@ -1031,6 +1041,8 @@
                             </select>
                             <p class="field-hint" id="plan-type-hint">Reduce a set amount each week until you reach your goal.</p>
                         </div>
+
+                        <div id="taper-type-suggestions" class="taper-type-suggestions hidden" aria-live="polite"></div>
                         <div id="taper-vape-puffs-extra" class="form-group hidden">
                             <label for="puff-reduction-mode">Reduction method</label>
                             <select id="puff-reduction-mode" onchange="toggleTaperPlanTypeFields()">
@@ -1293,11 +1305,13 @@
                                 <label for="weekly-max">Weekly target</label>
                                 <input type="number" id="weekly-max" min="0" step="0.1" placeholder="Optional">
                                 <p class="field-hint">Max amount for the current week.</p>
+                                <div id="taper-weekly-suggest" class="taper-inline-suggest hidden"></div>
                             </div>
                             <div class="form-group" id="monthly-max-group">
                                 <label for="monthly-max">Monthly cap</label>
                                 <input type="number" id="monthly-max" min="0" step="0.1" placeholder="Optional">
                                 <p class="field-hint">Optional monthly limit for your taper plan.</p>
+                                <div id="taper-monthly-suggest" class="taper-inline-suggest hidden"></div>
                             </div>
                         </div>
                         <div class="form-row" id="taper-priority-status-row">
@@ -2947,6 +2961,29 @@
                         <p class="settings-hint">Restores Auto View, 100% zoom, and default spacing. Color rules are kept — use Restore presets above to reset them.</p>
                     </div>
                 </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="settingsTaperSuggestions">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsTaperSuggestions')">
+                        <span>Taper Suggestions</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="settings-section">
+                            <p class="settings-hint">Prefill taper fields from your recent logged use, spending, and inventory for the selected substance. Manual edits are never overwritten unless you reapply.</p>
+                            <label class="settings-toggle-row" for="settings-taper-auto-suggest">
+                                <input type="checkbox" id="settings-taper-auto-suggest" checked onchange="setTaperAutoSuggestEnabled(this.checked)">
+                                <span>Auto-suggest taper values from recent data</span>
+                            </label>
+                            <fieldset class="settings-radio-fieldset" id="settings-taper-lookback-fieldset">
+                                <legend>Lookback period</legend>
+                                <label class="settings-radio-row"><input type="radio" name="taper-suggest-lookback" value="7" onchange="setTaperSuggestLookbackDays(7)"> 7 days</label>
+                                <label class="settings-radio-row"><input type="radio" name="taper-suggest-lookback" value="30" checked onchange="setTaperSuggestLookbackDays(30)"> 30 days</label>
+                                <label class="settings-radio-row"><input type="radio" name="taper-suggest-lookback" value="90" onchange="setTaperSuggestLookbackDays(90)"> 90 days</label>
+                                <label class="settings-radio-row"><input type="radio" name="taper-suggest-lookback" value="all" onchange="setTaperSuggestLookbackDays('all')"> Entire history</label>
+                            </fieldset>
+                        </div>
                     </div>
                 </div>
 
