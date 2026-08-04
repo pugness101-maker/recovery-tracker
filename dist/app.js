@@ -3487,8 +3487,9 @@ function updateVapeTaperModeNote() {
     el.classList.toggle('hidden', !spread);
 }
 
-function getSpreadPercentLeftUsage(data = appData) {
-    return data?.settings?.spreadPercentLeftUsage !== false;
+function getSpreadPercentLeftUsage() {
+    // Permanently enabled: percent-left usage is always spread across days.
+    return true;
 }
 
 function setSpreadPercentLeftUsage(enabled) {
@@ -15541,6 +15542,36 @@ function migrateContactsFromFreeText(data = appData, options = {}) {
     return { created, linked, scanned: names.length };
 }
 
+// Migrate saved store / location names (previously managed in their own
+// Settings list) into the shared Contacts system. Idempotent and duplicate-safe
+// via findContactByName, and runs once even for users who already migrated
+// free-text contacts before store names were included.
+function migrateSavedStoresToContacts(data = appData, options = {}) {
+    if (!data || typeof data !== 'object') return { created: 0, scanned: 0 };
+    if (!data.migrations || typeof data.migrations !== 'object') data.migrations = {};
+    ensureContacts(data);
+    const storeNames = typeof getSavedStoreNames === 'function' ? getSavedStoreNames(data) : [];
+    let created = 0;
+    storeNames.forEach(name => {
+        const trimmed = ctTrim(name);
+        if (!trimmed || trimmed.length < 2) return;
+        if (findContactByName(trimmed, data)) return;
+        data.contacts.push(normalizeContactRecord({
+            id: createContactId(),
+            name: trimmed,
+            source: 'migration:stores',
+            createdAt: ctNowIso(),
+            updatedAt: ctNowIso()
+        }));
+        created += 1;
+    });
+    data.migrations.storesToContactsV1 = true;
+    if (options.persist !== false && typeof saveData === 'function') {
+        try { saveData(data); } catch (_) { /* avoid TDZ during early load */ }
+    }
+    return { created, scanned: storeNames.length };
+}
+
 function ensureContactsMigrated(data = appData) {
     ensureContacts(data);
     ensureContactsPrefs(data);
@@ -15548,6 +15579,9 @@ function ensureContactsMigrated(data = appData) {
     if (!data.migrations.contactsFromFreeTextV1) {
         // Persist via later saveData/load path — never save during ensureAppDataSettings.
         migrateContactsFromFreeText(data, { persist: false });
+    }
+    if (!data.migrations.storesToContactsV1) {
+        migrateSavedStoresToContacts(data, { persist: false });
     }
     return data.contacts;
 }
@@ -21708,6 +21742,23 @@ function applyInventorySourceToPayload(payload) {
         return payload;
     }
 
+    // Every source flows through the shared Contacts system: a free-typed name
+    // reuses an existing contact when one matches (no duplicates) or creates a
+    // new contact from the purchase form.
+    if (sel.name && !sel.contactId
+        && typeof findContactByName === 'function'
+        && typeof saveContactRecord === 'function') {
+        let contact = findContactByName(sel.name, appData);
+        if (!contact) {
+            try {
+                contact = saveContactRecord({ name: sel.name }, appData);
+            } catch (_) {
+                contact = null;
+            }
+        }
+        if (contact && contact.id) sel.contactId = contact.id;
+    }
+
     payload.sourceName = sel.name || '';
     payload.sourceKind = sel.kind || 'other';
     payload.sourceContactId = sel.contactId || '';
@@ -22612,9 +22663,9 @@ function ensureAppDataSettings(data) {
     if (!data.settings.vapeTaperCountMode) {
         data.settings.vapeTaperCountMode = 'log-date';
     }
-    if (data.settings.spreadPercentLeftUsage === undefined) {
-        data.settings.spreadPercentLeftUsage = true;
-    }
+    // Spreading percent-left usage across days is now always enabled.
+    // Migrate any existing user who previously turned it off.
+    data.settings.spreadPercentLeftUsage = true;
     data.settings.appearanceViewMode = normalizeAppearanceViewMode(data.settings.appearanceViewMode);
     data.settings.appearanceZoom = normalizeAppearanceZoom(data.settings.appearanceZoom);
     data.settings.phoneViewZoom = normalizeAppearanceZoom(
@@ -22704,8 +22755,6 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     dashVapeSection: true,
     settingsSubstances: false,
     settingsAppearance: false,
-    settingsStores: true,
-    settingsVape: false,
     settingsBackup: true,
     settingsContacts: false,
     settingsDangerZone: true,
@@ -25643,7 +25692,6 @@ function initializeApp() {
     renderRecentUseList();
     refreshTaperDashboard();
     renderSubstancesList();
-    renderStoresList();
     setupBuyTrackerForm();
     loadInventoryFiltersPanelState();
     updateInventoryFiltersPanelUI();
@@ -25693,7 +25741,6 @@ function refreshAppAfterDataChange() {
     syncTaperSubstanceToMain();
     refreshTaperDashboard();
     renderSubstancesList();
-    renderStoresList();
     refreshAllRecoveryStreaks();
     renderPurchaseHistory(null);
     renderDashboardRecoveryInsights();
@@ -26106,20 +26153,6 @@ function renderSubstancesList() {
         container.appendChild(item);
     });
     applyCollapsedSections();
-}
-
-function renderStoresList() {
-    const container = document.getElementById('settings-stores-list');
-    if (!container) return;
-    const stores = getSavedStoreNames();
-    if (!stores.length) {
-        container.innerHTML = '<p class="settings-hint">Stores and locations appear here when you add them on Buy Tracker purchases.</p>';
-        return;
-    }
-    container.innerHTML = `<ul class="settings-stores-list">${stores.map(store => {
-        const safe = String(store).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
-        return `<li>${safe}</li>`;
-    }).join('')}</ul>`;
 }
 
 function openSubstanceEditor(id) {
@@ -36590,7 +36623,6 @@ function renderBuyTrackerTab() {
     renderInventorySummaryCards();
     renderPurchaseHistory(null);
     updateInventoryFiltersPanelUI();
-    renderStoresList();
     applyCollapsedSections();
 }
 
