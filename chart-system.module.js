@@ -45,7 +45,6 @@ const CHART_METRICS = Object.freeze([
     { id: 'session_count', label: 'Session count', category: 'use', defaultType: 'bar', unitFamily: 'count' },
     { id: 'avg_use_per_day', label: 'Average use per day', category: 'use', defaultType: 'line', unitFamily: 'auto' },
     { id: 'avg_amount_per_use_day', label: 'Average amount per use day', category: 'use', defaultType: 'line', unitFamily: 'auto' },
-    { id: 'personal_vs_shared', label: 'Personal vs shared use', category: 'use', defaultType: 'stacked-bar', unitFamily: 'auto' },
     { id: 'use_by_product', label: 'Use by product type', category: 'use', defaultType: 'bar', unitFamily: 'auto' },
     { id: 'use_by_weekday', label: 'Use by weekday', category: 'use', defaultType: 'bar', unitFamily: 'auto' },
     { id: 'use_heatmap', label: 'Use weekday/hour heatmap', category: 'use', defaultType: 'heatmap', unitFamily: 'count' },
@@ -96,7 +95,7 @@ const CHART_PRESETS = Object.freeze({
     },
     use_trends: {
         name: 'Use Trends',
-        widgets: ['use_amount', 'rolling_7_use', 'rolling_30_use', 'use_by_weekday', 'use_heatmap', 'personal_vs_shared']
+        widgets: ['use_amount', 'rolling_7_use', 'rolling_30_use', 'use_by_weekday', 'use_heatmap']
     },
     spending: {
         name: 'Spending',
@@ -179,7 +178,6 @@ function getDefaultChartFilters() {
         groupBy: 'none',
         comparePeriod: 'previous-period',
         includeGifts: false,
-        includeSharedUse: false,
         personalUseOnly: true
     };
 }
@@ -245,13 +243,17 @@ function ensureChartSystemPrefs(data = appData) {
         if (prefs.filters[key] === undefined) prefs.filters[key] = defaults.filters[key];
     });
     if (!Array.isArray(prefs.widgets) || !prefs.widgets.length) prefs.widgets = defaultChartWidgets();
-    prefs.widgets = prefs.widgets.map((w, i) => ({
-        ...w,
-        id: w.id || `chart-w-${i}-${w.metricId || 'use_amount'}`,
-        settings: { ...getDefaultChartSettings(), ...(w.settings || {}) },
-        overrides: { ...(w.overrides || {}) },
-        order: w.order == null ? i : w.order
-    })).sort((a, b) => a.order - b.order);
+    prefs.widgets = prefs.widgets
+        .filter(w => w && w.metricId !== 'personal_vs_shared' && getChartMetricMeta(w.metricId || 'use_amount'))
+        .map((w, i) => ({
+            ...w,
+            id: w.id || `chart-w-${i}-${w.metricId || 'use_amount'}`,
+            settings: { ...getDefaultChartSettings(), ...(w.settings || {}) },
+            overrides: { ...(w.overrides || {}) },
+            order: w.order == null ? i : w.order
+        })).sort((a, b) => a.order - b.order);
+    if (!prefs.widgets.length) prefs.widgets = defaultChartWidgets();
+    if ('includeSharedUse' in prefs.filters) delete prefs.filters.includeSharedUse;
     if (!prefs.presets || typeof prefs.presets !== 'object') prefs.presets = {};
     prefs.maxPoints = Math.max(30, Math.round(chToNumber(prefs.maxPoints, 120)));
     return prefs;
@@ -378,15 +380,13 @@ function chartBucketKey(dateStr, interval) {
 function chartLogAmount(log, filters) {
     if (!log) return 0;
     const type = typeof getLogTransactionType === 'function' ? getLogTransactionType(log) : (log.transactionType || 'use');
-    if (filters.personalUseOnly) {
-        if (typeof logCountsTowardPersonalUseStats === 'function' && !logCountsTowardPersonalUseStats(log)) {
-            if (!(filters.includeSharedUse && (type === 'shared_use' || type === 'session'))) return 0;
-        }
+    if (filters.personalUseOnly !== false) {
+        if (typeof logCountsTowardPersonalUseStats === 'function' && !logCountsTowardPersonalUseStats(log)) return 0;
         if (typeof getLogStatsAmount === 'function') return chToNumber(getLogStatsAmount(log), 0);
-        return chToNumber(log.personalAmount ?? log.amount, 0);
+        return chToNumber(log.amount, 0);
     }
     if (!filters.includeGifts && (type === 'gift_given' || type === 'gift_received')) return 0;
-    if (type === 'inventory_adjustment') return 0;
+    if (type === 'inventory_adjustment' || type === 'shared_use') return 0;
     return chToNumber(log.amount ?? log.quantity, 0);
 }
 
@@ -684,7 +684,7 @@ function buildChartDatasetForMetric(metricId, filters, data = appData, options =
     const f = { ...getDefaultChartFilters(), ...filters };
     const prefs = ensureChartSystemPrefs(data);
 
-    if (meta.category === 'use' || metricId.startsWith('rolling_') && metricId.includes('use') || metricId === 'use_heatmap' || metricId === 'personal_vs_shared') {
+    if (meta.category === 'use' || metricId.startsWith('rolling_') && metricId.includes('use') || metricId === 'use_heatmap') {
         if (metricId === 'use_heatmap') {
             const { logs, bounds } = getChartSourceLogs(f, data);
             const usable = logs.filter(log => chartLogAmount(log, f) !== 0 || (typeof logCountsTowardPersonalUseStats === 'function' && logCountsTowardPersonalUseStats(log)));
@@ -695,32 +695,6 @@ function buildChartDatasetForMetric(metricId, filters, data = appData, options =
                 bounds,
                 heatmap: buildHeatmapMatrix(usable, log => chartLogAmount(log, f), options.heatmapMode || 'count'),
                 series: []
-            };
-        }
-        if (metricId === 'personal_vs_shared') {
-            const { logs, bounds } = getChartSourceLogs({ ...f, personalUseOnly: false, includeSharedUse: true }, data);
-            const personal = [];
-            const shared = [];
-            logs.forEach(log => {
-                const type = typeof getLogTransactionType === 'function' ? getLogTransactionType(log) : log.transactionType;
-                if (type === 'use') personal.push({ date: log.date, value: chartLogAmount(log, { ...f, personalUseOnly: true }), count: 1 });
-                if (type === 'shared_use' || type === 'session') {
-                    shared.push({
-                        date: log.date,
-                        value: chToNumber(log.sharedAmount ?? log.amount, 0),
-                        count: 1
-                    });
-                }
-            });
-            return {
-                state: (personal.length || shared.length) ? 'ok' : 'empty',
-                metricId,
-                chartType: 'stacked-bar',
-                bounds,
-                series: [
-                    { id: 'personal', label: 'Personal', unitFamily: 'auto', points: aggregateTimeSeries(personal, f.interval, prefs.maxPoints) },
-                    { id: 'shared', label: 'Shared', unitFamily: 'auto', points: aggregateTimeSeries(shared, f.interval, prefs.maxPoints) }
-                ]
             };
         }
         if (metricId === 'use_by_weekday') {
@@ -1581,7 +1555,6 @@ function renderChartDashboardView() {
                             <option value="previous-period"${f.comparePeriod === 'previous-period' ? ' selected' : ''}>Previous period</option>
                         </select></label>
                         <label class="ch-check"><input type="checkbox" id="ch-filter-personal" ${f.personalUseOnly ? 'checked' : ''} onchange="onChartFilterChange()"> Personal-use only</label>
-                        <label class="ch-check"><input type="checkbox" id="ch-filter-shared" ${f.includeSharedUse ? 'checked' : ''} onchange="onChartFilterChange()"> Include shared use</label>
                         <label class="ch-check"><input type="checkbox" id="ch-filter-gifts" ${f.includeGifts ? 'checked' : ''} onchange="onChartFilterChange()"> Include gifts in use charts</label>
                         <label>Preset<select id="ch-filter-preset" onchange="applyChartPreset(this.value)">${presetOpts}</select></label>
                     </div>
@@ -1611,7 +1584,6 @@ function onChartFilterChange() {
             interval: g('ch-filter-interval')?.value || 'daily',
             comparePeriod: g('ch-filter-compare')?.value || 'none',
             personalUseOnly: !!g('ch-filter-personal')?.checked,
-            includeSharedUse: !!g('ch-filter-shared')?.checked,
             includeGifts: !!g('ch-filter-gifts')?.checked
         }
     });

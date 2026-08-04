@@ -146,7 +146,7 @@ test('3. combined plan applies purchase, lifespan, puff, and strength goals', ()
     assert.ok(week8.dailyTarget <= week1.dailyTarget);
 });
 
-test('4. personal versus shared puffs — only personal counts toward taper', () => {
+test('4. personal versus shared puffs — only personal use counts toward taper', () => {
     const plan = makeCombinedPlan({
         weeklyTargets: [{
             week: 1,
@@ -167,7 +167,7 @@ test('4. personal versus shared puffs — only personal counts toward taper', ()
             time: '10:00',
             amount: 100,
             unit: 'puffs',
-            transactionType: 'personal_use'
+            transactionType: 'use'
         },
         {
             id: 'log-shared',
@@ -191,8 +191,8 @@ test('4. personal versus shared puffs — only personal counts toward taper', ()
     const rt = setup(data);
     rt.syncNicotineVapePurchasePlanData(plan, data);
     assert.ok(plan.weeklyTargets[0].personalPuffs >= 100);
-    assert.ok(plan.weeklyTargets[0].sharedPuffs >= 50);
-    assert.ok(plan.weeklyTargets[0].personalPuffs < 100 + 80);
+    assert.equal(plan.weeklyTargets[0].personalPuffs, 100, 'shared_use personal portion excluded from taper');
+    assert.equal(plan.weeklyTargets[0].sharedPuffs, undefined, 'sharedPuffs column removed');
 });
 
 test('5. Gift Given excluded from personal puff totals', () => {

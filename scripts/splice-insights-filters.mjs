@@ -365,9 +365,9 @@ if (!html.includes('id="stats-product-type"')) {
                 <div class="form-group">
                     <label for="stats-transaction-type">Transaction type</label>
                     <select id="stats-transaction-type" onchange="onInsightsTransactionTypeChange()">
-                        <option value="">Use + Shared Use</option>
+                        <option value="">Personal Use</option>
                         <option value="use">Personal Use</option>
-                        <option value="shared_use">Shared Use</option>
+                        <option value="shared_use">Legacy Shared Use</option>
                     </select>
                 </div>
 

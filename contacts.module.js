@@ -371,7 +371,6 @@ function collectFreeTextContactNames(data = appData) {
     (data.logs || []).forEach(log => {
         if (!log) return;
         add(log.giftPartyName || log.recipientName || log.giverName, 'log_gift');
-        add(log.sharedWithName, 'log_shared');
     });
     return [...names.values()].map(row => ({
         name: row.name,

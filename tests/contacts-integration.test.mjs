@@ -79,7 +79,7 @@ test('home contact cards omit empty state and include recent shared-use', () => 
         totalAmount: 1
     });
     const html = rt.buildHomeContactCardsHtml(data);
-    assert.match(html, /Recent shared-use/);
+    assert.match(html, /Recent Legacy Shared Use/);
     assert.match(html, /Jordan/);
     assert.match(html, /openContactDetailPanel/);
 });

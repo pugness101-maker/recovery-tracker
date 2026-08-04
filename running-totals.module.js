@@ -51,7 +51,6 @@ function getDefaultRunningTotalsPrefs() {
             customEnd: '',
             transactionType: '',
             personalUseOnly: true,
-            includeSharedPersonal: true,
             groupBy: 'session',
             resetMode: 'daily',
             newestFirst: true,
@@ -188,15 +187,9 @@ function isRunningTotalsEligibleLog(log, filters = {}, data = appData) {
     if (log.parentPercentLogId != null && log.isEstimatedDailyUse) return false;
 
     const tx = typeof getLogTransactionType === 'function' ? getLogTransactionType(log) : (log.transactionType || 'use');
-    if (tx === 'gift_given' || tx === 'gift_received' || tx === 'inventory_adjustment') return false;
+    if (tx === 'gift_given' || tx === 'gift_received' || tx === 'inventory_adjustment' || tx === 'shared_use') return false;
     if (filters.transactionType && tx !== filters.transactionType) return false;
-
-    if (filters.personalUseOnly !== false) {
-        if (tx === 'use') return true;
-        if (tx === 'shared_use') return filters.includeSharedPersonal !== false;
-        return false;
-    }
-    return tx === 'use' || tx === 'shared_use';
+    return tx === 'use';
 }
 
 function getRunningTotalsProductType(log, data = appData) {
@@ -719,7 +712,6 @@ function renderRunningTotalsView() {
                         <select id="rt-filter-group" onchange="onRunningTotalsFilterChange()">${groupOptions}</select>
                     </label>
                     <label class="rt-check"><input type="checkbox" id="rt-filter-personal" ${f.personalUseOnly ? 'checked' : ''} onchange="onRunningTotalsFilterChange()"> Personal use only</label>
-                    <label class="rt-check"><input type="checkbox" id="rt-filter-shared" ${f.includeSharedPersonal ? 'checked' : ''} onchange="onRunningTotalsFilterChange()"> Include Shared Use personal portion</label>
                     <label class="rt-check"><input type="checkbox" id="rt-filter-newest" ${f.newestFirst !== false ? 'checked' : ''} onchange="onRunningTotalsFilterChange()"> Newest first</label>
                     <label class="rt-check"><input type="checkbox" id="rt-filter-target" ${f.showTargetLine ? 'checked' : ''} onchange="onRunningTotalsFilterChange()"> Show target / taper line</label>
                 </div>
@@ -749,7 +741,6 @@ function onRunningTotalsFilterChange() {
             resetMode: g('rt-filter-reset')?.value || 'daily',
             groupBy: g('rt-filter-group')?.value || 'session',
             personalUseOnly: !!g('rt-filter-personal')?.checked,
-            includeSharedPersonal: !!g('rt-filter-shared')?.checked,
             newestFirst: !!g('rt-filter-newest')?.checked,
             showTargetLine: !!g('rt-filter-target')?.checked
         }

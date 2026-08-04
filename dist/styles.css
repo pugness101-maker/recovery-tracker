@@ -5149,7 +5149,7 @@ body.table-col-resizing {
 .use-tx-pill,
 .use-adj-pill,
 .use-mode-pill {
-    flex: 1 1 calc(50% - 4px);
+    flex: 1 1 calc(25% - 6px);
     min-width: 0;
     padding: 10px 12px;
     border: 1px solid var(--border);
@@ -5891,7 +5891,7 @@ body.table-col-resizing {
 .use-tx-pill,
 .use-adj-pill,
 .use-mode-pill {
-    flex: 1 1 calc(50% - 4px);
+    flex: 1 1 calc(25% - 6px);
     min-width: 0;
     padding: 10px 12px;
     border: 1px solid var(--border);

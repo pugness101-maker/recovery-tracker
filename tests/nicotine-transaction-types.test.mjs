@@ -74,13 +74,7 @@ function setup(data) {
 
 function commitNicotineLog(rt, log, data) {
     data.logs = data.logs || [];
-    const sharedSplit = rt.isSharedUseLog(log) ? {
-        total: log.totalAmount ?? log.amount,
-        personal: log.personalAmount,
-        other: log.sharedAmount,
-        sharedWithName: log.sharedWithName || ''
-    } : null;
-    rt.finalizeNicotineUseLogForSave(log, { sharedSplit });
+    rt.finalizeNicotineUseLogForSave(log);
     data.logs.push(log);
     if (rt.isVapeUseLog(log) && rt.getLogPurchaseId(log)) {
         rt.recalculateVapePurchaseInventory(rt.getLogPurchaseId(log), data);
@@ -92,7 +86,7 @@ function commitNicotineLog(rt, log, data) {
     rt.saveData(data);
 }
 
-test('vape shared by puffs deducts total and counts only personal portion', () => {
+test('legacy vape shared_use deducts total inventory and excludes personal stats', () => {
     const purchase = makeVapePurchase();
     const data = makeNicotineData({ purchases: [purchase] });
     const rt = setup(data);
@@ -117,10 +111,10 @@ test('vape shared by puffs deducts total and counts only personal portion', () =
     commitNicotineLog(rt, log, data);
 
     assert.equal(rt.getPurchaseRemainingAmount(purchase), 9900);
-    assert.equal(rt.formatNicotineUseSummary(log), 'Shared Use · 100 puffs total · Me 60 · Juju 40');
+    assert.equal(rt.formatNicotineUseSummary(log), 'Legacy Shared Use · 100 puffs total · Me 60 · Juju 40');
     assert.equal(rt.isPersonalUseLog(log), false);
     assert.equal(rt.isSharedUseLog(log), true);
-    assert.equal(rt.getStatsUsageOnDate(NICOTINE_ID, '2026-07-05', data), 60);
+    assert.equal(rt.getStatsUsageOnDate(NICOTINE_ID, '2026-07-05', data), 0);
 });
 
 test('vape shared using percent-left uses estimated total puffs', () => {
@@ -156,7 +150,7 @@ test('vape shared using percent-left uses estimated total puffs', () => {
     assert.equal(rt.getLogSharedAmount(log), 200);
 });
 
-test('cigarettes shared deducts total and excludes other portion from personal stats', () => {
+test('legacy cigarettes shared_use deducts total and excludes from personal stats', () => {
     const purchase = makeCigarettePurchase();
     const data = makeNicotineData({ purchases: [purchase] });
     const rt = setup(data);
@@ -181,8 +175,8 @@ test('cigarettes shared deducts total and excludes other portion from personal s
     };
     commitNicotineLog(rt, log, data);
     assert.equal(rt.getPurchaseRemainingAmount(purchase), 10);
-    assert.equal(rt.getStatsUsageOnDate(NICOTINE_ID, '2026-07-07', data), 6);
-    assert.match(rt.formatNicotineUseSummary(log), /Shared Use · 10 cigarettes total · Me 6 · Sam 4/);
+    assert.equal(rt.getStatsUsageOnDate(NICOTINE_ID, '2026-07-07', data), 0);
+    assert.match(rt.formatNicotineUseSummary(log), /Legacy Shared Use · 10 cigarettes total · Me 6 · Sam 4/);
 });
 
 test('nicotine gift given deducts inventory and excludes personal-use totals', () => {
@@ -345,26 +339,16 @@ test('json export includes nicotine transaction split fields', () => {
     assert.equal(exported.nicotineProductType, 'vape');
 });
 
-test('shared use validation rejects mismatched personal and other portions', () => {
+test('shared use write helpers are removed; saving as shared_use is blocked', () => {
     const rt = setup(makeNicotineData());
-    const err = rt.validateNicotineSharedSplit(10, {
-        total: 10,
-        personal: 6,
-        other: 3,
-        sharedWithName: 'Juju'
-    });
-    assert.match(err, /must equal the total/);
-});
-
-test('shared use validation rejects negative amounts', () => {
-    const rt = setup(makeNicotineData());
-    const err = rt.validateNicotineSharedSplit(10, {
-        total: 10,
-        personal: -1,
-        other: 11,
-        sharedWithName: 'Juju'
-    });
-    assert.match(err, /cannot be negative/);
+    assert.equal(typeof rt.validateNicotineSharedSplit, 'undefined');
+    assert.equal(typeof rt.validateNicotineSharedUseSubmit, 'undefined');
+    assert.equal(typeof rt.parseNicotineSharedSplitFromForm, 'undefined');
+    assert.equal(typeof rt.applyNicotineSharedFieldsToLog, 'undefined');
+    assert.match(
+        String(rt.handleUseLogSubmit),
+        /Legacy Shared Use entries must be converted/
+    );
 });
 
 test('inventory is deducted once for shared vape use', () => {
@@ -395,7 +379,7 @@ test('inventory is deducted once for shared vape use', () => {
     assert.equal(metrics.shared, 80);
 });
 
-test('edit shared vape entry updates split without duplicating inventory deduction', () => {
+test('converting legacy shared vape entry to personal use updates inventory without duplicating deduction', () => {
     const purchase = makeVapePurchase();
     const data = makeNicotineData({ purchases: [purchase] });
     const rt = setup(data);
@@ -420,18 +404,23 @@ test('edit shared vape entry updates split without duplicating inventory deducti
     commitNicotineLog(rt, log, data);
     assert.equal(data.logs.length, 1);
     assert.equal(rt.getPurchaseRemainingAmount(purchase), 9900);
+    assert.equal(rt.getStatsUsageOnDate(NICOTINE_ID, '2026-07-14', data), 0);
 
     const existing = data.logs[0];
-    const sharedSplit = { total: 80, personal: 50, other: 30, sharedWithName: 'Sam' };
     const payload = {
         ...existing,
-        transactionType: 'shared_use',
+        transactionType: 'use',
         substanceId: NICOTINE_ID,
         date: '2026-07-14',
+        amount: 80,
         inventoryAffects: true,
         purchaseId: 'purchase-vape-1',
         linkedPurchaseId: 'purchase-vape-1'
     };
+    delete payload.personalAmount;
+    delete payload.sharedAmount;
+    delete payload.totalAmount;
+    delete payload.sharedWithName;
     const vapeCalc = {
         purchase,
         purchaseId: purchase.id,
@@ -443,14 +432,13 @@ test('edit shared vape entry updates split without duplicating inventory deducti
         isEstimated: false,
         estimatedFromPercent: false
     };
-    const result = rt.applyVapeUseLogEdit(existing, payload, vapeCalc, data, { sharedSplit });
+    const result = rt.applyVapeUseLogEdit(existing, payload, vapeCalc, data);
     assert.equal(result.ok, true);
     assert.equal(data.logs.length, 1);
-    assert.equal(result.updated.personalAmount, 50);
-    assert.equal(result.updated.sharedAmount, 30);
-    assert.equal(result.updated.sharedWithName, 'Sam');
+    assert.equal(result.updated.transactionType, 'use');
+    assert.equal(result.updated.amount, 80);
     assert.equal(rt.getPurchaseRemainingAmount(purchase), 9920);
-    assert.equal(rt.getStatsUsageOnDate(NICOTINE_ID, '2026-07-14', data), 50);
+    assert.equal(rt.getStatsUsageOnDate(NICOTINE_ID, '2026-07-14', data), 80);
 });
 
 test('delete shared use entry restores inventory', () => {

@@ -285,7 +285,6 @@
                                 <div class="rd-quick-actions" id="rd-quick-actions">
                                     <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('personal-use')">Log personal use</button>
                                     <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('session')">Log session</button>
-                                    <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('shared')">Log shared use</button>
                                     <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('gift-given')">Log gift given</button>
                                     <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('gift-received')">Log gift received</button>
                                     <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('inventory')">Add inventory</button>
@@ -615,11 +614,11 @@
                         <span class="use-log-field-label">Transaction Type</span>
                         <div class="use-tx-pills" role="group" aria-label="Transaction type">
                             <button type="button" class="use-tx-pill active" data-tx="use" data-tx-group="use" onclick="setUseTransactionType('use')">Personal Use</button>
-                            <button type="button" class="use-tx-pill" data-tx="shared_use" data-tx-group="use" onclick="setUseTransactionType('shared_use')">Shared Use</button>
                             <button type="button" class="use-tx-pill" data-tx="gift_given" data-tx-group="gift" onclick="setUseTransactionType('gift_given')">Gift Given</button>
                             <button type="button" class="use-tx-pill" data-tx="gift_received" data-tx-group="gift" onclick="setUseTransactionType('gift_received')">Gift Received</button>
                             <button type="button" class="use-tx-pill" data-tx="inventory_adjustment" data-tx-group="gift" onclick="setUseTransactionType('inventory_adjustment')">Adjustment</button>
                         </div>
+                        <p id="use-legacy-shared-banner" class="use-supply-preview hidden">This is a Legacy Shared Use entry. Choose Personal Use, Gift Given, Gift Received, or Adjustment to convert it before saving.</p>
                         <input type="hidden" id="use-transaction-type" value="use">
                     </div>
 
@@ -763,7 +762,7 @@
 
                         <div class="form-group use-log-compact hidden" id="use-nicotine-product-type-group">
                             <label for="use-nicotine-product-type">Product type</label>
-                            <select id="use-nicotine-product-type" onchange="updateUseNicotineProductTypeUI()">
+                            <select id="use-nicotine-product-type" onchange="onNicotineUseProductTypeChange()">
                                 <option value="vape">Vape</option>
                                 <option value="cigarettes">Cigarettes</option>
                                 <option value="pouches">Nicotine pouches</option>
@@ -872,28 +871,6 @@
                         <div class="form-group use-log-compact hidden" id="use-gift-party-group">
                             <label for="use-gift-party" id="use-gift-party-label">Recipient Name</label>
                             <input type="text" id="use-gift-party" placeholder="Name">
-                        </div>
-
-                        <div id="use-shared-fields-group" class="hidden">
-                            <div class="form-group use-log-compact">
-                                <label for="use-shared-total" id="use-shared-total-label">Total amount used</label>
-                                <input type="number" id="use-shared-total" min="0" step="0.01" placeholder="Total">
-                            </div>
-                            <div class="use-log-amount-grid">
-                                <div class="form-group use-log-compact">
-                                    <label for="use-shared-personal">My amount</label>
-                                    <input type="number" id="use-shared-personal" min="0" step="0.01" placeholder="My portion">
-                                </div>
-                                <div class="form-group use-log-compact">
-                                    <label for="use-shared-other">Other person's amount</label>
-                                    <input type="number" id="use-shared-other" min="0" step="0.01" placeholder="Their portion">
-                                </div>
-                            </div>
-                            <div class="form-group use-log-compact">
-                                <label for="use-shared-with">Shared with</label>
-                                <input type="text" id="use-shared-with" placeholder="Name">
-                            </div>
-                            <p id="use-shared-preview" class="use-supply-preview">—</p>
                         </div>
 
                         <div id="use-inventory-core-anchor"></div>
@@ -1764,7 +1741,7 @@
                                 <option value="">All transactions</option>
                                 <option value="use">Personal use</option>
                                 <option value="session">Session</option>
-                                <option value="shared_use">Shared use</option>
+                                <option value="shared_use">Legacy Shared Use</option>
                                 <option value="gift_given">Gift given</option>
                                 <option value="gift_received">Gift received</option>
                                 <option value="purchase">Purchase</option>
@@ -1865,9 +1842,9 @@
                 <div class="form-group">
                     <label for="stats-transaction-type">Transaction type</label>
                     <select id="stats-transaction-type" onchange="onInsightsTransactionTypeChange()">
-                        <option value="">Use + Shared Use</option>
+                        <option value="">Personal Use</option>
                         <option value="use">Personal Use</option>
-                        <option value="shared_use">Shared Use</option>
+                        <option value="shared_use">Legacy Shared Use</option>
                     </select>
                 </div>
 
@@ -2082,7 +2059,7 @@
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
-                        <p class="settings-hint">Cumulative personal-use by session. Gift and adjustment entries are excluded. Shared Use counts only your portion.</p>
+                        <p class="settings-hint">Cumulative personal-use by session. Gift, adjustment, and legacy Shared Use entries are excluded.</p>
                         <div id="running-totals-root" class="running-totals-root" aria-live="polite"></div>
                     </div>
                 </div>
@@ -2093,7 +2070,7 @@
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
-                        <p class="settings-hint">Spending, gifts, and shared use by linked contacts and suppliers.</p>
+                        <p class="settings-hint">Spending, gifts, and legacy shared-use history by linked contacts and suppliers.</p>
                         <div id="insights-contacts-root" class="insights-contacts-root" aria-live="polite"></div>
                     </div>
                 </div>

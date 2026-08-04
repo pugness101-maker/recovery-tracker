@@ -127,10 +127,9 @@ test('cart grams remaining and cost per percent are estimated clearly', () => {
     assert.equal(rt.getWeedCartCostPerPercent(purchase), 0.5);
 });
 
-test('shared split validation requires personal + shared = total', () => {
+test('weed shared-split validator was removed with creatable Shared Use', () => {
     const rt = setup();
-    assert.equal(rt.validateWeedSharedSplit({ total: 1, personal: 0.4, shared: 0.6 }).ok, true);
-    assert.equal(rt.validateWeedSharedSplit({ total: 1, personal: 0.5, shared: 0.6 }).ok, false);
+    assert.equal(typeof rt.validateWeedSharedSplit, 'undefined');
 });
 
 test('product-type filter excludes mismatched inventory', () => {

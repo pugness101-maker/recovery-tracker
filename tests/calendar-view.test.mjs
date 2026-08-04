@@ -314,7 +314,8 @@ test('filters isolate personal use, purchases, gifts, plans, goals, and mileston
     });
 
     const personal = rt.buildCalendarEvents(monthBounds(), baseFilters(rt, { personalUseOnly: true }));
-    assert.ok(personal.every(e => ['personal_use', 'session', 'shared_use'].includes(e.type)));
+    assert.ok(personal.every(e => ['personal_use', 'session'].includes(e.type)));
+    assert.ok(!personal.some(e => e.type === 'shared_use'));
 
     const purchases = rt.buildCalendarEvents(monthBounds(), baseFilters(rt, { purchasesOnly: true }));
     assert.ok(purchases.every(e => ['purchase', 'purchased_as_gift'].includes(e.type)));
@@ -401,16 +402,19 @@ test('day and period summaries count personal use only and include purchased-as-
     const day = rt.buildCalendarDaySummary('2026-08-02', events);
     assert.equal(day.purchaseCount, 1);
     assert.equal(day.spending, 45);
-    assert.ok(day.useEventCount >= 1);
+    assert.equal(day.useEventCount, 0, 'legacy shared_use is not personal use');
     assert.ok(day.giftCount >= 1);
+
+    const personalDay = rt.buildCalendarDaySummary('2026-08-03', events);
+    assert.equal(personalDay.useEventCount, 1);
 
     const period = rt.buildCalendarPeriodSummary(monthBounds(), events);
     assert.equal(period.purchases, 2);
     assert.equal(period.spending, 75);
     assert.ok(period.personalUse.some(row => row.substanceId === COKE_ID));
     const cokeUse = period.personalUse.find(row => row.substanceId === COKE_ID);
-    assert.ok(cokeUse.amount < 1.5, 'gift given and shared portion should not inflate personal use');
-    assert.ok(cokeUse.amount >= 0.6, 'personal shared portion + personal use should count');
+    assert.ok(cokeUse.amount < 1.5, 'gift given and shared_use should not inflate personal use');
+    assert.equal(cokeUse.amount, 0.4, 'only transactionType use counts toward personal totals');
     assert.equal(period.useDays + period.noUseDays, 31);
 });
 

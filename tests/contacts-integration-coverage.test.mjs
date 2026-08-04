@@ -114,13 +114,17 @@ test('picker selection falls back to typed free text when nothing is linked', ()
 
 test('log entries pick up contact ids and names per transaction type', () => {
     const rt = setup();
-    const contact = rt.saveContactRecord({ name: 'Avery', roles: ['shared_use_contact'] });
-    const { nodes } = mountPickerDom(rt, ['use-gift-party', 'use-shared-with']);
+    const { nodes } = mountPickerDom(rt, ['use-gift-party']);
 
-    nodes.get('use-shared-with-contact-id').value = contact.id;
-    const shared = rt.applyLogContactIdsToEntry({ transactionType: 'shared_use' });
-    assert.equal(shared.sharedWithContactId, contact.id);
-    assert.equal(shared.sharedWithName, 'Avery');
+    // shared_use is legacy-read-only: contact picker no longer writes shared-with fields
+    const shared = rt.applyLogContactIdsToEntry({
+        transactionType: 'shared_use',
+        sharedWithContactId: 'legacy-id',
+        sharedWithName: 'Legacy Friend'
+    });
+    assert.equal(shared.sharedWithContactId, 'legacy-id');
+    assert.equal(shared.sharedWithName, 'Legacy Friend');
+    assert.equal(shared.giftPartyContactId, undefined);
 
     nodes.get('use-gift-party').value = 'Jesse';
     const giftGiven = rt.applyLogContactIdsToEntry({ transactionType: 'gift_given' });
@@ -175,25 +179,18 @@ test('plan contact fields read their own pickers and stay optional', () => {
     assert.match(html, /Sponsor/);
 });
 
-test('log pickers mount once into the gift and shared-use form groups', () => {
+test('log pickers mount once into the gift form group', () => {
     const rt = setup();
-    const created = [];
     const giftGroup = makeNode('use-gift-party-group');
-    const sharedGroup = makeNode('use-shared-with-group');
-    const sharedInput = makeNode('use-shared-with');
-    sharedInput.closest = () => sharedGroup;
     let giftReplacedWith = null;
     const giftInput = makeNode('use-gift-party');
     giftInput.replaceWith = node => { giftReplacedWith = node; };
-    sharedGroup.appendChild = node => created.push(node);
 
     const nodes = new Map([
         ['use-gift-party-group', giftGroup],
-        ['use-gift-party', giftInput],
-        ['use-shared-with', sharedInput]
+        ['use-gift-party', giftInput]
     ]);
     giftGroup.querySelector = () => null;
-    sharedGroup.querySelector = () => null;
     rt.document.getElementById = id => nodes.get(id) || null;
     rt.document.querySelector = () => null;
     rt.document.querySelectorAll = () => [];
@@ -205,11 +202,11 @@ test('log pickers mount once into the gift and shared-use form groups', () => {
 
     rt.mountLogContactPickers();
     assert.ok(giftReplacedWith, 'gift free-text input should be replaced by a picker');
-    assert.equal(created.length, 1);
+    assert.equal(rt.document.getElementById('use-shared-with'), null, 'shared-with field is removed from the form');
 
-    // Already mounted: a second call must not add another picker.
+    // Already mounted: a second call must not replace again.
     giftGroup.querySelector = () => makeNode('existing');
-    sharedGroup.querySelector = () => makeNode('existing');
+    const firstPicker = giftReplacedWith;
     rt.mountLogContactPickers();
-    assert.equal(created.length, 1);
+    assert.equal(giftReplacedWith, firstPicker);
 });

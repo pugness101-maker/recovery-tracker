@@ -117,7 +117,7 @@ if (!html.includes('id="running-totals-root"')) {
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
-                        <p class="settings-hint">Cumulative personal-use by session. Gift and adjustment entries are excluded. Shared Use counts only your portion.</p>
+                        <p class="settings-hint">Cumulative personal-use by session. Gift, adjustment, and legacy Shared Use entries are excluded.</p>
                         <div id="running-totals-root" class="running-totals-root" aria-live="polite"></div>
                     </div>
                 </div>

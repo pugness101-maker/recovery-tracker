@@ -313,7 +313,7 @@ test('nicotine catalog excludes cocaine buying columns', () => {
     assert.ok(catalog.includes('buyInterval'));
     assert.ok(catalog.includes('runningAmountSpent'));
     assert.ok(catalog.includes('lifespanGoal'));
-    assert.ok(catalog.includes('sharedPuffs'));
+    assert.ok(!catalog.includes('sharedPuffs'));
     assert.ok(catalog.includes('giftedPuffs'));
     assert.ok(!catalog.includes('avgPerDay'));
     assert.ok(!catalog.includes('buyPlanned'));

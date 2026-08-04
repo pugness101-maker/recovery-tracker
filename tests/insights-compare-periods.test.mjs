@@ -164,12 +164,12 @@ test('Coke compare: lower use and spending mark Improved; gifts excluded from pe
     assert.equal(byId.totalUse.status, 'Improved');
     assert.ok(byId.totalSpent.current < byId.totalSpent.previous);
     assert.equal(byId.totalSpent.status, 'Improved');
-    // Gift given amount must not inflate personal-use totals
+    // Gift given and legacy shared_use must not inflate personal-use totals
     assert.ok(byId.totalUse.current < 5);
     assert.ok(byId.giftGiven.current >= 5);
-    assert.ok(byId.sharedAmount.current >= 1.5);
-    // Personal portion of shared use is counted in personal totals
-    assert.ok(byId.totalUse.current >= 2.5);
+    assert.equal(byId.sharedAmount, undefined, 'sharedAmount compare metric was removed');
+    // Only transactionType use counts (2g from c1+c2); shared personal portion excluded
+    assert.equal(byId.totalUse.current, 2);
 
     const chips = rt.buildComparePeriodSummaryChips(result);
     assert.ok(chips.some(c => /Use/.test(c.text)));

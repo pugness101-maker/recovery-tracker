@@ -107,7 +107,6 @@ function rowsFor(rt, filters = {}) {
         customStart: '2026-08-01',
         customEnd: '2026-08-31',
         personalUseOnly: true,
-        includeSharedPersonal: true,
         resetMode: 'daily',
         groupBy: 'session',
         newestFirst: false,
@@ -163,7 +162,7 @@ test('daily reset clears at local midnight; monthly resets on first of month', (
     assert.equal(rows[2].runningMonthly, 0.75);
 });
 
-test('Shared Use counts only personal portion; gifts and adjustments excluded', () => {
+test('Legacy Shared Use excluded from running totals; gifts and adjustments excluded', () => {
     const rt = setup({
         logs: [
             makeLog({
@@ -199,17 +198,13 @@ test('Shared Use counts only personal portion; gifts and adjustments excluded', 
     assert.equal(rt.isRunningTotalsEligibleLog({
         transactionType: 'shared_use',
         amount: 1
-    }, { personalUseOnly: true, includeSharedPersonal: true }), true);
+    }, { personalUseOnly: true }), false);
 
     const rows = rowsFor(rt);
-    assert.equal(rows.length, 2);
-    assert.ok(rows[0].sessionAmount <= 0.4 + 1e-9);
-    assert.equal(rows[1].runningDaily, rtRoundSum(rows[0].accumulateAmount, 0.1));
+    assert.equal(rows.length, 1);
+    assert.equal(rows[0].runningDaily, 0.1);
+    assert.equal(rows[0].sessionAmount, 0.1);
 });
-
-function rtRoundSum(a, b) {
-    return Math.round((a + b) * 10000) / 10000;
-}
 
 test('editing or deleting a session recalculates later running totals', () => {
     const rt = setup({

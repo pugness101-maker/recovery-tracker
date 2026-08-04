@@ -238,7 +238,7 @@ test('status cards keep substance-specific units and exclude gifts from personal
     const weed = dataset.statusCards.find(c => c.substanceId === WEED_ID);
     const nic = dataset.statusCards.find(c => c.substanceId === NICOTINE_ID);
     assert.ok(coke);
-    assert.match(coke.usedWeekLabel, /0\.6|0\.60/);
+    assert.match(coke.usedWeekLabel, /0\.4/);
     assert.ok(!coke.usedWeekLabel.toLowerCase().includes('gift'));
     assert.match(coke.inventoryLabel, /2/);
     assert.ok(!String(coke.inventoryLabel).includes('5'));

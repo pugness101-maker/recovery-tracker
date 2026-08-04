@@ -282,8 +282,6 @@ function mountLogContactPickers() {
     if (typeof document === 'undefined' || typeof document.createElement !== 'function') return;
     try {
         const giftGroup = document.getElementById('use-gift-party-group');
-        const sharedEl = document.getElementById('use-shared-with');
-        const sharedGroup = sharedEl && typeof sharedEl.closest === 'function' ? sharedEl.closest('.form-group') : null;
         if (giftGroup && typeof giftGroup.querySelector === 'function' && !giftGroup.querySelector('[data-ct-picker="use-gift-party"]')) {
             const label = document.getElementById('use-gift-party-label')?.textContent || 'Contact';
             const existing = document.getElementById('use-gift-party');
@@ -298,22 +296,6 @@ function mountLogContactPickers() {
             });
             if (wrap.firstElementChild && typeof existing?.replaceWith === 'function') {
                 existing.replaceWith(wrap.firstElementChild);
-            }
-        }
-        if (sharedGroup && typeof sharedGroup.querySelector === 'function' && !sharedGroup.querySelector('[data-ct-picker="use-shared-with"]')) {
-            const existing = document.getElementById('use-shared-with');
-            const currentVal = existing?.value || '';
-            const wrap = document.createElement('div');
-            wrap.innerHTML = buildContactPickerHtml({
-                fieldId: 'use-shared-with',
-                freeTextValue: currentVal,
-                roleFilter: 'shared',
-                label: 'Shared with',
-                allowFreeText: true
-            });
-            if (wrap.firstElementChild && typeof sharedGroup.appendChild === 'function') {
-                sharedGroup.innerHTML = '';
-                sharedGroup.appendChild(wrap.firstElementChild);
             }
         }
     } catch (err) {
@@ -371,7 +353,6 @@ function mountBuyContactPickers() {
 function applyLogContactIdsToEntry(base) {
     if (!base) return base;
     const gift = getContactPickerSelection('use-gift-party');
-    const shared = getContactPickerSelection('use-shared-with');
     if (base.transactionType === 'gift_given' || base.transactionType === 'gift_received') {
         if (gift.contactId) base.giftPartyContactId = gift.contactId;
         if (gift.name) {
@@ -379,10 +360,6 @@ function applyLogContactIdsToEntry(base) {
             if (base.transactionType === 'gift_given') base.recipientName = gift.name;
             if (base.transactionType === 'gift_received') base.giverName = gift.name;
         }
-    }
-    if (base.transactionType === 'shared_use') {
-        if (shared.contactId) base.sharedWithContactId = shared.contactId;
-        if (shared.name) base.sharedWithName = shared.name;
     }
     return base;
 }
@@ -432,7 +409,7 @@ function buildHomeContactCardsHtml(data = appData) {
         </article>`);
     };
 
-    // Most recent shared-use contact
+    // Most recent legacy shared-use contact (read-only history)
     const sharedLogs = (data.logs || [])
         .filter(l => (typeof getLogTransactionType === 'function' ? getLogTransactionType(l) : l.transactionType) === 'shared_use')
         .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
@@ -440,7 +417,7 @@ function buildHomeContactCardsHtml(data = appData) {
         const c = sharedLogs[0].sharedWithContactId
             ? getContactById(sharedLogs[0].sharedWithContactId, data)
             : findContactByName(sharedLogs[0].sharedWithName, data);
-        pushCard('Recent shared-use', c, sharedLogs[0].date || '');
+        pushCard('Recent Legacy Shared Use', c, sharedLogs[0].date || '');
     }
 
     const giftRecv = (data.purchases || [])

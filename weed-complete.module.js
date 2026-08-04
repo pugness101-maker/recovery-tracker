@@ -365,20 +365,6 @@ function estimateWeedCartLifespanDays(purchase, logs = [], data = appData) {
     return weedRound(remaining / avgPerDay, 2);
 }
 
-// ——— Shared use validation (product-specific measures) ———
-
-function validateWeedSharedSplit({ total, personal, shared } = {}) {
-    const t = weedNum(total, null);
-    const p = weedNum(personal, null);
-    const s = weedNum(shared, null);
-    if (t == null || p == null || s == null) return { ok: false, reason: 'Enter total, personal, and shared amounts.' };
-    if (t < 0 || p < 0 || s < 0) return { ok: false, reason: 'Amounts cannot be negative.' };
-    if (Math.abs((p + s) - t) > 0.0001) {
-        return { ok: false, reason: 'Personal amount + Shared amount must equal Total amount.' };
-    }
-    return { ok: true, total: t, personal: p, shared: s };
-}
-
 function getWeedNormalizedStatsAmount(log, data = appData) {
     if (!log) return 0;
     const type = getRecordWeedProductType(log, { allowEmpty: true });

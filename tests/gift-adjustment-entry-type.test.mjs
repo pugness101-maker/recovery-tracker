@@ -72,7 +72,6 @@ function installUseLogDom(rt) {
     ];
     const pills = [
         el(null, { className: 'use-tx-pill active', dataset: { tx: 'use', txGroup: 'use' } }),
-        el(null, { className: 'use-tx-pill', dataset: { tx: 'shared_use', txGroup: 'use' } }),
         el(null, { className: 'use-tx-pill', dataset: { tx: 'gift_given', txGroup: 'gift' } }),
         el(null, { className: 'use-tx-pill', dataset: { tx: 'gift_received', txGroup: 'gift' } }),
         el(null, { className: 'use-tx-pill', dataset: { tx: 'inventory_adjustment', txGroup: 'gift' } })
@@ -105,6 +104,8 @@ test('Log tab markup includes Gift / Adjustment beside Quick Use and Session', (
     assert.match(html, /data-tx="gift_given"/);
     assert.match(html, /data-tx="gift_received"/);
     assert.match(html, /data-tx="inventory_adjustment"/);
+    assert.equal(html.includes('data-tx="shared_use"'), false);
+    assert.equal(html.includes('use-shared-fields-group'), false);
 });
 
 test('entry toggle CSS uses three equal columns and stacks on mobile', () => {
@@ -141,7 +142,6 @@ test('selecting Gift / Adjustment shows gift pills and keeps gift_given transact
     assert.equal(pills.find(p => p.dataset.tx === 'gift_received').classList.contains('hidden'), false);
     assert.equal(pills.find(p => p.dataset.tx === 'inventory_adjustment').classList.contains('hidden'), false);
     assert.equal(pills.find(p => p.dataset.tx === 'use').classList.contains('hidden'), true);
-    assert.equal(pills.find(p => p.dataset.tx === 'shared_use').classList.contains('hidden'), true);
 });
 
 test('leaving Gift / Adjustment restores Quick Use personal-use mode', () => {

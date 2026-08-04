@@ -93,17 +93,28 @@ app = tryReplace(app,
 }`,
     'migrate activeTab from contacts');
 
-// Hook buildUseEntryFromForm to attach contact ids
+// Shared Use create UI removed — keep sharedWithName empty on new form saves.
 app = tryReplace(app,
     `        giftPartyName: giftParty,
         recipientName: isGiftGiven ? giftParty : '',
         giverName: isGiftReceived ? giftParty : '',
         sharedWithName: isSharedUse ? (document.getElementById('use-shared-with')?.value?.trim() || '') : '',`,
+    `        giftPartyName: (typeof getContactPickerSelection === 'function' ? getContactPickerSelection('use-gift-party').name : '') || giftParty,
+        recipientName: isGiftGiven ? giftParty : '',
+        giverName: isGiftReceived ? giftParty : '',
+        sharedWithName: '',`,
+    'clear sharedWithName on new use entries');
+
+app = tryReplace(app,
     `        giftPartyName: giftParty,
         recipientName: isGiftGiven ? giftParty : '',
         giverName: isGiftReceived ? giftParty : '',
         sharedWithName: isSharedUse ? (getContactPickerSelection?.('use-shared-with')?.name || document.getElementById('use-shared-with')?.value?.trim() || '') : '',`,
-    'use entry shared name from picker');
+    `        giftPartyName: (typeof getContactPickerSelection === 'function' ? getContactPickerSelection('use-gift-party').name : '') || giftParty,
+        recipientName: isGiftGiven ? giftParty : '',
+        giverName: isGiftReceived ? giftParty : '',
+        sharedWithName: '',`,
+    'clear sharedWithName from picker wiring');
 
 if (!app.includes('applyLogContactIdsToEntry(base)')) {
     app = tryReplace(app,

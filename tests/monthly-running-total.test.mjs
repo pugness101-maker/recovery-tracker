@@ -270,7 +270,7 @@ test('product-type filtering keeps nicotine vape personal amounts separate from 
     assert.equal(findWeek(weed, '2026-07-04').runningTotal, 50);
 });
 
-test('shared use counts only personal amount in monthly running total', () => {
+test('legacy shared use is excluded from monthly running total', () => {
     const rt = setup([
         makeUseLog({ id: 'p1', substanceId: SUBSTANCE_ID, date: '2026-07-02', amount: 2 }),
         makeSharedLog({
@@ -287,7 +287,12 @@ test('shared use counts only personal amount in monthly running total', () => {
         endDate: '2026-07-31'
     });
     assert.equal(findWeek(summaries, '2026-07-04').runningTotal, 2);
-    assert.equal(findWeek(summaries, '2026-07-11').runningTotal, 5);
+    assert.equal(
+        summaries.every(row => row.runningTotal === 2 || row.runningTotal === 0),
+        true
+    );
+    assert.equal(summaries.reduce((max, row) => Math.max(max, row.runningTotal), 0), 2);
+    assert.equal(rt.sumPersonalUseAmountThroughDate(SUBSTANCE_ID, '2026-07-31'), 2);
 });
 
 test('gift and adjustment logs are excluded from monthly running total', () => {
