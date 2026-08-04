@@ -1600,10 +1600,9 @@ const CCR_COLOR_CHANNEL_DEFAULTS = Object.freeze({
 
 const CCR_METRIC_GROUP_ORDER = Object.freeze([
     { id: 'use', label: 'Use' },
-    { id: 'useGap', label: 'Use Gap' },
     { id: 'inventory', label: 'Inventory' },
     { id: 'vapeInventory', label: 'Vape inventory' },
-    { id: 'purchases', label: 'Purchases and spending' },
+    { id: 'purchases', label: 'Purchases & spending' },
     { id: 'taper', label: 'Taper' },
     { id: 'taperGoals', label: 'Taper and goals' },
     { id: 'goals', label: 'Goals' },
@@ -1622,6 +1621,46 @@ const CCR_METRIC_ALIASES = Object.freeze({
     purchaseFrequency: 'averageGapBetweenPurchases',
     costPerUnit: 'costPerUnit'
 });
+
+const CCR_DROPDOWN_METRIC_KEYS = Object.freeze([
+    'useAmount',
+    'sessionDuration',
+    'gramsPerHour',
+    'useGapPrevious',
+    'useVsTarget',
+    'inventoryRemaining',
+    'inventoryPercent',
+    'supplyDuration',
+    'spend',
+    'purchaseCount',
+    'purchaseAmount',
+    'breakBetweenPurchases',
+    'costPerGram',
+    'taperStatus',
+    'plannedAmount',
+    'actualAmount',
+    'useDifference',
+    'plannedSpending',
+    'actualSpending',
+    'spendingDifference',
+    'transactionType',
+    'store'
+]);
+
+const CCR_DROPDOWN_METRIC_KEY_SET = new Set(CCR_DROPDOWN_METRIC_KEYS);
+const CCR_REMOVED_METRIC_REVIEW_REASON = 'This rule uses a metric that was removed from the color-rule dropdown. Review it before relying on the result.';
+
+const CCR_USE_METRIC_SECTIONS = Object.freeze(['useHistory']);
+const CCR_TARGET_METRIC_SECTIONS = Object.freeze(['status', 'insights', 'dashboard', 'taper']);
+const CCR_INVENTORY_METRIC_SECTIONS = Object.freeze(['inventory', 'purchaseHistory', 'dashboard']);
+const CCR_PURCHASE_METRIC_SECTIONS = Object.freeze(['spending', 'insights', 'dashboard', 'purchaseHistory']);
+const CCR_TAPER_METRIC_SECTIONS = Object.freeze(['taper', 'calendar', 'status', 'dashboard']);
+const CCR_TRANSACTION_FIELD_SECTIONS = Object.freeze(['useHistory', 'purchaseHistory']);
+
+function isCcrDropdownMetricKey(metricKey) {
+    const key = migrateCcrMetricKey(metricKey);
+    return CCR_DROPDOWN_METRIC_KEY_SET.has(key);
+}
 
 function ccrMetricDef({
     key,
@@ -1666,13 +1705,14 @@ function ccrMetricDef({
 
 const CCR_METRICS = Object.freeze([
     // ——— Universal / shared ———
-    ccrMetricDef({ key: 'useAmount', label: 'Use amount', group: 'use', substances: ['all', 'coke'], unitType: 'amount' }),
-    ccrMetricDef({ key: 'sessionDuration', label: 'Duration', group: 'use', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours' }),
+    ccrMetricDef({ key: 'useAmount', label: 'Use amount', group: 'use', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], sections: CCR_USE_METRIC_SECTIONS, unitType: 'amount' }),
+    ccrMetricDef({ key: 'sessionDuration', label: 'Duration', group: 'use', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], sections: CCR_USE_METRIC_SECTIONS, unitType: 'hours' }),
     ccrMetricDef({
         key: 'useVsTarget',
         label: 'Use vs target ratio',
         group: 'use',
         substances: ['all', 'coke', 'lsd', 'xanax', 'alcohol'],
+        sections: CCR_TARGET_METRIC_SECTIONS,
         valueType: 'ratio',
         unitType: 'ratio',
         groupBySubstance: { coke: 'use' },
@@ -1680,10 +1720,10 @@ const CCR_METRICS = Object.freeze([
         requiresTarget: true,
         hideWhenUnavailable: true
     }),
-    ccrMetricDef({ key: 'useGapPrevious', label: 'Break Between Uses', group: 'useGap', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours', favorableDirection: 'higher' }),
+    ccrMetricDef({ key: 'useGapPrevious', label: 'Break Between Uses', group: 'use', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], sections: CCR_USE_METRIC_SECTIONS, unitType: 'hours', favorableDirection: 'higher' }),
 
-    ccrMetricDef({ key: 'inventoryRemaining', label: 'Inventory remaining', group: 'inventory', substances: ['all', 'coke'], unitType: 'amount' }),
-    ccrMetricDef({ key: 'inventoryPercent', label: 'Inventory % remaining', group: 'inventory', substances: ['all', 'coke', 'lsd', 'xanax'], unitType: 'percent' }),
+    ccrMetricDef({ key: 'inventoryRemaining', label: 'Inventory remaining', group: 'inventory', substances: ['all', 'coke', 'lsd', 'xanax'], sections: CCR_INVENTORY_METRIC_SECTIONS, unitType: 'amount' }),
+    ccrMetricDef({ key: 'inventoryPercent', label: 'Inventory % remaining', group: 'inventory', substances: ['all', 'coke', 'lsd', 'xanax'], sections: CCR_INVENTORY_METRIC_SECTIONS, unitType: 'percent' }),
     ccrMetricDef({
         key: 'daysSincePurchase',
         label: 'Days since purchase',
@@ -1701,27 +1741,27 @@ const CCR_METRICS = Object.freeze([
         groupBySubstance: { nicotine: 'vapeInventory' }
     }),
 
-    ccrMetricDef({ key: 'spend', label: 'Spending', group: 'purchases', substances: ['all', 'coke', 'lsd', 'xanax', 'alcohol'], unitType: 'currency' }),
-    ccrMetricDef({ key: 'purchaseCount', label: 'Purchase count', group: 'purchases', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'count' }),
-    ccrMetricDef({ key: 'purchaseAmount', label: 'Purchase amount', group: 'purchases', substances: ['all', 'coke', 'lsd', 'xanax', 'alcohol'], unitType: 'amount' }),
-    ccrMetricDef({ key: 'breakBetweenPurchases', label: 'Break between purchases', group: 'purchases', substances: ['all', 'coke'], unitType: 'hours' }),
+    ccrMetricDef({ key: 'spend', label: 'Spending', group: 'purchases', substances: ['all', 'coke', 'lsd', 'xanax', 'alcohol'], sections: CCR_PURCHASE_METRIC_SECTIONS, unitType: 'currency' }),
+    ccrMetricDef({ key: 'purchaseCount', label: 'Purchase count', group: 'purchases', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], sections: CCR_PURCHASE_METRIC_SECTIONS, unitType: 'count' }),
+    ccrMetricDef({ key: 'purchaseAmount', label: 'Purchase amount', group: 'purchases', substances: ['all', 'coke', 'lsd', 'xanax', 'alcohol'], sections: CCR_PURCHASE_METRIC_SECTIONS, unitType: 'amount' }),
+    ccrMetricDef({ key: 'breakBetweenPurchases', label: 'Break between purchases', group: 'purchases', substances: ['all', 'coke'], sections: CCR_PURCHASE_METRIC_SECTIONS, unitType: 'hours' }),
     ccrMetricDef({ key: 'averageGapBetweenPurchases', label: 'Average Gap Between Purchases', group: 'purchases', substances: ['all', 'coke', 'nicotine'], unitType: 'days', favorableDirection: 'higher' }),
     ccrMetricDef({ key: 'purchasesPerWeek', label: 'Purchases Per Week', group: 'purchases', substances: ['all', 'coke', 'nicotine'], unitType: 'count', favorableDirection: 'lower' }),
     ccrMetricDef({ key: 'purchasesPerMonth', label: 'Purchases Per Month', group: 'purchases', substances: ['all', 'coke', 'nicotine'], unitType: 'count', favorableDirection: 'lower' }),
-    ccrMetricDef({ key: 'store', label: 'Store', group: 'purchases', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], valueType: 'string' }),
+    ccrMetricDef({ key: 'store', label: 'Store', group: 'record', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], sections: CCR_PURCHASE_METRIC_SECTIONS, valueType: 'string' }),
 
     ccrMetricDef({ key: 'taperPlannedVsActual', label: 'Taper planned vs actual ratio', group: 'taperGoals', substances: ['all'], valueType: 'ratio', unitType: 'ratio' }),
     ccrMetricDef({
         key: 'taperStatus',
         label: 'Taper status',
-        group: 'taperGoals',
-        substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax'],
+        group: 'taper',
+        substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'],
+        sections: CCR_TAPER_METRIC_SECTIONS,
         valueType: 'string',
-        allowedOperators: ['eq', 'neq', 'contains', 'empty', 'notEmpty'],
-        groupBySubstance: { coke: 'taper', nicotine: 'taper' }
+        allowedOperators: ['eq', 'neq', 'contains', 'empty', 'notEmpty']
     }),
-    ccrMetricDef({ key: 'plannedAmount', label: 'Planned amount', group: 'taperGoals', substances: ['all'], unitType: 'amount' }),
-    ccrMetricDef({ key: 'actualAmount', label: 'Actual amount', group: 'taperGoals', substances: ['all'], unitType: 'amount' }),
+    ccrMetricDef({ key: 'plannedAmount', label: 'Planned amount', group: 'taper', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], sections: CCR_TAPER_METRIC_SECTIONS, unitType: 'amount' }),
+    ccrMetricDef({ key: 'actualAmount', label: 'Actual amount', group: 'taper', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], sections: CCR_TAPER_METRIC_SECTIONS, unitType: 'amount' }),
     ccrMetricDef({
         key: 'difference',
         label: 'Difference',
@@ -1740,7 +1780,7 @@ const CCR_METRICS = Object.freeze([
         groupBySubstance: { alcohol: 'goals' }
     }),
 
-    ccrMetricDef({ key: 'transactionType', label: 'Transaction type', group: 'record', substances: ['all'], valueType: 'string' }),
+    ccrMetricDef({ key: 'transactionType', label: 'Transaction type', group: 'record', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], sections: CCR_TRANSACTION_FIELD_SECTIONS, valueType: 'string' }),
     ccrMetricDef({ key: 'productType', label: 'Product type', group: 'record', substances: ['all'], valueType: 'string' }),
     ccrMetricDef({
         key: 'statusLabel',
@@ -1757,15 +1797,15 @@ const CCR_METRICS = Object.freeze([
     ccrMetricDef({ key: 'periodChangeDirection', label: 'Increase/decrease direction', group: 'period', substances: ['all'], valueType: 'string' }),
 
     // ——— Coke ———
-    ccrMetricDef({ key: 'gramsPerHour', label: 'g/hr', group: 'use', substances: ['coke'], unitType: 'rate' }),
-    ccrMetricDef({ key: 'supplyDuration', label: 'Supply duration', group: 'inventory', substances: ['coke'], unitType: 'days' }),
-    ccrMetricDef({ key: 'costPerGram', label: 'Cost per gram', group: 'purchases', substances: ['coke'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'gramsPerHour', label: 'g/hr', group: 'use', substances: ['coke'], sections: CCR_USE_METRIC_SECTIONS, unitType: 'rate' }),
+    ccrMetricDef({ key: 'supplyDuration', label: 'Supply duration', group: 'inventory', substances: ['coke'], sections: CCR_INVENTORY_METRIC_SECTIONS, unitType: 'days' }),
+    ccrMetricDef({ key: 'costPerGram', label: 'Cost per gram', group: 'purchases', substances: ['coke'], sections: CCR_PURCHASE_METRIC_SECTIONS, unitType: 'currency' }),
     ccrMetricDef({ key: 'plannedGrams', label: 'Planned grams', group: 'taper', substances: ['coke'], unitType: 'grams' }),
     ccrMetricDef({ key: 'actualGrams', label: 'Actual grams', group: 'taper', substances: ['coke'], unitType: 'grams' }),
-    ccrMetricDef({ key: 'useDifference', label: 'Use difference', group: 'taper', substances: ['coke'], unitType: 'grams' }),
-    ccrMetricDef({ key: 'plannedSpending', label: 'Planned spending', group: 'taper', substances: ['coke'], unitType: 'currency' }),
-    ccrMetricDef({ key: 'actualSpending', label: 'Actual spending', group: 'taper', substances: ['coke'], unitType: 'currency' }),
-    ccrMetricDef({ key: 'spendingDifference', label: 'Spending difference', group: 'taper', substances: ['coke'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'useDifference', label: 'Use difference', group: 'taper', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], sections: CCR_TAPER_METRIC_SECTIONS, unitType: 'amount' }),
+    ccrMetricDef({ key: 'plannedSpending', label: 'Planned spending', group: 'taper', substances: ['all', 'coke'], sections: CCR_TAPER_METRIC_SECTIONS, unitType: 'currency' }),
+    ccrMetricDef({ key: 'actualSpending', label: 'Actual spending', group: 'taper', substances: ['all', 'coke'], sections: CCR_TAPER_METRIC_SECTIONS, unitType: 'currency' }),
+    ccrMetricDef({ key: 'spendingDifference', label: 'Spending difference', group: 'taper', substances: ['all', 'coke'], sections: CCR_TAPER_METRIC_SECTIONS, unitType: 'currency' }),
 
     // ——— Nicotine ———
     ccrMetricDef({ key: 'puffs', label: 'Puffs', group: 'use', substances: ['nicotine'], unitType: 'count' }),
@@ -1995,12 +2035,44 @@ function getCcrMetricGroupId(metric, family) {
     return metric.group || 'use';
 }
 
-function getCcrMetricsForSubstance(substanceScope, data = appData) {
+function normalizeCcrMetricSectionScope(sectionScope = 'all') {
+    if (sectionScope == null || sectionScope === '' || sectionScope === 'all') return ['all'];
+    const list = Array.isArray(sectionScope) ? sectionScope : [sectionScope];
+    const cleaned = list.map(String).filter(Boolean);
+    return cleaned.length ? cleaned : ['all'];
+}
+
+function getCcrMetricSupportedSections(metric, data = appData) {
+    if (!metric) return ['all'];
+    const settings = getCcrMetricSettings(metric.key, data);
+    return settings?.supportedSections?.length ? settings.supportedSections : (metric.sections || ['all']);
+}
+
+function getCcrMetricSupportedSubstances(metric, data = appData) {
+    if (!metric) return [];
+    const settings = getCcrMetricSettings(metric.key, data);
+    return settings?.supportedSubstances?.length ? settings.supportedSubstances : (metric.substances || []);
+}
+
+function ccrMetricSupportsSectionScope(metric, sectionScope = 'all', data = appData) {
+    if (!metric) return false;
+    const selected = normalizeCcrMetricSectionScope(sectionScope);
+    if (selected.includes('all')) return true;
+    const supported = getCcrMetricSupportedSections(metric, data);
+    return supported.includes('all') || selected.some(section => supported.includes(section));
+}
+
+function getCcrMetricsForSubstance(substanceScope, data = appData, sectionScope = 'all') {
+    if (typeof data === 'string' || Array.isArray(data)) {
+        sectionScope = data;
+        data = appData;
+    }
     const family = resolveCcrMetricSubstanceFamily(substanceScope, data);
     const groupRank = new Map(CCR_METRIC_GROUP_ORDER.map((g, i) => [g.id, i]));
     return CCR_METRICS
         .filter(m => {
             if (m.deleted) return false;
+            if (!isCcrDropdownMetricKey(m.key)) return false;
             if (!getCcrMetricResolver(m.key)) {
                 warnCcrMissingMetricResolver(m.key);
                 return false;
@@ -2008,7 +2080,8 @@ function getCcrMetricsForSubstance(substanceScope, data = appData) {
             if (m.hideWhenUnavailable && !ccrMetricHasAvailableData(m, data, family)) return false;
             const settings = getCcrMetricSettings(m.key, data);
             if (settings?.visible === false) return false;
-            return (settings?.supportedSubstances || m.substances).includes(family);
+            if (!ccrMetricSupportsSectionScope(m, sectionScope, data)) return false;
+            return getCcrMetricSupportedSubstances(m, data).includes(family);
         })
         .slice()
         .sort((a, b) => {
@@ -2019,10 +2092,15 @@ function getCcrMetricsForSubstance(substanceScope, data = appData) {
         });
 }
 
-function isCcrMetricValidForSubstance(metricKey, substanceScope, data = appData) {
+function isCcrMetricValidForSubstance(metricKey, substanceScope, data = appData, sectionScope = 'all') {
+    if (typeof data === 'string' || Array.isArray(data)) {
+        sectionScope = data;
+        data = appData;
+    }
     const family = resolveCcrMetricSubstanceFamily(substanceScope, data);
     const def = getCcrMetricDef(metricKey);
     if (!def || def.deleted) return false;
+    if (!isCcrDropdownMetricKey(def.key)) return false;
     if (!getCcrMetricResolver(def.key)) {
         warnCcrMissingMetricResolver(def.key);
         return false;
@@ -2030,32 +2108,41 @@ function isCcrMetricValidForSubstance(metricKey, substanceScope, data = appData)
     if (def.hideWhenUnavailable && !ccrMetricHasAvailableData(def, data, family)) return false;
     const settings = getCcrMetricSettings(def.key, data);
     if (settings?.visible === false) return false;
-    return (settings?.supportedSubstances || def.substances).includes(family);
+    if (!ccrMetricSupportsSectionScope(def, sectionScope, data)) return false;
+    return getCcrMetricSupportedSubstances(def, data).includes(family);
 }
 
 const CCR_DEFAULT_METRIC_BY_FAMILY = Object.freeze({
     all: 'useAmount',
     coke: 'useAmount',
-    nicotine: 'puffs',
-    lsd: 'tabs',
-    xanax: 'pills',
-    alcohol: 'drinks'
+    nicotine: 'useAmount',
+    lsd: 'useAmount',
+    xanax: 'useAmount',
+    alcohol: 'useAmount'
 });
 
-function resolveCcrMetricForSubstance(metricKey, substanceScope, data = appData) {
+function resolveCcrMetricForSubstance(metricKey, substanceScope, data = appData, sectionScope = 'all') {
+    if (typeof data === 'string' || Array.isArray(data)) {
+        sectionScope = data;
+        data = appData;
+    }
     const migrated = migrateCcrMetricKey(metricKey);
-    if (isCcrMetricValidForSubstance(migrated, substanceScope, data)) return migrated;
+    if (isCcrMetricValidForSubstance(migrated, substanceScope, data, sectionScope)) return migrated;
     const family = resolveCcrMetricSubstanceFamily(substanceScope, data);
     const preferred = CCR_DEFAULT_METRIC_BY_FAMILY[family];
-    if (preferred && isCcrMetricValidForSubstance(preferred, family, data)) return preferred;
-    const available = getCcrMetricsForSubstance(substanceScope, data);
+    if (preferred && isCcrMetricValidForSubstance(preferred, family, data, sectionScope)) return preferred;
+    const available = getCcrMetricsForSubstance(substanceScope, data, sectionScope);
     return available[0]?.key || 'useAmount';
 }
 
-function buildCcrMetricSelectOptionsHtml(substanceScope, selectedKey = null, data = appData) {
+function buildCcrMetricSelectOptionsHtml(substanceScope, selectedKey = null, data = appData, sectionScope = 'all') {
+    if (typeof data === 'string' || Array.isArray(data)) {
+        sectionScope = data;
+        data = appData;
+    }
     const family = resolveCcrMetricSubstanceFamily(substanceScope, data);
-    const metrics = getCcrMetricsForSubstance(family, data);
-    const resolved = resolveCcrMetricForSubstance(selectedKey || metrics[0]?.key, family, data);
+    const metrics = getCcrMetricsForSubstance(family, data, sectionScope);
+    const resolved = resolveCcrMetricForSubstance(selectedKey || metrics[0]?.key, family, data, sectionScope);
     const byGroup = new Map();
     metrics.forEach(m => {
         const ui = getCcrMetricUiDef(m.key, data);
@@ -2082,13 +2169,29 @@ function buildCcrMetricSelectOptionsHtml(substanceScope, selectedKey = null, dat
     return html;
 }
 
+function getCcrRuleSelectedSectionScope() {
+    const sectionEl = document.getElementById('ccr-rule-sections');
+    if (!sectionEl) return ['all'];
+    const selected = [...sectionEl.selectedOptions].map(o => o.value).filter(Boolean);
+    return selected.length ? selected : ['all'];
+}
+
+function onCcrSectionScopeChanged() {
+    populateCcrMetricSelect();
+    populateCcrOperatorSelectForMetric(document.getElementById('ccr-rule-metric')?.value || 'useAmount');
+    updateCcrDurationValueLabels();
+    updateCcrOperatorFieldsVisibility();
+    updateCcrLivePreview();
+}
+
 function populateCcrMetricSelect(preferredMetric = null) {
     const metricEl = document.getElementById('ccr-rule-metric');
     if (!metricEl) return null;
     const substance = document.getElementById('ccr-rule-substance')?.value || 'all';
+    const sectionScope = getCcrRuleSelectedSectionScope();
     const current = preferredMetric != null ? preferredMetric : metricEl.value;
-    const resolved = resolveCcrMetricForSubstance(current, substance);
-    metricEl.innerHTML = buildCcrMetricSelectOptionsHtml(substance, resolved);
+    const resolved = resolveCcrMetricForSubstance(current, substance, appData, sectionScope);
+    metricEl.innerHTML = buildCcrMetricSelectOptionsHtml(substance, resolved, appData, sectionScope);
     if ([...metricEl.options].some(o => o.value === resolved)) metricEl.value = resolved;
     populateCcrMetricSettingsEditor();
     return resolved;
@@ -2605,6 +2708,7 @@ function normalizeConditionalColorRule(raw, index = 0) {
     const opIds = new Set(CCR_OPERATORS.map(o => o.id));
     const metricDef = getCcrMetricDef(raw.metric);
     const metric = metricDef ? metricDef.key : 'useAmount';
+    const removedDropdownMetric = !!metricDef && !isCcrDropdownMetricKey(metric);
     let operator = opIds.has(raw.operator) ? raw.operator : 'gt';
     if (operator === 'betweenInclusive') operator = 'between';
     let sectionScope = raw.sectionScope;
@@ -2705,6 +2809,11 @@ function normalizeConditionalColorRule(raw, index = 0) {
     if (removedCurrentGapMetric) {
         normalized.needsReview = true;
         normalized.reviewReason = 'Current gap rules were disabled because the metric was removed. Recreate as Break Between Uses only if that preserves the intended meaning.';
+    } else if (removedDropdownMetric) {
+        normalized.needsReview = true;
+        normalized.reviewReason = raw.reviewReason
+            ? String(raw.reviewReason).slice(0, 240)
+            : CCR_REMOVED_METRIC_REVIEW_REASON;
     } else {
         normalized.needsReview = !!raw.needsReview;
         if (raw.reviewReason) normalized.reviewReason = String(raw.reviewReason).slice(0, 240);
@@ -3039,8 +3148,14 @@ const CCR_METRIC_RESOLVERS = Object.freeze({
         const status = ccrMetricResolveTextField(context, ['status', 'statusLabel', 'taperStatus']);
         return { value: status, textValue: status };
     },
-    plannedAmount: (context) => ccrMetricResolveNumericField(context, ['plannedAmount', 'planned', 'target']),
-    actualAmount: (context) => ccrMetricResolveNumericField(context, ['actualAmount', 'actual', 'used']),
+    plannedAmount: (context) => ccrMetricResolveNumericField(context, [
+        'plannedAmount', 'plannedGrams', 'puffTarget', 'plannedTabs', 'plannedUg',
+        'plannedPills', 'plannedMg', 'plannedDrinks', 'planned', 'target'
+    ]),
+    actualAmount: (context) => ccrMetricResolveNumericField(context, [
+        'actualAmount', 'actualGrams', 'actualPuffs', 'actualTabs', 'actualUg',
+        'actualPills', 'actualMg', 'actualDrinks', 'actual', 'used'
+    ]),
     difference: (context) => ccrMetricResolveNumericField(context, ['difference', 'diff']),
     percentageOfTarget: ccrMetricResolvePercentageOfTarget,
     transactionType: (context) => {
@@ -3065,7 +3180,9 @@ const CCR_METRIC_RESOLVERS = Object.freeze({
     costPerGram: (context) => ccrMetricPurchaseUnitCost(context.purchase || context.record, 'costPerGram'),
     plannedGrams: (context) => ccrMetricResolveNumericField(context, ['plannedGrams', 'plannedAmount', 'planned']),
     actualGrams: (context) => ccrMetricResolveNumericField(context, ['actualGrams', 'actualAmount', 'actual']),
-    useDifference: (context) => ccrMetricResolveNumericField(context, ['useDifference', 'difference']),
+    useDifference: (context) => ccrMetricResolveNumericField(context, [
+        'useDifference', 'puffDifference', 'difference', 'diff'
+    ]),
     plannedSpending: (context) => ccrMetricResolveNumericField(context, ['plannedSpending', 'spendPlanned']),
     actualSpending: (context) => ccrMetricResolveNumericField(context, ['actualSpending', 'spent']),
     spendingDifference: (context) => ccrMetricResolveNumericField(context, ['spendingDifference', 'spendDiff']),
@@ -3242,11 +3359,9 @@ function ccrMetricHasAvailableData(metric, data = appData, family = 'all') {
     return (data.logs || []).some(l => ccrMetricMatchesFamily(l, family, data));
 }
 
-function ccrMetricSupportsSection(metric, section = 'all') {
+function ccrMetricSupportsSection(metric, section = 'all', data = appData) {
     if (!metric) return false;
-    if (!section || section === 'all') return true;
-    const sections = metric.sections || ['all'];
-    return sections.includes('all') || sections.includes(section);
+    return ccrMetricSupportsSectionScope(metric, section, data);
 }
 
 function ccrMetricSupportsFamily(metric, family = 'all') {
@@ -3260,7 +3375,7 @@ function buildCcrMetricAuditReport(data = appData, options = {}) {
     const section = options.section || 'all';
     return CCR_METRICS.map(metric => {
         const resolver = getCcrMetricResolver(metric.key);
-        const unsupportedSection = !ccrMetricSupportsSection(metric, section);
+        const unsupportedSection = !ccrMetricSupportsSection(metric, section, data);
         const unsupportedSubstance = !ccrMetricSupportsFamily(metric, family);
         const noAvailableData = !ccrMetricHasAvailableData(metric, data, family);
         const statuses = [];
@@ -3282,6 +3397,7 @@ function buildCcrMetricAuditReport(data = appData, options = {}) {
             favorableDirection: metric.favorableDirection,
             legacyKeys: ccrMetricLegacyKeys(metric.key),
             visible: !metric.deleted
+                && isCcrDropdownMetricKey(metric.key)
                 && !!resolver
                 && !unsupportedSubstance
                 && !unsupportedSection
@@ -5014,6 +5130,13 @@ function fillCcrEditorForm(rule) {
     set('ccr-rule-name', r.name);
     set('ccr-rule-enabled', r.enabled, 'checked');
     set('ccr-rule-substance', Array.isArray(r.substanceScope) ? (r.substanceScope[0] || 'all') : r.substanceScope);
+    const sectionsEl = document.getElementById('ccr-rule-sections');
+    if (sectionsEl) {
+        const selected = new Set(r.sectionScope || ['all']);
+        [...sectionsEl.options].forEach(opt => {
+            opt.selected = selected.has(opt.value);
+        });
+    }
     populateCcrMetricSelect(r.metric);
     set('ccr-rule-operator', r.operator);
     if (isCcrDurationMetric(r.metric)) {
@@ -5040,13 +5163,6 @@ function fillCcrEditorForm(rule) {
     set('ccr-rule-border-hex', r.colors.border.startsWith('#') ? r.colors.border.slice(0, 7) : '#4caf50');
     set('ccr-rule-border-picker', r.colors.border.startsWith('#') ? r.colors.border.slice(0, 7) : '#4caf50');
 
-    const sectionsEl = document.getElementById('ccr-rule-sections');
-    if (sectionsEl) {
-        const selected = new Set(r.sectionScope || ['all']);
-        [...sectionsEl.options].forEach(opt => {
-            opt.selected = selected.has(opt.value);
-        });
-    }
     const textHex = document.getElementById('ccr-rule-text-hex');
     const borderHex = document.getElementById('ccr-rule-border-hex');
     if (textHex) syncCcrColorInputs(textHex);

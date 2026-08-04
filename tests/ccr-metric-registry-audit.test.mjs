@@ -178,9 +178,13 @@ test('every visible CCR metric has registry metadata and resolves against sample
             visible.set(metric.key, { metric, family });
         }
     }
-    assert.ok(visible.size > 40);
+    assert.ok(visible.size > 20);
     assert.equal(visible.has('useGapCurrent'), false);
     assert.equal(visible.has('purchaseFrequency'), false);
+    assert.equal(visible.has('daysSincePurchase'), false);
+    assert.equal(visible.has('averageGapBetweenPurchases'), false);
+    assert.equal(visible.has('purchasesPerWeek'), false);
+    assert.equal(visible.has('purchasesPerMonth'), false);
 
     for (const [key, { family }] of visible) {
         const entry = rt.getCcrMetricRegistryEntry(key);
@@ -202,10 +206,13 @@ test('metric audit report flags missing data and keeps text/status operators non
     const emptyData = rt.normalizeAppDataSafe(makeTestData([], SUBSTANCES));
     assert.ok(rt.buildCcrMetricAuditReport(emptyData).some(row => row.statuses.includes('no available data')));
     const store = rt.getDefaultCcrMetricSettings('store');
+    const transactionType = rt.getDefaultCcrMetricSettings('transactionType');
     const taperStatus = rt.getDefaultCcrMetricSettings('taperStatus');
     assert.equal(store.allowedOperators.join('|'), 'eq|neq|contains|empty|notEmpty');
+    assert.equal(transactionType.allowedOperators.join('|'), 'eq|neq|contains|empty|notEmpty');
     assert.equal(taperStatus.allowedOperators.join('|'), 'eq|neq|contains|empty|notEmpty');
     assert.equal(store.allowedOperators.includes('gt'), false);
+    assert.equal(transactionType.allowedOperators.includes('between'), false);
     assert.equal(taperStatus.allowedOperators.includes('between'), false);
     assert.match(rt.renderCcrMetricAuditReport(data), /Missing resolver/);
 });

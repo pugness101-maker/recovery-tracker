@@ -45,15 +45,17 @@ test('all substances metric filter shows only universal metrics', () => {
     const keys = keysFor(rt, 'all');
     assertHas(keys, [
         'useAmount', 'sessionDuration', 'useGapPrevious',
-        'inventoryRemaining', 'inventoryPercent', 'daysSincePurchase', 'inventoryStatus',
-        'spend', 'purchaseCount', 'purchaseAmount', 'breakBetweenPurchases', 'averageGapBetweenPurchases', 'purchasesPerWeek', 'purchasesPerMonth', 'store',
-        'taperPlannedVsActual', 'taperStatus', 'plannedAmount', 'actualAmount', 'difference', 'percentageOfTarget',
-        'transactionType', 'productType', 'statusLabel',
-        'periodPreviousValue', 'periodNumericChange', 'periodPercentageChange', 'periodChangeDirection'
+        'inventoryRemaining', 'inventoryPercent',
+        'spend', 'purchaseCount', 'purchaseAmount', 'breakBetweenPurchases',
+        'taperStatus', 'plannedAmount', 'actualAmount', 'useDifference',
+        'plannedSpending', 'actualSpending', 'spendingDifference',
+        'transactionType', 'store'
     ]);
     assertMissing(keys, [
         'gramsPerHour', 'puffs', 'percentLeft', 'tabs', 'ug', 'pills', 'mg', 'drinks',
-        'costPerGram', 'costPerVape', 'paymentMethod', 'costPerUnit', 'daysSinceUse', 'useGapCurrent'
+        'costPerGram', 'costPerVape', 'paymentMethod', 'costPerUnit', 'daysSinceUse', 'useGapCurrent',
+        'daysSincePurchase', 'averageGapBetweenPurchases', 'purchasesPerWeek', 'purchasesPerMonth',
+        'taperPlannedVsActual', 'productType', 'periodPreviousValue'
     ]);
 });
 
@@ -62,80 +64,80 @@ test('coke metric filter includes g/hr and excludes nicotine/LSD/alcohol specifi
     const keys = keysFor(rt, 'coke');
     assertHas(keys, [
         'useAmount', 'sessionDuration', 'gramsPerHour', 'useGapPrevious',
-        'inventoryRemaining', 'inventoryPercent', 'daysSincePurchase', 'supplyDuration',
-        'spend', 'purchaseAmount', 'purchaseCount', 'costPerGram', 'breakBetweenPurchases', 'averageGapBetweenPurchases', 'purchasesPerWeek', 'purchasesPerMonth', 'store',
-        'plannedGrams', 'actualGrams', 'useDifference', 'plannedSpending', 'actualSpending', 'spendingDifference', 'taperStatus'
+        'inventoryRemaining', 'inventoryPercent', 'supplyDuration',
+        'spend', 'purchaseAmount', 'purchaseCount', 'costPerGram', 'breakBetweenPurchases',
+        'taperStatus', 'plannedAmount', 'actualAmount', 'useDifference',
+        'plannedSpending', 'actualSpending', 'spendingDifference', 'transactionType', 'store'
     ]);
     assertMissing(keys, [
-        'puffs', 'percentLeft', 'tabs', 'ug', 'pills', 'mg', 'drinks', 'costPerVape', 'paymentMethod', 'useGapCurrent'
+        'puffs', 'percentLeft', 'tabs', 'ug', 'pills', 'mg', 'drinks', 'costPerVape', 'paymentMethod',
+        'useGapCurrent', 'daysSincePurchase', 'averageGapBetweenPurchases', 'purchasesPerWeek', 'purchasesPerMonth',
+        'plannedGrams', 'actualGrams'
     ]);
 });
 
-test('nicotine metric filter includes puffs/vape metrics and excludes g/hr and pills', () => {
+test('nicotine metric filter shows only compatible simplified metrics', () => {
     const rt = setup();
     const keys = keysFor(rt, 'nicotine');
     assertHas(keys, [
-        'puffs', 'percentLeftCheckpoint', 'personalUseAmount', 'sessionDuration', 'useGapPrevious',
-        'nicotineFreeHours',
-        'percentLeft', 'puffsRemaining', 'currentVapeAge', 'vapeLifespan', 'nicotineStrength',
-        'daysSincePurchase', 'inventoryStatus',
-        'vapesPurchased', 'purchaseCount', 'costPerVape', 'monthlySpending',
-        'breakBetweenVapePurchases', 'averageGapBetweenPurchases', 'purchasesPerWeek', 'purchasesPerMonth', 'store',
-        'puffTarget', 'actualPuffs', 'puffDifference', 'puffsVsTargetRatio',
-        'vapeLifespanGoal', 'daysBetweenPurchasesGoal', 'monthlyVapeCap', 'spendingGoal', 'taperStatus'
+        'useAmount', 'sessionDuration', 'useGapPrevious',
+        'purchaseCount', 'taperStatus', 'plannedAmount', 'actualAmount',
+        'useDifference', 'transactionType', 'store'
     ]);
     assertMissing(keys, [
-        'gramsPerHour', 'tabs', 'ug', 'pills', 'mg', 'drinks', 'costPerGram', 'useAmount', 'paymentMethod', 'useGapCurrent'
+        'gramsPerHour', 'tabs', 'ug', 'pills', 'mg', 'drinks', 'costPerGram', 'paymentMethod', 'useGapCurrent',
+        'puffs', 'percentLeft', 'vapesPurchased', 'costPerVape', 'monthlySpending', 'breakBetweenVapePurchases',
+        'averageGapBetweenPurchases', 'purchasesPerWeek', 'purchasesPerMonth'
     ]);
 });
 
-test('lsd metric filter includes tabs/µg and excludes puffs/g/hr', () => {
+test('lsd metric filter shows simplified use, inventory, purchase, taper, and field metrics', () => {
     const rt = setup();
     const keys = keysFor(rt, 'lsd');
     assertHas(keys, [
-        'tabs', 'ug', 'sessionDuration', 'useGapPrevious',
-        'tabsRemaining', 'ugRemaining', 'inventoryPercent', 'daysSincePurchase', 'inventoryStatus',
-        'purchaseAmount', 'purchaseCount', 'costPerTab', 'costPerUg', 'spend', 'store',
-        'plannedTabs', 'actualTabs', 'plannedUg', 'actualUg', 'difference', 'percentageOfTarget', 'taperStatus'
+        'useAmount', 'sessionDuration', 'useGapPrevious',
+        'inventoryRemaining', 'inventoryPercent',
+        'purchaseAmount', 'purchaseCount', 'spend', 'store',
+        'taperStatus', 'plannedAmount', 'actualAmount', 'useDifference', 'transactionType'
     ]);
-    assertMissing(keys, ['puffs', 'gramsPerHour', 'pills', 'mg', 'drinks', 'costPerVape', 'useGapCurrent']);
+    assertMissing(keys, ['puffs', 'gramsPerHour', 'pills', 'mg', 'drinks', 'costPerVape', 'useGapCurrent', 'tabs', 'ug', 'costPerTab', 'costPerUg']);
 });
 
-test('xanax metric filter includes pills/mg and missing strength flag', () => {
+test('xanax metric filter shows simplified metrics and hides strength helpers', () => {
     const rt = setup();
     const keys = keysFor(rt, 'xanax');
     assertHas(keys, [
-        'pills', 'mg', 'strengthPerPill', 'sessionDuration', 'useGapPrevious',
-        'pillsRemaining', 'mgRemaining', 'inventoryPercent', 'daysSincePurchase', 'inventoryStatus', 'missingStrengthFlag',
-        'purchaseAmount', 'purchaseCount', 'costPerPill', 'costPerMg', 'spend', 'store',
-        'plannedPills', 'actualPills', 'plannedMg', 'actualMg', 'difference', 'percentageOfTarget', 'taperStatus'
+        'useAmount', 'sessionDuration', 'useGapPrevious',
+        'inventoryRemaining', 'inventoryPercent',
+        'purchaseAmount', 'purchaseCount', 'spend', 'store',
+        'taperStatus', 'plannedAmount', 'actualAmount', 'useDifference', 'transactionType'
     ]);
-    assertMissing(keys, ['puffs', 'tabs', 'ug', 'gramsPerHour', 'drinks', 'costPerGram', 'useGapCurrent']);
+    assertMissing(keys, ['puffs', 'tabs', 'ug', 'gramsPerHour', 'drinks', 'costPerGram', 'useGapCurrent', 'strengthPerPill', 'missingStrengthFlag', 'costPerPill', 'costPerMg']);
 });
 
-test('alcohol metric filter includes drinks and multi-day duration', () => {
+test('alcohol metric filter shows simplified metrics and hides alcohol-only helpers', () => {
     const rt = setup();
     const keys = keysFor(rt, 'alcohol');
     assertHas(keys, [
-        'drinks', 'sessionDuration', 'multiDayDuration', 'useGapPrevious',
-        'purchaseAmount', 'purchaseCount', 'costPerDrink', 'spend', 'store',
-        'plannedDrinks', 'actualDrinks', 'difference', 'percentageOfTarget', 'statusLabel'
+        'useAmount', 'sessionDuration', 'useGapPrevious',
+        'purchaseAmount', 'purchaseCount', 'spend', 'store',
+        'taperStatus', 'plannedAmount', 'actualAmount', 'useDifference', 'transactionType'
     ]);
-    assertMissing(keys, ['puffs', 'tabs', 'pills', 'gramsPerHour', 'percentLeft', 'inventoryRemaining', 'useGapCurrent']);
+    assertMissing(keys, ['puffs', 'tabs', 'pills', 'gramsPerHour', 'percentLeft', 'inventoryRemaining', 'useGapCurrent', 'drinks', 'multiDayDuration', 'costPerDrink', 'statusLabel']);
 });
 
 test('xannax substance id resolves to xanax metric family', () => {
     const rt = setup();
     assert.equal(rt.resolveCcrMetricSubstanceFamily('xannax'), 'xanax');
-    assert.ok(keysFor(rt, 'xannax').includes('pills'));
+    assert.ok(keysFor(rt, 'xannax').includes('useAmount'));
 });
 
 test('invalid metric falls back to first valid metric for substance', () => {
     const rt = setup();
-    assert.equal(rt.resolveCcrMetricForSubstance('gramsPerHour', 'nicotine'), 'puffs');
+    assert.equal(rt.resolveCcrMetricForSubstance('gramsPerHour', 'nicotine'), 'useAmount');
     assert.equal(rt.resolveCcrMetricForSubstance('puffs', 'coke'), 'useAmount');
     assert.equal(rt.resolveCcrMetricForSubstance('not-a-metric', 'all'), 'useAmount');
-    assert.equal(rt.resolveCcrMetricForSubstance('tabs', 'alcohol'), 'drinks');
+    assert.equal(rt.resolveCcrMetricForSubstance('tabs', 'alcohol'), 'useAmount');
     assert.ok(rt.isCcrMetricValidForSubstance('gramsPerHour', 'coke'));
     assert.equal(rt.isCcrMetricValidForSubstance('gramsPerHour', 'nicotine'), false);
 });
@@ -165,6 +167,7 @@ test('legacy metric keys migrate and payment method stays hidden', () => {
         value: 'Cash'
     });
     assert.equal(payment.metric, 'paymentMethod');
+    assert.equal(payment.needsReview, true);
     assert.equal(rt.getCcrMetricDef('paymentMethod').deleted, true);
     assert.ok(!keysFor(rt, 'all').includes('paymentMethod'));
     assert.ok(!labelsFor(rt, 'all').includes('Payment method'));
@@ -175,14 +178,15 @@ test('metric select html uses optgroups and substance filtering', () => {
     const rt = setup();
     const allHtml = rt.buildCcrMetricSelectOptionsHtml('all', 'useAmount');
     assert.match(allHtml, /<optgroup label="Use">/);
-    assert.match(allHtml, /<optgroup label="Use Gap">/);
     assert.match(allHtml, /<optgroup label="Inventory">/);
-    assert.match(allHtml, /<optgroup label="Previous-period comparison">/);
+    assert.match(allHtml, /<optgroup label="Purchases &amp; spending">/);
+    assert.match(allHtml, /<optgroup label="Taper">/);
+    assert.match(allHtml, /<optgroup label="Record fields">/);
     assert.match(allHtml, /value="useAmount"/);
     assert.match(allHtml, />Break Between Uses</);
-    assert.match(allHtml, />Average Gap Between Purchases</);
-    assert.match(allHtml, />Purchases Per Week</);
-    assert.match(allHtml, />Purchases Per Month</);
+    assert.doesNotMatch(allHtml, />Average Gap Between Purchases</);
+    assert.doesNotMatch(allHtml, />Purchases Per Week</);
+    assert.doesNotMatch(allHtml, />Purchases Per Month</);
     assert.doesNotMatch(allHtml, /Purchase frequency \/ average gap/);
     assert.doesNotMatch(allHtml, /value="useGapCurrent"/);
     assert.doesNotMatch(allHtml, /value="gramsPerHour"/);
@@ -196,9 +200,25 @@ test('metric select html uses optgroups and substance filtering', () => {
     assert.match(cokeHtml, /value="useAmount"[^>]*selected|selected[^>]*value="useAmount"/);
 
     const nicHtml = rt.buildCcrMetricSelectOptionsHtml('nicotine', 'gramsPerHour');
-    assert.match(nicHtml, /value="puffs"/);
+    assert.match(nicHtml, /value="useAmount"/);
     assert.doesNotMatch(nicHtml, /value="gramsPerHour"/);
-    assert.match(nicHtml, /<optgroup label="Vape inventory">/);
+    assert.doesNotMatch(nicHtml, /<optgroup label="Vape inventory">/);
+});
+
+test('metric select filters options by selected section', () => {
+    const rt = setup();
+    const useHtml = rt.buildCcrMetricSelectOptionsHtml('coke', 'useAmount', 'useHistory');
+    assert.match(useHtml, /value="useAmount"/);
+    assert.match(useHtml, /value="gramsPerHour"/);
+    assert.match(useHtml, /value="transactionType"/);
+    assert.doesNotMatch(useHtml, /value="inventoryRemaining"/);
+    assert.doesNotMatch(useHtml, /value="spend"/);
+
+    const inventoryHtml = rt.buildCcrMetricSelectOptionsHtml('coke', 'useAmount', 'inventory');
+    assert.match(inventoryHtml, /value="inventoryRemaining"/);
+    assert.match(inventoryHtml, /value="inventoryPercent"/);
+    assert.match(inventoryHtml, /value="supplyDuration"/);
+    assert.doesNotMatch(inventoryHtml, /value="useAmount"/);
 });
 
 test('Use vs target only appears when a valid target exists', () => {
