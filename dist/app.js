@@ -22096,6 +22096,12 @@ let editingPurchaseId = null;
 const expandedPurchaseIds = new Set();
 let editingUseId = null;
 let taperEditingPlan = false;
+/** True after Edit/Create form has been fully initialized from plan or defaults. */
+let taperFormInitialized = false;
+/** Serialized snapshot of form values after last clean init/save. */
+let taperFormBaselineSnapshot = null;
+let taperFormDirty = false;
+let taperFormBeforeUnloadBound = false;
 
 function slugify(name) {
     return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') || `substance-${Date.now()}`;
@@ -43828,16 +43834,24 @@ function updateLongestTimeBetween() {
 }
 
 // ——— Taper / Do Not Surpass ———
-function getTaperReductionTypesForSubstance(substanceId) {
-    if (!isNicotineVapeTaperEligible(substanceId)) return TAPER_STANDARD_REDUCTION_TYPES;
-    const types = [...TAPER_VAPE_REDUCTION_TYPES];
-    // Keep legacy reduction types available only when the selected plan already uses them.
-    const selected = getSelectedTaperPlan();
-    if (selected?.substanceId === substanceId
-        && TAPER_VAPE_LEGACY_REDUCTION_TYPES.includes(selected.reductionType)
-        && !types.includes(selected.reductionType)) {
-        types.push(selected.reductionType);
+function getTaperReductionTypesForSubstance(substanceId, options = {}) {
+    const forceType = options.forceType
+        || options.plan?.reductionType
+        || null;
+    if (!isNicotineVapeTaperEligible(substanceId)) {
+        const types = [...TAPER_STANDARD_REDUCTION_TYPES];
+        if (forceType && !types.includes(forceType)) types.push(forceType);
+        return types;
     }
+    const types = [...TAPER_VAPE_REDUCTION_TYPES];
+    // Keep the plan's saved type available when editing (legacy buying/nicotine/amount).
+    const selected = options.plan || getSelectedTaperPlan();
+    const keepType = forceType
+        || (selected?.substanceId === substanceId ? selected.reductionType : null);
+    if (keepType && !types.includes(keepType)) types.push(keepType);
+    TAPER_VAPE_LEGACY_REDUCTION_TYPES.forEach(type => {
+        if (keepType === type && !types.includes(type)) types.push(type);
+    });
     return types;
 }
 
@@ -43884,15 +43898,25 @@ function getNicotineStepIntervalDays(interval) {
     return 7;
 }
 
-function populateTaperReductionTypeSelect(substanceId, selectedType) {
+function populateTaperReductionTypeSelect(substanceId, selectedType, options = {}) {
     const select = document.getElementById('reduction-type');
     if (!select) return;
-    const types = getTaperReductionTypesForSubstance(substanceId);
+    const plan = options.plan || (selectedType ? { substanceId, reductionType: selectedType } : null);
+    const types = getTaperReductionTypesForSubstance(substanceId, {
+        forceType: selectedType || null,
+        plan
+    });
     let value = selectedType || select.value || types[0];
     if (!types.includes(value)) {
-        value = types.includes('nicotine-vape-purchase') ? 'nicotine-vape-purchase'
-            : types.includes('reduce-puffs') ? 'reduce-puffs'
-                : types[0];
+        // Prefer keeping the requested type by appending it rather than coercing away.
+        if (selectedType) {
+            types.push(selectedType);
+            value = selectedType;
+        } else {
+            value = types.includes('nicotine-vape-purchase') ? 'nicotine-vape-purchase'
+                : types.includes('reduce-puffs') ? 'reduce-puffs'
+                    : types[0];
+        }
     }
     select.innerHTML = types.map(type => {
         let label = TAPER_REDUCTION_LABELS[type] || type;
@@ -45252,20 +45276,20 @@ function fillBuyingReductionSettingsForm(plan) {
     setChecked('br-manual-spend-plan', settings.manualWeeklySpendingPlan.enabled);
     setChecked('br-auto-spend-cost-per-gram', settings.autoSpendFromCostPerGram.enabled);
 
-    setInputValue('purchase-start-amount', settings.reducePurchaseAmount.startingAmount ?? '');
-    setInputValue('purchase-goal-amount', settings.reducePurchaseAmount.goalAmount ?? '');
-    setInputValue('purchase-reduction-amount', settings.reducePurchaseAmount.reductionPerWeek ?? '');
-    setInputValue('purchase-reduction-percent', settings.reducePurchaseAmount.reductionPercentPerWeek ?? '');
-    setInputValue('purchase-start-spend', settings.reducePurchaseCost.startingSpend ?? '');
-    setInputValue('purchase-goal-spend', settings.reducePurchaseCost.goalSpend ?? '');
-    setInputValue('purchase-spend-reduction-amount', settings.reducePurchaseCost.reductionPerWeek ?? '');
-    setInputValue('purchase-spend-reduction-percent', settings.reducePurchaseCost.reductionPercentPerWeek ?? '');
-    setInputValue('purchase-weekly-amount', settings.weeklyPurchaseLimit.amount ?? '');
-    setInputValue('purchase-weekly-spend', settings.weeklySpendingLimit.amount ?? '');
-    setInputValue('purchase-monthly-amount', settings.monthlyPurchaseCap.amount ?? '');
-    setInputValue('purchase-monthly-spend', settings.monthlySpendingCap.amount ?? '');
+    setInputValue('purchase-start-amount', formatTaperFormNumber(settings.reducePurchaseAmount.startingAmount));
+    setInputValue('purchase-goal-amount', formatTaperFormNumber(settings.reducePurchaseAmount.goalAmount));
+    setInputValue('purchase-reduction-amount', formatTaperFormNumber(settings.reducePurchaseAmount.reductionPerWeek));
+    setInputValue('purchase-reduction-percent', formatTaperFormNumber(settings.reducePurchaseAmount.reductionPercentPerWeek));
+    setInputValue('purchase-start-spend', formatTaperFormNumber(settings.reducePurchaseCost.startingSpend));
+    setInputValue('purchase-goal-spend', formatTaperFormNumber(settings.reducePurchaseCost.goalSpend));
+    setInputValue('purchase-spend-reduction-amount', formatTaperFormNumber(settings.reducePurchaseCost.reductionPerWeek));
+    setInputValue('purchase-spend-reduction-percent', formatTaperFormNumber(settings.reducePurchaseCost.reductionPercentPerWeek));
+    setInputValue('purchase-weekly-amount', formatTaperFormNumber(settings.weeklyPurchaseLimit.amount));
+    setInputValue('purchase-weekly-spend', formatTaperFormNumber(settings.weeklySpendingLimit.amount));
+    setInputValue('purchase-monthly-amount', formatTaperFormNumber(settings.monthlyPurchaseCap.amount));
+    setInputValue('purchase-monthly-spend', formatTaperFormNumber(settings.monthlySpendingCap.amount));
     setInputValue('auto-spend-cost-source', settings.autoSpendFromCostPerGram.source || 'auto');
-    setInputValue('auto-spend-manual-cost', settings.autoSpendFromCostPerGram.manualCostPerGram ?? '');
+    setInputValue('auto-spend-manual-cost', formatTaperFormNumber(settings.autoSpendFromCostPerGram.manualCostPerGram));
     setInputValue('auto-spend-baseline-range', settings.autoSpendFromCostPerGram.baselineRange || 'last-30');
     setInputValue('auto-spend-custom-start', settings.autoSpendFromCostPerGram.customStart || '');
     setInputValue('auto-spend-custom-end', settings.autoSpendFromCostPerGram.customEnd || '');
@@ -47898,11 +47922,15 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
     const isNicotine = reductionType === 'reduce-nicotine';
     const isPurchaseBased = isNicotineVape || isBuying;
     const startingDailyAverage = (isManual || isPurchaseBased || isNicotine)
-        ? null
+        ? (existingPlan?.startingDailyAverage ?? null)
         : parseOptionalTaperNumber(document.getElementById('current-avg'));
     const goalDailyAverage = (isPurchaseBased || isNicotine)
-        ? null
+        ? (existingPlan?.goalDailyAverage ?? null)
         : parseOptionalTaperNumber(document.getElementById('goal-avg'));
+
+    const reductionAmountRaw = parseOptionalTaperNumber(document.getElementById('reduction-amount'));
+    const reductionPercentRaw = parseOptionalTaperNumber(document.getElementById('reduction-percent'));
+    const weeklyMaxRaw = parseOptionalTaperNumber(document.getElementById('weekly-max'));
 
     const plan = {
         id: existingPlan?.id || generateUniqueId('taper'),
@@ -47913,15 +47941,28 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
         startDate,
         endDate: document.getElementById('end-date')?.value || null,
         startingDailyAverage,
-        goalDailyAverage: isManual ? goalDailyAverage : (goalDailyAverage ?? 0),
+        // Keep null when optional/blank; do not coerce blank → 0 on edit (would wipe real goals).
+        goalDailyAverage: isManual
+            ? goalDailyAverage
+            : (goalDailyAverage ?? (existingPlan ? (existingPlan.goalDailyAverage ?? existingPlan.goalAvg ?? null) : 0)),
         reductionType,
-        reductionAmount: (isManual || isPurchaseBased || isNicotine) ? 0 : (parseFloat(document.getElementById('reduction-amount')?.value) || 0),
-        reductionPercent: (isManual || isPurchaseBased || isNicotine) ? 0 : (parseFloat(document.getElementById('reduction-percent')?.value) || 0),
-        weeklyMax: (isManual || isPurchaseBased || isNicotine) ? null : (parseFloat(document.getElementById('weekly-max')?.value) || null),
-        monthlyMax: parseOptionalTaperNumber(document.getElementById('monthly-max')),
+        reductionAmount: (isManual || isPurchaseBased || isNicotine)
+            ? (existingPlan?.reductionAmount ?? 0)
+            : (reductionAmountRaw ?? (existingPlan?.reductionAmount ?? 0)),
+        reductionPercent: (isManual || isPurchaseBased || isNicotine)
+            ? (existingPlan?.reductionPercent ?? 0)
+            : (reductionPercentRaw ?? (existingPlan?.reductionPercent ?? 0)),
+        weeklyMax: (isManual || isPurchaseBased || isNicotine)
+            ? (existingPlan?.weeklyMax ?? null)
+            : (weeklyMaxRaw ?? (existingPlan?.weeklyMax ?? null)),
+        monthlyMax: (() => {
+            const fromForm = parseOptionalTaperNumber(document.getElementById('monthly-max'));
+            if (fromForm != null) return fromForm;
+            return existingPlan?.monthlyMax ?? null;
+        })(),
         doNotSurpassDaily: document.getElementById('do-not-surpass-daily')?.checked !== false,
         doNotSurpassWeekly: !!document.getElementById('do-not-surpass-weekly')?.checked,
-        notes: document.getElementById('taper-notes')?.value || '',
+        notes: document.getElementById('taper-notes')?.value ?? '',
         isPaused: existingPlan ? isTaperPlanPaused(existingPlan) : false,
         createdAt: existingPlan?.createdAt || now,
         updatedAt: now
@@ -48033,6 +48074,25 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
         plan.buyingReductionSettings = collectBuyingReductionSettingsFromForm();
         plan._buyingReductionMigrated = true;
         syncLegacyPurchaseFieldsFromBuyingReduction(plan);
+    } else if (existingPlan) {
+        // Keep prior rule config when the toggle is off so re-enabling does not wipe it.
+        plan.purchaseReductionMode = 'none';
+        plan.buyingReductionSettings = existingPlan.buyingReductionSettings
+            || getDefaultBuyingReductionSettings();
+        plan._buyingReductionMigrated = true;
+        plan.purchaseWeeklyAmountTarget = existingPlan.purchaseWeeklyAmountTarget ?? null;
+        plan.purchaseWeeklySpendTarget = existingPlan.purchaseWeeklySpendTarget ?? null;
+        plan.purchaseMonthlyAmountCap = existingPlan.purchaseMonthlyAmountCap ?? null;
+        plan.purchaseMonthlySpendCap = existingPlan.purchaseMonthlySpendCap ?? null;
+        plan.purchaseStartingWeeklyAmount = existingPlan.purchaseStartingWeeklyAmount ?? null;
+        plan.purchaseStartingWeeklySpend = existingPlan.purchaseStartingWeeklySpend ?? null;
+        plan.purchaseGoalWeeklyAmount = existingPlan.purchaseGoalWeeklyAmount ?? null;
+        plan.purchaseGoalWeeklySpend = existingPlan.purchaseGoalWeeklySpend ?? null;
+        plan.purchaseReductionAmountPerWeek = existingPlan.purchaseReductionAmountPerWeek ?? null;
+        plan.purchaseReductionPercentPerWeek = existingPlan.purchaseReductionPercentPerWeek ?? null;
+        plan.purchaseSpendReductionAmountPerWeek = existingPlan.purchaseSpendReductionAmountPerWeek ?? null;
+        plan.purchaseSpendReductionPercentPerWeek = existingPlan.purchaseSpendReductionPercentPerWeek ?? null;
+        plan.manualWeeklyPurchaseTargets = existingPlan.manualWeeklyPurchaseTargets || [];
     } else {
         plan.purchaseReductionMode = 'none';
         plan.buyingReductionSettings = getDefaultBuyingReductionSettings();
@@ -48054,13 +48114,166 @@ function buildTaperPlanFromForm(substanceId, existingPlan) {
 
     plan.currentAvg = plan.startingDailyAverage;
     plan.goalAvg = plan.goalDailyAverage;
-    plan.weeklyTargets = generateWeeklyTargets(plan);
+    plan.taperNotes = plan.notes;
+    const generatedWeeks = generateWeeklyTargets(plan);
+    if (existingPlan) {
+        const nextSchedule = {
+            ...existingPlan,
+            reductionType: plan.reductionType,
+            startDate: plan.startDate,
+            endDate: plan.endDate,
+            startingDailyAverage: plan.startingDailyAverage,
+            goalDailyAverage: plan.goalDailyAverage,
+            reductionAmount: plan.reductionAmount,
+            reductionPercent: plan.reductionPercent,
+            weeklyMax: plan.weeklyMax,
+            monthlyMax: plan.monthlyMax,
+            puffReductionMode: plan.puffReductionMode,
+            taperDurationWeeks: plan.taperDurationWeeks,
+            manualWeeklyMode: plan.manualWeeklyMode,
+            manualWeeklyBaseline: plan.manualWeeklyBaseline,
+            manualWeeklyTargets: plan.manualWeeklyTargets,
+            currentBuyFrequencyDays: plan.currentBuyFrequencyDays,
+            goalBuyFrequencyDays: plan.goalBuyFrequencyDays,
+            startingNicotineMgPerMl: plan.startingNicotineMgPerMl,
+            goalNicotineMgPerMl: plan.goalNicotineMgPerMl,
+            nicotineStepDownMgPerMl: plan.nicotineStepDownMgPerMl,
+            nicotineStepDownInterval: plan.nicotineStepDownInterval,
+            nicotineVapeGoals: plan.nicotineVapeGoals,
+            nicotineVapeTaperSpeed: plan.nicotineVapeTaperSpeed,
+            goalVapesPerMonth: plan.goalVapesPerMonth,
+            goalDaysBetweenPurchases: plan.goalDaysBetweenPurchases,
+            goalLifespanDays: plan.goalLifespanDays,
+            goalPuffsPerDay: plan.goalPuffsPerDay,
+            goalMonthlySpend: plan.goalMonthlySpend,
+            purchaseTaperEnabled: plan.purchaseTaperEnabled,
+            buyingReductionSettings: plan.buyingReductionSettings
+        };
+        if (getTaperPlanScheduleSignature(existingPlan) === getTaperPlanScheduleSignature(nextSchedule)) {
+            plan.weeklyTargets = existingPlan.weeklyTargets?.length
+                ? existingPlan.weeklyTargets
+                : generatedWeeks;
+        } else {
+            plan.weeklyTargets = mergeWeeklyTargetsPreservingProgress(existingPlan.weeklyTargets, generatedWeeks);
+        }
+    } else {
+        plan.weeklyTargets = generatedWeeks;
+    }
     migrateTaperPlan(plan, substanceId, appData);
     if (plan.purchaseTaperEnabled) {
         applyPurchaseTargetsToWeeklyRows(plan);
         syncPurchaseTaperForPlan(plan, appData);
     }
     return plan;
+}
+
+/** Fields the edit form is allowed to write for a given reduction type. */
+function getTaperFormWritableFields(reductionType) {
+    const shared = [
+        'name', 'reductionType', 'startDate', 'endDate', 'notes', 'taperNotes',
+        'updatedAt', 'purchaseTaperEnabled', 'buyingReductionSettings', '_buyingReductionMigrated',
+        'purchaseReductionMode', 'purchaseWeeklyAmountTarget', 'purchaseWeeklySpendTarget',
+        'purchaseMonthlyAmountCap', 'purchaseMonthlySpendCap', 'purchaseStartingWeeklyAmount',
+        'purchaseStartingWeeklySpend', 'purchaseGoalWeeklyAmount', 'purchaseGoalWeeklySpend',
+        'purchaseReductionAmountPerWeek', 'purchaseReductionPercentPerWeek',
+        'purchaseSpendReductionAmountPerWeek', 'purchaseSpendReductionPercentPerWeek',
+        'manualWeeklyPurchaseTargets', 'weeklyTargets', 'dailyTargets',
+        'currentAvg', 'goalAvg'
+    ];
+    const amountFields = [
+        'startingDailyAverage', 'goalDailyAverage', 'reductionAmount', 'reductionPercent',
+        'weeklyMax', 'monthlyMax', 'doNotSurpassDaily', 'doNotSurpassWeekly'
+    ];
+    switch (reductionType) {
+        case 'manual-weekly':
+            return [...shared, 'goalDailyAverage', 'manualWeeklyMode', 'manualWeeklyUnit',
+                'manualWeeklyBaseline', 'manualWeeklyTargets', 'startingDailyAverage'];
+        case 'reduce-puffs':
+            return [...shared, ...amountFields, 'puffReductionMode', 'taperDurationWeeks', 'purchaseIntervalDays'];
+        case 'nicotine-vape-purchase':
+            return [...shared, 'monthlyMax', 'weeklySpendCap', 'monthlySpendCap',
+                'nicotineVapeGoals', 'nicotineVapeStrategy', 'nicotineVapeTaperSpeed',
+                'nicotineVapeBaselineWindow', 'nicotineVapeBaselineCustomStart', 'nicotineVapeBaselineCustomEnd',
+                'nicotineVapeBaseline', 'currentVapesPerMonth', 'goalVapesPerMonth',
+                'currentDaysBetweenPurchases', 'goalDaysBetweenPurchases',
+                'currentLifespanDays', 'goalLifespanDays', 'currentPuffsPerDay', 'goalPuffsPerDay',
+                'currentNicotineMgPerMl', 'goalNicotineMgPerMl', 'startingDailyAverage', 'goalDailyAverage',
+                'startingNicotineMgPerMl', 'currentMonthlySpend', 'goalMonthlySpend',
+                'optionalNoBuyDays', 'optionalNicotineFreeDays', 'delayFirstUseMinutes',
+                'minBreakBetweenSessionsMinutes', 'bedtimeCutoff', 'noUseBlocks', 'nicotineStrengthSteps',
+                'currentBuyFrequencyDays', 'goalBuyFrequencyDays', 'legacyPuffPlan',
+                'legacyReductionType', 'legacyPuffTargets', '_suggestedPreviewOverrides'];
+        case 'reduce-buying':
+            return [...shared, 'currentBuyFrequencyDays', 'goalBuyFrequencyDays', 'weeklySpendCap', 'monthlyMax'];
+        case 'reduce-nicotine':
+            return [...shared, 'startingNicotineMgPerMl', 'goalNicotineMgPerMl',
+                'nicotineStepDownMgPerMl', 'nicotineStepDownInterval'];
+        default:
+            return [...shared, ...amountFields];
+    }
+}
+
+function getTaperPlanScheduleSignature(plan) {
+    if (!plan) return '';
+    return JSON.stringify({
+        reductionType: plan.reductionType,
+        startDate: plan.startDate,
+        endDate: plan.endDate,
+        startingDailyAverage: plan.startingDailyAverage,
+        goalDailyAverage: plan.goalDailyAverage,
+        reductionAmount: plan.reductionAmount,
+        reductionPercent: plan.reductionPercent,
+        weeklyMax: plan.weeklyMax,
+        monthlyMax: plan.monthlyMax,
+        puffReductionMode: plan.puffReductionMode,
+        taperDurationWeeks: plan.taperDurationWeeks,
+        manualWeeklyMode: plan.manualWeeklyMode,
+        manualWeeklyBaseline: plan.manualWeeklyBaseline,
+        manualWeeklyTargets: plan.manualWeeklyTargets,
+        currentBuyFrequencyDays: plan.currentBuyFrequencyDays,
+        goalBuyFrequencyDays: plan.goalBuyFrequencyDays,
+        startingNicotineMgPerMl: plan.startingNicotineMgPerMl,
+        goalNicotineMgPerMl: plan.goalNicotineMgPerMl,
+        nicotineStepDownMgPerMl: plan.nicotineStepDownMgPerMl,
+        nicotineStepDownInterval: plan.nicotineStepDownInterval,
+        nicotineVapeGoals: plan.nicotineVapeGoals,
+        nicotineVapeTaperSpeed: plan.nicotineVapeTaperSpeed,
+        goalVapesPerMonth: plan.goalVapesPerMonth,
+        goalDaysBetweenPurchases: plan.goalDaysBetweenPurchases,
+        goalLifespanDays: plan.goalLifespanDays,
+        goalPuffsPerDay: plan.goalPuffsPerDay,
+        goalMonthlySpend: plan.goalMonthlySpend,
+        purchaseTaperEnabled: plan.purchaseTaperEnabled,
+        buyingReductionSettings: plan.buyingReductionSettings
+    });
+}
+
+/**
+ * Overlay form-built fields onto the existing plan in place.
+ * Preserves id/status/primary/createdAt and any fields the form does not own.
+ */
+function applyBuiltTaperPlanToExisting(existingPlan, built) {
+    if (!existingPlan || !built) return existingPlan;
+    const preservedStatus = getTaperPlanStatus(existingPlan);
+    const preservedPrimary = !!existingPlan.isPrimary;
+    const preservedCreatedAt = existingPlan.createdAt;
+    const preservedId = existingPlan.id;
+    const writable = new Set(getTaperFormWritableFields(built.reductionType || existingPlan.reductionType));
+    writable.forEach(key => {
+        if (Object.prototype.hasOwnProperty.call(built, key)) {
+            existingPlan[key] = built[key];
+        }
+    });
+    existingPlan.id = preservedId || built.id;
+    existingPlan.createdAt = preservedCreatedAt || built.createdAt;
+    existingPlan.substanceId = existingPlan.substanceId || built.substanceId;
+    existingPlan.status = preservedStatus;
+    existingPlan.isPaused = preservedStatus === 'paused';
+    existingPlan.isPrimary = preservedPrimary;
+    existingPlan.updatedAt = built.updatedAt || new Date().toISOString();
+    existingPlan.notes = built.notes ?? existingPlan.notes;
+    existingPlan.taperNotes = existingPlan.notes;
+    return existingPlan;
 }
 
 function syncTaperSubstanceToMain() {
@@ -48079,6 +48292,13 @@ function syncTaperSubstanceToSelected() {
 }
 
 function onTaperSubstanceChange() {
+    if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) {
+        // Revert select to the plan/substance being edited.
+        const editing = taperFormPlanId ? getTaperPlanById(taperFormPlanId) : null;
+        const substanceEl = document.getElementById('taper-substance');
+        if (substanceEl && editing?.substanceId) substanceEl.value = editing.substanceId;
+        return;
+    }
     const id = getTaperSubstanceId();
     if (id) setSelectedSubstanceId(id, { source: 'taper', refresh: false });
     // Changing substance abandons an in-progress edit for a different substance.
@@ -48088,10 +48308,12 @@ function onTaperSubstanceChange() {
             taperEditingPlan = false;
             taperFormPlanId = null;
             setInputValue('taper-editing-plan-id', '');
+            resetTaperFormLifecycleState();
         }
     } else {
         taperEditingPlan = false;
         setInputValue('taper-editing-plan-id', '');
+        resetTaperFormLifecycleState();
     }
     const defaultPlan = resolveDefaultTaperPlanForSubstance(id);
     if (!taperEditingPlan) {
@@ -48162,14 +48384,17 @@ function populateTaperPlanDropdown() {
 }
 
 function showNewTaperPlan() {
+    if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return;
     taperFormPlanId = null;
     taperEditingPlan = true;
+    resetTaperFormLifecycleState();
     setInputValue('taper-editing-plan-id', '');
     setText('taper-setup-title', 'Create Taper Plan');
     setText('taper-generate-btn', 'Save Plan');
     document.getElementById('taper-dashboard')?.classList.add('hidden');
     document.getElementById('taper-no-plan')?.classList.add('hidden');
     document.getElementById('taper-setup')?.classList.remove('hidden');
+    document.getElementById('taper-cancel-edit-btn')?.classList.remove('hidden');
     const substanceId = getTaperSubstanceId();
     populateTaperReductionTypeSelect(substanceId);
     setInputValue('taper-plan-name', getDefaultTaperPlanName(substanceId));
@@ -48178,8 +48403,10 @@ function showNewTaperPlan() {
         setPrimaryEl.checked = !getTaperPlansForSubstance(substanceId).some(p => p.isPrimary && p.status === 'active');
     }
     setDefaultTaperEndDate();
-    toggleTaperPlanTypeFields();
+    toggleTaperPlanTypeFields({ skipPrefill: false });
     prefillVapeTaperDefaults(substanceId);
+    bindTaperFormDirtyTracking();
+    markTaperFormClean();
     const purchaseEnabledEl = document.getElementById('purchase-taper-enabled');
     if (purchaseEnabledEl) purchaseEnabledEl.checked = false;
     setInputValue('purchase-reduction-mode', 'weekly_spend');
@@ -48341,9 +48568,14 @@ function openTaperPlanFromManage(planId) {
 function editTaperPlanById(planId) {
     const plan = getTaperPlanById(planId);
     if (!plan) return;
+    if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return;
     selectedTaperPlanId = planId;
     taperFormPlanId = planId;
     taperEditingPlan = true;
+    resetTaperFormLifecycleState();
+    // Backup before normalizing/migrating plan data for edit.
+    createAutoBackup('before-taper-plan-edit');
+    migrateTaperPlan(plan, plan.substanceId, appData);
     // Keep substance selector aligned with the plan without firing change handlers
     // that would clear taperFormPlanId / selectedTaperPlanId.
     const substanceEl = document.getElementById('taper-substance');
@@ -48357,6 +48589,7 @@ function editTaperPlanById(planId) {
     fillTaperFormFromPlan(plan);
     setText('taper-setup-title', 'Edit Taper Plan');
     setText('taper-generate-btn', 'Save Changes');
+    document.getElementById('taper-cancel-edit-btn')?.classList.remove('hidden');
     closeManageTaperPlansModal();
     document.getElementById('taper-dashboard')?.classList.add('hidden');
     document.getElementById('taper-no-plan')?.classList.add('hidden');
@@ -48442,9 +48675,14 @@ function deleteTaperPlanById(planId, options = {}) {
     refreshTaperDashboard();
 }
 
-function toggleTaperPlanTypeFields() {
+function toggleTaperPlanTypeFields(options = {}) {
     const substanceId = getTaperSubstanceId();
-    populateTaperReductionTypeSelect(substanceId);
+    const preferredType = options.selectedType
+        || document.getElementById('reduction-type')?.value
+        || null;
+    populateTaperReductionTypeSelect(substanceId, preferredType, {
+        plan: options.plan || (preferredType ? { substanceId, reductionType: preferredType } : null)
+    });
     const type = document.getElementById('reduction-type')?.value || 'reduce-amount';
     const hint = document.getElementById('plan-type-hint');
     const amtGroup = document.getElementById('reduction-amount-group');
@@ -48537,7 +48775,7 @@ function toggleTaperPlanTypeFields() {
     }
     if (endDateInput) endDateInput.required = !isManual && !isNicotine;
 
-    if (isManual) {
+    if (isManual && !options.skipManualSeed) {
         populateManualWeeklyUnitSelect(getTaperSubstanceId());
         setManualWeeklyMode(getManualWeeklyModeFromForm() || 'amount', { skipRender: true });
         if (!document.querySelector('.manual-week-target-input, .manual-week-percent-input')) {
@@ -48576,89 +48814,258 @@ function toggleTaperPlanTypeFields() {
         if (reductionPercentLabel) reductionPercentLabel.textContent = 'Reduction percent (per week)';
     }
 
-    if (isVape && (taperEditingPlan || isNicotineVape || isPuffs)) prefillVapeTaperDefaults(substanceId);
-    togglePurchaseTaperFields();
+    // Never invent baseline defaults while loading an existing plan into Edit.
+    const skipPrefill = options.skipPrefill === true || !!taperFormPlanId;
+    if (!skipPrefill && isVape && (isNicotineVape || isPuffs || isBuying || isNicotine)) {
+        prefillVapeTaperDefaults(substanceId);
+    }
+    if (!options.skipPurchaseToggle) togglePurchaseTaperFields();
+    if (taperFormInitialized) markTaperFormDirtyFromUi();
+}
+
+function formatTaperFormNumber(value) {
+    if (value == null || value === '') return '';
+    const n = typeof value === 'number' ? value : parseFloat(value);
+    if (!Number.isFinite(n)) return '';
+    return String(n);
+}
+
+function resolvePlanWeeklyMaxForForm(plan) {
+    if (plan?.weeklyMax != null && plan.weeklyMax !== '') return plan.weeklyMax;
+    const rows = Array.isArray(plan?.weeklyTargets) ? plan.weeklyTargets : [];
+    if (!rows.length) return null;
+    const today = getLocalDateString();
+    const current = rows.find(r => r?.weekStart && r?.weekEnd && today >= r.weekStart && today <= r.weekEnd)
+        || rows[0];
+    return current?.weeklyMax ?? current?.targetAmount ?? null;
+}
+
+function resolvePlanMonthlyMaxForForm(plan) {
+    if (plan?.monthlyMax != null && plan.monthlyMax !== '') return plan.monthlyMax;
+    if (plan?.goalVapesPerMonth != null && plan.goalVapesPerMonth !== '') return plan.goalVapesPerMonth;
+    return null;
+}
+
+/**
+ * Normalize legacy aliases onto a plan copy used only for form population.
+ * Does not mutate stored weekly progress; migrateTaperPlan may still update the live plan.
+ */
+function normalizePlanRecordForEditForm(plan) {
+    if (!plan || typeof plan !== 'object') return plan;
+    const normalized = { ...plan };
+    if (normalized.startingDailyAverage == null && normalized.currentAvg != null) {
+        normalized.startingDailyAverage = normalized.currentAvg;
+    }
+    if (normalized.goalDailyAverage == null && normalized.goalAvg != null) {
+        normalized.goalDailyAverage = normalized.goalAvg;
+    }
+    if ((normalized.notes == null || normalized.notes === '') && normalized.taperNotes != null) {
+        normalized.notes = normalized.taperNotes;
+    }
+    if (normalized.doNotSurpassDaily == null && normalized.warnBeforeSurpass != null) {
+        normalized.doNotSurpassDaily = !!normalized.warnBeforeSurpass;
+    }
+    if (normalized.weeklyMax == null) {
+        normalized.weeklyMax = resolvePlanWeeklyMaxForForm(normalized);
+    }
+    if (normalized.monthlyMax == null) {
+        normalized.monthlyMax = resolvePlanMonthlyMaxForForm(normalized);
+    }
+    if (normalized.reductionAmount == null && normalized.reductionType === 'reduce-amount') {
+        const startVal = normalized.startingDailyAverage ?? 0;
+        const goalVal = normalized.goalDailyAverage ?? 0;
+        if (startVal > goalVal && normalized.startDate && normalized.endDate) {
+            const weeks = Math.max(1, countWeeksBetween(normalized.startDate, normalized.endDate));
+            normalized.reductionAmount = roundTaperValue((startVal - goalVal) / weeks);
+        }
+    }
+    return normalized;
+}
+
+function getTaperFormSnapshot() {
+    const form = document.getElementById('taper-form');
+    if (!form) return '';
+    const entries = [];
+    form.querySelectorAll('input, select, textarea').forEach(el => {
+        if (!el.id) return;
+        if (el.type === 'checkbox' || el.type === 'radio') {
+            entries.push(`${el.id}=${el.checked ? '1' : '0'}`);
+        } else {
+            entries.push(`${el.id}=${el.value ?? ''}`);
+        }
+    });
+    form.querySelectorAll('.manual-week-target-input, .manual-week-percent-input, .manual-purchase-amount-input, .manual-purchase-spend-input').forEach((el, idx) => {
+        entries.push(`dyn-${idx}=${el.value ?? ''}`);
+    });
+    return entries.join('\n');
+}
+
+function updateTaperSaveButtonState() {
+    const btn = document.getElementById('taper-generate-btn');
+    if (!btn) return;
+    // Block save until the form has been initialized from the selected plan / create defaults.
+    btn.disabled = !taperFormInitialized;
+}
+
+function markTaperFormClean() {
+    taperFormBaselineSnapshot = getTaperFormSnapshot();
+    taperFormDirty = false;
+    taperFormInitialized = true;
+    updateTaperSaveButtonState();
+}
+
+function markTaperFormDirtyFromUi() {
+    if (!taperFormInitialized) return;
+    const next = getTaperFormSnapshot();
+    taperFormDirty = next !== taperFormBaselineSnapshot;
+}
+
+function resetTaperFormLifecycleState() {
+    taperFormInitialized = false;
+    taperFormBaselineSnapshot = null;
+    taperFormDirty = false;
+    updateTaperSaveButtonState();
+}
+
+function confirmDiscardTaperFormChanges() {
+    if (!taperFormInitialized || !taperFormDirty) return true;
+    return confirm('You have unsaved taper plan changes. Discard them?');
+}
+
+function bindTaperFormDirtyTracking() {
+    const form = document.getElementById('taper-form');
+    if (!form || form.dataset.dirtyBound === '1') return;
+    form.dataset.dirtyBound = '1';
+    const onChange = () => markTaperFormDirtyFromUi();
+    form.addEventListener('input', onChange);
+    form.addEventListener('change', onChange);
+    if (!taperFormBeforeUnloadBound && typeof window !== 'undefined') {
+        taperFormBeforeUnloadBound = true;
+        window.addEventListener('beforeunload', (e) => {
+            if (!taperEditingPlan || !taperFormDirty) return;
+            e.preventDefault();
+            e.returnValue = '';
+        });
+    }
 }
 
 function fillTaperFormFromPlan(plan) {
     if (!plan) return;
+    resetTaperFormLifecycleState();
+    bindTaperFormDirtyTracking();
     const substanceId = plan.substanceId || getTaperSubstanceId();
-    setInputValue('taper-plan-name', plan.name || getDefaultTaperPlanName(substanceId));
+    const normalized = normalizePlanRecordForEditForm(plan);
+    const reductionType = normalized.reductionType || 'reduce-amount';
+
+    // Show the correct field groups for the saved type before writing values.
+    // skipPrefill: never overwrite saved blanks with baseline invents while editing.
+    populateTaperReductionTypeSelect(substanceId, reductionType, { plan: normalized });
+    setInputValue('reduction-type', reductionType);
+    toggleTaperPlanTypeFields({
+        selectedType: reductionType,
+        plan: normalized,
+        skipPrefill: true,
+        skipManualSeed: true,
+        skipPurchaseToggle: true
+    });
+
+    setInputValue('taper-plan-name', normalized.name ?? getDefaultTaperPlanName(substanceId));
     const setPrimaryEl = document.getElementById('taper-set-primary');
-    if (setPrimaryEl) setPrimaryEl.checked = !!plan.isPrimary;
-    populateTaperReductionTypeSelect(substanceId, plan.reductionType || 'reduce-amount');
-    setInputValue('start-date', plan.startDate || (plan.createdAt ? getLocalDateFromIso(plan.createdAt) : ''));
-    const startVal = plan.startingDailyAverage ?? plan.currentAvg;
-    setInputValue('current-avg', startVal != null && startVal !== '' ? startVal : '');
-    const goalVal = plan.goalDailyAverage ?? plan.goalAvg;
-    setInputValue('goal-avg', goalVal != null && goalVal !== '' ? goalVal : '');
-    setInputValue('reduction-type', plan.reductionType || 'reduce-amount');
-    setInputValue('reduction-amount', plan.reductionAmount ?? '');
-    setInputValue('reduction-percent', plan.reductionPercent ?? '');
-    setInputValue('puff-reduction-mode', plan.puffReductionMode || 'percent');
-    setInputValue('taper-duration-weeks', plan.taperDurationWeeks ?? '');
-    setInputValue('purchase-interval-days', plan.purchaseIntervalDays ?? plan.goalDaysBetweenPurchases ?? '');
-    setInputValue('vape-current-buy-days', plan.currentBuyFrequencyDays ?? '');
-    setInputValue('vape-goal-buy-days', plan.goalBuyFrequencyDays ?? '');
-    setInputValue('vape-weekly-spend-cap', plan.weeklySpendCap ?? '');
-    setInputValue('vape-start-nicotine', plan.startingNicotineMgPerMl ?? '');
-    setInputValue('vape-goal-nicotine', plan.goalNicotineMgPerMl ?? '');
-    setInputValue('vape-nicotine-step', plan.nicotineStepDownMgPerMl ?? '');
-    setInputValue('vape-nicotine-interval', plan.nicotineStepDownInterval || 'weekly');
-    setInputValue('nicotine-vape-strategy', plan.nicotineVapeStrategy || 'combined');
-    setNicotineVapeGoalCheckboxes(plan.nicotineVapeGoals || normalizeNicotineVapeGoals(plan));
-    setInputValue('nicotine-vape-taper-speed', plan.nicotineVapeTaperSpeed || 'moderate');
-    setInputValue('nicotine-vape-baseline-window', plan.nicotineVapeBaselineWindow ?? 60);
-    setInputValue('nicotine-vape-baseline-start', plan.nicotineVapeBaselineCustomStart ?? '');
-    setInputValue('nicotine-vape-baseline-end', plan.nicotineVapeBaselineCustomEnd ?? '');
-    setInputValue('nicotine-vape-current-vpm', plan.currentVapesPerMonth ?? '');
-    setInputValue('nicotine-vape-goal-vpm', plan.goalVapesPerMonth ?? plan.monthlyMax ?? '');
-    setInputValue('nicotine-vape-current-gap', plan.currentDaysBetweenPurchases ?? plan.currentBuyFrequencyDays ?? '');
-    setInputValue('nicotine-vape-goal-gap', plan.goalDaysBetweenPurchases ?? plan.goalBuyFrequencyDays ?? '');
-    setInputValue('nicotine-vape-current-lifespan', plan.currentLifespanDays ?? '');
-    setInputValue('nicotine-vape-goal-lifespan', plan.goalLifespanDays ?? '');
-    setInputValue('nicotine-vape-current-puffs', plan.currentPuffsPerDay ?? plan.startingDailyAverage ?? '');
-    setInputValue('nicotine-vape-goal-puffs', plan.goalPuffsPerDay ?? plan.goalDailyAverage ?? '');
-    setInputValue('nicotine-vape-current-strength', plan.currentNicotineMgPerMl ?? plan.startingNicotineMgPerMl ?? '');
-    setInputValue('nicotine-vape-goal-strength', plan.goalNicotineMgPerMl ?? '');
-    setInputValue('nicotine-vape-current-spend', plan.currentMonthlySpend ?? '');
-    setInputValue('nicotine-vape-goal-spend', plan.goalMonthlySpend ?? plan.monthlySpendCap ?? '');
-    setInputValue('nicotine-vape-monthly-spend-cap', plan.monthlySpendCap ?? plan.goalMonthlySpend ?? '');
-    setInputValue('nicotine-vape-weekly-spend-cap', plan.weeklySpendCap ?? '');
-    setInputValue('nicotine-vape-no-buy-days', plan.optionalNoBuyDays ?? '');
-    setInputValue('nicotine-vape-free-days', plan.optionalNicotineFreeDays ?? '');
-    setInputValue('nicotine-vape-delay-first-use', plan.delayFirstUseMinutes ?? '');
-    setInputValue('nicotine-vape-min-break', plan.minBreakBetweenSessionsMinutes ?? '');
-    setInputValue('nicotine-vape-bedtime-cutoff', plan.bedtimeCutoff ?? '');
-    setInputValue('nicotine-vape-no-use-blocks', Array.isArray(plan.noUseBlocks) ? plan.noUseBlocks.join(', ') : (plan.noUseBlocks || ''));
-    setInputValue('nicotine-vape-strength-steps', Array.isArray(plan.nicotineStrengthSteps)
-        ? plan.nicotineStrengthSteps.join(', ')
-        : (plan.nicotineStrengthSteps || NICOTINE_STRENGTH_STEP_DEFAULTS.join(', ')));
-    if (plan.nicotineVapeBaseline) renderNicotineVapeBaselineMetrics(plan.nicotineVapeBaseline);
-    setInputValue('end-date', plan.endDate || '');
-    setInputValue('weekly-max', plan.weeklyMax ?? '');
-    setInputValue('monthly-max', plan.monthlyMax ?? '');
-    setInputValue('taper-notes', plan.notes || '');
+    if (setPrimaryEl) setPrimaryEl.checked = !!normalized.isPrimary;
+    setInputValue('start-date', normalized.startDate || (normalized.createdAt ? getLocalDateFromIso(normalized.createdAt) : ''));
+    setInputValue('end-date', normalized.endDate ?? '');
+    setInputValue('current-avg', formatTaperFormNumber(normalized.startingDailyAverage ?? normalized.currentAvg));
+    setInputValue('goal-avg', formatTaperFormNumber(normalized.goalDailyAverage ?? normalized.goalAvg));
+    setInputValue('reduction-amount', formatTaperFormNumber(normalized.reductionAmount));
+    setInputValue('reduction-percent', formatTaperFormNumber(normalized.reductionPercent));
+    setInputValue('puff-reduction-mode', normalized.puffReductionMode || 'percent');
+    setInputValue('taper-duration-weeks', formatTaperFormNumber(normalized.taperDurationWeeks));
+    setInputValue('purchase-interval-days', formatTaperFormNumber(
+        normalized.purchaseIntervalDays ?? normalized.goalDaysBetweenPurchases
+    ));
+    setInputValue('vape-current-buy-days', formatTaperFormNumber(normalized.currentBuyFrequencyDays));
+    setInputValue('vape-goal-buy-days', formatTaperFormNumber(normalized.goalBuyFrequencyDays));
+    setInputValue('vape-weekly-spend-cap', formatTaperFormNumber(normalized.weeklySpendCap));
+    setInputValue('vape-start-nicotine', formatTaperFormNumber(normalized.startingNicotineMgPerMl));
+    setInputValue('vape-goal-nicotine', formatTaperFormNumber(normalized.goalNicotineMgPerMl));
+    setInputValue('vape-nicotine-step', formatTaperFormNumber(normalized.nicotineStepDownMgPerMl));
+    setInputValue('vape-nicotine-interval', normalized.nicotineStepDownInterval || 'weekly');
+    setInputValue('nicotine-vape-strategy', normalized.nicotineVapeStrategy || 'combined');
+    setNicotineVapeGoalCheckboxes(normalized.nicotineVapeGoals || normalizeNicotineVapeGoals(normalized));
+    setInputValue('nicotine-vape-taper-speed', normalized.nicotineVapeTaperSpeed || 'moderate');
+    setInputValue('nicotine-vape-baseline-window', normalized.nicotineVapeBaselineWindow ?? 60);
+    setInputValue('nicotine-vape-baseline-start', normalized.nicotineVapeBaselineCustomStart ?? '');
+    setInputValue('nicotine-vape-baseline-end', normalized.nicotineVapeBaselineCustomEnd ?? '');
+    setInputValue('nicotine-vape-current-vpm', formatTaperFormNumber(normalized.currentVapesPerMonth));
+    setInputValue('nicotine-vape-goal-vpm', formatTaperFormNumber(normalized.goalVapesPerMonth ?? normalized.monthlyMax));
+    setInputValue('nicotine-vape-current-gap', formatTaperFormNumber(
+        normalized.currentDaysBetweenPurchases ?? normalized.currentBuyFrequencyDays
+    ));
+    setInputValue('nicotine-vape-goal-gap', formatTaperFormNumber(
+        normalized.goalDaysBetweenPurchases ?? normalized.goalBuyFrequencyDays
+    ));
+    setInputValue('nicotine-vape-current-lifespan', formatTaperFormNumber(normalized.currentLifespanDays));
+    setInputValue('nicotine-vape-goal-lifespan', formatTaperFormNumber(normalized.goalLifespanDays));
+    setInputValue('nicotine-vape-current-puffs', formatTaperFormNumber(
+        normalized.currentPuffsPerDay ?? normalized.startingDailyAverage
+    ));
+    setInputValue('nicotine-vape-goal-puffs', formatTaperFormNumber(
+        normalized.goalPuffsPerDay ?? normalized.goalDailyAverage
+    ));
+    setInputValue('nicotine-vape-current-strength', formatTaperFormNumber(
+        normalized.currentNicotineMgPerMl ?? normalized.startingNicotineMgPerMl
+    ));
+    setInputValue('nicotine-vape-goal-strength', formatTaperFormNumber(normalized.goalNicotineMgPerMl));
+    setInputValue('nicotine-vape-current-spend', formatTaperFormNumber(normalized.currentMonthlySpend));
+    setInputValue('nicotine-vape-goal-spend', formatTaperFormNumber(
+        normalized.goalMonthlySpend ?? normalized.monthlySpendCap
+    ));
+    setInputValue('nicotine-vape-monthly-spend-cap', formatTaperFormNumber(
+        normalized.monthlySpendCap ?? normalized.goalMonthlySpend
+    ));
+    setInputValue('nicotine-vape-weekly-spend-cap', formatTaperFormNumber(normalized.weeklySpendCap));
+    setInputValue('nicotine-vape-no-buy-days', formatTaperFormNumber(normalized.optionalNoBuyDays));
+    setInputValue('nicotine-vape-free-days', formatTaperFormNumber(normalized.optionalNicotineFreeDays));
+    setInputValue('nicotine-vape-delay-first-use', formatTaperFormNumber(normalized.delayFirstUseMinutes));
+    setInputValue('nicotine-vape-min-break', formatTaperFormNumber(normalized.minBreakBetweenSessionsMinutes));
+    setInputValue('nicotine-vape-bedtime-cutoff', normalized.bedtimeCutoff ?? '');
+    setInputValue('nicotine-vape-no-use-blocks', Array.isArray(normalized.noUseBlocks)
+        ? normalized.noUseBlocks.join(', ')
+        : (normalized.noUseBlocks || ''));
+    setInputValue('nicotine-vape-strength-steps', Array.isArray(normalized.nicotineStrengthSteps)
+        ? normalized.nicotineStrengthSteps.join(', ')
+        : (normalized.nicotineStrengthSteps ?? NICOTINE_STRENGTH_STEP_DEFAULTS.join(', ')));
+    if (normalized.nicotineVapeBaseline) renderNicotineVapeBaselineMetrics(normalized.nicotineVapeBaseline);
+    setInputValue('weekly-max', formatTaperFormNumber(normalized.weeklyMax));
+    setInputValue('monthly-max', formatTaperFormNumber(normalized.monthlyMax));
+    setInputValue('taper-notes', normalized.notes ?? normalized.taperNotes ?? '');
     const dailyEl = document.getElementById('do-not-surpass-daily');
     const weeklyEl = document.getElementById('do-not-surpass-weekly');
-    if (dailyEl) dailyEl.checked = plan.doNotSurpassDaily !== false;
-    if (weeklyEl) weeklyEl.checked = !!plan.doNotSurpassWeekly;
-    toggleTaperPlanTypeFields();
-    if (isManualWeeklyPlan(plan)) {
-        const substanceId = plan.substanceId || getTaperSubstanceId();
-        populateManualWeeklyUnitSelect(substanceId, plan.manualWeeklyUnit);
-        setManualWeeklyMode(plan.manualWeeklyMode || 'amount', { skipRender: true });
-        setInputValue('manual-weekly-baseline', plan.manualWeeklyBaseline ?? '');
-        renderManualWeeklyTargetsEditor(plan.manualWeeklyTargets || []);
+    if (dailyEl) {
+        const dailyVal = normalized.doNotSurpassDaily ?? normalized.warnBeforeSurpass;
+        dailyEl.checked = dailyVal !== false;
     }
+    if (weeklyEl) weeklyEl.checked = !!normalized.doNotSurpassWeekly;
+
+    if (isManualWeeklyPlan(normalized)) {
+        populateManualWeeklyUnitSelect(substanceId, normalized.manualWeeklyUnit);
+        setManualWeeklyMode(normalized.manualWeeklyMode || 'amount', { skipRender: true });
+        setInputValue('manual-weekly-baseline', formatTaperFormNumber(normalized.manualWeeklyBaseline));
+        renderManualWeeklyTargetsEditor(normalized.manualWeeklyTargets || []);
+    }
+
     const purchaseEnabledEl = document.getElementById('purchase-taper-enabled');
-    if (purchaseEnabledEl) purchaseEnabledEl.checked = !!plan.purchaseTaperEnabled;
-    if (plan.purchaseTaperEnabled) {
-        fillBuyingReductionSettingsForm(plan);
+    if (purchaseEnabledEl) purchaseEnabledEl.checked = !!normalized.purchaseTaperEnabled;
+    if (normalized.purchaseTaperEnabled) {
+        fillBuyingReductionSettingsForm(normalized);
     } else {
-        fillBuyingReductionSettingsForm({ buyingReductionSettings: getDefaultBuyingReductionSettings(), purchaseTaperEnabled: false });
+        fillBuyingReductionSettingsForm({
+            buyingReductionSettings: normalized.buyingReductionSettings || getDefaultBuyingReductionSettings(),
+            purchaseTaperEnabled: false
+        });
     }
     togglePurchaseTaperFields();
+    markTaperFormClean();
 }
 
 function setDefaultTaperDates() {
@@ -49562,6 +49969,9 @@ function resolveTaperFormEditingPlanId() {
 
 function handleTaperSubmit(e) {
     e.preventDefault();
+    if (!taperFormInitialized) {
+        return alert('Plan form is still loading. Please wait a moment and try again.');
+    }
     const editingPlanId = resolveTaperFormEditingPlanId();
     const existingPlan = editingPlanId ? getTaperPlanById(editingPlanId) : null;
     const substanceId = existingPlan?.substanceId
@@ -49688,6 +50098,7 @@ function handleTaperSubmit(e) {
 
     ensureTaperPlansV2(appData);
     const scrollY = typeof window !== 'undefined' ? window.scrollY : 0;
+    if (existingPlan) createAutoBackup('before-taper-plan-save');
     const built = buildTaperPlanFromForm(substanceId, existingPlan);
     built.name = planName;
     const setPrimary = !!document.getElementById('taper-set-primary')?.checked;
@@ -49695,19 +50106,11 @@ function handleTaperSubmit(e) {
 
     if (existingPlan) {
         const preservedId = existingPlan.id;
-        const preservedCreatedAt = existingPlan.createdAt;
-        const previousWeekly = existingPlan.weeklyTargets;
-        const previousStatus = getTaperPlanStatus(existingPlan);
         const previousPrimary = !!existingPlan.isPrimary;
-        Object.assign(existingPlan, built);
-        // Update in place — never mint a new id when editing (even if the name changes).
+        applyBuiltTaperPlanToExisting(existingPlan, built);
         existingPlan.id = preservedId;
-        existingPlan.createdAt = preservedCreatedAt;
-        existingPlan.substanceId = substanceId;
-        existingPlan.status = previousStatus;
-        existingPlan.isPaused = previousStatus === 'paused';
+        existingPlan.name = planName;
         existingPlan.isPrimary = previousPrimary;
-        existingPlan.weeklyTargets = mergeWeeklyTargetsPreservingProgress(previousWeekly, built.weeklyTargets);
         if (setPrimary) setTaperPlanPrimary(existingPlan.id, substanceId);
         selectedTaperPlanId = preservedId;
     } else {
@@ -49726,6 +50129,7 @@ function handleTaperSubmit(e) {
     taperEditingPlan = false;
     taperFormPlanId = null;
     setInputValue('taper-editing-plan-id', '');
+    resetTaperFormLifecycleState();
     document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
     setText('taper-generate-btn', 'Save Plan');
     setText('taper-setup-title', 'Create Taper Plan');
@@ -50212,10 +50616,13 @@ function editTaperPlan() {
 }
 
 function cancelTaperEdit() {
+    if (taperFormDirty && !confirmDiscardTaperFormChanges()) return;
     taperEditingPlan = false;
     taperFormPlanId = null;
     setInputValue('taper-editing-plan-id', '');
+    resetTaperFormLifecycleState();
     document.getElementById('taper-setup')?.classList.add('hidden');
+    document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
     setText('taper-generate-btn', 'Save Plan');
     setText('taper-setup-title', 'Create Taper Plan');
     refreshTaperDashboard();
@@ -52966,6 +53373,23 @@ function __getRecoveryTrackerTestExports() {
         handleTaperSubmit,
         editTaperPlanById,
         buildTaperPlanFromForm,
+        fillTaperFormFromPlan,
+        normalizePlanRecordForEditForm,
+        formatTaperFormNumber,
+        resolvePlanWeeklyMaxForForm,
+        applyBuiltTaperPlanToExisting,
+        getTaperFormWritableFields,
+        getTaperFormSnapshot,
+        markTaperFormClean,
+        resetTaperFormLifecycleState,
+        taperFormInitializedRef: {
+            get value() { return taperFormInitialized; },
+            set value(v) { taperFormInitialized = !!v; }
+        },
+        taperFormDirtyRef: {
+            get value() { return taperFormDirty; },
+            set value(v) { taperFormDirty = !!v; }
+        },
         getTaperPlanById,
         getSelectedTaperPlan,
         selectedTaperPlanIdRef: {

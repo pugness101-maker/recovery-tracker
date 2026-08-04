@@ -183,6 +183,7 @@ test('editing a taper plan updates in place and keeps the same active plan id', 
         setPrimary: true
     });
 
+    rt.taperFormInitializedRef.value = true;
     const beforeCount = rt.__getTestAppData().taperPlansV2.length;
     rt.handleTaperSubmit({ preventDefault() {} });
 
