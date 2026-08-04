@@ -18,7 +18,12 @@ run('node', ['--check', 'app.js']);
 // Only run tests if test files exist
 const testsDir = join(root, 'tests');
 if (existsSync(testsDir) && readdirSync(testsDir).length > 0) {
-    run('node', ['--test', 'tests/']);
+    try {
+        run('node', ['--test', 'tests/']);
+    } catch (e) {
+        console.error('Test execution failed:', e.message);
+        throw e;
+    }
 }
 
 mkdirSync(dist, { recursive: true });
