@@ -263,6 +263,54 @@ test('contrast warning and theme text overrides', () => {
     assert.notEqual(dark[0].colors.text, light[0].colors.text);
 });
 
+test('optional status labels: empty label colors without injecting rule names', () => {
+    const rt = setup();
+    rt.persistConditionalColorRulesState({
+        enabled: true,
+        rules: [
+            rt.normalizeConditionalColorRule({
+                id: 'color-only',
+                name: 'Untitled rule',
+                statusLabel: '',
+                metric: 'useAmount',
+                operator: 'gt',
+                value: 0,
+                priority: 50,
+                sectionScope: ['all'],
+                substanceScope: 'all',
+                colors: { background: '#222', text: '#0f0', border: '#0f0' }
+            })
+        ]
+    });
+    const result = rt.evaluateConditionalColorRules({
+        metric: 'useAmount',
+        section: 'useHistory',
+        value: 3
+    });
+    assert.equal(result.matched.length, 1);
+    assert.equal(result.labels.length, 0);
+    assert.ok(result.style);
+    assert.equal(result.style.text, '#00ff00');
+    const html = rt.wrapWithConditionalColor('12.5 g', result, { keepLabel: true });
+    assert.match(html, /12\.5 g/);
+    assert.doesNotMatch(html, /Untitled rule/);
+    assert.doesNotMatch(html, /ccr-status-label/);
+
+    const saved = rt.saveConditionalColorRule({
+        name: 'No label rule',
+        statusLabel: '',
+        metric: 'spend',
+        operator: 'gt',
+        value: 1,
+        priority: 40,
+        sectionScope: ['spending'],
+        substanceScope: 'all',
+        colors: { background: '#111', text: '#fff', border: '#fff' }
+    });
+    assert.equal(saved.statusLabel, '');
+    assert.equal(rt.renderConditionalColorLabels(result), '');
+});
+
 test('disabled engine returns no styles', () => {
     const rt = setup();
     rt.setConditionalColorRulesEnabled(false);

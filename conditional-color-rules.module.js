@@ -564,7 +564,7 @@ function evaluateConditionalColorRules(context = {}, data = appData) {
     if (!matched.length) return empty;
 
     const labels = matched
-        .map(r => r.statusLabel || r.name)
+        .map(r => (r.statusLabel || '').trim())
         .filter(Boolean)
         .filter((v, i, arr) => arr.indexOf(v) === i);
 
@@ -601,9 +601,8 @@ function buildConditionalColorInlineStyle(result) {
 }
 
 function renderConditionalColorLabels(result, { fallbackLabel = '' } = {}) {
-    const labels = (result?.labels && result.labels.length)
-        ? result.labels
-        : (fallbackLabel ? [fallbackLabel] : []);
+    const labels = (result?.labels || []).filter(Boolean);
+    // Only explicit rule status labels — never invent text from rule names or fallbacks.
     if (!labels.length) return '';
     return labels.map(label => {
         const style = buildConditionalColorInlineStyle(result);
@@ -614,7 +613,7 @@ function renderConditionalColorLabels(result, { fallbackLabel = '' } = {}) {
 function wrapWithConditionalColor(innerHtml, result, { keepLabel = true, fallbackLabel = '' } = {}) {
     if (!result?.matched?.length) return innerHtml;
     const style = buildConditionalColorInlineStyle(result);
-    const labelsHtml = keepLabel ? renderConditionalColorLabels(result, { fallbackLabel }) : '';
+    const labelsHtml = keepLabel ? renderConditionalColorLabels(result) : '';
     return `<span class="ccr-wrap"${style ? ` style="${escapeAttr(style)}"` : ''}>${innerHtml}${labelsHtml ? ` ${labelsHtml}` : ''}</span>`;
 }
 
@@ -693,7 +692,10 @@ function evaluateTaperColors(planned, actual, status, options = {}, data = appDa
         };
     }
     const style = results.find(r => r.style)?.style || null;
-    const labels = matched.map(r => r.statusLabel || r.name).filter((v, i, a) => v && a.indexOf(v) === i);
+    const labels = matched
+        .map(r => (r.statusLabel || '').trim())
+        .filter(Boolean)
+        .filter((v, i, a) => a.indexOf(v) === i);
     const cssText = style
         ? [
             style.background ? `background:${style.background}` : '',
@@ -927,9 +929,11 @@ function updateCcrLivePreview() {
     const warn = document.getElementById('ccr-contrast-warning');
     if (preview) {
         const style = buildConditionalColorInlineStyle({ style: draft.colors, matched: [draft] });
-        const label = draft.statusLabel || draft.name || 'Preview';
-        preview.innerHTML = `<span class="ccr-preview-swatch"${style ? ` style="${escapeAttr(style)}"` : ''}>${escapeHtml(label)}</span>
-            <span class="ccr-preview-sample"${style ? ` style="${escapeAttr(style)}"` : ''}>Sample value 12.5</span>`;
+        const label = (draft.statusLabel || '').trim();
+        const sample = `<span class="ccr-preview-sample"${style ? ` style="${escapeAttr(style)}"` : ''}>Sample value 12.5</span>`;
+        preview.innerHTML = label
+            ? `<span class="ccr-preview-swatch"${style ? ` style="${escapeAttr(style)}"` : ''}>${escapeHtml(label)}</span>${sample}`
+            : sample;
     }
     if (warn) {
         const bg = draft.colors.background.startsWith('#')
