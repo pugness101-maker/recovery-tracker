@@ -3035,7 +3035,7 @@ function renderChangeHistoryPanel() {
                 <span class="change-history-time">${escapeHtml(formatLastSaved(entry.savedAt))}</span>
                 ${entry.detail?.summary ? `<div class="field-hint">${escapeHtml(entry.detail.summary)}</div>` : ''}
             </div>
-            <button type="button" class="taper-chip-btn" onclick="restoreChangeHistoryEntry('${entry.id}')">Restore</button>
+            <button type="button" class="taper-chip-btn" onclick="restoreChangeHistoryEntry('${escapeAttr(entry.id)}')">Restore</button>
         </div>`).join('');
 }
 
@@ -19081,6 +19081,7 @@ function ctEscAttr(value) {
     return String(value ?? '')
         .replace(/&/g, '&amp;')
         .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;');
 }
@@ -24990,7 +24991,7 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
     const dataLabel = ` data-label="${escapeAttr(label)}"`;
     switch (colId) {
         case 'select':
-            return `<td class="use-history-cb-col" data-col="${colId}"><input type="checkbox" class="use-history-row-cb" data-log-id="${entry.id}" aria-label="Select session" ${checked}></td>`;
+            return `<td class="use-history-cb-col" data-col="${colId}"><input type="checkbox" class="use-history-row-cb" data-log-id="${escapeAttr(entry.id)}" aria-label="Select session" ${checked}></td>`;
         case 'date':
             return `<td data-col="${colId}"${dataLabel}>${formatDate(entry.date)}</td>`;
         case 'start':
@@ -25000,7 +25001,7 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
         case 'duration':
             return `<td data-col="${colId}"${dataLabel}>${hideTimeStats ? '—' : formatDurationHours(entry.durationHours)}</td>`;
         case 'substance':
-            return `<td data-col="${colId}"${dataLabel}>${sub.icon || ''} ${sub.name}</td>`;
+            return `<td data-col="${colId}"${dataLabel}>${escapeHtml(sub.icon || '')} ${escapeHtml(sub.name)}</td>`;
         case 'productType':
             if (isWeedTrackingMode(getUseSubstanceId(entry))) {
                 return `<td data-col="${colId}"${dataLabel}>${escapeHtml(getWeedLogProductTypeLabel(entry))}</td>`;
@@ -25107,10 +25108,10 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
             return `<td data-col="${colId}"${dataLabel}>${renderBreakSincePreviousCell(entry)}</td>`;
         case 'inventory':
         case 'supply':
-            return `<td class="supply-cell session-supply-cell" data-col="inventory"${dataLabel}>${formatInventoryLinkDisplay(entry)}</td>`;
+            return `<td class="supply-cell session-supply-cell" data-col="inventory"${dataLabel}>${escapeHtml(formatInventoryLinkDisplay(entry))}</td>`;
         case 'notes': {
             const splitNote = formatOvernightSplitNote(entry, sub.id);
-            let notesHtml = entry.notes || '';
+            let notesHtml = escapeHtml(entry.notes || '');
             if (isPercentLeftDistributedChildLog(entry)) {
                 notesHtml = `${notesHtml ? `${notesHtml}<br>` : ''}<span class="use-history-est-label">Estimated daily use from percent-left log</span>`;
             }
@@ -25289,7 +25290,7 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
         case 'supply':
             return phTd(
                 'supply',
-                `<span class="purchase-supply-status ${supply.className}">${supply.label}</span>`,
+                `<span class="purchase-supply-status ${escapeAttr(supply.className)}">${escapeHtml(supply.label)}</span>`,
                 'supply-cell'
             );
         case 'cost': {
@@ -25302,36 +25303,36 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
             );
         }
         case 'store':
-            return phTd('store', typeof formatPurchaseSourceDisplay === 'function'
+            return phTd('store', escapeHtml(typeof formatPurchaseSourceDisplay === 'function'
                 ? formatPurchaseSourceDisplay(purchase)
-                : (store || '—'));
+                : (store || '—')));
         case 'payment':
-            return phTd('payment', purchase.paymentMethod || '—');
+            return phTd('payment', escapeHtml(purchase.paymentMethod || '—'));
         case 'costPerUnit': {
             const unitCpu = getPurchaseHistoryCostPerUnit(purchase, totalNum);
             const unitSuffix = getPurchaseHistoryCostPerUnitSuffix(purchase);
             return phTd('costPerUnit', Number.isFinite(unitCpu) ? (fmtSheetMoney(unitCpu, cur) + '/' + unitSuffix) : '—');
         }
         case 'acquisitionType':
-            return phTd('acquisitionType', getPurchaseAcquisitionType(purchase) || '—');
+            return phTd('acquisitionType', escapeHtml(getPurchaseAcquisitionType(purchase) || '—'));
         case 'supplier':
-            return phTd('supplier', (typeof financialPurchaseSupplier === 'function' ? financialPurchaseSupplier(purchase) : (purchase.store || getPurchaseGiftSource(purchase) || '')) || '—');
+            return phTd('supplier', escapeHtml((typeof financialPurchaseSupplier === 'function' ? financialPurchaseSupplier(purchase) : (purchase.store || getPurchaseGiftSource(purchase) || '')) || '—'));
         case 'giftRecipient':
-            return phTd('giftRecipient', getPurchaseGiftRecipient(purchase) || '—');
+            return phTd('giftRecipient', escapeHtml(getPurchaseGiftRecipient(purchase) || '—'));
         case 'runningMonthlySpend':
-            return phTd('runningMonthlySpend', ctx.runningMonthlySpendLabel || '—');
+            return phTd('runningMonthlySpend', escapeHtml(ctx.runningMonthlySpendLabel || '—'));
         case 'runningYearlySpend':
-            return phTd('runningYearlySpend', ctx.runningYearlySpendLabel || '—');
+            return phTd('runningYearlySpend', escapeHtml(ctx.runningYearlySpendLabel || '—'));
         case 'budgetStatus':
-            return phTd('budgetStatus', ctx.budgetStatusLabel || '—');
+            return phTd('budgetStatus', escapeHtml(ctx.budgetStatusLabel || '—'));
         case 'productType':
-            return phTd('productType', (typeof purchaseAnalyticsProductType === 'function' ? purchaseAnalyticsProductType(purchase) : (purchase.weedProductType || purchase.productType || purchase.flavor || '')) || '—');
+            return phTd('productType', escapeHtml((typeof purchaseAnalyticsProductType === 'function' ? purchaseAnalyticsProductType(purchase) : (purchase.weedProductType || purchase.productType || purchase.flavor || '')) || '—'));
         case 'inventoryLifespan':
             return phTd('inventoryLifespan', typeof purchaseHistoryInventoryLifespanLabel === 'function' ? purchaseHistoryInventoryLifespanLabel(purchase) : (supplyDurationLabel || '—'));
         case 'giftStatus':
             return phTd('giftStatus', typeof purchaseHistoryGiftStatusLabel === 'function' ? purchaseHistoryGiftStatusLabel(purchase) : '—');
         case 'linkedUsers':
-            return phTd('linkedUsers', typeof purchaseHistoryLinkedUsersLabel === 'function' ? purchaseHistoryLinkedUsersLabel(purchase) : '—');
+            return phTd('linkedUsers', escapeHtml(typeof purchaseHistoryLinkedUsersLabel === 'function' ? purchaseHistoryLinkedUsersLabel(purchase) : '—'));
         case 'purchaseQualityRating':
             return phTd('purchaseQualityRating', typeof purchaseHistoryQualityRating === 'function' ? purchaseHistoryQualityRating(purchase) : '—');
         case 'flavor': {
@@ -25339,7 +25340,7 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
             return phTd('flavor', flavor ? escapeHtml(flavor) : '—', 'purchase-flavor-cell');
         }
         case 'notes':
-            return phTd('notes', purchase.notes || '—', 'notes-cell');
+            return phTd('notes', escapeHtml(purchase.notes || '—'), 'notes-cell');
         case 'break':
             return phTd('break', breakCell);
         case 'actions': {
@@ -26112,22 +26113,22 @@ function renderSubstancesList() {
         item.style.borderLeftColor = sub.color;
         item.innerHTML = `
             <div class="substance-card-main">
-                <span class="substance-card-icon">${sub.icon}</span>
+                <span class="substance-card-icon">${escapeHtml(sub.icon)}</span>
                 <div>
-                    <strong>${sub.name}</strong>${sub.isMain ? ' <span class="main-badge">⭐ Main</span>' : ''}
+                    <strong>${escapeHtml(sub.name)}</strong>${sub.isMain ? ' <span class="main-badge">⭐ Main</span>' : ''}
                     <div class="substance-card-meta">
-                        ${sub.defaultUnit} · ${sub.costTrackingEnabled ? '💰 cost' : ''}${sub.costTrackingEnabled && sub.taperTrackingEnabled ? ' · ' : ''}${sub.taperTrackingEnabled ? '📉 taper' : ''}
+                        ${escapeHtml(sub.defaultUnit)} · ${sub.costTrackingEnabled ? '💰 cost' : ''}${sub.costTrackingEnabled && sub.taperTrackingEnabled ? ' · ' : ''}${sub.taperTrackingEnabled ? '📉 taper' : ''}
                         ${!sub.active ? ' · <em>archived</em>' : ''}
                     </div>
                 </div>
             </div>
             <div class="substance-card-actions">
-                ${sub.active && !sub.isMain ? `<button type="button" class="secondary-btn main-set-btn" onclick="setMainSubstance('${sub.id}')">⭐ Set as Main</button>` : ''}
-                <button type="button" class="secondary-btn" onclick="openSubstanceEditor('${sub.id}')">Edit</button>
+                ${sub.active && !sub.isMain ? `<button type="button" class="secondary-btn main-set-btn" onclick="setMainSubstance('${escapeAttr(sub.id)}')">⭐ Set as Main</button>` : ''}
+                <button type="button" class="secondary-btn" onclick="openSubstanceEditor('${escapeAttr(sub.id)}')">Edit</button>
                 ${sub.active
-                    ? `<button type="button" class="secondary-btn" onclick="archiveSubstance('${sub.id}')">Archive</button>`
-                    : `<button type="button" class="secondary-btn" onclick="restoreSubstance('${sub.id}')">Restore</button>`}
-                <button type="button" class="delete-btn" onclick="deleteSubstance('${sub.id}')">Delete</button>
+                    ? `<button type="button" class="secondary-btn" onclick="archiveSubstance('${escapeAttr(sub.id)}')">Archive</button>`
+                    : `<button type="button" class="secondary-btn" onclick="restoreSubstance('${escapeAttr(sub.id)}')">Restore</button>`}
+                <button type="button" class="delete-btn" onclick="deleteSubstance('${escapeAttr(sub.id)}')">Delete</button>
             </div>
         `;
         container.appendChild(item);
@@ -34457,17 +34458,17 @@ function renderUseHistoryCard(entry, sub, avgRate) {
            </div>`
         : '';
 
-    return `<article class="use-history-card${warningClass}" data-log-id="${entry.id}">
+    return `<article class="use-history-card${warningClass}" data-log-id="${escapeAttr(entry.id)}">
         <div class="use-history-card-top">
             <label class="use-history-card-check">
-                <input type="checkbox" class="use-history-row-cb" data-log-id="${entry.id}" aria-label="Select entry" ${checked}>
+                <input type="checkbox" class="use-history-row-cb" data-log-id="${escapeAttr(entry.id)}" aria-label="Select entry" ${checked}>
             </label>
             <div class="use-history-card-main">
                 <div class="use-history-card-title-row">
                     ${renderUseLogBadge(entry)}
                     <span class="use-history-card-amount">${amountDisplay}</span>
                 </div>
-                <div class="use-history-card-meta">${sub.icon} ${sub.name} · ${formatDate(entry.date)}${timeRange ? ` · ${timeRange}` : ''}</div>
+                <div class="use-history-card-meta">${escapeHtml(sub.icon)} ${escapeHtml(sub.name)} · ${formatDate(entry.date)}${timeRange ? ` · ${escapeHtml(timeRange)}` : ''}</div>
             </div>
         </div>
         <dl class="use-history-card-details">
@@ -34475,8 +34476,8 @@ function renderUseHistoryCard(entry, sub, avgRate) {
             <div><dt>Count</dt><dd>${countStr}</dd></div>
             ${hideTimeStats ? '' : `<div><dt>Rate</dt><dd>${rateStr}</dd></div>`}
             ${hideTimeStats ? '' : `<div><dt>Break</dt><dd>${entry.breakText || '—'}</dd></div>`}
-            <div class="use-history-card-supply"><dt>Supply</dt><dd>${isVape ? formatVapeLinkedPurchaseLine(entry) || formatInventoryLinkDisplay(entry) : formatInventoryLinkDisplay(entry)}</dd></div>
-            ${entry.notes ? `<div class="use-history-card-notes"><dt>Notes</dt><dd>${entry.notes}</dd></div>` : ''}
+            <div class="use-history-card-supply"><dt>Supply</dt><dd>${escapeHtml(isVape ? formatVapeLinkedPurchaseLine(entry) || formatInventoryLinkDisplay(entry) : formatInventoryLinkDisplay(entry))}</dd></div>
+            ${entry.notes ? `<div class="use-history-card-notes"><dt>Notes</dt><dd>${escapeHtml(entry.notes)}</dd></div>` : ''}
             ${splitHtml}
             ${multiDayHtml}
         </dl>
@@ -34554,12 +34555,12 @@ function renderRecentUseList() {
         const linkedLine = isVape ? formatVapeLinkedPurchaseLine(log) : formatInventoryLinkDisplay(log);
         const splitNote = !isVape ? formatOvernightSplitNote(log, substanceId) : '';
         const sessionBodyHtml = isSessionLog
-            ? `<div class="use-recent-sub">${sub?.icon || ''} ${sub?.name || 'Unknown'}</div>
+            ? `<div class="use-recent-sub">${escapeHtml(sub?.icon || '')} ${escapeHtml(sub?.name || 'Unknown')}</div>
                 <div class="use-recent-date">${formatDate(log.date || '')}</div>
                 <div class="use-recent-time">${timeRange}</div>
                 ${amountDisplay ? `<div class="use-recent-amount-line">${amountDisplay}</div>` : ''}
                 ${enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}`
-            : `<div class="use-recent-sub">${sub?.icon || ''} ${sub?.name || 'Unknown'} · ${formatDate(log.date || '')}${timeRange && timeRange !== '—' ? ` · ${timeRange}` : ''}</div>`;
+            : `<div class="use-recent-sub">${escapeHtml(sub?.icon || '')} ${escapeHtml(sub?.name || 'Unknown')} · ${formatDate(log.date || '')}${timeRange && timeRange !== '—' ? ` · ${escapeHtml(timeRange)}` : ''}</div>`;
         const item = document.createElement('div');
         item.className = `use-recent-card${isCheckpoint || isMultiDayParent ? ' use-recent-checkpoint' : ''}`;
         item.innerHTML = `
@@ -34575,13 +34576,13 @@ function renderRecentUseList() {
                 ${multiDayHtml}
                 ${!isSessionLog && !isVape && enriched.durationHours ? `<div class="use-recent-detail">${formatDurationHours(enriched.durationHours)}</div>` : ''}
                 ${!isVape && formatSecondaryCountDisplay(substanceId, countStr) ? `<div class="use-recent-detail">${formatSecondaryCountDisplay(substanceId, countStr)}</div>` : ''}
-                ${log.notes ? `<div class="use-recent-notes">${log.notes}</div>` : ''}
-                ${log.mood ? `<div class="use-recent-detail">Mood: ${log.mood}</div>` : ''}
-                ${log.trigger ? `<div class="use-recent-detail">Trigger: ${log.trigger}</div>` : ''}
+                ${log.notes ? `<div class="use-recent-notes">${escapeHtml(log.notes)}</div>` : ''}
+                ${log.mood ? `<div class="use-recent-detail">Mood: ${escapeHtml(log.mood)}</div>` : ''}
+                ${log.trigger ? `<div class="use-recent-detail">Trigger: ${escapeHtml(log.trigger)}</div>` : ''}
                 ${log.cravingLevel != null ? `<div class="use-recent-detail">Craving: ${log.cravingLevel}/10</div>` : ''}
                 ${log.stressLevel != null ? `<div class="use-recent-detail">Stress: ${log.stressLevel}/10</div>` : ''}
                 ${splitNote ? `<div class="use-recent-detail use-history-split-note cal-muted">${splitNote}</div>` : ''}
-                <div class="use-recent-supply">${linkedLine}</div>
+                <div class="use-recent-supply">${escapeHtml(linkedLine)}</div>
             </div>
             <div class="use-recent-actions">
                 <button type="button" class="secondary-btn" onclick="editUseEntry(${log.id})">Edit</button>
@@ -34946,7 +34947,7 @@ function getPurchaseAcquisitionBadgeInfo(purchase) {
 function renderPurchaseAcquisitionBadge(purchase) {
     const info = getPurchaseAcquisitionBadgeInfo(purchase);
     if (!info) return '';
-    return ` <span class="use-log-badge ${info.className}">${info.label}</span>`;
+    return ` <span class="use-log-badge ${escapeAttr(info.className)}">${escapeHtml(info.label)}</span>`;
 }
 
 function getBuyFormAcquisitionType() {
@@ -36258,7 +36259,9 @@ function escapeAttr(str) {
     return String(str || '')
         .replace(/&/g, '&amp;')
         .replace(/"/g, '&quot;')
-        .replace(/</g, '&lt;');
+        .replace(/'/g, '&#39;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;');
 }
 
 function escapeHtml(str) {
@@ -36266,7 +36269,8 @@ function escapeHtml(str) {
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
         .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
 }
 
 function getLogSupplyStartDate(log) {
@@ -36581,10 +36585,10 @@ function renderPurchaseLinkedLogsPanel(purchase) {
     const isVape = isVapePuffPurchase(purchase);
     const isXanax = isXanaxPurchase(purchase);
     const header = isVape
-        ? `${formatDate(purchase.date)} · ${formatVapePurchaseTitleLine(purchase)} · ${formatAmountWithUnit(getVapeFullPuffCount(purchase), 'puffs')} @100%`
+        ? `${formatDate(purchase.date)} · ${escapeHtml(formatVapePurchaseTitleLine(purchase))} · ${formatAmountWithUnit(getVapeFullPuffCount(purchase), 'puffs')} @100%`
         : isXanax
-            ? `${formatDate(purchase.date)} purchase${store ? ` · ${store}` : ''} · ${formatXanaxPurchaseDisplayLine(purchase)}`
-            : `${formatDate(purchase.date)} purchase${store ? ` · ${store}` : ''} · ${formatAmountWithUnit(metrics.quantityBought, displayUnit)}`;
+            ? `${formatDate(purchase.date)} purchase${store ? ` · ${escapeHtml(store)}` : ''} · ${formatXanaxPurchaseDisplayLine(purchase)}`
+            : `${formatDate(purchase.date)} purchase${store ? ` · ${escapeHtml(store)}` : ''} · ${formatAmountWithUnit(metrics.quantityBought, displayUnit)}`;
 
     const totalsHtml = isVape
         ? renderVapePurchaseLifecycleHtml(purchase)
@@ -36629,9 +36633,9 @@ function renderPurchaseLinkedLogsPanel(purchase) {
             <td>${durationMs != null ? formatVapeDuration(durationMs) : '—'}</td>
             <td>${formatAmount(amount)} puffs</td>
             <td>${log.percentRemaining != null ? `${log.percentRemaining}%` : '—'}</td>
-            <td>${getTransactionTypeShortLabel(log)}</td>
-            <td>${formatInventoryLinkDisplay(log)}</td>
-            <td class="session-notes-cell">${log.notes || ''}</td>
+            <td>${escapeHtml(getTransactionTypeShortLabel(log))}</td>
+            <td>${escapeHtml(formatInventoryLinkDisplay(log))}</td>
+            <td class="session-notes-cell">${escapeHtml(log.notes || '')}</td>
         </tr>`;
             return;
         }
@@ -36642,9 +36646,9 @@ function renderPurchaseLinkedLogsPanel(purchase) {
             <td>${enriched.durationHours != null ? formatDurationHours(enriched.durationHours) : '—'}</td>
             <td>${formatAmountWithUnit(amount, displayUnit)}</td>
             <td>${count !== '' && count != null ? count : '—'}</td>
-            <td>${getTransactionTypeShortLabel(log)}</td>
-            <td>${formatInventoryLinkDisplay(log)}</td>
-            <td class="session-notes-cell">${log.notes || ''}</td>
+            <td>${escapeHtml(getTransactionTypeShortLabel(log))}</td>
+            <td>${escapeHtml(formatInventoryLinkDisplay(log))}</td>
+            <td class="session-notes-cell">${escapeHtml(log.notes || '')}</td>
         </tr>`;
     });
 
@@ -36675,7 +36679,7 @@ function togglePurchaseLinkedLogs(purchaseId) {
     else expandedPurchaseIds.add(id);
 
     const detail = document.getElementById(`purchase-detail-${id}`);
-    const btn = document.querySelector(`[data-purchase-toggle="${String(id).replace(/"/g, '\\"')}"]`);
+    const btn = document.querySelector(`[data-purchase-toggle="${CSS.escape(String(id))}"]`);
     const expanded = expandedPurchaseIds.has(id);
     if (detail) detail.classList.toggle('hidden', !expanded);
     if (btn) {
@@ -37237,7 +37241,7 @@ function renderAllSubstancesInventoryDashboard(container) {
         const name = getSubstanceDisplayName(sub);
         const unit = getSubstanceDisplayUnit(sub.id);
         const remaining = getTotalRemainingSupply(sub.id);
-        supplyLines.push(`<li><strong>${name}</strong> · ${formatAmount(remaining)} ${unit}</li>`);
+        supplyLines.push(`<li><strong>${escapeHtml(name)}</strong> · ${formatAmount(remaining)} ${escapeHtml(unit)}</li>`);
 
         const purchases = (appData.purchases || [])
             .filter(p => getPurchaseSubstanceId(p) === sub.id)
@@ -37245,9 +37249,9 @@ function renderAllSubstancesInventoryDashboard(container) {
         const totalBought = purchases.reduce((s, p) => s + (parseFloat(getPurchaseQuantity(p)) || 0), 0);
         const pct = totalBought > 0 && remaining != null ? remaining / totalBought : null;
         if (pct != null && pct <= 0.15 && remaining > INVENTORY_EPS) {
-            lowLines.push(`<li>Low inventory: ${name} about ${formatAmount(remaining)} ${unit} remaining.</li>`);
+            lowLines.push(`<li>Low inventory: ${escapeHtml(name)} about ${formatAmount(remaining)} ${escapeHtml(unit)} remaining.</li>`);
         } else if (purchases.length && remaining != null && remaining <= INVENTORY_EPS) {
-            lowLines.push(`<li>${name} inventory is depleted.</li>`);
+            lowLines.push(`<li>${escapeHtml(name)} inventory is depleted.</li>`);
         }
 
         if (purchases[0]) {
@@ -37255,7 +37259,7 @@ function renderAllSubstancesInventoryDashboard(container) {
             const summary = isVapePuffPurchase(p)
                 ? formatVapePurchaseTitleLine(p)
                 : (p.store || p.location || '');
-            recentLines.push(`<li><strong>${name}</strong> · ${formatDate(p.date)}${summary ? ` · ${escapeHtml(summary)}` : ''}</li>`);
+            recentLines.push(`<li><strong>${escapeHtml(name)}</strong> · ${formatDate(p.date)}${summary ? ` · ${escapeHtml(summary)}` : ''}</li>`);
         }
     });
 
@@ -37358,7 +37362,7 @@ function renderMiniUsageChart(containerId, buckets, emptyHint = 'No data yet') {
         bar.className = 'chart-bar chart-bar-insight';
         bar.style.height = `${Math.max((data.value / max) * 100, 4)}%`;
         bar.title = `${data.label}: ${formatAmount(data.value)}`;
-        bar.innerHTML = `<span class="chart-bar-value">${formatAmount(data.value)}</span><span class="chart-bar-label">${data.label}</span>`;
+        bar.innerHTML = `<span class="chart-bar-value">${formatAmount(data.value)}</span><span class="chart-bar-label">${escapeHtml(data.label)}</span>`;
         container.appendChild(bar);
     });
 }
@@ -39574,8 +39578,8 @@ function updateBreakStats() {
         } else {
             trendEl.innerHTML = metrics.trend.map(item => `
                 <div class="break-trend-row">
-                    <span>${item.label || item.date || '—'}</span>
-                    <span class="break-trend-value ${getBreakColorClass(item.hours)}">${item.text || formatBreakFromHours(item.hours)}</span>
+                    <span>${escapeHtml(item.label || item.date || '—')}</span>
+                    <span class="break-trend-value ${escapeAttr(getBreakColorClass(item.hours))}">${escapeHtml(item.text || formatBreakFromHours(item.hours))}</span>
                 </div>
             `).join('');
         }
@@ -39645,7 +39649,7 @@ function renderSubstanceCompare() {
         card.className = 'compare-card';
         card.style.borderTopColor = sub.color;
         card.innerHTML = `
-            <div class="compare-header">${sub.icon} ${name}</div>
+            <div class="compare-header">${escapeHtml(sub.icon)} ${escapeHtml(name)}</div>
             <div class="compare-stat"><span>Uses</span><strong>${formatAmount(amount)} ${unit}</strong></div>
             ${sub.costTrackingEnabled ? `<div class="compare-stat"><span>Spent</span><strong>${getCurrencySymbol()}${spent.toFixed(2)}</strong></div>` : ''}
             <div class="compare-stat"><span>Streak</span><strong>${days}d</strong></div>
@@ -40633,7 +40637,7 @@ function renderCompareChartBlock(title, currentSeries, previousSeries, valueKey,
         <div class="stats-compare-chart-rows">
             ${rows.map(r => `
                 <div class="stats-compare-chart-row">
-                    <span class="stats-compare-chart-label">${r.label}</span>
+                    <span class="stats-compare-chart-label">${escapeHtml(r.label)}</span>
                     <div class="stats-compare-chart-bars">
                         <div class="stats-compare-bar current" style="width:${Math.max((r.current / max) * 100, r.current > 0 ? 4 : 0)}%" title="Current: ${fmt(r.current)}"></div>
                         <div class="stats-compare-bar previous" style="width:${Math.max((r.previous / max) * 100, r.previous > 0 ? 4 : 0)}%" title="Previous: ${fmt(r.previous)}"></div>
@@ -41181,8 +41185,8 @@ function renderUseStatsCards(metrics, unit) {
         const label = getUseStatLabel(statId, unit);
         const value = formatUseStatValue(statId, metrics, unit);
         return `<div class="stat-card use-stat-card">
-            <h3>${label}</h3>
-            <p class="stat-value">${value}</p>
+            <h3>${escapeHtml(label)}</h3>
+            <p class="stat-value">${escapeHtml(value)}</p>
         </div>`;
     }).join('');
 }
@@ -42457,7 +42461,7 @@ function renderStatsBuyAnalyticsCards(insights) {
         renderSheetMetricCard('Supply Duration', formatSupplyDurationDays(supplyDurationDays), null),
         renderSheetMetricCard('Break Between Buying', breakBetweenBuying, null),
         renderSheetMetricCard('Remaining Supply', remainingLabel, supplyBadge),
-        renderSheetMetricCard('Top Store', topStore ? `${topStore.store} (${fmtSheetMoney(topStore.cost, cur)})` : '—', null),
+        renderSheetMetricCard('Top Store', topStore ? `${escapeHtml(topStore.store)} (${fmtSheetMoney(topStore.cost, cur)})` : '—', null),
         renderSheetMetricCard('Range', `${formatDate(bounds.startDate)} – ${formatDate(bounds.endDate)}`, null)
     ].join('');
 }
@@ -44088,9 +44092,9 @@ function renderSubstanceStatsBreakdown() {
         card.className = 'stats-substance-card';
         card.style.borderLeftColor = sub.color;
         card.innerHTML = `
-            <h4>${sub.icon} ${sub.name}</h4>
+            <h4>${escapeHtml(sub.icon)} ${escapeHtml(sub.name)}</h4>
             <div class="stats-substance-grid">
-                <div><span>Total uses</span><strong>${uses} ${sub.defaultUnit}</strong></div>
+                <div><span>Total uses</span><strong>${uses} ${escapeHtml(sub.defaultUnit)}</strong></div>
                 <div><span>Money spent</span><strong>${sub.costTrackingEnabled ? getCurrencySymbol() + spent.toFixed(2) : '—'}</strong></div>
                 <div><span>Streak</span><strong>${days}d (best ${best}d)</strong></div>
                 <div><span>Taper</span><strong>${sub.taperTrackingEnabled ? taperPct : '—'}</strong></div>
@@ -44132,7 +44136,7 @@ function renderGiftPartyBreakdown(containerId, totalsMap, unit) {
         return;
     }
     container.innerHTML = sorted.map(([name, amt]) =>
-        `<div class="breakdown-row"><span>${name}</span><strong>${amt.toFixed(1)} ${unit}</strong></div>`
+        `<div class="breakdown-row"><span>${escapeHtml(name)}</span><strong>${amt.toFixed(1)} ${escapeHtml(unit)}</strong></div>`
     ).join('');
 }
 
@@ -44230,7 +44234,7 @@ function renderUsageChart(bounds) {
         bar.style.height = `${Math.max((data.count / max) * 100, 4)}%`;
         const displayCount = isVapeChart ? formatStatsPuffs(data.count) : data.count.toFixed(1);
         bar.title = data.detail ? `${data.detail}: ${displayCount}` : displayCount;
-        bar.innerHTML = `<span class="chart-bar-value">${displayCount}</span><span class="chart-bar-label">${data.label}</span>`;
+        bar.innerHTML = `<span class="chart-bar-value">${escapeHtml(displayCount)}</span><span class="chart-bar-label">${escapeHtml(data.label)}</span>`;
         container.appendChild(bar);
     });
 }
@@ -48711,9 +48715,9 @@ function renderManageTaperPlansList() {
             plan.isPrimary ? '<span class="taper-plan-badge taper-plan-badge-primary">Primary</span>' : '',
             `<span class="taper-plan-badge taper-plan-badge-${status}">${getTaperPlanStatusLabel(status)}</span>`
         ].filter(Boolean).join(' ');
-        return `<article class="manage-taper-plan-card" data-plan-id="${plan.id}">
+        return `<article class="manage-taper-plan-card" data-plan-id="${escapeAttr(plan.id)}">
             <header class="manage-taper-plan-header">
-                <h4>${plan.name}</h4>
+                <h4>${escapeHtml(plan.name)}</h4>
                 <div class="manage-taper-plan-badges">${badges}</div>
             </header>
             <div class="manage-taper-plan-metrics">
@@ -48725,17 +48729,17 @@ function renderManageTaperPlansList() {
                 <div><span>Month remaining</span><strong>${monthLimit != null ? formatTaperAmount(Math.max(0, monthLimit - monthUsed), unit) : '—'}</strong></div>
             </div>
             <div class="manage-taper-plan-actions">
-                <button type="button" class="taper-chip-btn" onclick="openTaperPlanFromManage('${plan.id}')">Open</button>
-                <button type="button" class="taper-chip-btn" onclick="editTaperPlanById('${plan.id}')">Edit</button>
-                <button type="button" class="taper-chip-btn" onclick="duplicateTaperPlanById('${plan.id}')">Duplicate</button>
+                <button type="button" class="taper-chip-btn" onclick="openTaperPlanFromManage('${escapeAttr(plan.id)}')">Open</button>
+                <button type="button" class="taper-chip-btn" onclick="editTaperPlanById('${escapeAttr(plan.id)}')">Edit</button>
+                <button type="button" class="taper-chip-btn" onclick="duplicateTaperPlanById('${escapeAttr(plan.id)}')">Duplicate</button>
                 ${status === 'paused'
-                    ? `<button type="button" class="taper-chip-btn" onclick="resumeTaperPlanById('${plan.id}')">Resume</button>`
+                    ? `<button type="button" class="taper-chip-btn" onclick="resumeTaperPlanById('${escapeAttr(plan.id)}')">Resume</button>`
                     : status === 'active'
-                        ? `<button type="button" class="taper-chip-btn" onclick="pauseTaperPlanById('${plan.id}')">Pause</button>`
+                        ? `<button type="button" class="taper-chip-btn" onclick="pauseTaperPlanById('${escapeAttr(plan.id)}')">Pause</button>`
                         : ''}
-                ${status !== 'completed' ? `<button type="button" class="taper-chip-btn" onclick="completeTaperPlanById('${plan.id}')">Complete</button>` : ''}
-                ${status !== 'archived' ? `<button type="button" class="taper-chip-btn" onclick="archiveTaperPlanById('${plan.id}')">Archive</button>` : ''}
-                <button type="button" class="taper-chip-btn taper-chip-danger" onclick="deleteTaperPlanById('${plan.id}')">Delete</button>
+                ${status !== 'completed' ? `<button type="button" class="taper-chip-btn" onclick="completeTaperPlanById('${escapeAttr(plan.id)}')">Complete</button>` : ''}
+                ${status !== 'archived' ? `<button type="button" class="taper-chip-btn" onclick="archiveTaperPlanById('${escapeAttr(plan.id)}')">Archive</button>` : ''}
+                <button type="button" class="taper-chip-btn taper-chip-danger" onclick="deleteTaperPlanById('${escapeAttr(plan.id)}')">Delete</button>
             </div>
         </article>`;
     }).join('');
@@ -53720,6 +53724,10 @@ function __getRecoveryTrackerTestExports() {
         set statsCompareCustomEnd(v) { statsCompareCustomEnd = v; },
         get currentSubstanceId() { return currentSubstanceId; },
         set currentSubstanceId(v) { currentSubstanceId = v; },
+        escapeHtml,
+        escapeAttr,
+        renderUseHistoryBodyCell,
+        renderUseHistoryCard,
         get document() { return document; },
         get localStorage() { return localStorage; },
         get matchMedia() { return window.matchMedia; },
