@@ -26185,7 +26185,8 @@ function clearInsightsSectionOutputs() {
         'insights-contacts-root',
         'goal-insights-panel',
         'stats-weekly-summary',
-        'stats-monthly-summary'
+        'stats-monthly-summary',
+        'average-use-analytics-root'
     ];
     ids.forEach(id => {
         const el = document.getElementById(id);
@@ -26214,6 +26215,9 @@ function renderInsightsFilteredSections() {
     try {
         if (typeof renderRunningTotalsView === 'function') renderRunningTotalsView();
     } catch (err) { console.error('Running totals render failed', err); }
+    try {
+        if (typeof renderAverageUseAnalyticsView === 'function') renderAverageUseAnalyticsView();
+    } catch (err) { console.error('Average use analytics render failed', err); }
     try {
         if (typeof renderPlanAnalyticsPanel === 'function') renderPlanAnalyticsPanel();
     } catch (err) { console.error('Plan analytics render failed', err); }
@@ -26971,6 +26975,455 @@ function exportRunningTotalsCsv() {
     const csv = lines.join('\n');
     if (typeof downloadTextFile === 'function') {
         downloadTextFile(`running-totals-${rtToday()}.csv`, csv, 'text/csv');
+    }
+    return csv;
+}
+
+
+// ——— Average Use Analytics (Insights → Use Analytics) ———
+
+const AVERAGE_USE_SETTINGS_KEY = 'averageUseAnalytics';
+const AVERAGE_USE_MONTH_DAYS = 365.25 / 12;
+
+function getDefaultAverageUseAnalyticsPrefs() {
+    return {
+        denominatorMode: 'active'
+    };
+}
+
+function ensureAverageUseAnalyticsPrefs(data = appData) {
+    if (!data || typeof data !== 'object') return getDefaultAverageUseAnalyticsPrefs();
+    if (!data.settings || typeof data.settings !== 'object') data.settings = {};
+    if (!data.settings[AVERAGE_USE_SETTINGS_KEY] || typeof data.settings[AVERAGE_USE_SETTINGS_KEY] !== 'object') {
+        data.settings[AVERAGE_USE_SETTINGS_KEY] = getDefaultAverageUseAnalyticsPrefs();
+    }
+    const prefs = data.settings[AVERAGE_USE_SETTINGS_KEY];
+    if (prefs.denominatorMode !== 'full' && prefs.denominatorMode !== 'active') prefs.denominatorMode = 'active';
+    return prefs;
+}
+
+function persistAverageUseAnalyticsPrefs(patch = {}, data = appData) {
+    const prefs = ensureAverageUseAnalyticsPrefs(data);
+    Object.assign(prefs, patch || {});
+    if (prefs.denominatorMode !== 'full' && prefs.denominatorMode !== 'active') prefs.denominatorMode = 'active';
+    if (typeof saveData === 'function') saveData(data);
+    return prefs;
+}
+
+function resolveAverageUseFilters(options = {}, data = appData) {
+    const inf = typeof getInsightsFilters === 'function' ? getInsightsFilters(data) : {};
+    const prefs = ensureAverageUseAnalyticsPrefs(data);
+    return {
+        substanceId: inf.substanceId || 'all',
+        productType: inf.productType || '',
+        dateRangePreset: inf.dateRangePreset || 'last-7',
+        customStart: inf.customStart || '',
+        customEnd: inf.customEnd || '',
+        transactionType: inf.transactionType || '',
+        denominatorMode: prefs.denominatorMode || 'active',
+        ...(options.filters || {})
+    };
+}
+
+function averageUseQualifiesLog(log, filters = {}, data = appData) {
+    if (!log) return false;
+    if (log.isDistributedChild) return false;
+    if (typeof isAlcoholMultiDayChildLog === 'function' && isAlcoholMultiDayChildLog(log)) return false;
+    if (log.parentPercentLogId != null && log.isEstimatedDailyUse) return false;
+    if (typeof isGiftGivenLog === 'function' && isGiftGivenLog(log)) return false;
+    if (typeof isGiftReceivedLog === 'function' && isGiftReceivedLog(log)) return false;
+    if (typeof isInventoryAdjustmentLog === 'function' && isInventoryAdjustmentLog(log)) return false;
+
+    const tx = typeof getLogTransactionType === 'function' ? getLogTransactionType(log) : (log.transactionType || 'use');
+    if (filters.transactionType && tx !== filters.transactionType) return false;
+    if (tx === 'shared_use') {
+        const personal = typeof getLogPersonalAmount === 'function' ? getLogPersonalAmount(log) : parseFloat(log.personalAmount);
+        return Number.isFinite(personal) && personal > 0;
+    }
+    return tx === 'use';
+}
+
+function getAverageUseBounds(filters = {}, data = appData) {
+    const range = {
+        preset: filters.dateRangePreset || 'last-7',
+        startDate: filters.customStart || null,
+        endDate: filters.customEnd || null
+    };
+    if (range.preset !== 'custom') {
+        const previousPreset = statsDateRangePreset;
+        const previousStart = statsCustomStartDate;
+        const previousEnd = statsCustomEndDate;
+        try {
+            statsDateRangePreset = range.preset;
+            statsCustomStartDate = filters.customStart || '';
+            statsCustomEndDate = filters.customEnd || '';
+            const resolved = getStatsDateRange();
+            range.startDate = resolved.startDate;
+            range.endDate = resolved.endDate;
+            range.preset = resolved.preset || range.preset;
+        } finally {
+            statsDateRangePreset = previousPreset;
+            statsCustomStartDate = previousStart;
+            statsCustomEndDate = previousEnd;
+        }
+    } else if (filters.customStart || filters.customEnd) {
+        const today = toDateStr(getStatsReferenceDate());
+        const a = filters.customStart || filters.customEnd || today;
+        const b = filters.customEnd || filters.customStart || today;
+        range.startDate = a <= b ? a : b;
+        range.endDate = a <= b ? b : a;
+    }
+
+    const candidateLogs = (data.logs || []).filter(log => averageUseQualifiesLog(log, { ...filters, transactionType: '' }, data));
+    const activeLogs = rtIsAll(filters.substanceId)
+        ? candidateLogs
+        : candidateLogs.filter(log => logMatchesSubstance(log, filters.substanceId, data));
+    const bounds = resolveStatsRangeBounds(range.startDate, range.endDate, activeLogs);
+    return { ...bounds, preset: range.preset || filters.dateRangePreset || 'last-7' };
+}
+
+function cloneAverageUseLogForMeasure(log, data = appData) {
+    const personal = typeof getLogPersonalAmount === 'function' ? getLogPersonalAmount(log) : (parseFloat(log.amount) || 0);
+    return {
+        ...log,
+        amount: personal,
+        personalAmount: personal,
+        totalAmount: personal,
+        sharedAmount: 0,
+        transactionType: 'use'
+    };
+}
+
+function getAverageUseMeasure(log, data = appData) {
+    const normalized = cloneAverageUseLogForMeasure(log, data);
+    const measure = getRunningTotalsSessionMeasure(normalized, data);
+    const amount = rtNum(measure.accumulateAmount, 0);
+    return {
+        amount,
+        unit: measure.accumulateUnit || measure.sessionUnit || '',
+        unitFamily: measure.unitFamily || 'auto',
+        productType: measure.productType || ''
+    };
+}
+
+function averageUseMonthKey(dateStr) {
+    return String(dateStr || '').slice(0, 7);
+}
+
+function averageUseSafeDivide(total, denominator) {
+    return denominator > 0 ? total / denominator : null;
+}
+
+function buildAverageUseAnalyticsRows(data = appData, options = {}) {
+    const filters = resolveAverageUseFilters(options, data);
+    const bounds = options.bounds || getAverageUseBounds(filters, data);
+    const dayCount = countDaysInRange(bounds.startDate, bounds.endDate);
+    const fullWeeks = dayCount / 7;
+    const fullMonths = dayCount / AVERAGE_USE_MONTH_DAYS;
+    const rowsByKey = new Map();
+
+    (data.logs || []).forEach(log => {
+        if (!averageUseQualifiesLog(log, filters, data)) return;
+        const date = log.date || '';
+        if (!date) return;
+        if (bounds.startDate && date < bounds.startDate) return;
+        if (bounds.endDate && date > bounds.endDate) return;
+        if (!rtIsAll(filters.substanceId) && !logMatchesSubstance(log, filters.substanceId, data)) return;
+        if (filters.productType && getRunningTotalsProductType(log, data) !== filters.productType) return;
+
+        const substanceId = typeof getUseSubstanceId === 'function' ? getUseSubstanceId(log, data) : log.substanceId;
+        const measure = getAverageUseMeasure(log, data);
+        if (!(measure.amount > 0)) return;
+        const key = `${substanceId}::${measure.unitFamily}::${measure.unit}`;
+        if (!rowsByKey.has(key)) {
+            rowsByKey.set(key, {
+                key,
+                substanceId,
+                substanceName: typeof getSubstanceDisplayName === 'function' ? getSubstanceDisplayName(substanceId, data) : substanceId,
+                unit: measure.unit,
+                unitFamily: measure.unitFamily,
+                totalUse: 0,
+                useDaySet: new Set(),
+                weekSet: new Set(),
+                monthSet: new Set(),
+                sessions: 0
+            });
+        }
+        const row = rowsByKey.get(key);
+        row.totalUse += measure.amount;
+        row.useDaySet.add(date);
+        row.weekSet.add(runningTotalsWeekKey(date, data));
+        row.monthSet.add(averageUseMonthKey(date));
+        row.sessions += 1;
+    });
+
+    const sameSubstanceCounts = new Map();
+    rowsByKey.forEach(row => {
+        sameSubstanceCounts.set(row.substanceId, (sameSubstanceCounts.get(row.substanceId) || 0) + 1);
+    });
+
+    return [...rowsByKey.values()]
+        .map(row => {
+            const useDays = row.useDaySet.size;
+            const activeWeeks = row.weekSet.size;
+            const activeMonths = row.monthSet.size;
+            const weekDenominator = filters.denominatorMode === 'full' ? fullWeeks : activeWeeks;
+            const monthDenominator = filters.denominatorMode === 'full' ? fullMonths : activeMonths;
+            const period = `${formatDate(bounds.startDate)} – ${formatDate(bounds.endDate)}`;
+            const hasSplitUnits = (sameSubstanceCounts.get(row.substanceId) || 0) > 1;
+            return {
+                key: row.key,
+                substanceId: row.substanceId,
+                substanceName: row.substanceName,
+                period,
+                periodLabel: rtIsAll(filters.substanceId) || hasSplitUnits
+                    ? `${row.substanceName}${hasSplitUnits ? ` (${row.unit})` : ''} · ${period}`
+                    : period,
+                unit: row.unit,
+                unitFamily: row.unitFamily,
+                totalUse: rtRound(row.totalUse, 6),
+                useDays,
+                calendarDays: dayCount,
+                sessions: row.sessions,
+                avgActiveDay: averageUseSafeDivide(row.totalUse, useDays),
+                avgCalendarDay: averageUseSafeDivide(row.totalUse, dayCount),
+                avgWeek: averageUseSafeDivide(row.totalUse, weekDenominator),
+                avgMonth: averageUseSafeDivide(row.totalUse, monthDenominator),
+                denominators: {
+                    activeDay: useDays,
+                    calendarDay: dayCount,
+                    week: weekDenominator,
+                    month: monthDenominator,
+                    weekMode: filters.denominatorMode,
+                    monthMode: filters.denominatorMode,
+                    fullWeeks,
+                    fullMonths,
+                    activeWeeks,
+                    activeMonths
+                }
+            };
+        })
+        .sort((a, b) => a.substanceName.localeCompare(b.substanceName) || a.unit.localeCompare(b.unit));
+}
+
+function buildAverageUseAnalyticsDataset(data = appData, options = {}) {
+    const filters = resolveAverageUseFilters(options, data);
+    if (options.filters) Object.assign(filters, options.filters);
+    const bounds = getAverageUseBounds(filters, data);
+    const rows = buildAverageUseAnalyticsRows(data, { filters, bounds });
+    return {
+        generatedAt: new Date().toISOString(),
+        filters,
+        bounds,
+        rows,
+        empty: rows.length === 0
+    };
+}
+
+function formatAverageUseAmount(value, unit) {
+    if (value == null || !Number.isFinite(value)) return '—';
+    const formatted = typeof formatAmount === 'function' ? formatAmount(value) : String(rtRound(value, 3));
+    return unit ? `${formatted} ${unit}` : formatted;
+}
+
+function formatAverageUseDenominator(value, label) {
+    if (value == null || !Number.isFinite(value)) return `${label}: —`;
+    const formatted = Number.isInteger(value) ? String(value) : formatAmount(value, 2);
+    return `${label}: ${formatted}`;
+}
+
+function evaluateAverageUseCcr(row, metricValue) {
+    if (typeof evaluateConditionalColorRules !== 'function') return null;
+    return evaluateConditionalColorRules({
+        substanceId: row.substanceId,
+        section: 'insights',
+        metric: 'useAmount',
+        visualTarget: 'valueCell',
+        value: metricValue
+    });
+}
+
+function renderAverageUseValue(row, metricKey) {
+    const unit = metricKey === 'sessions' || metricKey === 'useDays' ? '' : row.unit;
+    const raw = row[metricKey];
+    const text = metricKey === 'sessions' || metricKey === 'useDays'
+        ? String(raw ?? 0)
+        : formatAverageUseAmount(raw, unit);
+    const denom = row.denominators || {};
+    let title = text;
+    if (metricKey === 'avgActiveDay') title = formatAverageUseDenominator(denom.activeDay, 'Denominator active days');
+    if (metricKey === 'avgCalendarDay') title = formatAverageUseDenominator(denom.calendarDay, 'Denominator calendar days');
+    if (metricKey === 'avgWeek') title = `${formatAverageUseDenominator(denom.week, 'Denominator weeks')} (${denom.weekMode === 'full' ? 'full selected range' : 'active periods only'})`;
+    if (metricKey === 'avgMonth') title = `${formatAverageUseDenominator(denom.month, 'Denominator months')} (${denom.monthMode === 'full' ? 'full selected range' : 'active periods only'})`;
+    const ccr = metricKey === 'sessions' || metricKey === 'useDays' ? null : evaluateAverageUseCcr(row, raw);
+    const html = ccr?.matched?.length
+        ? wrapWithConditionalColor(escapeHtml(text), ccr, { keepLabel: false })
+        : escapeHtml(text);
+    return { html, title };
+}
+
+function renderAverageUsePreviousComparison(dataset, row, metricKey) {
+    if (typeof isPreviousPeriodCompareEnabled !== 'function' || !isPreviousPeriodCompareEnabled(appData)) return '';
+    if (!dataset.bounds?.startDate || !dataset.bounds?.endDate) return '';
+    const prevBounds = resolvePreviousPeriodBounds(dataset.bounds, getPreviousPeriodCompareMode(appData));
+    if (!prevBounds?.valid) return '';
+    const previous = buildAverageUseAnalyticsDataset(appData, {
+        filters: {
+            ...dataset.filters,
+            substanceId: row.substanceId,
+            dateRangePreset: 'custom',
+            customStart: prevBounds.startDate,
+            customEnd: prevBounds.endDate
+        }
+    });
+    const prevRow = previous.rows.find(r => r.unitFamily === row.unitFamily && r.unit === row.unit);
+    const currentValue = row[metricKey];
+    const previousValue = prevRow
+        ? (metricKey === 'avgSessionAmount' ? averageUseSafeDivide(prevRow.totalUse, prevRow.sessions) : prevRow[metricKey])
+        : null;
+    const cmp = buildMetricPeriodComparison({
+        current: currentValue,
+        previous: previousValue,
+        metricKind: 'use',
+        unit: row.unit,
+        currentLabel: formatAverageUseAmount(currentValue, row.unit),
+        previousLabel: previousValue == null ? '—' : formatAverageUseAmount(previousValue, row.unit),
+        currentPeriodLabel: 'Current',
+        previousPeriodLabel: prevBounds.label || 'Previous',
+        currentBounds: dataset.bounds,
+        previousBounds: prevBounds
+    });
+    return renderMetricPeriodComparison(cmp, { data: appData, compact: true });
+}
+
+function renderAverageUseCards(dataset) {
+    if (!dataset.rows.length) return '<p class="empty-hint">No qualifying personal use in this range.</p>';
+    return dataset.rows.map(row => {
+        const title = rtIsAll(dataset.filters.substanceId) ? `<h4>${escapeHtml(row.substanceName)}</h4>` : '';
+        const cards = [
+            ['Average per active day', 'avgActiveDay'],
+            ['Average per calendar day', 'avgCalendarDay'],
+            ['Average per week', 'avgWeek'],
+            ['Average per month', 'avgMonth'],
+            ['Average session amount', 'avgSessionAmount'],
+            ['Total use', 'totalUse'],
+            ['Number of use days', 'useDays'],
+            ['Number of sessions', 'sessions']
+        ].map(([label, key]) => {
+            const metricKey = key === 'avgSessionAmount' ? 'avgSessionAmount' : key;
+            const value = key === 'avgSessionAmount'
+                ? averageUseSafeDivide(row.totalUse, row.sessions)
+                : row[metricKey];
+            const display = key === 'useDays' || key === 'sessions'
+                ? String(value ?? 0)
+                : formatAverageUseAmount(value, row.unit);
+            const footerMetric = key === 'useDays' || key === 'sessions' ? null : (key === 'avgSessionAmount' ? 'avgSessionAmount' : key);
+            const comparisonRow = footerMetric === 'avgSessionAmount' ? { ...row, avgSessionAmount: value } : row;
+            const footer = footerMetric ? renderAverageUsePreviousComparison(dataset, comparisonRow, footerMetric) : '';
+            const ccr = key === 'useDays' || key === 'sessions' ? null : evaluateAverageUseCcr(row, value);
+            const denom = row.denominators || {};
+            const title = key === 'avgActiveDay'
+                ? formatAverageUseDenominator(denom.activeDay, 'Denominator active days')
+                : key === 'avgCalendarDay'
+                    ? formatAverageUseDenominator(denom.calendarDay, 'Denominator calendar days')
+                    : key === 'avgWeek'
+                        ? `${formatAverageUseDenominator(denom.week, 'Denominator weeks')} (${denom.weekMode === 'full' ? 'full selected range' : 'active periods only'})`
+                        : key === 'avgMonth'
+                            ? `${formatAverageUseDenominator(denom.month, 'Denominator months')} (${denom.monthMode === 'full' ? 'full selected range' : 'active periods only'})`
+                            : key === 'avgSessionAmount'
+                                ? formatAverageUseDenominator(row.sessions, 'Denominator sessions')
+                                : '';
+            return renderSheetMetricCard(label, display, null, {
+                substanceId: row.substanceId,
+                section: 'insights',
+                ccrResult: ccr,
+                footerHtml: footer,
+                title
+            });
+        }).join('');
+        return `<section class="average-use-card-group">${title}<div class="sheet-summary-grid">${cards}</div></section>`;
+    }).join('');
+}
+
+function renderAverageUseSummaryTable(dataset) {
+    const rows = dataset.rows.map(row => ({
+        ...row,
+        avgSessionAmount: averageUseSafeDivide(row.totalUse, row.sessions)
+    }));
+    return renderConfigurableSheetTable('averageUse', rows, (colId, row) => {
+        switch (colId) {
+            case 'period': return row.periodLabel || row.period;
+            case 'totalUse': return renderAverageUseValue(row, 'totalUse');
+            case 'useDays': return renderAverageUseValue(row, 'useDays');
+            case 'sessions': return renderAverageUseValue(row, 'sessions');
+            case 'avgActiveDay': return renderAverageUseValue(row, 'avgActiveDay');
+            case 'avgCalendarDay': return renderAverageUseValue(row, 'avgCalendarDay');
+            case 'avgWeek': return renderAverageUseValue(row, 'avgWeek');
+            case 'avgMonth': return renderAverageUseValue(row, 'avgMonth');
+            default: return '—';
+        }
+    });
+}
+
+function renderAverageUseAnalyticsView() {
+    const root = typeof document !== 'undefined' ? document.getElementById('average-use-analytics-root') : null;
+    if (!root) return;
+    const mode = ensureAverageUseAnalyticsPrefs(appData).denominatorMode;
+    const modeSelect = document.getElementById('average-use-denominator-mode');
+    if (modeSelect) modeSelect.value = mode;
+    const dataset = buildAverageUseAnalyticsDataset(appData);
+    const rangeLabel = getStatsRangeLabel(dataset.bounds.preset || dataset.filters.dateRangePreset, dataset.bounds.startDate, dataset.bounds.endDate);
+    root.innerHTML = `
+        <p class="settings-hint">Using shared Insights filters · ${escapeHtml(rangeLabel)} · ${dataset.filters.denominatorMode === 'full' ? 'Full selected range' : 'Active periods only'} for weekly and monthly averages.</p>
+        ${renderAverageUseCards(dataset)}
+        <h4>Summary table</h4>
+        ${renderAverageUseSummaryTable(dataset)}
+    `;
+}
+
+function onAverageUseDenominatorModeChange() {
+    const value = typeof document !== 'undefined'
+        ? (document.getElementById('average-use-denominator-mode')?.value || 'active')
+        : 'active';
+    persistAverageUseAnalyticsPrefs({ denominatorMode: value === 'full' ? 'full' : 'active' });
+    renderAverageUseAnalyticsView();
+}
+
+function buildAverageUseAnalyticsCsvRows(dataset = buildAverageUseAnalyticsDataset(appData)) {
+    const columns = getEffectiveColumnOrder('averageUse');
+    const headers = columns.map(colId => resolveColumnDisplayLabel('averageUse', colId, { forCsv: true }));
+    const rows = [headers];
+    dataset.rows.forEach(baseRow => {
+        const row = {
+            ...baseRow,
+            avgSessionAmount: averageUseSafeDivide(baseRow.totalUse, baseRow.sessions)
+        };
+        rows.push(columns.map(colId => {
+            switch (colId) {
+                case 'period': return row.periodLabel || row.period;
+                case 'totalUse': return row.totalUse;
+                case 'useDays': return row.useDays;
+                case 'sessions': return row.sessions;
+                case 'avgActiveDay': return row.avgActiveDay ?? '';
+                case 'avgCalendarDay': return row.avgCalendarDay ?? '';
+                case 'avgWeek': return row.avgWeek ?? '';
+                case 'avgMonth': return row.avgMonth ?? '';
+                default: return '';
+            }
+        }));
+    });
+    return rows;
+}
+
+function exportAverageUseAnalyticsCsv(data = appData) {
+    const dataset = buildAverageUseAnalyticsDataset(data);
+    const rows = buildAverageUseAnalyticsCsvRows(dataset);
+    const csv = rows.map(r => r.map(cell => {
+        const s = String(cell ?? '');
+        return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+    }).join(',')).join('\n');
+    if (typeof downloadTextFile === 'function') {
+        downloadTextFile(`average-use-analytics-${rtToday()}.csv`, csv, 'text/csv');
     }
     return csv;
 }
@@ -29172,6 +29625,23 @@ const TABLE_COLUMN_DEFAULTS = {
             status: 100
         }
     },
+    averageUse: {
+        order: [
+            'period', 'totalUse', 'useDays', 'sessions',
+            'avgActiveDay', 'avgCalendarDay', 'avgWeek', 'avgMonth'
+        ],
+        hidden: [],
+        widths: {
+            period: 180,
+            totalUse: 110,
+            useDays: 90,
+            sessions: 90,
+            avgActiveDay: 130,
+            avgCalendarDay: 140,
+            avgWeek: 110,
+            avgMonth: 120
+        }
+    },
     buyWeekly: {
         order: [
             'week',
@@ -29402,6 +29872,16 @@ const TABLE_COLUMN_LABELS = {
         gPerHour: 'g/hr',
         status: 'Status'
     },
+    averageUse: {
+        period: 'Period',
+        totalUse: 'Total Use',
+        useDays: 'Use Days',
+        sessions: 'Sessions',
+        avgActiveDay: 'Avg/Active Day',
+        avgCalendarDay: 'Avg/Calendar Day',
+        avgWeek: 'Avg/Week',
+        avgMonth: 'Avg/Month'
+    },
     buyWeekly: {
         week: 'Week',
         purchased: 'Purchased',
@@ -29500,6 +29980,12 @@ const TABLE_COLUMN_TOOLTIPS = {
         sessionsChangePct: 'Percent change in sessions vs the previous month in this filtered range.',
         useDaysChangePct: 'Percent change in use days vs the previous month in this filtered range.'
     },
+    averageUse: {
+        avgActiveDay: 'Total personal use divided by days with qualifying personal use.',
+        avgCalendarDay: 'Total personal use divided by calendar days in the selected range.',
+        avgWeek: 'Uses the selected denominator mode. Custom ranges use fractional weeks.',
+        avgMonth: 'Uses the selected denominator mode. Custom ranges use fractional months.'
+    },
     buyWeekly: {
         runningAmountBought: 'Cumulative amount purchased within the calendar month of this row. Resets on the first day of each month.',
         runningCostThisMonth: 'Cumulative spending within the calendar month of this row. Resets on the first day of each month.',
@@ -29516,6 +30002,7 @@ const COLUMN_MODAL_TITLES = {
     purchaseHistory: 'Customize Purchase History Columns',
     statsWeekly: 'Customize Weekly Summary Columns',
     statsMonthly: 'Customize Monthly Summary Columns',
+    averageUse: 'Show/Hide Average Use Columns',
     buyWeekly: 'Customize Weekly Buy Summary Columns',
     buyMonthly: 'Customize Month Summary Columns',
     buyPurchaseDetails: 'Customize Purchase Details Columns',
@@ -31112,6 +31599,9 @@ function setupColumnSettingsModal() {
     });
     document.getElementById('stats-monthly-customize-columns')?.addEventListener('click', () => {
         openColumnSettingsModal('statsMonthly');
+    });
+    document.getElementById('average-use-customize-columns')?.addEventListener('click', () => {
+        openColumnSettingsModal('averageUse');
     });
     document.getElementById('stats-buy-week-customize-columns')?.addEventListener('click', () => {
         openColumnSettingsModal('buyWeekly');
@@ -47779,7 +48269,8 @@ function renderSheetMetricCard(label, value, badge, options = {}) {
         : '';
     const style = ccr?.matched?.length ? buildConditionalColorInlineStyle(ccr) : '';
     const footer = options.footerHtml ? `<div class="sheet-metric-footer">${options.footerHtml}</div>` : '';
-    return `<div class="sheet-metric-card${ccr?.matched?.length ? ' ccr-applied' : ''}"${style ? ` style="${escapeAttr(style)}"` : ''}><span class="sheet-metric-label">${label}</span><strong class="sheet-metric-value">${value}</strong>${badgeHtml}${footer}</div>`;
+    const titleAttr = options.title ? ` title="${escapeAttr(options.title)}"` : '';
+    return `<div class="sheet-metric-card${ccr?.matched?.length ? ' ccr-applied' : ''}"${style ? ` style="${escapeAttr(style)}"` : ''}${titleAttr}><span class="sheet-metric-label">${label}</span><strong class="sheet-metric-value">${value}</strong>${badgeHtml}${footer}</div>`;
 }
 
 function renderConfigurableSheetTable(tableKey, rows, renderCell, substanceId = currentSubstanceId) {
@@ -61421,6 +61912,16 @@ function __getRecoveryTrackerTestExports() {
         exportRunningTotalsCsv,
         renderRunningTotalsView,
         RUNNING_TOTALS_RESET_MODES,
+        ensureAverageUseAnalyticsPrefs,
+        persistAverageUseAnalyticsPrefs,
+        averageUseQualifiesLog,
+        getAverageUseBounds,
+        buildAverageUseAnalyticsRows,
+        buildAverageUseAnalyticsDataset,
+        buildAverageUseAnalyticsCsvRows,
+        renderAverageUseAnalyticsView,
+        onAverageUseDenominatorModeChange,
+        exportAverageUseAnalyticsCsv,
         buildContactPickerHtml,
         getContactPickerSelection,
         selectContactPickerValue,

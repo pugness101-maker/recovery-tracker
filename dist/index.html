@@ -1779,6 +1779,26 @@
                     </div>
                 </div>
 
+                <div class="collapsible-section" data-section="statsAverageUseAnalytics" data-ic-panels="overview use">
+                    <button type="button" class="section-toggle" onclick="toggleSection('statsAverageUseAnalytics')">
+                        <span>Use Analytics</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="sheet-table-toolbar">
+                            <label class="stats-cal-toggle">Average denominator
+                                <select id="average-use-denominator-mode" onchange="onAverageUseDenominatorModeChange()">
+                                    <option value="active">Active periods only</option>
+                                    <option value="full">Full selected range</option>
+                                </select>
+                            </label>
+                            <button type="button" class="secondary-btn table-columns-btn" id="average-use-customize-columns">Show/hide columns</button>
+                            <button type="button" class="secondary-btn" onclick="exportAverageUseAnalyticsCsv()">Export CSV</button>
+                        </div>
+                        <div id="average-use-analytics-root" class="average-use-analytics-root" aria-live="polite"></div>
+                    </div>
+                </div>
+
                 <div id="stats-single-view">
 
                 <div class="collapsible-section" data-section="statsSummaryDashboard" data-ic-panels="overview use">
