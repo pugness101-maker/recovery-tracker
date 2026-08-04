@@ -2751,22 +2751,31 @@
                                 <span>Stop processing after this rule matches</span>
                             </label>
                             <div class="ccr-color-grid">
-                                <div class="form-group">
+                                <div class="form-group ccr-color-field">
                                     <label for="ccr-rule-bg">Background</label>
-                                    <input type="text" id="ccr-rule-bg" placeholder="rgba(...) or #hex" oninput="updateCcrLivePreview()">
-                                </div>
-                                <div class="form-group">
-                                    <label for="ccr-rule-text-picker">Text color</label>
                                     <div class="ccr-color-inputs">
-                                        <input type="color" id="ccr-rule-text-picker" oninput="syncCcrColorInputs(this)">
+                                        <input type="color" id="ccr-rule-bg-picker" value="#4caf50" aria-label="Background color picker" oninput="syncCcrBackgroundColorInputs(this)">
+                                        <input type="text" id="ccr-rule-bg" placeholder="#hex or rgba(...)" aria-describedby="ccr-rule-bg-error ccr-rule-bg-hint" oninput="syncCcrBackgroundColorInputs(this)">
+                                    </div>
+                                    <div class="ccr-bg-opacity-row">
+                                        <label for="ccr-rule-bg-opacity">Opacity <span id="ccr-rule-bg-opacity-label">100%</span></label>
+                                        <input type="range" id="ccr-rule-bg-opacity" min="0" max="100" value="100" step="1" aria-valuemin="0" aria-valuemax="100" aria-valuenow="100" oninput="syncCcrBackgroundColorInputs(this)">
+                                    </div>
+                                    <p id="ccr-rule-bg-hint" class="settings-hint">Leave empty for no background override. Accepts #RGB, #RRGGBB, #RRGGBBAA, rgb(), rgba().</p>
+                                    <p id="ccr-rule-bg-error" class="ccr-color-error" role="alert" aria-live="polite"></p>
+                                </div>
+                                <div class="form-group ccr-color-field">
+                                    <label for="ccr-rule-text-hex">Text color</label>
+                                    <div class="ccr-color-inputs">
+                                        <input type="color" id="ccr-rule-text-picker" aria-label="Text color picker" oninput="syncCcrColorInputs(this)">
                                         <input type="text" id="ccr-rule-text-hex" maxlength="9" oninput="syncCcrColorInputs(this)">
                                         <input type="hidden" id="ccr-rule-text">
                                     </div>
                                 </div>
-                                <div class="form-group">
-                                    <label for="ccr-rule-border-picker">Border color</label>
+                                <div class="form-group ccr-color-field">
+                                    <label for="ccr-rule-border-hex">Border color</label>
                                     <div class="ccr-color-inputs">
-                                        <input type="color" id="ccr-rule-border-picker" oninput="syncCcrColorInputs(this)">
+                                        <input type="color" id="ccr-rule-border-picker" aria-label="Border color picker" oninput="syncCcrColorInputs(this)">
                                         <input type="text" id="ccr-rule-border-hex" maxlength="9" oninput="syncCcrColorInputs(this)">
                                         <input type="hidden" id="ccr-rule-border">
                                     </div>

@@ -7561,8 +7561,19 @@ body.purchase-history-col-resizing {
 
 .ccr-color-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    grid-template-columns: repeat(3, minmax(0, 1fr));
     gap: 10px;
+    align-items: start;
+}
+
+@media (max-width: 720px) {
+    .ccr-color-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.ccr-color-field .ccr-color-inputs {
+    width: 100%;
 }
 
 .ccr-color-inputs {
@@ -7573,10 +7584,40 @@ body.purchase-history-col-resizing {
 
 .ccr-color-inputs input[type="color"] {
     width: 40px;
+    min-width: 40px;
     height: 32px;
     padding: 0;
     border: 1px solid var(--border);
     background: transparent;
+    cursor: pointer;
+}
+
+.ccr-color-inputs input[type="text"] {
+    flex: 1;
+    min-width: 0;
+}
+
+.ccr-bg-opacity-row {
+    margin-top: 8px;
+    display: grid;
+    gap: 4px;
+}
+
+.ccr-bg-opacity-row input[type="range"] {
+    width: 100%;
+    accent-color: var(--accent, #4caf50);
+}
+
+.ccr-color-error {
+    margin: 4px 0 0;
+    min-height: 1.1em;
+    font-size: 0.78rem;
+    color: #e57373;
+}
+
+html[data-theme="light"] .ccr-color-error,
+body.light-theme .ccr-color-error {
+    color: #c62828;
 }
 
 .ccr-contrast-warning {

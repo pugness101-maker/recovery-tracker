@@ -1835,31 +1835,97 @@ function normalizeHexColor(input, fallback = '#000000') {
     return fallback;
 }
 
-function parseCssColorToRgb(color) {
-    if (!color || typeof color !== 'string') return null;
+function clampCssByte(n) {
+    return Math.max(0, Math.min(255, Math.round(Number(n) || 0)));
+}
+
+function rgbToHexColor(r, g, b) {
+    return `#${[r, g, b].map(v => clampCssByte(v).toString(16).padStart(2, '0')).join('')}`;
+}
+
+/** Parse #RGB / #RRGGBB / #RRGGBBAA / rgb() / rgba() into { r, g, b, a } (a in 0–1). */
+function parseCssColor(color) {
+    if (color == null || typeof color !== 'string') return null;
     const c = color.trim();
-    const hex = c.match(/^#([0-9a-fA-F]{6})([0-9a-fA-F]{2})?$/);
-    if (hex) {
-        return {
-            r: parseInt(hex[1].slice(0, 2), 16),
-            g: parseInt(hex[1].slice(2, 4), 16),
-            b: parseInt(hex[1].slice(4, 6), 16)
-        };
-    }
-    const short = c.match(/^#([0-9a-fA-F]{3})$/);
-    if (short) {
-        const h = short[1];
+    if (!c) return null;
+
+    let m = c.match(/^#([0-9a-fA-F]{3})$/);
+    if (m) {
+        const h = m[1];
         return {
             r: parseInt(h[0] + h[0], 16),
             g: parseInt(h[1] + h[1], 16),
-            b: parseInt(h[2] + h[2], 16)
+            b: parseInt(h[2] + h[2], 16),
+            a: 1
         };
     }
-    const rgb = c.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)/i);
-    if (rgb) {
-        return { r: Number(rgb[1]), g: Number(rgb[2]), b: Number(rgb[3]) };
+    m = c.match(/^#([0-9a-fA-F]{6})([0-9a-fA-F]{2})?$/);
+    if (m) {
+        return {
+            r: parseInt(m[1].slice(0, 2), 16),
+            g: parseInt(m[1].slice(2, 4), 16),
+            b: parseInt(m[1].slice(4, 6), 16),
+            a: m[2] != null ? parseInt(m[2], 16) / 255 : 1
+        };
+    }
+    m = c.match(/^rgba?\(\s*([\d.]+)\s*,\s*([\d.]+)\s*,\s*([\d.]+)(?:\s*,\s*([\d.]+%?))?\s*\)$/i);
+    if (m) {
+        let a = 1;
+        if (m[4] != null) {
+            a = String(m[4]).endsWith('%') ? parseFloat(m[4]) / 100 : parseFloat(m[4]);
+        }
+        if (!Number.isFinite(a)) a = 1;
+        return {
+            r: Number(m[1]),
+            g: Number(m[2]),
+            b: Number(m[3]),
+            a: Math.max(0, Math.min(1, a))
+        };
     }
     return null;
+}
+
+function formatCssColorFromParts(parts) {
+    if (!parts) return '';
+    const r = clampCssByte(parts.r);
+    const g = clampCssByte(parts.g);
+    const b = clampCssByte(parts.b);
+    let a = parts.a;
+    if (a == null || !Number.isFinite(Number(a))) a = 1;
+    a = Math.max(0, Math.min(1, Number(a)));
+    if (a >= 0.999) return rgbToHexColor(r, g, b);
+    const aStr = String(Math.round(a * 1000) / 1000);
+    return `rgba(${r}, ${g}, ${b}, ${aStr})`;
+}
+
+function composeCcrBackgroundFromPicker(pickerHex, opacityPercent) {
+    const rgb = parseCssColor(pickerHex) || { r: 76, g: 175, b: 80, a: 1 };
+    const pct = Math.max(0, Math.min(100, Number(opacityPercent)));
+    const a = Number.isFinite(pct) ? pct / 100 : 1;
+    return formatCssColorFromParts({ r: rgb.r, g: rgb.g, b: rgb.b, a });
+}
+
+function validateCcrBackgroundColor(value) {
+    const trimmed = String(value ?? '').trim();
+    if (!trimmed) {
+        return { ok: true, value: '', message: '', parsed: null };
+    }
+    const parsed = parseCssColor(trimmed);
+    if (!parsed) {
+        return {
+            ok: false,
+            value: trimmed,
+            message: 'Invalid background color. Use #RGB, #RRGGBB, #RRGGBBAA, rgb(), or rgba().',
+            parsed: null
+        };
+    }
+    return { ok: true, value: trimmed, message: '', parsed };
+}
+
+function parseCssColorToRgb(color) {
+    const parsed = parseCssColor(color);
+    if (!parsed) return null;
+    return { r: parsed.r, g: parsed.g, b: parsed.b };
 }
 
 function relativeLuminance(rgb) {
@@ -1932,7 +1998,10 @@ function normalizeConditionalColorRule(raw, index = 0) {
         valueTo: raw.valueTo === undefined ? null : raw.valueTo,
         targetValue: raw.targetValue === undefined ? null : raw.targetValue,
         colors: {
-            background: String(colors.background || 'rgba(76, 175, 80, 0.22)'),
+            // Empty string = no background override. Missing key keeps legacy default.
+            background: Object.prototype.hasOwnProperty.call(colors, 'background')
+                ? String(colors.background ?? '').trim()
+                : 'rgba(76, 175, 80, 0.22)',
             text: normalizeHexColor(colors.text, '#81c784'),
             border,
             accent: normalizeHexColor(colors.accent || colors.border, border)
@@ -2896,6 +2965,7 @@ function getCcrEditorDraftFromForm() {
     const get = (id) => document.getElementById(id);
     const sections = [...(get('ccr-rule-sections')?.selectedOptions || [])].map(o => o.value);
     const substance = get('ccr-rule-substance')?.value || 'all';
+    const backgroundRaw = get('ccr-rule-bg')?.value ?? '';
     return normalizeConditionalColorRule({
         id: ccrEditingRuleId || ccrNewId(),
         name: get('ccr-rule-name')?.value || 'Untitled rule',
@@ -2911,11 +2981,49 @@ function getCcrEditorDraftFromForm() {
         stopProcessing: !!get('ccr-rule-stop')?.checked,
         statusLabel: get('ccr-rule-status-label')?.value || '',
         colors: {
-            background: get('ccr-rule-bg')?.value || 'rgba(76, 175, 80, 0.22)',
+            background: backgroundRaw,
             text: get('ccr-rule-text')?.value || '#81c784',
             border: get('ccr-rule-border')?.value || '#4caf50'
         }
     });
+}
+
+function setCcrBackgroundOpacityUi(percent) {
+    const pct = Math.max(0, Math.min(100, Math.round(Number(percent))));
+    const opacity = document.getElementById('ccr-rule-bg-opacity');
+    const label = document.getElementById('ccr-rule-bg-opacity-label');
+    if (opacity) {
+        opacity.value = String(Number.isFinite(pct) ? pct : 100);
+        opacity.setAttribute('aria-valuenow', opacity.value);
+    }
+    if (label) label.textContent = `${Number.isFinite(pct) ? pct : 100}%`;
+}
+
+function setCcrBackgroundColorError(message) {
+    const error = document.getElementById('ccr-rule-bg-error');
+    if (error) error.textContent = message || '';
+}
+
+function applyCcrBackgroundControlsFromValue(backgroundValue) {
+    const text = document.getElementById('ccr-rule-bg');
+    const picker = document.getElementById('ccr-rule-bg-picker');
+    const raw = String(backgroundValue ?? '');
+    if (text) text.value = raw;
+    const trimmed = raw.trim();
+    if (!trimmed) {
+        setCcrBackgroundColorError('');
+        if (picker && !picker.value) picker.value = '#4caf50';
+        setCcrBackgroundOpacityUi(Number(document.getElementById('ccr-rule-bg-opacity')?.value) || 100);
+        return;
+    }
+    const parsed = parseCssColor(trimmed);
+    if (!parsed) {
+        setCcrBackgroundColorError('Invalid background color. Use #RGB, #RRGGBB, #RRGGBBAA, rgb(), or rgba().');
+        return;
+    }
+    setCcrBackgroundColorError('');
+    if (picker) picker.value = rgbToHexColor(parsed.r, parsed.g, parsed.b);
+    setCcrBackgroundOpacityUi(Math.round(parsed.a * 100));
 }
 
 function fillCcrEditorForm(rule) {
@@ -2946,14 +3054,13 @@ function fillCcrEditorForm(rule) {
     set('ccr-rule-priority', r.priority);
     set('ccr-rule-stop', r.stopProcessing, 'checked');
     set('ccr-rule-status-label', r.statusLabel);
-    set('ccr-rule-bg', r.colors.background);
-    set('ccr-rule-bg-hex', r.colors.background.startsWith('#') ? r.colors.background : '#4caf50');
+    applyCcrBackgroundControlsFromValue(r.colors.background);
     set('ccr-rule-text', r.colors.text);
-    set('ccr-rule-text-hex', r.colors.text.startsWith('#') ? r.colors.text : '#81c784');
-    set('ccr-rule-text-picker', r.colors.text.startsWith('#') ? r.colors.text : '#81c784');
+    set('ccr-rule-text-hex', r.colors.text.startsWith('#') ? r.colors.text.slice(0, 7) : '#81c784');
+    set('ccr-rule-text-picker', r.colors.text.startsWith('#') ? r.colors.text.slice(0, 7) : '#81c784');
     set('ccr-rule-border', r.colors.border);
-    set('ccr-rule-border-hex', r.colors.border.startsWith('#') ? r.colors.border : '#4caf50');
-    set('ccr-rule-border-picker', r.colors.border.startsWith('#') ? r.colors.border : '#4caf50');
+    set('ccr-rule-border-hex', r.colors.border.startsWith('#') ? r.colors.border.slice(0, 7) : '#4caf50');
+    set('ccr-rule-border-picker', r.colors.border.startsWith('#') ? r.colors.border.slice(0, 7) : '#4caf50');
 
     const sectionsEl = document.getElementById('ccr-rule-sections');
     if (sectionsEl) {
@@ -2987,8 +3094,19 @@ function updateCcrLivePreview() {
     const draft = getCcrEditorDraftFromForm();
     const preview = document.getElementById('ccr-live-preview');
     const warn = document.getElementById('ccr-contrast-warning');
+    const bgInput = document.getElementById('ccr-rule-bg');
+    const bgValidation = validateCcrBackgroundColor(bgInput?.value ?? draft.colors.background);
+    if (bgInput && String(bgInput.value || '').trim()) {
+        setCcrBackgroundColorError(bgValidation.ok ? '' : bgValidation.message);
+    } else {
+        setCcrBackgroundColorError('');
+    }
     if (preview) {
-        const style = buildConditionalColorInlineStyle({ style: draft.colors, matched: [draft] });
+        const previewColors = {
+            ...draft.colors,
+            background: bgValidation.ok ? draft.colors.background : ''
+        };
+        const style = buildConditionalColorInlineStyle({ style: previewColors, matched: [draft] });
         const label = (draft.statusLabel || '').trim();
         const sample = `<span class="ccr-preview-sample"${style ? ` style="${escapeAttr(style)}"` : ''}>Sample value 12.5</span>`;
         preview.innerHTML = label
@@ -2996,11 +3114,10 @@ function updateCcrLivePreview() {
             : sample;
     }
     if (warn) {
-        const bg = draft.colors.background.startsWith('#')
-            ? draft.colors.background
-            : (parseCssColorToRgb(draft.colors.background)
-                ? `rgb(${parseCssColorToRgb(draft.colors.background).r},${parseCssColorToRgb(draft.colors.background).g},${parseCssColorToRgb(draft.colors.background).b})`
-                : '#1e1e1e');
+        const bgParsed = bgValidation.parsed || parseCssColor(draft.colors.background);
+        const bg = bgParsed
+            ? `rgb(${clampCssByte(bgParsed.r)},${clampCssByte(bgParsed.g)},${clampCssByte(bgParsed.b)})`
+            : (typeof resolvedTheme !== 'undefined' && resolvedTheme === 'light' ? '#ffffff' : '#1e1e1e');
         const info = getContrastWarning(draft.colors.text, bg);
         warn.textContent = info.message || '';
         warn.classList.toggle('ccr-contrast-bad', !info.ok);
@@ -3357,6 +3474,14 @@ function saveConditionalColorRuleFromForm() {
         if (typeof showToast === 'function') showToast('Rule name is required');
         return;
     }
+    const bgValidation = validateCcrBackgroundColor(draft.colors.background);
+    if (!bgValidation.ok) {
+        setCcrBackgroundColorError(bgValidation.message);
+        if (typeof showToast === 'function') showToast(bgValidation.message);
+        document.getElementById('ccr-rule-bg')?.focus();
+        return;
+    }
+    draft.colors.background = bgValidation.value;
     saveConditionalColorRule(draft);
     closeConditionalColorRuleEditor();
     renderConditionalColorRulesSettings();
@@ -3406,6 +3531,41 @@ function onConditionalColorRulesImportFile(event) {
     reader.readAsText(file);
 }
 
+function syncCcrBackgroundColorInputs(source) {
+    const picker = document.getElementById('ccr-rule-bg-picker');
+    const text = document.getElementById('ccr-rule-bg');
+    const opacity = document.getElementById('ccr-rule-bg-opacity');
+    if (!picker || !text || !opacity) {
+        updateCcrLivePreview();
+        return;
+    }
+
+    if (source === picker || source === opacity) {
+        const pct = Math.max(0, Math.min(100, Number(opacity.value)));
+        setCcrBackgroundOpacityUi(Number.isFinite(pct) ? pct : 100);
+        text.value = composeCcrBackgroundFromPicker(picker.value, Number.isFinite(pct) ? pct : 100);
+        setCcrBackgroundColorError('');
+    } else if (source === text) {
+        const raw = String(text.value || '').trim();
+        if (!raw) {
+            setCcrBackgroundColorError('');
+            updateCcrLivePreview();
+            return;
+        }
+        const validation = validateCcrBackgroundColor(raw);
+        if (!validation.ok) {
+            setCcrBackgroundColorError(validation.message);
+            updateCcrLivePreview();
+            return;
+        }
+        setCcrBackgroundColorError('');
+        const parsed = validation.parsed;
+        picker.value = rgbToHexColor(parsed.r, parsed.g, parsed.b);
+        setCcrBackgroundOpacityUi(Math.round(parsed.a * 100));
+    }
+    updateCcrLivePreview();
+}
+
 function syncCcrColorInputs(source) {
     const pairs = [
         ['ccr-rule-text-picker', 'ccr-rule-text', 'ccr-rule-text-hex'],
@@ -3421,16 +3581,16 @@ function syncCcrColorInputs(source) {
             hex.value = picker.value;
         } else if (source === hex) {
             const normalized = normalizeHexColor(hex.value, picker.value);
-            hex.value = normalized;
-            if (normalized.startsWith('#') && normalized.length === 7) {
-                picker.value = normalized;
-                value.value = normalized;
+            hex.value = normalized.length === 9 ? normalized.slice(0, 7) : normalized;
+            if (normalized.startsWith('#') && (normalized.length === 7 || normalized.length === 9)) {
+                picker.value = normalized.slice(0, 7);
+                value.value = normalized.length === 7 ? normalized : normalized.slice(0, 7);
             }
         } else if (source === value) {
             if (String(value.value).startsWith('#')) {
                 const normalized = normalizeHexColor(value.value, picker.value);
-                hex.value = normalized;
-                if (normalized.length === 7) picker.value = normalized;
+                hex.value = normalized.slice(0, 7);
+                if (normalized.length === 7 || normalized.length === 9) picker.value = normalized.slice(0, 7);
             }
         }
     });
@@ -57485,6 +57645,14 @@ function __getRecoveryTrackerTestExports() {
         getContrastRatio,
         getContrastWarning,
         normalizeHexColor,
+        parseCssColor,
+        parseCssColorToRgb,
+        formatCssColorFromParts,
+        composeCcrBackgroundFromPicker,
+        validateCcrBackgroundColor,
+        rgbToHexColor,
+        syncCcrBackgroundColorInputs,
+        syncCcrColorInputs,
         CCR_OPERATORS,
         CCR_METRICS,
         CCR_SECTIONS,
