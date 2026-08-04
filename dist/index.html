@@ -2724,11 +2724,95 @@
                             <div class="form-row">
                                 <div class="form-group">
                                     <label for="ccr-rule-metric">Metric / field</label>
-                                    <select id="ccr-rule-metric" onchange="onCcrMetricChanged()"></select>
+                                    <div class="ccr-metric-picker-row">
+                                        <select id="ccr-rule-metric" onchange="onCcrMetricChanged()"></select>
+                                        <button type="button" class="secondary-btn btn-sm" onclick="toggleCcrMetricEditor()">Edit metric</button>
+                                    </div>
                                 </div>
                                 <div class="form-group">
                                     <label for="ccr-rule-operator">Comparison</label>
                                     <select id="ccr-rule-operator" onchange="updateCcrOperatorFieldsVisibility(); updateCcrLivePreview();"></select>
+                                </div>
+                            </div>
+                            <div id="ccr-metric-editor" class="ccr-metric-editor hidden" role="region" aria-label="Metric settings editor">
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="ccr-metric-display-name">Display name</label>
+                                        <input type="text" id="ccr-metric-display-name" maxlength="80">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="ccr-metric-group-name">Group name</label>
+                                        <input type="text" id="ccr-metric-group-name" maxlength="80">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="ccr-metric-input-unit">Input unit</label>
+                                        <select id="ccr-metric-input-unit">
+                                            <option value="">Default</option>
+                                            <option value="minutes">Minutes</option>
+                                            <option value="hours">Hours</option>
+                                            <option value="days">Days</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="ccr-metric-display-unit">Display unit</label>
+                                        <input type="text" id="ccr-metric-display-unit" placeholder="automatic">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="ccr-metric-display-format">Display format</label>
+                                        <select id="ccr-metric-display-format">
+                                            <option value="automatic">Automatic</option>
+                                            <option value="default">Default</option>
+                                            <option value="number">Number</option>
+                                            <option value="duration">Duration</option>
+                                            <option value="percent">Percent</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="ccr-metric-precision">Decimal precision</label>
+                                        <input type="number" id="ccr-metric-precision" min="0" max="6" step="1">
+                                    </div>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="ccr-metric-direction">Favorable direction</label>
+                                        <select id="ccr-metric-direction">
+                                            <option value="higher">Higher is better</option>
+                                            <option value="lower">Lower is better</option>
+                                            <option value="neutral">Neutral</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="ccr-metric-default-operator">Default comparison</label>
+                                        <select id="ccr-metric-default-operator"></select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="ccr-metric-allowed-operators">Allowed comparisons</label>
+                                        <select id="ccr-metric-allowed-operators" multiple size="4"></select>
+                                    </div>
+                                    <label class="settings-toggle-row" for="ccr-metric-visible">
+                                        <input type="checkbox" id="ccr-metric-visible" checked>
+                                        <span>Show metric</span>
+                                    </label>
+                                </div>
+                                <div class="form-row">
+                                    <div class="form-group">
+                                        <label for="ccr-metric-sections">Supported sections</label>
+                                        <input type="text" id="ccr-metric-sections" placeholder="all, useHistory, dashboard">
+                                    </div>
+                                    <div class="form-group">
+                                        <label for="ccr-metric-substances">Supported substances</label>
+                                        <input type="text" id="ccr-metric-substances" placeholder="all, coke, nicotine">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="ccr-metric-help">Help text</label>
+                                    <textarea id="ccr-metric-help" rows="2" maxlength="240"></textarea>
+                                </div>
+                                <div class="ccr-toolbar">
+                                    <button type="button" class="submit-btn btn-sm" onclick="saveCcrMetricSettingsFromEditor()">Save metric</button>
+                                    <button type="button" class="secondary-btn btn-sm" onclick="resetCcrMetricSettingsFromEditor()">Reset metric to default</button>
                                 </div>
                             </div>
                             <div class="form-row" id="ccr-value-row">

@@ -1601,6 +1601,7 @@ const CCR_COLOR_CHANNEL_DEFAULTS = Object.freeze({
 
 const CCR_METRIC_GROUP_ORDER = Object.freeze([
     { id: 'use', label: 'Use' },
+    { id: 'useGap', label: 'Use Gap' },
     { id: 'inventory', label: 'Inventory' },
     { id: 'vapeInventory', label: 'Vape inventory' },
     { id: 'purchases', label: 'Purchases and spending' },
@@ -1613,10 +1614,12 @@ const CCR_METRIC_GROUP_ORDER = Object.freeze([
 
 /** Legacy metric keys → canonical registry keys. */
 const CCR_METRIC_ALIASES = Object.freeze({
-    daysSinceUse: 'timeSinceLastUse',
+    daysSinceUse: 'useGapCurrent',
+    timeSinceLastUse: 'useGapCurrent',
     duration: 'sessionDuration',
     gPerHour: 'gramsPerHour',
-    break: 'breakSincePreviousUse',
+    break: 'useGapPrevious',
+    breakSincePreviousUse: 'useGapPrevious',
     costPerUnit: 'costPerUnit'
 });
 
@@ -1651,7 +1654,6 @@ const CCR_METRICS = Object.freeze([
     // ——— Universal / shared ———
     ccrMetricDef({ key: 'useAmount', label: 'Use amount', group: 'use', substances: ['all', 'coke'], unitType: 'amount' }),
     ccrMetricDef({ key: 'sessionDuration', label: 'Duration', group: 'use', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours' }),
-    ccrMetricDef({ key: 'breakSincePreviousUse', label: 'Break since previous use', group: 'use', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours' }),
     ccrMetricDef({
         key: 'useVsTarget',
         label: 'Use vs target ratio',
@@ -1661,7 +1663,8 @@ const CCR_METRICS = Object.freeze([
         unitType: 'ratio',
         groupBySubstance: { coke: 'use' }
     }),
-    ccrMetricDef({ key: 'timeSinceLastUse', label: 'Time since last use', group: 'use', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'days' }),
+    ccrMetricDef({ key: 'useGapCurrent', label: 'Use Gap → Current gap', group: 'useGap', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours' }),
+    ccrMetricDef({ key: 'useGapPrevious', label: 'Use Gap → Previous gap', group: 'useGap', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours' }),
 
     ccrMetricDef({ key: 'inventoryRemaining', label: 'Inventory remaining', group: 'inventory', substances: ['all', 'coke'], unitType: 'amount' }),
     ccrMetricDef({ key: 'inventoryPercent', label: 'Inventory % remaining', group: 'inventory', substances: ['all', 'coke', 'lsd', 'xanax'], unitType: 'percent' }),
@@ -1805,7 +1808,9 @@ const CCR_METRICS = Object.freeze([
     // ——— Deleted / legacy (kept for saved-rule migration; never shown in dropdowns) ———
     ccrMetricDef({ key: 'paymentMethod', label: 'Payment method', group: 'record', substances: [], valueType: 'string', deleted: true }),
     ccrMetricDef({ key: 'costPerUnit', label: 'Cost per unit', group: 'purchases', substances: [], unitType: 'currency', deleted: true }),
-    ccrMetricDef({ key: 'daysSinceUse', label: 'Days since use', group: 'use', substances: [], unitType: 'days', deleted: true })
+    ccrMetricDef({ key: 'timeSinceLastUse', label: 'Time since last use', group: 'useGap', substances: [], unitType: 'days', deleted: true }),
+    ccrMetricDef({ key: 'breakSincePreviousUse', label: 'Break since previous use', group: 'useGap', substances: [], unitType: 'hours', deleted: true }),
+    ccrMetricDef({ key: 'daysSinceUse', label: 'Days since use', group: 'useGap', substances: [], unitType: 'days', deleted: true })
 ]);
 
 function migrateCcrMetricKey(rawKey) {
@@ -1818,6 +1823,126 @@ function migrateCcrMetricKey(rawKey) {
 function getCcrMetricDef(metricKey) {
     const key = migrateCcrMetricKey(metricKey);
     return CCR_METRICS.find(m => m.key === key || m.id === key) || null;
+}
+
+const CCR_TIME_INPUT_UNITS = Object.freeze(['minutes', 'hours', 'days']);
+const CCR_FAVORABLE_DIRECTIONS = Object.freeze(['higher', 'lower', 'neutral']);
+const CCR_NUMERIC_OPERATORS = Object.freeze(['eq', 'neq', 'gt', 'gte', 'lt', 'lte', 'between', 'betweenExclusive', 'empty', 'notEmpty']);
+const CCR_TEXT_OPERATORS = Object.freeze(['eq', 'neq', 'contains', 'empty', 'notEmpty']);
+const CCR_BOOLEAN_OPERATORS = Object.freeze(['true', 'false', 'empty', 'notEmpty']);
+
+function getDefaultCcrMetricSettings(metricKey) {
+    const def = getCcrMetricDef(metricKey);
+    if (!def) return null;
+    const group = CCR_METRIC_GROUP_ORDER.find(g => g.id === def.group);
+    const valueType = def.valueType || 'number';
+    const allowed = valueType === 'string'
+        ? CCR_TEXT_OPERATORS
+        : (valueType === 'boolean' ? CCR_BOOLEAN_OPERATORS : CCR_NUMERIC_OPERATORS);
+    const isGap = isCcrTimeGapMetric(def.key);
+    return {
+        key: def.key,
+        displayName: def.label,
+        groupName: group?.label || def.group || 'Use',
+        inputUnit: isGap || def.unitType === 'hours' ? 'hours' : (def.unitType || ''),
+        displayUnit: isGap ? 'automatic' : (def.unitType || 'automatic'),
+        decimalPrecision: isGap ? 1 : 2,
+        favorableDirection: isGap ? 'higher' : 'neutral',
+        defaultOperator: isGap ? 'gt' : (allowed.includes('gt') ? 'gt' : allowed[0]),
+        allowedOperators: [...allowed],
+        supportedSections: [...(def.sections || ['all'])],
+        supportedSubstances: [...(def.substances || [])],
+        visible: !def.deleted,
+        displayFormat: isGap ? 'automatic' : 'default',
+        helpText: isGap ? 'Enter duration in hours. Decimals are allowed.' : ''
+    };
+}
+
+function normalizeCcrMetricSettings(raw, metricKey = null) {
+    const key = migrateCcrMetricKey(metricKey || raw?.key);
+    const defaults = getDefaultCcrMetricSettings(key);
+    if (!defaults) return null;
+    const allowedDefault = new Set(defaults.allowedOperators);
+    const allowedOperators = Array.isArray(raw?.allowedOperators)
+        ? raw.allowedOperators.map(String).filter(op => allowedDefault.has(op))
+        : defaults.allowedOperators;
+    const inputUnit = isCcrTimeGapMetric(key)
+        ? (CCR_TIME_INPUT_UNITS.includes(raw?.inputUnit) ? raw.inputUnit : defaults.inputUnit)
+        : String(raw?.inputUnit || defaults.inputUnit || '');
+    const favorableDirection = CCR_FAVORABLE_DIRECTIONS.includes(raw?.favorableDirection)
+        ? raw.favorableDirection
+        : defaults.favorableDirection;
+    const precision = Number(raw?.decimalPrecision);
+    const normalized = {
+        key,
+        displayName: String(raw?.displayName || defaults.displayName).slice(0, 80),
+        groupName: String(raw?.groupName || defaults.groupName).slice(0, 80),
+        inputUnit,
+        displayUnit: String(raw?.displayUnit || defaults.displayUnit || 'automatic').slice(0, 40),
+        decimalPrecision: Number.isFinite(precision) ? Math.max(0, Math.min(6, Math.round(precision))) : defaults.decimalPrecision,
+        favorableDirection,
+        defaultOperator: allowedOperators.includes(raw?.defaultOperator) ? raw.defaultOperator : defaults.defaultOperator,
+        allowedOperators: allowedOperators.length ? allowedOperators : defaults.allowedOperators,
+        supportedSections: Array.isArray(raw?.supportedSections) && raw.supportedSections.length
+            ? raw.supportedSections.map(String).filter(Boolean)
+            : defaults.supportedSections,
+        supportedSubstances: Array.isArray(raw?.supportedSubstances) && raw.supportedSubstances.length
+            ? raw.supportedSubstances.map(String).filter(Boolean)
+            : defaults.supportedSubstances,
+        visible: raw?.visible === false ? false : defaults.visible,
+        displayFormat: String(raw?.displayFormat || defaults.displayFormat).slice(0, 40),
+        helpText: String(raw?.helpText || defaults.helpText || '').slice(0, 240)
+    };
+    if (!normalized.allowedOperators.includes(normalized.defaultOperator)) {
+        normalized.defaultOperator = normalized.allowedOperators[0];
+    }
+    return normalized;
+}
+
+function normalizeCcrMetricSettingsMap(raw = {}) {
+    const out = {};
+    if (!raw || typeof raw !== 'object') return out;
+    Object.entries(raw).forEach(([key, value]) => {
+        const normalized = normalizeCcrMetricSettings(value, key);
+        if (normalized) out[normalized.key] = normalized;
+    });
+    return out;
+}
+
+function getCcrMetricSettings(metricKey, data = appData) {
+    const key = migrateCcrMetricKey(metricKey);
+    const state = ensureConditionalColorRules(data);
+    return normalizeCcrMetricSettings(state.metricSettings?.[key] || {}, key);
+}
+
+function saveCcrMetricSettings(metricKey, patch = {}, data = appData) {
+    const key = migrateCcrMetricKey(metricKey);
+    if (!getCcrMetricDef(key)) return null;
+    const state = ensureConditionalColorRules(data);
+    const next = normalizeCcrMetricSettings({ ...(state.metricSettings?.[key] || {}), ...patch, key }, key);
+    state.metricSettings = { ...(state.metricSettings || {}), [key]: next };
+    persistConditionalColorRulesState({ metricSettings: state.metricSettings }, data);
+    return next;
+}
+
+function resetCcrMetricSettings(metricKey, data = appData) {
+    const key = migrateCcrMetricKey(metricKey);
+    const state = ensureConditionalColorRules(data);
+    if (state.metricSettings) delete state.metricSettings[key];
+    persistConditionalColorRulesState({ metricSettings: state.metricSettings || {} }, data);
+    return getDefaultCcrMetricSettings(key);
+}
+
+function getCcrMetricUiDef(metricKey, data = appData) {
+    const def = getCcrMetricDef(metricKey);
+    if (!def) return null;
+    const settings = getCcrMetricSettings(def.key, data);
+    return {
+        ...def,
+        label: settings?.displayName || def.label,
+        groupLabel: settings?.groupName || CCR_METRIC_GROUP_ORDER.find(g => g.id === def.group)?.label || def.group,
+        settings
+    };
 }
 
 function resolveCcrMetricSubstanceFamily(substanceScope, data = appData) {
@@ -1853,7 +1978,12 @@ function getCcrMetricsForSubstance(substanceScope, data = appData) {
     const family = resolveCcrMetricSubstanceFamily(substanceScope, data);
     const groupRank = new Map(CCR_METRIC_GROUP_ORDER.map((g, i) => [g.id, i]));
     return CCR_METRICS
-        .filter(m => !m.deleted && m.substances.includes(family))
+        .filter(m => {
+            if (m.deleted) return false;
+            const settings = getCcrMetricSettings(m.key, data);
+            if (settings?.visible === false) return false;
+            return (settings?.supportedSubstances || m.substances).includes(family);
+        })
         .slice()
         .sort((a, b) => {
             const ga = groupRank.get(getCcrMetricGroupId(a, family)) ?? 999;
@@ -1867,7 +1997,9 @@ function isCcrMetricValidForSubstance(metricKey, substanceScope, data = appData)
     const family = resolveCcrMetricSubstanceFamily(substanceScope, data);
     const def = getCcrMetricDef(metricKey);
     if (!def || def.deleted) return false;
-    return def.substances.includes(family);
+    const settings = getCcrMetricSettings(def.key, data);
+    if (settings?.visible === false) return false;
+    return (settings?.supportedSubstances || def.substances).includes(family);
 }
 
 const CCR_DEFAULT_METRIC_BY_FAMILY = Object.freeze({
@@ -1895,15 +2027,21 @@ function buildCcrMetricSelectOptionsHtml(substanceScope, selectedKey = null, dat
     const resolved = resolveCcrMetricForSubstance(selectedKey || metrics[0]?.key, family, data);
     const byGroup = new Map();
     metrics.forEach(m => {
+        const ui = getCcrMetricUiDef(m.key, data);
         const gid = getCcrMetricGroupId(m, family);
         if (!byGroup.has(gid)) byGroup.set(gid, []);
-        byGroup.get(gid).push(m);
+        byGroup.get(gid).push(ui || m);
     });
     let html = '';
-    CCR_METRIC_GROUP_ORDER.forEach(group => {
-        const list = byGroup.get(group.id);
+    const orderedGroupIds = [...CCR_METRIC_GROUP_ORDER.map(g => g.id), ...[...byGroup.keys()].filter(id => !CCR_METRIC_GROUP_ORDER.some(g => g.id === id))];
+    orderedGroupIds.forEach(groupId => {
+        const list = byGroup.get(groupId);
         if (!list?.length) return;
-        html += `<optgroup label="${escapeAttr(group.label)}">`;
+        const group = CCR_METRIC_GROUP_ORDER.find(g => g.id === groupId);
+        const customGroup = list.find(item => item.settings?.groupName
+            && item.settings.groupName !== getDefaultCcrMetricSettings(item.key)?.groupName);
+        const label = customGroup?.settings?.groupName || group?.label || list[0]?.groupLabel || groupId;
+        html += `<optgroup label="${escapeAttr(label)}">`;
         list.forEach(m => {
             const selected = m.key === resolved ? ' selected' : '';
             html += `<option value="${escapeAttr(m.key)}"${selected}>${escapeHtml(m.label)}</option>`;
@@ -1921,7 +2059,102 @@ function populateCcrMetricSelect(preferredMetric = null) {
     const resolved = resolveCcrMetricForSubstance(current, substance);
     metricEl.innerHTML = buildCcrMetricSelectOptionsHtml(substance, resolved);
     if ([...metricEl.options].some(o => o.value === resolved)) metricEl.value = resolved;
+    populateCcrMetricSettingsEditor();
     return resolved;
+}
+
+function populateCcrMetricSettingsEditor(metricKey = null) {
+    const metric = metricKey || document.getElementById('ccr-rule-metric')?.value || 'useAmount';
+    const settings = getCcrMetricSettings(metric);
+    if (!settings) return;
+    const setVal = (id, value, prop = 'value') => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (prop === 'checked') el.checked = !!value;
+        else el[prop] = value ?? '';
+    };
+    setVal('ccr-metric-display-name', settings.displayName);
+    setVal('ccr-metric-group-name', settings.groupName);
+    setVal('ccr-metric-input-unit', settings.inputUnit);
+    setVal('ccr-metric-display-unit', settings.displayUnit);
+    setVal('ccr-metric-display-format', settings.displayFormat);
+    setVal('ccr-metric-precision', settings.decimalPrecision);
+    setVal('ccr-metric-direction', settings.favorableDirection);
+    setVal('ccr-metric-visible', settings.visible, 'checked');
+    setVal('ccr-metric-sections', settings.supportedSections.join(', '));
+    setVal('ccr-metric-substances', settings.supportedSubstances.join(', '));
+    setVal('ccr-metric-help', settings.helpText);
+    const opEl = document.getElementById('ccr-metric-default-operator');
+    const allowedEl = document.getElementById('ccr-metric-allowed-operators');
+    const defaults = getDefaultCcrMetricSettings(metric);
+    const allowedUniverse = defaults?.allowedOperators || settings.allowedOperators;
+    const operatorOptionsHtml = allowedUniverse.map(op => {
+        const def = CCR_OPERATORS.find(o => o.id === op);
+        return `<option value="${escapeAttr(op)}">${escapeHtml(def?.label || op)}</option>`;
+    }).join('');
+    if (allowedEl) {
+        allowedEl.innerHTML = operatorOptionsHtml;
+        const selected = new Set(settings.allowedOperators);
+        [...allowedEl.options].forEach(opt => { opt.selected = selected.has(opt.value); });
+    }
+    if (opEl) {
+        opEl.innerHTML = operatorOptionsHtml;
+        opEl.value = settings.defaultOperator;
+    }
+    const unitEl = document.getElementById('ccr-metric-input-unit');
+    if (unitEl) unitEl.disabled = !isCcrTimeGapMetric(metric);
+}
+
+function toggleCcrMetricEditor(force = null) {
+    const editor = document.getElementById('ccr-metric-editor');
+    if (!editor) return;
+    const show = force == null ? editor.classList.contains('hidden') : !!force;
+    editor.classList.toggle('hidden', !show);
+    if (show) populateCcrMetricSettingsEditor();
+}
+
+function getCcrMetricSettingsDraftFromEditor() {
+    const metric = document.getElementById('ccr-rule-metric')?.value || 'useAmount';
+    const allowedSelected = [...(document.getElementById('ccr-metric-allowed-operators')?.selectedOptions || [])].map(o => o.value);
+    const allowed = allowedSelected.length ? allowedSelected : (getCcrMetricSettings(metric)?.allowedOperators || []);
+    const splitList = (value) => String(value || '').split(',').map(v => v.trim()).filter(Boolean);
+    return {
+        displayName: document.getElementById('ccr-metric-display-name')?.value || '',
+        groupName: document.getElementById('ccr-metric-group-name')?.value || '',
+        inputUnit: document.getElementById('ccr-metric-input-unit')?.value || '',
+        displayUnit: document.getElementById('ccr-metric-display-unit')?.value || 'automatic',
+        displayFormat: document.getElementById('ccr-metric-display-format')?.value || 'automatic',
+        decimalPrecision: document.getElementById('ccr-metric-precision')?.value || 0,
+        favorableDirection: document.getElementById('ccr-metric-direction')?.value || 'neutral',
+        defaultOperator: document.getElementById('ccr-metric-default-operator')?.value || '',
+        allowedOperators: allowed,
+        supportedSections: splitList(document.getElementById('ccr-metric-sections')?.value),
+        supportedSubstances: splitList(document.getElementById('ccr-metric-substances')?.value),
+        visible: document.getElementById('ccr-metric-visible')?.checked !== false,
+        helpText: document.getElementById('ccr-metric-help')?.value || ''
+    };
+}
+
+function saveCcrMetricSettingsFromEditor() {
+    const metric = document.getElementById('ccr-rule-metric')?.value || 'useAmount';
+    const saved = saveCcrMetricSettings(metric, getCcrMetricSettingsDraftFromEditor());
+    if (!saved) {
+        if (typeof showToast === 'function') showToast('Metric settings could not be saved');
+        return;
+    }
+    populateCcrMetricSelect(metric);
+    renderConditionalColorRulesList();
+    updateCcrDurationValueLabels();
+    if (typeof showToast === 'function') showToast('Metric settings saved');
+}
+
+function resetCcrMetricSettingsFromEditor() {
+    const metric = document.getElementById('ccr-rule-metric')?.value || 'useAmount';
+    resetCcrMetricSettings(metric);
+    populateCcrMetricSelect(metric);
+    populateCcrMetricSettingsEditor(metric);
+    renderConditionalColorRulesList();
+    if (typeof showToast === 'function') showToast('Metric reset to default');
 }
 
 function onCcrSubstanceScopeChanged() {
@@ -2144,9 +2377,9 @@ function getConditionalColorPresetRules(theme = 'dark') {
             presetId: 'recoveryStreak',
             substanceScope: 'all',
             sectionScope: ['dashboard', 'status', 'insights'],
-            metric: 'timeSinceLastUse',
+            metric: 'useGapCurrent',
             operator: 'gte',
-            value: 7,
+            value: 168,
             colors: color('recoveryStreak'),
             priority: 85,
             stopProcessing: false,
@@ -2191,7 +2424,8 @@ function getDefaultConditionalColorRulesState(theme = 'dark') {
     return {
         enabled: true,
         version: 1,
-        rules: getConditionalColorPresetRules(theme)
+        rules: getConditionalColorPresetRules(theme),
+        metricSettings: {}
     };
 }
 
@@ -2332,6 +2566,7 @@ function getContrastWarning(fg, bg) {
 
 function normalizeConditionalColorRule(raw, index = 0) {
     if (!raw || typeof raw !== 'object') return null;
+    const rawMetricKey = String(raw.metric || '').trim();
     const opIds = new Set(CCR_OPERATORS.map(o => o.id));
     const metricDef = getCcrMetricDef(raw.metric);
     const metric = metricDef ? metricDef.key : 'useAmount';
@@ -2362,6 +2597,19 @@ function normalizeConditionalColorRule(raw, index = 0) {
     let durationValueVersion = raw.durationValueVersion == null
         ? null
         : Number(raw.durationValueVersion);
+    let value = raw.value === undefined ? null : raw.value;
+    let valueTo = raw.valueTo === undefined ? null : raw.valueTo;
+    let targetValue = raw.targetValue === undefined ? null : raw.targetValue;
+    if (rawMetricKey === 'daysSinceUse' || rawMetricKey === 'timeSinceLastUse') {
+        const convertDaysToHours = (v) => {
+            const n = ccrCoerceNumber(v);
+            return n == null ? v : n * 24;
+        };
+        value = convertDaysToHours(value);
+        valueTo = convertDaysToHours(valueTo);
+        targetValue = convertDaysToHours(targetValue);
+        valueUnit = 'hours';
+    }
     if (metric === 'sessionDuration') {
         if (valueUnit !== 'hours' && valueUnit !== 'minutes') {
             if (durationValueVersion === 2 || raw.valueInputUnit === 'hours') valueUnit = 'hours';
@@ -2369,6 +2617,13 @@ function normalizeConditionalColorRule(raw, index = 0) {
         }
         if (valueUnit === 'hours') durationValueVersion = 2;
         else if (durationValueVersion == null) durationValueVersion = 1;
+    } else if (isCcrTimeGapMetric(metric)) {
+        if (!CCR_TIME_INPUT_UNITS.includes(valueUnit)) valueUnit = 'hours';
+        value = ccrTimeGapUnitToHours(value, valueUnit);
+        valueTo = ccrTimeGapUnitToHours(valueTo, valueUnit);
+        targetValue = ccrTimeGapUnitToHours(targetValue, valueUnit);
+        valueUnit = 'hours';
+        durationValueVersion = null;
     } else {
         valueUnit = null;
         durationValueVersion = null;
@@ -2383,9 +2638,9 @@ function normalizeConditionalColorRule(raw, index = 0) {
         sectionScope,
         metric,
         operator,
-        value: raw.value === undefined ? null : raw.value,
-        valueTo: raw.valueTo === undefined ? null : raw.valueTo,
-        targetValue: raw.targetValue === undefined ? null : raw.targetValue,
+        value,
+        valueTo,
+        targetValue,
         valueUnit,
         durationValueVersion,
         colors: {
@@ -2468,6 +2723,7 @@ function ensureConditionalColorRules(data = appData, options = {}) {
         ? state.customGroups.map((g, i) => normalizeCcrCustomGroup(g, i)).filter(Boolean)
         : [];
     state.ui = normalizeCcrManagerPersistedUi(state.ui);
+    state.metricSettings = normalizeCcrMetricSettingsMap(state.metricSettings);
     if (!Array.isArray(state.rules) || !state.rules.length) {
         state.rules = getConditionalColorPresetRules(theme);
     } else {
@@ -2499,6 +2755,9 @@ function persistConditionalColorRulesState(patch = {}, data = appData) {
     if (patch.ui && typeof patch.ui === 'object') {
         state.ui = normalizeCcrManagerPersistedUi({ ...(state.ui || {}), ...patch.ui });
     }
+    if (patch.metricSettings && typeof patch.metricSettings === 'object') {
+        state.metricSettings = normalizeCcrMetricSettingsMap(patch.metricSettings);
+    }
     data.settings[ccrStorageKey()] = state;
     if (typeof saveData === 'function') saveData(data);
     return state;
@@ -2513,6 +2772,11 @@ function ccrCoerceNumber(value) {
 
 function isCcrDurationMetric(metric) {
     return migrateCcrMetricKey(metric) === 'sessionDuration';
+}
+
+function isCcrTimeGapMetric(metric) {
+    const key = migrateCcrMetricKey(metric);
+    return key === 'useGapCurrent' || key === 'useGapPrevious';
 }
 
 /** Duration rules: new rules use hours; legacy rules without a unit are minutes. */
@@ -2544,6 +2808,36 @@ function getCcrRuleCompareMinutes(rule, field = 'value') {
     return getCcrDurationValueUnit(rule) === 'hours' ? n * 60 : n;
 }
 
+function ccrTimeGapUnitToHours(value, unit = 'hours') {
+    const n = ccrCoerceNumber(value);
+    if (n == null) return null;
+    if (unit === 'minutes') return n / 60;
+    if (unit === 'days') return n * 24;
+    return n;
+}
+
+function ccrTimeGapHoursToUnit(hours, unit = 'hours') {
+    const n = ccrCoerceNumber(hours);
+    if (n == null) return '';
+    if (unit === 'minutes') return String(Math.round(n * 60 * 1000) / 1000);
+    if (unit === 'days') return String(Math.round((n / 24) * 1000) / 1000);
+    return String(Math.round(n * 1000) / 1000);
+}
+
+function getCcrRuleCompareHours(rule, field = 'value') {
+    const raw = field === 'valueTo' ? rule?.valueTo : rule?.value;
+    const n = ccrCoerceNumber(raw);
+    if (n == null) return null;
+    return n;
+}
+
+function getCcrRuleCompareNumber(rule, field = 'value') {
+    if (isCcrDurationMetric(rule?.metric)) return getCcrRuleCompareMinutes(rule, field);
+    if (isCcrTimeGapMetric(rule?.metric)) return getCcrRuleCompareHours(rule, field);
+    const raw = field === 'valueTo' ? rule?.valueTo : rule?.value;
+    return ccrCoerceNumber(raw);
+}
+
 function getCcrDurationEditorValues(rule) {
     if (!isCcrDurationMetric(rule?.metric)) {
         return {
@@ -2561,6 +2855,20 @@ function getCcrDurationEditorValues(rule) {
     return { value: toEditor(rule.value), valueTo: toEditor(rule.valueTo) };
 }
 
+function getCcrTimeGapEditorValues(rule, data = appData) {
+    if (!isCcrTimeGapMetric(rule?.metric)) {
+        return {
+            value: rule?.value == null ? '' : String(rule.value),
+            valueTo: rule?.valueTo == null ? '' : String(rule.valueTo)
+        };
+    }
+    const unit = getCcrMetricSettings(rule.metric, data)?.inputUnit || 'hours';
+    return {
+        value: ccrTimeGapHoursToUnit(rule.value, unit),
+        valueTo: ccrTimeGapHoursToUnit(rule.valueTo, unit)
+    };
+}
+
 function formatCcrDurationThresholdLabel(minutes) {
     const n = ccrCoerceNumber(minutes);
     if (n == null || !Number.isFinite(n) || n < 0) return '—';
@@ -2569,6 +2877,20 @@ function formatCcrDurationThresholdLabel(minutes) {
     const hours = n / 60;
     const h = Math.floor(hours);
     const m = Math.round((hours - h) * 60);
+    if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    return `${m}m`;
+}
+
+function formatCcrUseGapThresholdLabel(hours) {
+    const n = ccrCoerceNumber(hours);
+    if (n == null || !Number.isFinite(n) || n < 0) return '—';
+    if (n === 0) return '0m';
+    if (typeof formatBreakFromHours === 'function') return formatBreakFromHours(n);
+    const totalMinutes = Math.round(n * 60);
+    const days = Math.floor(totalMinutes / 1440);
+    const h = Math.floor((totalMinutes % 1440) / 60);
+    const m = totalMinutes % 60;
+    if (days > 0) return h > 0 ? `${days}d ${h}h` : `${days}d`;
     if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
     return `${m}m`;
 }
@@ -2606,12 +2928,8 @@ function compareConditionalColorRule(rule, context = {}) {
         textValue = normalizeCcrTransactionTypeToken(textValue || rawValue);
     }
     const numValue = ccrCoerceNumber(rawValue);
-    const compare = isCcrDurationMetric(rule.metric)
-        ? getCcrRuleCompareMinutes(rule, 'value')
-        : ccrCoerceNumber(ruleValue);
-    const compareTo = isCcrDurationMetric(rule.metric)
-        ? getCcrRuleCompareMinutes(rule, 'valueTo')
-        : ccrCoerceNumber(rule.valueTo);
+    const compare = getCcrRuleCompareNumber(rule, 'value');
+    const compareTo = getCcrRuleCompareNumber(rule, 'valueTo');
     const target = ccrCoerceNumber(context.target != null ? context.target : rule.targetValue);
 
     try {
@@ -2699,7 +3017,7 @@ function ruleMatchesSectionScope(rule, section) {
 
 function ruleMatchesMetric(rule, metric) {
     if (!metric) return true;
-    return rule.metric === metric;
+    return migrateCcrMetricKey(rule.metric) === migrateCcrMetricKey(metric);
 }
 
 /**
@@ -3045,6 +3363,9 @@ function exportConditionalColorRulesJson(data = appData) {
         version: state.version || 1,
         exportedAt: new Date().toISOString(),
         enabled: state.enabled,
+        metricSettings: state.metricSettings || {},
+        customGroups: state.customGroups || [],
+        ui: state.ui || {},
         rules: state.rules
     }, null, 2);
 }
@@ -3063,19 +3384,22 @@ function importConditionalColorRulesJson(jsonText, data = appData, { replace = f
     const normalized = incoming.map((r, i) => normalizeConditionalColorRule(r, i)).filter(Boolean);
     if (!normalized.length) throw new Error('No valid rules in import file.');
     const state = ensureConditionalColorRules(data);
+    const metricSettings = normalizeCcrMetricSettingsMap(parsed?.metricSettings || {});
     if (replace) {
         state.rules = normalized;
+        state.metricSettings = metricSettings;
     } else {
         const existingIds = new Set(state.rules.map(r => r.id));
         normalized.forEach(rule => {
             if (existingIds.has(rule.id)) rule.id = ccrNewId();
             state.rules.push(rule);
         });
+        state.metricSettings = { ...(state.metricSettings || {}), ...metricSettings };
     }
     if (parsed && typeof parsed === 'object' && parsed.enabled != null) {
         state.enabled = !!parsed.enabled;
     }
-    persistConditionalColorRulesState({ rules: state.rules, enabled: state.enabled }, data);
+    persistConditionalColorRulesState({ rules: state.rules, enabled: state.enabled, metricSettings: state.metricSettings }, data);
     invalidateConditionalColorRuleMatchCache();
     return state;
 }
@@ -3141,6 +3465,10 @@ function setCcrManagerFilters(patch = {}) {
 
 function formatCcrConditionSummary(rule) {
     if (!rule) return '—';
+    const metricDef = getCcrMetricUiDef(rule.metric) || getCcrMetricDef(rule.metric);
+    const metricName = metricDef?.label || rule.metric;
+    const op = CCR_OPERATORS.find(o => o.id === rule.operator);
+    const opLabel = op?.label || rule.operator;
     if (isCcrDurationMetric(rule.metric)) {
         const lo = formatCcrDurationThresholdLabel(getCcrRuleCompareMinutes(rule, 'value'));
         const hi = formatCcrDurationThresholdLabel(getCcrRuleCompareMinutes(rule, 'valueTo'));
@@ -3170,8 +3498,36 @@ function formatCcrConditionSummary(rule) {
                 break;
         }
     }
-    const op = CCR_OPERATORS.find(o => o.id === rule.operator);
-    const opLabel = op?.label || rule.operator;
+    if (isCcrTimeGapMetric(rule.metric)) {
+        const lo = formatCcrUseGapThresholdLabel(getCcrRuleCompareHours(rule, 'value'));
+        const hi = formatCcrUseGapThresholdLabel(getCcrRuleCompareHours(rule, 'valueTo'));
+        const prefix = String(metricName).replace(/^Use Gap\s*→\s*/i, 'Use Gap: ');
+        switch (rule.operator) {
+            case 'lt':
+                return `${prefix} · Less than ${lo}`;
+            case 'lte':
+                return `${prefix} · At most ${lo}`;
+            case 'gt':
+                return `${prefix} · Greater than ${lo}`;
+            case 'gte':
+                return `${prefix} · At least ${lo}`;
+            case 'eq':
+                return `${prefix} · Equals ${lo}`;
+            case 'neq':
+                return `${prefix} · Not ${lo}`;
+            case 'between':
+            case 'betweenInclusive':
+                return `${prefix} · Between ${lo} and ${hi}`;
+            case 'betweenExclusive':
+                return `${prefix} · Between ${lo} and ${hi} (exclusive)`;
+            case 'empty':
+                return `${prefix} · Empty`;
+            case 'notEmpty':
+                return `${prefix} · Not empty`;
+            default:
+                break;
+        }
+    }
     if (rule.operator === 'between' || rule.operator === 'betweenInclusive' || rule.operator === 'betweenExclusive') {
         return `${opLabel} ${rule.value ?? '—'} – ${rule.valueTo ?? '—'}`;
     }
@@ -3232,12 +3588,8 @@ function scopesOverlapSections(a, b) {
 }
 
 function ccrNumericRange(rule) {
-    const v = isCcrDurationMetric(rule?.metric)
-        ? getCcrRuleCompareMinutes(rule, 'value')
-        : ccrCoerceNumber(rule.value);
-    const v2 = isCcrDurationMetric(rule?.metric)
-        ? getCcrRuleCompareMinutes(rule, 'valueTo')
-        : ccrCoerceNumber(rule.valueTo);
+    const v = getCcrRuleCompareNumber(rule, 'value');
+    const v2 = getCcrRuleCompareNumber(rule, 'valueTo');
     switch (rule.operator) {
         case 'eq':
             return v == null ? null : { lo: v, hi: v, loExclusive: false, hiExclusive: false };
@@ -3374,7 +3726,7 @@ function buildConditionalColorRuleMatchContexts(data = appData, { maxSamples = 2
             push({
                 substanceId: log.substanceId,
                 section: 'useHistory',
-                metric: 'breakSincePreviousUse',
+                metric: 'useGapPrevious',
                 value: breakHours,
                 log
             });
@@ -3417,7 +3769,13 @@ function buildConditionalColorRuleMatchContexts(data = appData, { maxSamples = 2
     push({ substanceId: 'all', section: 'dashboard', metric: 'useVsTarget', value: 1.2, target: 1 });
     push({ substanceId: 'all', section: 'taper', metric: 'taperPlannedVsActual', value: 0.8, target: 1 });
     push({ substanceId: 'all', section: 'taper', metric: 'taperPlannedVsActual', value: 1.3, target: 1 });
-    push({ substanceId: 'all', section: 'dashboard', metric: 'timeSinceLastUse', value: 10 });
+    (data.substances || []).forEach(sub => {
+        const gap = computeCurrentUseGapHours(sub.id, data);
+        if (gap != null) {
+            push({ substanceId: sub.id, section: 'dashboard', metric: 'useGapCurrent', value: gap });
+        }
+    });
+    push({ substanceId: 'all', section: 'dashboard', metric: 'useGapCurrent', value: 48 });
     return contexts;
 }
 
@@ -3573,19 +3931,24 @@ function exportConditionalColorRulesSelectionJson(ruleIds, data = appData) {
         version: state.version || 1,
         exportedAt: new Date().toISOString(),
         enabled: state.enabled,
+        metricSettings: state.metricSettings || {},
         rules
     }, null, 2);
 }
 
 function formatCcrRuleRangeLabel(rule) {
     if (!rule) return '';
-    const unit = isCcrDurationMetric(rule.metric) ? '' : '';
+    const unit = '';
     const lo = isCcrDurationMetric(rule.metric)
         ? formatCcrDurationThresholdLabel(getCcrRuleCompareMinutes(rule, 'value'))
-        : String(rule.value ?? '').trim();
+        : (isCcrTimeGapMetric(rule.metric)
+            ? formatCcrUseGapThresholdLabel(getCcrRuleCompareHours(rule, 'value'))
+            : String(rule.value ?? '').trim());
     const hi = isCcrDurationMetric(rule.metric)
         ? formatCcrDurationThresholdLabel(getCcrRuleCompareMinutes(rule, 'valueTo'))
-        : String(rule.valueTo ?? '').trim();
+        : (isCcrTimeGapMetric(rule.metric)
+            ? formatCcrUseGapThresholdLabel(getCcrRuleCompareHours(rule, 'valueTo'))
+            : String(rule.valueTo ?? '').trim());
     if (rule.operator === 'between' || rule.operator === 'betweenInclusive' || rule.operator === 'betweenExclusive') {
         return `${lo || '—'}-${hi || '—'}${unit}`;
     }
@@ -3599,9 +3962,19 @@ function formatCcrRuleRangeLabel(rule) {
 
 function generateCcrRuleNameFromCondition(rule, data = appData) {
     const substance = formatCcrSubstanceScopeLabel(rule, data).replace(/^All substances$/, 'All');
-    const metric = getCcrMetricDef(rule?.metric)?.label || rule?.metric || 'Metric';
+    const metric = getCcrMetricUiDef(rule?.metric, data)?.label || getCcrMetricDef(rule?.metric)?.label || rule?.metric || 'Metric';
     const range = formatCcrRuleRangeLabel(rule) || formatCcrConditionSummary(rule);
     return `${substance} · ${metric} · ${range}`.slice(0, 80);
+}
+
+function formatCcrRuleManagerSummary(rule, data = appData) {
+    const substance = formatCcrSubstanceScopeLabel(rule, data);
+    const metric = getCcrMetricUiDef(rule?.metric, data)?.label || getCcrMetricDef(rule?.metric)?.label || rule?.metric || 'Metric';
+    const condition = formatCcrConditionSummary(rule);
+    if (isCcrTimeGapMetric(rule?.metric)) {
+        return `${substance} · ${condition}`;
+    }
+    return `${substance} · ${metric} · ${condition}`;
 }
 
 function applyCcrBulkNameChange(rule, changes = {}, index = 0, data = appData) {
@@ -3780,6 +4153,7 @@ function exportCcrCustomGroupJson(groupId, data = appData) {
         version: state.version || 1,
         exportedAt: new Date().toISOString(),
         group,
+        metricSettings: state.metricSettings || {},
         rules
     }, null, 2);
 }
@@ -3828,7 +4202,7 @@ function getCcrRuleGroupKey(rule, groupBy = 'substance', data = appData) {
 
 function getCcrRuleGroupName(groupKey, groupBy = 'substance', data = appData) {
     const value = String(groupKey).split(':').slice(1).join(':') || 'all';
-    if (groupBy === 'metric') return getCcrMetricDef(value)?.label || value;
+    if (groupBy === 'metric') return getCcrMetricUiDef(value, data)?.label || getCcrMetricDef(value)?.label || value;
     if (groupBy === 'section') return CCR_SECTION_USAGE_LABELS[value] || CCR_SECTIONS.find(s => s.id === value)?.label || value;
     if (groupBy === 'enabled') return value === 'enabled' ? 'Enabled' : 'Disabled';
     if (groupBy === 'custom') {
@@ -3998,6 +4372,8 @@ function getCcrEditorDraftFromForm() {
     if (isCcrDurationMetric(metric)) {
         draft.valueUnit = 'hours';
         draft.durationValueVersion = 2;
+    } else if (isCcrTimeGapMetric(metric)) {
+        draft.valueUnit = getCcrMetricSettings(metric)?.inputUnit || 'hours';
     }
     return normalizeConditionalColorRule(draft);
 }
@@ -4066,6 +4442,10 @@ function fillCcrEditorForm(rule) {
         const editorVals = getCcrDurationEditorValues(r);
         set('ccr-rule-value', editorVals.value);
         set('ccr-rule-value-to', editorVals.valueTo);
+    } else if (isCcrTimeGapMetric(r.metric)) {
+        const editorVals = getCcrTimeGapEditorValues(r);
+        set('ccr-rule-value', editorVals.value);
+        set('ccr-rule-value-to', editorVals.valueTo);
     } else {
         set('ccr-rule-value', r.value);
         set('ccr-rule-value-to', r.valueTo);
@@ -4103,6 +4483,7 @@ function updateCcrDurationValueLabels() {
     const metric = document.getElementById('ccr-rule-metric')?.value;
     const op = document.getElementById('ccr-rule-operator')?.value;
     const isDur = isCcrDurationMetric(metric);
+    const isGap = isCcrTimeGapMetric(metric);
     const isBetween = op === 'between' || op === 'betweenInclusive' || op === 'betweenExclusive';
     const valueLabel = document.getElementById('ccr-rule-value-label')
         || document.querySelector('label[for="ccr-rule-value"]');
@@ -4112,15 +4493,43 @@ function updateCcrDurationValueLabels() {
     if (valueLabel) {
         if (isDur && isBetween) valueLabel.textContent = 'Minimum hours';
         else if (isDur) valueLabel.textContent = 'Comparison value (hours)';
+        else if (isGap && isBetween) valueLabel.textContent = 'Minimum hours';
+        else if (isGap) valueLabel.textContent = 'Comparison value (hours)';
         else valueLabel.textContent = 'Comparison value';
     }
     if (valueToLabel) {
-        valueToLabel.textContent = isDur ? 'Maximum hours' : 'Range end';
+        valueToLabel.textContent = (isDur || isGap) ? 'Maximum hours' : 'Range end';
     }
-    hint?.classList.toggle('hidden', !isDur);
+    if (hint) {
+        hint.textContent = isGap
+            ? 'Enter duration in hours. Decimals are allowed. Examples: 0.5 = 30 minutes, 2 = 2 hours, 26 = 1 day 2 hours.'
+            : 'Enter duration in hours. Decimals are allowed.';
+        hint.classList.toggle('hidden', !(isDur || isGap));
+    }
+}
+
+function populateCcrOperatorSelectForMetric(metric = null) {
+    const opEl = document.getElementById('ccr-rule-operator');
+    if (!opEl) return;
+    const current = opEl.value;
+    const settings = getCcrMetricSettings(metric || document.getElementById('ccr-rule-metric')?.value || 'useAmount');
+    const allowed = new Set(settings?.allowedOperators || CCR_OPERATORS.map(o => o.id));
+    opEl.innerHTML = CCR_OPERATORS
+        .filter(o => o.id !== 'betweenInclusive' && allowed.has(o.id))
+        .map(o => `<option value="${o.id}">${escapeHtml(o.label)}</option>`).join('');
+    if ([...opEl.options].some(o => o.value === current)) opEl.value = current;
+    else if (settings?.defaultOperator && [...opEl.options].some(o => o.value === settings.defaultOperator)) opEl.value = settings.defaultOperator;
 }
 
 function onCcrMetricChanged() {
+    populateCcrMetricSettingsEditor();
+    const metric = document.getElementById('ccr-rule-metric')?.value;
+    populateCcrOperatorSelectForMetric(metric);
+    const settings = getCcrMetricSettings(metric);
+    const opEl = document.getElementById('ccr-rule-operator');
+    if (opEl && settings?.defaultOperator && [...opEl.options].some(o => o.value === settings.defaultOperator)) {
+        opEl.value = settings.defaultOperator;
+    }
     updateCcrDurationValueLabels();
     updateCcrOperatorFieldsVisibility();
     updateCcrLivePreview();
@@ -4280,7 +4689,7 @@ function openCcrBulkEditDialog() {
 }
 
 function renderCcrRuleManagerCard(rule, { conflicts, matchCounts, selected } = {}) {
-    const metricLabel = (id) => getCcrMetricDef(id)?.label || id;
+    const metricLabel = (id) => getCcrMetricUiDef(id)?.label || getCcrMetricDef(id)?.label || id;
     const conflictList = conflicts[rule.id] || [];
     const expanded = isCcrRuleCardExpanded(rule.id);
     const conflictHtml = conflictList.length
@@ -4309,7 +4718,7 @@ function renderCcrRuleManagerCard(rule, { conflicts, matchCounts, selected } = {
             <div class="ccr-rule-card-body">
                 <div class="ccr-rule-compact-line">
                     <strong class="ccr-rule-name">${escapeHtml(rule.name)}</strong>
-                    <span class="ccr-rule-condition">${escapeHtml(metricLabel(rule.metric))} · ${escapeHtml(formatCcrConditionSummary(rule))}</span>
+                    <span class="ccr-rule-condition">${escapeHtml(formatCcrRuleManagerSummary(rule))}</span>
                     <span class="ccr-priority-pill">P${escapeHtml(String(rule.priority))}</span>
                     ${conflictHtml}
                 </div>
@@ -4408,18 +4817,20 @@ function populateCcrManagerFilterSelects() {
     }
     const metricEl = document.getElementById('ccr-manager-filter-metric');
     if (metricEl && !metricEl.dataset.ready) {
-        const active = CCR_METRICS.filter(m => !m.deleted);
+        const active = CCR_METRICS.filter(m => !m.deleted && getCcrMetricSettings(m.key)?.visible !== false);
         const byGroup = new Map();
         active.forEach(m => {
             const gid = m.group || 'use';
             if (!byGroup.has(gid)) byGroup.set(gid, []);
-            byGroup.get(gid).push(m);
+            byGroup.get(gid).push(getCcrMetricUiDef(m.key) || m);
         });
         let metricHtml = `<option value="all">All metrics</option>`;
         CCR_METRIC_GROUP_ORDER.forEach(group => {
             const list = byGroup.get(group.id);
             if (!list?.length) return;
-            metricHtml += `<optgroup label="${escapeAttr(group.label)}">`;
+            const customGroup = list.find(item => item.settings?.groupName
+                && item.settings.groupName !== getDefaultCcrMetricSettings(item.key)?.groupName);
+            metricHtml += `<optgroup label="${escapeAttr(customGroup?.settings?.groupName || group.label)}">`;
             list.forEach(m => {
                 metricHtml += `<option value="${escapeAttr(m.key)}">${escapeHtml(m.label)}</option>`;
             });
@@ -4622,14 +5033,7 @@ function renderConditionalColorRulesSettings() {
     populateCcrSubstanceSelect();
     populateCcrManagerFilterSelects();
     populateCcrMetricSelect();
-    const opEl = document.getElementById('ccr-rule-operator');
-    if (opEl) {
-        const current = opEl.value;
-        opEl.innerHTML = CCR_OPERATORS
-            .filter(o => o.id !== 'betweenInclusive')
-            .map(o => `<option value="${o.id}">${escapeHtml(o.label)}</option>`).join('');
-        if ([...opEl.options].some(o => o.value === current)) opEl.value = current;
-    }
+    populateCcrOperatorSelectForMetric(document.getElementById('ccr-rule-metric')?.value || 'useAmount');
     const sectionsEl = document.getElementById('ccr-rule-sections');
     if (sectionsEl && !sectionsEl.options.length) {
         sectionsEl.innerHTML = CCR_SECTIONS.map(s => `<option value="${s.id}">${escapeHtml(s.label)}</option>`).join('');
@@ -4914,6 +5318,9 @@ function formatCcrRangeTick(n, rule = null) {
     if (!Number.isFinite(n)) return n > 0 ? '∞' : '−∞';
     if (rule && isCcrDurationMetric(rule.metric)) {
         return formatCcrDurationThresholdLabel(n);
+    }
+    if (rule && isCcrTimeGapMetric(rule.metric)) {
+        return formatCcrUseGapThresholdLabel(n);
     }
     if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
     return String(Math.round(n * 100) / 100);
@@ -34675,6 +35082,34 @@ function computeBreakSincePreviousUseHours(entry, data = appData) {
     return details.hours;
 }
 
+function getQualifyingUseGapTimestampMs(log) {
+    if (!log) return null;
+    const end = typeof getUseEndDatetime === 'function'
+        ? getUseEndDatetime(log)
+        : (typeof getUseLogEndedAt === 'function' ? getUseLogEndedAt(log) : null);
+    if (end?.getTime && Number.isFinite(end.getTime())) return end.getTime();
+    const start = typeof getUseLogStartedAt === 'function' ? getUseLogStartedAt(log) : null;
+    if (start?.getTime && Number.isFinite(start.getTime())) return start.getTime();
+    const ms = typeof getLogDatetimeMs === 'function' ? getLogDatetimeMs(log) : null;
+    return Number.isFinite(ms) ? ms : null;
+}
+
+function computeCurrentUseGapHours(substanceId, data = appData, asOf = new Date()) {
+    const asOfMs = asOf instanceof Date ? asOf.getTime() : new Date(asOf).getTime();
+    if (!Number.isFinite(asOfMs)) return null;
+    let latestMs = null;
+    (typeof getUseEntries === 'function' ? getUseEntries(data) : (data.logs || [])).forEach(log => {
+        if (!logMatchesSubstance(log, substanceId, data)) return;
+        if (!isQualifyingBreakUseLog(log, data)) return;
+        const ts = getQualifyingUseGapTimestampMs(log);
+        if (ts == null || ts > asOfMs) return;
+        if (latestMs == null || ts > latestMs) latestMs = ts;
+    });
+    if (latestMs == null) return null;
+    const hours = (asOfMs - latestMs) / 3600000;
+    return Number.isFinite(hours) && hours >= 0 ? hours : null;
+}
+
 function formatBreakSincePreviousUse(hours) {
     if (hours == null || !Number.isFinite(hours) || hours < 0) return '—';
     return formatBreakFromHours(hours);
@@ -34691,18 +35126,18 @@ function formatBreakBetweenUsesTooltip(details) {
 
 /**
  * Shared resolver for log-level normalized metrics used by CCR and tables.
- * Duration → minutes; g/hr → grams/hour; break → hours.
+ * Duration → minutes; g/hr → grams/hour; use gaps → hours.
  */
 function resolveNormalizedLogMetric(metricId, log, data = appData) {
     if (!log || !metricId) return null;
-    switch (metricId) {
+    switch (migrateCcrMetricKey(metricId)) {
         case 'sessionDuration':
         case 'duration':
             return getNormalizedSessionDurationMinutes(log);
         case 'gramsPerHour':
         case 'gPerHour':
             return getNormalizedGramsPerHour(log);
-        case 'breakSincePreviousUse':
+        case 'useGapPrevious':
             return computeBreakSincePreviousUseHours(log, data);
         default:
             return null;
@@ -35422,7 +35857,7 @@ function formatInsightsBreakCell(hours, substanceId, section = 'insights') {
     if (hours == null || !Number.isFinite(hours)) return display;
     return applyCcrToInsightsMetricCell(display, {
         substanceId,
-        metric: 'breakSincePreviousUse',
+        metric: 'useGapPrevious',
         value: hours,
         section
     });
@@ -37919,7 +38354,7 @@ function renderBreakSincePreviousCell(entry, data = appData) {
         html = applyConditionalColorToMetricHtml(html, {
             substanceId: getUseSubstanceId(entry, data),
             section: 'useHistory',
-            metric: 'breakSincePreviousUse',
+            metric: 'useGapPrevious',
             value: hours,
             log: entry
         }, data);
@@ -59623,12 +60058,25 @@ function __getRecoveryTrackerTestExports() {
         populateCcrMetricSelect,
         onCcrSubstanceScopeChanged,
         isCcrDurationMetric,
+        isCcrTimeGapMetric,
         getCcrDurationValueUnit,
         ccrDurationHoursToMinutes,
         ccrDurationMinutesToHours,
+        ccrTimeGapUnitToHours,
+        ccrTimeGapHoursToUnit,
         getCcrRuleCompareMinutes,
+        getCcrRuleCompareHours,
         getCcrDurationEditorValues,
+        getCcrTimeGapEditorValues,
         formatCcrDurationThresholdLabel,
+        formatCcrUseGapThresholdLabel,
+        computeCurrentUseGapHours,
+        getCcrMetricSettings,
+        saveCcrMetricSettings,
+        resetCcrMetricSettings,
+        getDefaultCcrMetricSettings,
+        getCcrMetricUiDef,
+        formatCcrRuleManagerSummary,
         updateCcrDurationValueLabels,
         onCcrMetricChanged,
         evaluateUseHistoryRowConditionalColor,

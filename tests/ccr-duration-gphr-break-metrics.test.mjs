@@ -79,17 +79,20 @@ function cokeSession(overrides = {}) {
     };
 }
 
-test('CCR metrics include Duration, g/hr, and Break since previous use', () => {
+test('CCR metrics include Duration, g/hr, and grouped Use Gap variants', () => {
     const { rt } = setup();
-    const labels = rt.CCR_METRICS.map(m => m.label);
+    const labels = rt.getCcrMetricsForSubstance('coke').map(m => m.label);
     assert.ok(labels.includes('Duration'));
     assert.ok(labels.includes('g/hr'));
-    assert.ok(labels.includes('Break since previous use'));
-    assert.ok(!labels.includes('Break') || labels.some(l => l === 'Break since previous use'));
-    const ids = rt.CCR_METRICS.map(m => m.id);
+    assert.ok(labels.includes('Use Gap → Current gap'));
+    assert.ok(labels.includes('Use Gap → Previous gap'));
+    assert.ok(!labels.includes('Break since previous use'));
+    assert.ok(!labels.includes('Time since last use'));
+    const ids = rt.getCcrMetricsForSubstance('coke').map(m => m.id);
     assert.ok(ids.includes('sessionDuration'));
     assert.ok(ids.includes('gramsPerHour'));
-    assert.ok(ids.includes('breakSincePreviousUse'));
+    assert.ok(ids.includes('useGapCurrent'));
+    assert.ok(ids.includes('useGapPrevious'));
 });
 
 test('duration: midnight crossing, missing, and zero', () => {
