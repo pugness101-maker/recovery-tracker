@@ -1599,39 +1599,336 @@ const CCR_COLOR_CHANNEL_DEFAULTS = Object.freeze({
     border: '#4caf50'
 });
 
-const CCR_METRICS = Object.freeze([
-    { id: 'useAmount', label: 'Use amount', valueType: 'number' },
-    { id: 'sessionDuration', label: 'Duration', valueType: 'number' },
-    { id: 'gramsPerHour', label: 'g/hr', valueType: 'number' },
-    { id: 'breakSincePreviousUse', label: 'Break since previous use', valueType: 'number' },
-    { id: 'useVsTarget', label: 'Use vs target ratio', valueType: 'ratio' },
-    { id: 'puffs', label: 'Puffs', valueType: 'number' },
-    { id: 'percentLeft', label: 'Percent left', valueType: 'number' },
-    { id: 'tabs', label: 'Tabs', valueType: 'number' },
-    { id: 'ug', label: 'µg', valueType: 'number' },
-    { id: 'pills', label: 'Pills', valueType: 'number' },
-    { id: 'mg', label: 'mg', valueType: 'number' },
-    { id: 'drinks', label: 'Drinks', valueType: 'number' },
-    { id: 'inventoryRemaining', label: 'Inventory remaining', valueType: 'number' },
-    { id: 'inventoryPercent', label: 'Inventory % remaining', valueType: 'number' },
-    { id: 'daysSinceUse', label: 'Days since use', valueType: 'number' },
-    { id: 'daysSincePurchase', label: 'Days since purchase', valueType: 'number' },
-    { id: 'spend', label: 'Spending', valueType: 'number' },
-    { id: 'purchaseCount', label: 'Purchase count', valueType: 'number' },
-    { id: 'taperPlannedVsActual', label: 'Taper planned vs actual ratio', valueType: 'ratio' },
-    { id: 'taperStatus', label: 'Taper status', valueType: 'string' },
-    { id: 'costPerUnit', label: 'Cost per unit', valueType: 'number' },
-    { id: 'transactionType', label: 'Transaction type', valueType: 'string' },
-    { id: 'productType', label: 'Product type', valueType: 'string' },
-    { id: 'store', label: 'Store', valueType: 'string' },
-    { id: 'paymentMethod', label: 'Payment method', valueType: 'string' },
-    { id: 'statusLabel', label: 'Status label', valueType: 'string' },
-    { id: 'booleanFlag', label: 'Boolean flag', valueType: 'boolean' },
-    { id: 'periodPreviousValue', label: 'Previous-period value', valueType: 'number' },
-    { id: 'periodNumericChange', label: 'Previous-period numeric change', valueType: 'number' },
-    { id: 'periodPercentageChange', label: 'Previous-period % change', valueType: 'number' },
-    { id: 'periodChangeDirection', label: 'Increase/decrease direction', valueType: 'string' }
+const CCR_METRIC_GROUP_ORDER = Object.freeze([
+    { id: 'use', label: 'Use' },
+    { id: 'inventory', label: 'Inventory' },
+    { id: 'vapeInventory', label: 'Vape inventory' },
+    { id: 'purchases', label: 'Purchases and spending' },
+    { id: 'taper', label: 'Taper' },
+    { id: 'taperGoals', label: 'Taper and goals' },
+    { id: 'goals', label: 'Goals' },
+    { id: 'record', label: 'Record fields' },
+    { id: 'period', label: 'Previous-period comparison' }
 ]);
+
+/** Legacy metric keys → canonical registry keys. */
+const CCR_METRIC_ALIASES = Object.freeze({
+    daysSinceUse: 'timeSinceLastUse',
+    duration: 'sessionDuration',
+    gPerHour: 'gramsPerHour',
+    break: 'breakSincePreviousUse',
+    costPerUnit: 'costPerUnit'
+});
+
+function ccrMetricDef({
+    key,
+    label,
+    group,
+    substances,
+    sections = ['all'],
+    valueType = 'number',
+    unitType = null,
+    allowedOperators = null,
+    groupBySubstance = null,
+    deleted = false
+}) {
+    return Object.freeze({
+        id: key,
+        key,
+        label,
+        group,
+        substances: Object.freeze([...(substances || [])]),
+        sections: Object.freeze([...(sections || ['all'])]),
+        valueType,
+        unitType,
+        allowedOperators: allowedOperators ? Object.freeze([...allowedOperators]) : null,
+        groupBySubstance: groupBySubstance ? Object.freeze({ ...groupBySubstance }) : null,
+        deleted: !!deleted
+    });
+}
+
+const CCR_METRICS = Object.freeze([
+    // ——— Universal / shared ———
+    ccrMetricDef({ key: 'useAmount', label: 'Use amount', group: 'use', substances: ['all', 'coke'], unitType: 'amount' }),
+    ccrMetricDef({ key: 'sessionDuration', label: 'Duration', group: 'use', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'minutes' }),
+    ccrMetricDef({ key: 'breakSincePreviousUse', label: 'Break since previous use', group: 'use', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours' }),
+    ccrMetricDef({
+        key: 'useVsTarget',
+        label: 'Use vs target ratio',
+        group: 'use',
+        substances: ['all', 'coke', 'lsd', 'xanax', 'alcohol'],
+        valueType: 'ratio',
+        unitType: 'ratio',
+        groupBySubstance: { coke: 'use' }
+    }),
+    ccrMetricDef({ key: 'timeSinceLastUse', label: 'Time since last use', group: 'use', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'days' }),
+
+    ccrMetricDef({ key: 'inventoryRemaining', label: 'Inventory remaining', group: 'inventory', substances: ['all', 'coke'], unitType: 'amount' }),
+    ccrMetricDef({ key: 'inventoryPercent', label: 'Inventory % remaining', group: 'inventory', substances: ['all', 'coke', 'lsd', 'xanax'], unitType: 'percent' }),
+    ccrMetricDef({
+        key: 'daysSincePurchase',
+        label: 'Days since purchase',
+        group: 'inventory',
+        substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax'],
+        unitType: 'days',
+        groupBySubstance: { nicotine: 'vapeInventory' }
+    }),
+    ccrMetricDef({
+        key: 'inventoryStatus',
+        label: 'Inventory status',
+        group: 'inventory',
+        substances: ['all', 'nicotine', 'lsd', 'xanax'],
+        valueType: 'string',
+        groupBySubstance: { nicotine: 'vapeInventory' }
+    }),
+
+    ccrMetricDef({ key: 'spend', label: 'Spending', group: 'purchases', substances: ['all', 'coke', 'lsd', 'xanax', 'alcohol'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'purchaseCount', label: 'Purchase count', group: 'purchases', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'count' }),
+    ccrMetricDef({ key: 'purchaseAmount', label: 'Purchase amount', group: 'purchases', substances: ['all', 'coke', 'lsd', 'xanax', 'alcohol'], unitType: 'amount' }),
+    ccrMetricDef({ key: 'breakBetweenPurchases', label: 'Break between purchases', group: 'purchases', substances: ['all', 'coke'], unitType: 'hours' }),
+    ccrMetricDef({ key: 'purchaseFrequency', label: 'Purchase frequency / average gap', group: 'purchases', substances: ['all', 'coke', 'nicotine'], unitType: 'days' }),
+    ccrMetricDef({ key: 'store', label: 'Store', group: 'purchases', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], valueType: 'string' }),
+
+    ccrMetricDef({ key: 'taperPlannedVsActual', label: 'Taper planned vs actual ratio', group: 'taperGoals', substances: ['all'], valueType: 'ratio', unitType: 'ratio' }),
+    ccrMetricDef({
+        key: 'taperStatus',
+        label: 'Taper status',
+        group: 'taperGoals',
+        substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax'],
+        valueType: 'string',
+        groupBySubstance: { coke: 'taper', nicotine: 'taper' }
+    }),
+    ccrMetricDef({ key: 'plannedAmount', label: 'Planned amount', group: 'taperGoals', substances: ['all'], unitType: 'amount' }),
+    ccrMetricDef({ key: 'actualAmount', label: 'Actual amount', group: 'taperGoals', substances: ['all'], unitType: 'amount' }),
+    ccrMetricDef({
+        key: 'difference',
+        label: 'Difference',
+        group: 'taperGoals',
+        substances: ['all', 'lsd', 'xanax', 'alcohol'],
+        unitType: 'amount',
+        groupBySubstance: { alcohol: 'goals' }
+    }),
+    ccrMetricDef({
+        key: 'percentageOfTarget',
+        label: 'Percentage of target',
+        group: 'taperGoals',
+        substances: ['all', 'lsd', 'xanax', 'alcohol'],
+        valueType: 'ratio',
+        unitType: 'percent',
+        groupBySubstance: { alcohol: 'goals' }
+    }),
+
+    ccrMetricDef({ key: 'transactionType', label: 'Transaction type', group: 'record', substances: ['all'], valueType: 'string' }),
+    ccrMetricDef({ key: 'productType', label: 'Product type', group: 'record', substances: ['all'], valueType: 'string' }),
+    ccrMetricDef({
+        key: 'statusLabel',
+        label: 'Status label',
+        group: 'record',
+        substances: ['all', 'alcohol'],
+        valueType: 'string',
+        groupBySubstance: { alcohol: 'goals' }
+    }),
+    ccrMetricDef({ key: 'booleanFlag', label: 'Boolean flag', group: 'record', substances: ['all'], valueType: 'boolean' }),
+
+    ccrMetricDef({ key: 'periodPreviousValue', label: 'Previous-period value', group: 'period', substances: ['all'], unitType: 'amount' }),
+    ccrMetricDef({ key: 'periodNumericChange', label: 'Previous-period numeric change', group: 'period', substances: ['all'], unitType: 'amount' }),
+    ccrMetricDef({ key: 'periodPercentageChange', label: 'Previous-period % change', group: 'period', substances: ['all'], unitType: 'percent' }),
+    ccrMetricDef({ key: 'periodChangeDirection', label: 'Increase/decrease direction', group: 'period', substances: ['all'], valueType: 'string' }),
+
+    // ——— Coke ———
+    ccrMetricDef({ key: 'gramsPerHour', label: 'g/hr', group: 'use', substances: ['coke'], unitType: 'rate' }),
+    ccrMetricDef({ key: 'supplyDuration', label: 'Supply duration', group: 'inventory', substances: ['coke'], unitType: 'days' }),
+    ccrMetricDef({ key: 'costPerGram', label: 'Cost per gram', group: 'purchases', substances: ['coke'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'plannedGrams', label: 'Planned grams', group: 'taper', substances: ['coke'], unitType: 'grams' }),
+    ccrMetricDef({ key: 'actualGrams', label: 'Actual grams', group: 'taper', substances: ['coke'], unitType: 'grams' }),
+    ccrMetricDef({ key: 'useDifference', label: 'Use difference', group: 'taper', substances: ['coke'], unitType: 'grams' }),
+    ccrMetricDef({ key: 'plannedSpending', label: 'Planned spending', group: 'taper', substances: ['coke'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'actualSpending', label: 'Actual spending', group: 'taper', substances: ['coke'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'spendingDifference', label: 'Spending difference', group: 'taper', substances: ['coke'], unitType: 'currency' }),
+
+    // ——— Nicotine ———
+    ccrMetricDef({ key: 'puffs', label: 'Puffs', group: 'use', substances: ['nicotine'], unitType: 'count' }),
+    ccrMetricDef({ key: 'percentLeftCheckpoint', label: 'Percent-left checkpoint', group: 'use', substances: ['nicotine'], unitType: 'percent' }),
+    ccrMetricDef({ key: 'personalUseAmount', label: 'Personal use amount', group: 'use', substances: ['nicotine'], unitType: 'amount' }),
+    ccrMetricDef({ key: 'nicotineFreeHours', label: 'Nicotine-free hours', group: 'use', substances: ['nicotine'], unitType: 'hours' }),
+    ccrMetricDef({ key: 'percentLeft', label: 'Percent left', group: 'vapeInventory', substances: ['nicotine'], unitType: 'percent' }),
+    ccrMetricDef({ key: 'puffsRemaining', label: 'Puffs remaining', group: 'vapeInventory', substances: ['nicotine'], unitType: 'count' }),
+    ccrMetricDef({ key: 'currentVapeAge', label: 'Current vape age', group: 'vapeInventory', substances: ['nicotine'], unitType: 'days' }),
+    ccrMetricDef({ key: 'vapeLifespan', label: 'Vape lifespan', group: 'vapeInventory', substances: ['nicotine'], unitType: 'days' }),
+    ccrMetricDef({ key: 'nicotineStrength', label: 'Nicotine strength', group: 'vapeInventory', substances: ['nicotine'], unitType: 'strength' }),
+    ccrMetricDef({ key: 'vapesPurchased', label: 'Vapes purchased', group: 'purchases', substances: ['nicotine'], unitType: 'count' }),
+    ccrMetricDef({ key: 'costPerVape', label: 'Cost per vape', group: 'purchases', substances: ['nicotine'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'monthlySpending', label: 'Monthly spending', group: 'purchases', substances: ['nicotine'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'breakBetweenVapePurchases', label: 'Break between vape purchases', group: 'purchases', substances: ['nicotine'], unitType: 'hours' }),
+    ccrMetricDef({ key: 'puffTarget', label: 'Puff target', group: 'taper', substances: ['nicotine'], unitType: 'count' }),
+    ccrMetricDef({ key: 'actualPuffs', label: 'Actual puffs', group: 'taper', substances: ['nicotine'], unitType: 'count' }),
+    ccrMetricDef({ key: 'puffDifference', label: 'Puff difference', group: 'taper', substances: ['nicotine'], unitType: 'count' }),
+    ccrMetricDef({ key: 'puffsVsTargetRatio', label: 'Puffs vs target ratio', group: 'taper', substances: ['nicotine'], valueType: 'ratio', unitType: 'ratio' }),
+    ccrMetricDef({ key: 'vapeLifespanGoal', label: 'Vape lifespan goal', group: 'taper', substances: ['nicotine'], unitType: 'days' }),
+    ccrMetricDef({ key: 'daysBetweenPurchasesGoal', label: 'Days-between-purchases goal', group: 'taper', substances: ['nicotine'], unitType: 'days' }),
+    ccrMetricDef({ key: 'monthlyVapeCap', label: 'Monthly vape cap', group: 'taper', substances: ['nicotine'], unitType: 'count' }),
+    ccrMetricDef({ key: 'spendingGoal', label: 'Spending goal', group: 'taper', substances: ['nicotine'], unitType: 'currency' }),
+
+    // ——— LSD ———
+    ccrMetricDef({ key: 'tabs', label: 'Tabs', group: 'use', substances: ['lsd'], unitType: 'count' }),
+    ccrMetricDef({ key: 'ug', label: 'µg', group: 'use', substances: ['lsd'], unitType: 'ug' }),
+    ccrMetricDef({ key: 'tabsRemaining', label: 'Tabs remaining', group: 'inventory', substances: ['lsd'], unitType: 'count' }),
+    ccrMetricDef({ key: 'ugRemaining', label: 'µg remaining', group: 'inventory', substances: ['lsd'], unitType: 'ug' }),
+    ccrMetricDef({ key: 'costPerTab', label: 'Cost per tab', group: 'purchases', substances: ['lsd'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'costPerUg', label: 'Cost per µg', group: 'purchases', substances: ['lsd'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'plannedTabs', label: 'Planned tabs', group: 'taperGoals', substances: ['lsd'], unitType: 'count' }),
+    ccrMetricDef({ key: 'actualTabs', label: 'Actual tabs', group: 'taperGoals', substances: ['lsd'], unitType: 'count' }),
+    ccrMetricDef({ key: 'plannedUg', label: 'Planned µg', group: 'taperGoals', substances: ['lsd'], unitType: 'ug' }),
+    ccrMetricDef({ key: 'actualUg', label: 'Actual µg', group: 'taperGoals', substances: ['lsd'], unitType: 'ug' }),
+
+    // ——— Xanax ———
+    ccrMetricDef({ key: 'pills', label: 'Pills', group: 'use', substances: ['xanax'], unitType: 'count' }),
+    ccrMetricDef({ key: 'mg', label: 'mg', group: 'use', substances: ['xanax'], unitType: 'mg' }),
+    ccrMetricDef({ key: 'strengthPerPill', label: 'Strength per pill', group: 'use', substances: ['xanax'], unitType: 'strength' }),
+    ccrMetricDef({ key: 'pillsRemaining', label: 'Pills remaining', group: 'inventory', substances: ['xanax'], unitType: 'count' }),
+    ccrMetricDef({ key: 'mgRemaining', label: 'mg remaining', group: 'inventory', substances: ['xanax'], unitType: 'mg' }),
+    ccrMetricDef({ key: 'missingStrengthFlag', label: 'Missing strength flag', group: 'inventory', substances: ['xanax'], valueType: 'boolean' }),
+    ccrMetricDef({ key: 'costPerPill', label: 'Cost per pill', group: 'purchases', substances: ['xanax'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'costPerMg', label: 'Cost per mg', group: 'purchases', substances: ['xanax'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'plannedPills', label: 'Planned pills', group: 'taperGoals', substances: ['xanax'], unitType: 'count' }),
+    ccrMetricDef({ key: 'actualPills', label: 'Actual pills', group: 'taperGoals', substances: ['xanax'], unitType: 'count' }),
+    ccrMetricDef({ key: 'plannedMg', label: 'Planned mg', group: 'taperGoals', substances: ['xanax'], unitType: 'mg' }),
+    ccrMetricDef({ key: 'actualMg', label: 'Actual mg', group: 'taperGoals', substances: ['xanax'], unitType: 'mg' }),
+
+    // ——— Alcohol ———
+    ccrMetricDef({ key: 'drinks', label: 'Drinks', group: 'use', substances: ['alcohol'], unitType: 'count' }),
+    ccrMetricDef({ key: 'multiDayDuration', label: 'Multi-day duration', group: 'use', substances: ['alcohol'], unitType: 'days' }),
+    ccrMetricDef({ key: 'costPerDrink', label: 'Cost per drink', group: 'purchases', substances: ['alcohol'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'plannedDrinks', label: 'Planned drinks', group: 'goals', substances: ['alcohol'], unitType: 'count' }),
+    ccrMetricDef({ key: 'actualDrinks', label: 'Actual drinks', group: 'goals', substances: ['alcohol'], unitType: 'count' }),
+
+    // ——— Deleted / legacy (kept for saved-rule migration; never shown in dropdowns) ———
+    ccrMetricDef({ key: 'paymentMethod', label: 'Payment method', group: 'record', substances: [], valueType: 'string', deleted: true }),
+    ccrMetricDef({ key: 'costPerUnit', label: 'Cost per unit', group: 'purchases', substances: [], unitType: 'currency', deleted: true }),
+    ccrMetricDef({ key: 'daysSinceUse', label: 'Days since use', group: 'use', substances: [], unitType: 'days', deleted: true })
+]);
+
+function migrateCcrMetricKey(rawKey) {
+    const key = String(rawKey || '').trim();
+    if (!key) return 'useAmount';
+    if (CCR_METRIC_ALIASES[key]) return CCR_METRIC_ALIASES[key];
+    return key;
+}
+
+function getCcrMetricDef(metricKey) {
+    const key = migrateCcrMetricKey(metricKey);
+    return CCR_METRICS.find(m => m.key === key || m.id === key) || null;
+}
+
+function resolveCcrMetricSubstanceFamily(substanceScope, data = appData) {
+    if (substanceScope == null || substanceScope === '' || substanceScope === 'all') return 'all';
+    const id = Array.isArray(substanceScope) ? (substanceScope[0] || 'all') : String(substanceScope);
+    if (!id || id === 'all') return 'all';
+    const lower = String(id).toLowerCase();
+    if (lower === 'coke' || lower === 'cocaine') return 'coke';
+    if (lower === 'nicotine') return 'nicotine';
+    if (lower === 'lsd') return 'lsd';
+    if (lower === 'xanax' || lower === 'xannax') return 'xanax';
+    if (lower === 'alcohol') return 'alcohol';
+    try {
+        if (typeof isNicotineTrackingMode === 'function' && isNicotineTrackingMode(id, data)) return 'nicotine';
+        if (typeof isAlcoholTrackingMode === 'function' && isAlcoholTrackingMode(id, data)) return 'alcohol';
+        if (typeof isLsdSubstanceId === 'function' && isLsdSubstanceId(id, data)) return 'lsd';
+        if (typeof isXanaxSubstanceId === 'function' && isXanaxSubstanceId(id, data)) return 'xanax';
+        if (typeof isCokeSubstanceId === 'function' && isCokeSubstanceId(id, data)) return 'coke';
+        if (typeof isPowderTrackingMode === 'function' && isPowderTrackingMode(id, data)) return 'coke';
+    } catch (_) { /* helpers may not be ready in early boot */ }
+    return 'all';
+}
+
+function getCcrMetricGroupId(metric, family) {
+    if (!metric) return 'use';
+    if (metric.groupBySubstance && metric.groupBySubstance[family]) {
+        return metric.groupBySubstance[family];
+    }
+    return metric.group || 'use';
+}
+
+function getCcrMetricsForSubstance(substanceScope, data = appData) {
+    const family = resolveCcrMetricSubstanceFamily(substanceScope, data);
+    const groupRank = new Map(CCR_METRIC_GROUP_ORDER.map((g, i) => [g.id, i]));
+    return CCR_METRICS
+        .filter(m => !m.deleted && m.substances.includes(family))
+        .slice()
+        .sort((a, b) => {
+            const ga = groupRank.get(getCcrMetricGroupId(a, family)) ?? 999;
+            const gb = groupRank.get(getCcrMetricGroupId(b, family)) ?? 999;
+            if (ga !== gb) return ga - gb;
+            return CCR_METRICS.indexOf(a) - CCR_METRICS.indexOf(b);
+        });
+}
+
+function isCcrMetricValidForSubstance(metricKey, substanceScope, data = appData) {
+    const family = resolveCcrMetricSubstanceFamily(substanceScope, data);
+    const def = getCcrMetricDef(metricKey);
+    if (!def || def.deleted) return false;
+    return def.substances.includes(family);
+}
+
+const CCR_DEFAULT_METRIC_BY_FAMILY = Object.freeze({
+    all: 'useAmount',
+    coke: 'useAmount',
+    nicotine: 'puffs',
+    lsd: 'tabs',
+    xanax: 'pills',
+    alcohol: 'drinks'
+});
+
+function resolveCcrMetricForSubstance(metricKey, substanceScope, data = appData) {
+    const migrated = migrateCcrMetricKey(metricKey);
+    if (isCcrMetricValidForSubstance(migrated, substanceScope, data)) return migrated;
+    const family = resolveCcrMetricSubstanceFamily(substanceScope, data);
+    const preferred = CCR_DEFAULT_METRIC_BY_FAMILY[family];
+    if (preferred && isCcrMetricValidForSubstance(preferred, family, data)) return preferred;
+    const available = getCcrMetricsForSubstance(substanceScope, data);
+    return available[0]?.key || 'useAmount';
+}
+
+function buildCcrMetricSelectOptionsHtml(substanceScope, selectedKey = null, data = appData) {
+    const family = resolveCcrMetricSubstanceFamily(substanceScope, data);
+    const metrics = getCcrMetricsForSubstance(family, data);
+    const resolved = resolveCcrMetricForSubstance(selectedKey || metrics[0]?.key, family, data);
+    const byGroup = new Map();
+    metrics.forEach(m => {
+        const gid = getCcrMetricGroupId(m, family);
+        if (!byGroup.has(gid)) byGroup.set(gid, []);
+        byGroup.get(gid).push(m);
+    });
+    let html = '';
+    CCR_METRIC_GROUP_ORDER.forEach(group => {
+        const list = byGroup.get(group.id);
+        if (!list?.length) return;
+        html += `<optgroup label="${escapeAttr(group.label)}">`;
+        list.forEach(m => {
+            const selected = m.key === resolved ? ' selected' : '';
+            html += `<option value="${escapeAttr(m.key)}"${selected}>${escapeHtml(m.label)}</option>`;
+        });
+        html += '</optgroup>';
+    });
+    return html;
+}
+
+function populateCcrMetricSelect(preferredMetric = null) {
+    const metricEl = document.getElementById('ccr-rule-metric');
+    if (!metricEl) return null;
+    const substance = document.getElementById('ccr-rule-substance')?.value || 'all';
+    const current = preferredMetric != null ? preferredMetric : metricEl.value;
+    const resolved = resolveCcrMetricForSubstance(current, substance);
+    metricEl.innerHTML = buildCcrMetricSelectOptionsHtml(substance, resolved);
+    if ([...metricEl.options].some(o => o.value === resolved)) metricEl.value = resolved;
+    return resolved;
+}
+
+function onCcrSubstanceScopeChanged() {
+    populateCcrMetricSelect();
+    updateCcrOperatorFieldsVisibility();
+    updateCcrLivePreview();
+}
 
 const CCR_SECTIONS = Object.freeze([
     { id: 'dashboard', label: 'Dashboard cards' },
@@ -1830,7 +2127,7 @@ function getConditionalColorPresetRules(theme = 'dark') {
             presetId: 'recoveryStreak',
             substanceScope: 'all',
             sectionScope: ['dashboard', 'status', 'insights'],
-            metric: 'daysSinceUse',
+            metric: 'timeSinceLastUse',
             operator: 'gte',
             value: 7,
             colors: color('recoveryStreak'),
@@ -1986,9 +2283,9 @@ function getContrastWarning(fg, bg) {
 
 function normalizeConditionalColorRule(raw, index = 0) {
     if (!raw || typeof raw !== 'object') return null;
-    const metricIds = new Set(CCR_METRICS.map(m => m.id));
     const opIds = new Set(CCR_OPERATORS.map(o => o.id));
-    const metric = metricIds.has(raw.metric) ? raw.metric : 'useAmount';
+    const metricDef = getCcrMetricDef(raw.metric);
+    const metric = metricDef ? metricDef.key : 'useAmount';
     let operator = opIds.has(raw.operator) ? raw.operator : 'gt';
     if (operator === 'betweenInclusive') operator = 'between';
     let sectionScope = raw.sectionScope;
@@ -2833,7 +3130,7 @@ function buildConditionalColorRuleMatchContexts(data = appData, { maxSamples = 2
     push({ substanceId: 'all', section: 'dashboard', metric: 'useVsTarget', value: 1.2, target: 1 });
     push({ substanceId: 'all', section: 'taper', metric: 'taperPlannedVsActual', value: 0.8, target: 1 });
     push({ substanceId: 'all', section: 'taper', metric: 'taperPlannedVsActual', value: 1.3, target: 1 });
-    push({ substanceId: 'all', section: 'dashboard', metric: 'daysSinceUse', value: 10 });
+    push({ substanceId: 'all', section: 'dashboard', metric: 'timeSinceLastUse', value: 10 });
     return contexts;
 }
 
@@ -3160,7 +3457,7 @@ function fillCcrEditorForm(rule) {
     set('ccr-rule-name', r.name);
     set('ccr-rule-enabled', r.enabled, 'checked');
     set('ccr-rule-substance', Array.isArray(r.substanceScope) ? (r.substanceScope[0] || 'all') : r.substanceScope);
-    set('ccr-rule-metric', r.metric);
+    populateCcrMetricSelect(r.metric);
     set('ccr-rule-operator', r.operator);
     set('ccr-rule-value', r.value);
     set('ccr-rule-value-to', r.valueTo);
@@ -3281,7 +3578,7 @@ function renderConditionalColorRulesList() {
         return;
     }
 
-    const metricLabel = (id) => CCR_METRICS.find(m => m.id === id)?.label || id;
+    const metricLabel = (id) => getCcrMetricDef(id)?.label || id;
 
     root.innerHTML = rules.map(rule => {
         const conflictList = conflicts[rule.id] || [];
@@ -3356,9 +3653,24 @@ function populateCcrManagerFilterSelects() {
     }
     const metricEl = document.getElementById('ccr-manager-filter-metric');
     if (metricEl && !metricEl.dataset.ready) {
-        metricEl.innerHTML = `<option value="all">All metrics</option>` + CCR_METRICS.map(m =>
-            `<option value="${escapeAttr(m.id)}">${escapeHtml(m.label)}</option>`
-        ).join('');
+        const active = CCR_METRICS.filter(m => !m.deleted);
+        const byGroup = new Map();
+        active.forEach(m => {
+            const gid = m.group || 'use';
+            if (!byGroup.has(gid)) byGroup.set(gid, []);
+            byGroup.get(gid).push(m);
+        });
+        let metricHtml = `<option value="all">All metrics</option>`;
+        CCR_METRIC_GROUP_ORDER.forEach(group => {
+            const list = byGroup.get(group.id);
+            if (!list?.length) return;
+            metricHtml += `<optgroup label="${escapeAttr(group.label)}">`;
+            list.forEach(m => {
+                metricHtml += `<option value="${escapeAttr(m.key)}">${escapeHtml(m.label)}</option>`;
+            });
+            metricHtml += '</optgroup>';
+        });
+        metricEl.innerHTML = metricHtml;
         metricEl.dataset.ready = '1';
     }
     const sortEl = document.getElementById('ccr-manager-sort');
@@ -3552,10 +3864,7 @@ function onCcrRuleDragEnd() {
 function renderConditionalColorRulesSettings() {
     populateCcrSubstanceSelect();
     populateCcrManagerFilterSelects();
-    const metricEl = document.getElementById('ccr-rule-metric');
-    if (metricEl && !metricEl.options.length) {
-        metricEl.innerHTML = CCR_METRICS.map(m => `<option value="${m.id}">${escapeHtml(m.label)}</option>`).join('');
-    }
+    populateCcrMetricSelect();
     const opEl = document.getElementById('ccr-rule-operator');
     if (opEl) {
         const current = opEl.value;
@@ -3578,6 +3887,7 @@ function openConditionalColorRuleEditor(ruleId = null) {
     const rule = ruleId ? state.rules.find(r => r.id === ruleId) : null;
     const editor = document.getElementById('ccr-rule-editor');
     editor?.classList.remove('hidden');
+    populateCcrSubstanceSelect();
     fillCcrEditorForm(rule || {
         id: ccrNewId(),
         name: 'New rule',
@@ -3591,7 +3901,6 @@ function openConditionalColorRuleEditor(ruleId = null) {
         colors: { background: 'rgba(76, 175, 80, 0.22)', text: '#81c784', border: '#4caf50' },
         statusLabel: ''
     });
-    populateCcrSubstanceSelect();
     refreshCcrColorPalettes();
     updateCcrRangeVisualizer();
 }
@@ -58497,7 +58806,18 @@ function __getRecoveryTrackerTestExports() {
         addNextCcrRangeFromRule,
         CCR_OPERATORS,
         CCR_METRICS,
+        CCR_METRIC_ALIASES,
+        CCR_METRIC_GROUP_ORDER,
         CCR_SECTIONS,
+        migrateCcrMetricKey,
+        getCcrMetricDef,
+        resolveCcrMetricSubstanceFamily,
+        getCcrMetricsForSubstance,
+        isCcrMetricValidForSubstance,
+        resolveCcrMetricForSubstance,
+        buildCcrMetricSelectOptionsHtml,
+        populateCcrMetricSelect,
+        onCcrSubstanceScopeChanged,
         updateAppearanceZoomLayoutMetrics,
         normalizeAppearanceSpacing,
         getAppearanceSpacing,
