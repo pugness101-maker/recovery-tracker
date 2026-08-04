@@ -31015,6 +31015,25 @@ function updateVapeUsePreview() {
     }
 }
 
+function onNicotineUseProductTypeChange() {
+    const substanceId = document.getElementById('use-substance')?.value;
+    const productType = isNicotineTrackingMode(substanceId) ? getUseFormNicotineProductType() : null;
+    const select = document.getElementById('use-purchase-select');
+    if (select?.value && productType) {
+        const purchase = findPurchase(parsePurchaseSelectId(select.value));
+        if (purchase && getNicotineProductType(purchase) !== productType) {
+            select.value = '';
+        }
+    }
+    const vapeSelect = document.getElementById('use-vape-purchase-select');
+    if (vapeSelect?.value && productType && productType !== 'vape') {
+        vapeSelect.value = '';
+    }
+    // Full form refresh clears required flags on hidden vape/amount fields so submit is not blocked.
+    updateVapeUseFormUI();
+    updateUsePurchaseLinkUI();
+}
+
 function updateUseNicotineProductTypeUI() {
     const substanceId = document.getElementById('use-substance')?.value;
     if (!isNicotineTrackingMode(substanceId)) return;
@@ -31538,8 +31557,8 @@ function updateVapeUseFormUI() {
         }
     }
     if (unitSelect) {
-        unitSelect.disabled = isVapeUse || isLsd || isXanax;
-        unitSelect.required = !isVapeUse && !isLsd && !isXanax;
+        unitSelect.disabled = isVapeUse || isLsd || isXanax || isNicotineSimple;
+        unitSelect.required = !isVapeUse && !isLsd && !isXanax && !isNicotineSimple;
     }
     countGroup?.classList.toggle('hidden', !shouldShowUseCountForSubstance(substanceId) || isVapeUse || isWeed || isLsd || isNicotineSimple);
     if (isVapeUse) {
@@ -32343,6 +32362,7 @@ function updateUsePurchaseLinkUI() {
     }
 
     const isVapeUse = isVapeSessionFormActive();
+    const nicotineProductType = isNicotineTrackingMode(substanceId) ? getUseFormNicotineProductType() : null;
 
     if (manualWrap) manualWrap.classList.toggle('hidden', mode !== 'manual' && !isVapeUse);
 
@@ -32354,6 +32374,9 @@ function updateUsePurchaseLinkUI() {
             : getActivePurchasesForSubstance(substanceId);
         if (weedProductType) {
             active = active.filter(p => purchaseMatchesWeedProductType(p, weedProductType));
+        }
+        if (nicotineProductType && isNicotineTrackingMode(substanceId)) {
+            active = active.filter(p => getNicotineProductType(p) === nicotineProductType);
         }
         if (editingUseId) {
             const entry = findUseEntry(editingUseId);
@@ -32416,7 +32439,9 @@ function updateUsePurchaseLinkUI() {
             } else {
                 const bag = weedProductType
                     ? getOldestActivePurchase(substanceId, null, { weedProductType })
-                    : getOldestActivePurchase(substanceId);
+                    : (nicotineProductType
+                        ? getOldestActivePurchase(substanceId, nicotineProductType)
+                        : getOldestActivePurchase(substanceId));
                 if (bag) {
                     preview.textContent = isGiven
                         ? `Auto deduct (gift): ${formatPurchaseOptionLabel(bag)}`
@@ -33208,10 +33233,6 @@ function setupUseLogForm() {
             updateXanaxUsePreview();
             updateUsePurchaseLinkUI();
         });
-    });
-    document.getElementById('use-nicotine-product-type')?.addEventListener('change', () => {
-        updateUseNicotineProductTypeUI();
-        updateUsePurchaseLinkUI();
     });
     ['use-cigarettes-smoked', 'use-pouches-used', 'use-gum-pieces-used', 'use-patches-used', 'use-patch-hours-worn']
         .forEach(id => {
@@ -53163,6 +53184,11 @@ function __getRecoveryTrackerTestExports() {
         setWeedUseProductType,
         ensureWeedUseProductTypeDefault,
         onWeedUseProductTypeChange,
+        onNicotineUseProductTypeChange,
+        updateUseNicotineProductTypeUI,
+        updateVapeUseFormUI,
+        computeNicotineNonVapeUseFromForm,
+        handleUseLogSubmit,
         getWeedCartLogInputMode,
         setWeedCartLogInputMode,
         computeWeedCartUseFromForm,
