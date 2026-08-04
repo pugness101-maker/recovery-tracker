@@ -2735,7 +2735,7 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .taper-by-week-table {
-    min-width: 720px;
+    min-width: 0;
     border-collapse: separate;
     border-spacing: 0;
 }
@@ -2759,7 +2759,8 @@ input[type="range"]::-webkit-slider-thumb {
 }
 
 .taper-by-week-dates {
-    min-width: 9rem;
+    /* Column widths come from Customize Weekly Table; do not force a CSS floor. */
+    min-width: 0;
 }
 
 .taper-by-week-row.taper-by-week-current {
@@ -4610,6 +4611,12 @@ body.locked .bottom-nav {
 
 .customizable-table {
     min-width: max-content;
+    table-layout: fixed;
+}
+
+/* Weekly Table: honor explicit col/th widths from column settings (not content max). */
+#taper-weekly-table .taper-by-week-table.customizable-table {
+    min-width: 0;
     table-layout: fixed;
 }
 

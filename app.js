@@ -23667,8 +23667,12 @@ function getTaperByWeekColumnFamilyLabel(familyOrSubstanceId, data = appData) {
     return TAPER_BY_WEEK_FAMILY_LABELS[family] || TAPER_BY_WEEK_FAMILY_LABELS.generic;
 }
 
+/**
+ * Weekly Table column preferences are scoped per substance (not family/plan).
+ * Family is still used for catalog membership and migration from older keys.
+ */
 function getTaperByWeekColumnVariantKey(substanceId, plan) {
-    return getTaperByWeekColumnFamily(substanceId || plan?.substanceId);
+    return substanceId || plan?.substanceId || getTaperSubstanceId() || null;
 }
 
 function getTaperByWeekColumnCatalog(substanceId, plan = null, data = appData) {
@@ -23770,6 +23774,27 @@ function findLegacyTaperByWeekColumnSettings(store, family) {
     return store[matches[0]] || null;
 }
 
+/** Resolve older Weekly Table prefs (family key or substance__planType) for migration. */
+function findMigratableTaperByWeekColumnSettings(store, substanceId) {
+    if (!store || !substanceId) return null;
+    const prefix = 'taperByWeek::';
+    const substanceKey = `${prefix}${substanceId}`;
+    if (store[substanceKey]) return null;
+
+    const family = getTaperByWeekColumnFamily(substanceId);
+    const familyKey = `${prefix}${family}`;
+    if (family && store[familyKey]) return store[familyKey];
+
+    const substanceLegacy = Object.keys(store).filter(key => {
+        if (!key.startsWith(prefix) || key === substanceKey) return false;
+        const variant = key.slice(prefix.length);
+        return variant === substanceId || variant.startsWith(`${substanceId}__`);
+    });
+    if (substanceLegacy.length) return store[substanceLegacy[0]] || null;
+
+    return findLegacyTaperByWeekColumnSettings(store, family);
+}
+
 function getTaperByWeekColumnLabel(colId, plan, substanceId) {
     const labels = TABLE_COLUMN_LABELS.taperByWeek;
     const family = getTaperByWeekColumnFamily(substanceId);
@@ -23858,7 +23883,7 @@ function getTableColumnConfig(tableKey, variantKey = null) {
     if (store[storageKey]) {
         const normalized = normalizeStoredColumnSettings(tableKey, store[storageKey]);
         if (tableKey === 'taperByWeek' && variantKey) {
-            const substanceId = getTaperSubstanceIdForColumnFamily(variantKey);
+            const substanceId = resolveTaperByWeekColumnSubstanceId(variantKey);
             return filterTaperByWeekColumnSettingsToCatalog(
                 normalized,
                 substanceId,
@@ -23877,14 +23902,17 @@ function getTableColumnConfig(tableKey, variantKey = null) {
         return normalized;
     }
     if (tableKey === 'taperByWeek' && variantKey) {
-        const legacy = findLegacyTaperByWeekColumnSettings(store, variantKey);
-        const substanceId = getTaperSubstanceIdForColumnFamily(variantKey);
-        if (legacy) {
-            return filterTaperByWeekColumnSettingsToCatalog(
-                normalizeStoredColumnSettings(tableKey, legacy),
+        const substanceId = resolveTaperByWeekColumnSubstanceId(variantKey);
+        const migratable = findMigratableTaperByWeekColumnSettings(store, substanceId);
+        if (migratable) {
+            const migrated = filterTaperByWeekColumnSettingsToCatalog(
+                normalizeStoredColumnSettings(tableKey, migratable),
                 substanceId,
                 getSelectedTaperPlan()
             );
+            // Persist under the substance-scoped key so refresh/restart keep widths.
+            saveTableColumnConfig(tableKey, migrated, substanceId);
+            return migrated;
         }
         return getDefaultTaperByWeekColumnSettings(substanceId, getSelectedTaperPlan() || {
             substanceId,
@@ -23921,6 +23949,16 @@ function getTaperSubstanceIdForColumnFamily(family) {
     return match?.id || currentId || family;
 }
 
+/** Variant keys are substance ids; accept legacy family keys for older callers/tests. */
+function resolveTaperByWeekColumnSubstanceId(variantKey) {
+    if (!variantKey) return getTaperSubstanceId();
+    if ((appData.substances || []).some(s => s.id === variantKey)) return variantKey;
+    if (TAPER_BY_WEEK_FAMILY_LABELS[variantKey]) {
+        return getTaperSubstanceIdForColumnFamily(variantKey);
+    }
+    return variantKey;
+}
+
 function getEffectiveColumnOrder(tableKey, variantKey = null) {
     const defaults = TABLE_COLUMN_DEFAULTS[tableKey];
     const config = getTableColumnConfig(tableKey, variantKey);
@@ -23933,7 +23971,7 @@ function getEffectiveColumnOrder(tableKey, variantKey = null) {
     let allowedIds = defaults.order;
     if (tableKey === 'taperByWeek') {
         const substanceId = variantKey
-            ? getTaperSubstanceIdForColumnFamily(variantKey)
+            ? resolveTaperByWeekColumnSubstanceId(variantKey)
             : getTaperSubstanceId();
         allowedIds = getTaperByWeekColumnCatalog(substanceId, getSelectedTaperPlan());
     }
@@ -23963,10 +24001,9 @@ function getTableColumnMinWidth(tableKey, colId, variantKey = null) {
     if (colId === 'actions') return 150;
     if (colId === 'select') return 40;
     if (colId === 'notes') return 120;
-    if (tableKey === 'taperByWeek') {
-        const label = TABLE_COLUMN_LABELS.taperByWeek?.[colId] || colId;
-        return estimateColumnMinWidthFromLabel(label);
-    }
+    // Weekly Table: saved widths control layout. Keep only a small floor so
+    // Customize → Width values are not overridden by label-length estimates.
+    if (tableKey === 'taperByWeek') return 48;
     return 60;
 }
 
@@ -23974,6 +24011,7 @@ function getCustomizableTableColumnLayout(tableKey, columnIds, variantKey = null
     return (columnIds || []).map(colId => {
         const minWidthPx = getTableColumnMinWidth(tableKey, colId, variantKey);
         const savedWidth = getTableColumnWidthPx(tableKey, colId, variantKey);
+        // Saved/default width is authoritative (clamped only to the absolute floor).
         const widthPx = Math.max(minWidthPx, savedWidth);
         return { id: colId, widthPx, minWidthPx };
     });
@@ -24306,10 +24344,11 @@ function setupColumnSettingsDragReorder(list, dragIdKey) {
 function resetTableColumnConfig(tableKey, variantKey = null) {
     let config;
     if (tableKey === 'taperByWeek' && variantKey) {
+        const substanceId = resolveTaperByWeekColumnSubstanceId(variantKey);
         config = getDefaultTaperByWeekColumnSettings(
-            getTaperSubstanceIdForColumnFamily(variantKey),
+            substanceId,
             getSelectedTaperPlan() || {
-                substanceId: getTaperSubstanceIdForColumnFamily(variantKey),
+                substanceId,
                 reductionType: 'reduce-amount'
             }
         );
@@ -24325,8 +24364,10 @@ function updateColumnSettingsSubtitle(tableKey, variantKey = null) {
     const subtitle = document.getElementById('column-settings-subtitle');
     if (!subtitle) return;
     if (tableKey === 'taperByWeek' && variantKey) {
-        const label = getTaperByWeekColumnFamilyLabel(variantKey);
-        subtitle.innerHTML = `Showing columns for <strong>${escapeHtml(label)}</strong>`;
+        const substanceId = resolveTaperByWeekColumnSubstanceId(variantKey);
+        const substanceName = getSubstance(substanceId)?.name || substanceId;
+        const familyLabel = getTaperByWeekColumnFamilyLabel(substanceId);
+        subtitle.innerHTML = `Showing columns for <strong>${escapeHtml(substanceName)}</strong> (${escapeHtml(familyLabel)})`;
         subtitle.classList.remove('hidden');
         return;
     }
@@ -48040,10 +48081,22 @@ function syncTaperSubstanceToSelected() {
 function onTaperSubstanceChange() {
     const id = getTaperSubstanceId();
     if (id) setSelectedSubstanceId(id, { source: 'taper', refresh: false });
-    taperEditingPlan = false;
-    taperFormPlanId = null;
+    // Changing substance abandons an in-progress edit for a different substance.
+    if (taperFormPlanId) {
+        const editing = getTaperPlanById(taperFormPlanId);
+        if (!editing || editing.substanceId !== id) {
+            taperEditingPlan = false;
+            taperFormPlanId = null;
+            setInputValue('taper-editing-plan-id', '');
+        }
+    } else {
+        taperEditingPlan = false;
+        setInputValue('taper-editing-plan-id', '');
+    }
     const defaultPlan = resolveDefaultTaperPlanForSubstance(id);
-    selectedTaperPlanId = defaultPlan?.id || null;
+    if (!taperEditingPlan) {
+        selectedTaperPlanId = defaultPlan?.id || null;
+    }
     populateTaperReductionTypeSelect(getTaperSubstanceId());
     toggleTaperPlanTypeFields();
     prefillVapeTaperDefaults(getTaperSubstanceId());
@@ -48111,6 +48164,7 @@ function populateTaperPlanDropdown() {
 function showNewTaperPlan() {
     taperFormPlanId = null;
     taperEditingPlan = true;
+    setInputValue('taper-editing-plan-id', '');
     setText('taper-setup-title', 'Create Taper Plan');
     setText('taper-generate-btn', 'Save Plan');
     document.getElementById('taper-dashboard')?.classList.add('hidden');
@@ -48290,6 +48344,16 @@ function editTaperPlanById(planId) {
     selectedTaperPlanId = planId;
     taperFormPlanId = planId;
     taperEditingPlan = true;
+    // Keep substance selector aligned with the plan without firing change handlers
+    // that would clear taperFormPlanId / selectedTaperPlanId.
+    const substanceEl = document.getElementById('taper-substance');
+    if (substanceEl && plan.substanceId && [...substanceEl.options].some(o => o.value === plan.substanceId)) {
+        substanceEl.value = plan.substanceId;
+    }
+    if (plan.substanceId) {
+        setSelectedSubstanceId(plan.substanceId, { source: 'taper', refresh: false });
+    }
+    setInputValue('taper-editing-plan-id', planId);
     fillTaperFormFromPlan(plan);
     setText('taper-setup-title', 'Edit Taper Plan');
     setText('taper-generate-btn', 'Save Changes');
@@ -49455,15 +49519,58 @@ function renderTaperPlanSummary(substanceId) {
     }
 }
 
+/**
+ * Keep progress-linked fields on weekly rows when regenerating targets on edit.
+ * Matches by week number / weekStart so purchases and history stay attached to the same plan id.
+ */
+function mergeWeeklyTargetsPreservingProgress(previousWeeks, nextWeeks) {
+    const prev = Array.isArray(previousWeeks) ? previousWeeks : [];
+    const next = Array.isArray(nextWeeks) ? nextWeeks : [];
+    if (!prev.length || !next.length) return next;
+
+    const byWeek = new Map();
+    const byStart = new Map();
+    prev.forEach((row, index) => {
+        const weekNum = row?.week ?? index + 1;
+        if (weekNum != null) byWeek.set(Number(weekNum), row);
+        if (row?.weekStart) byStart.set(String(row.weekStart), row);
+    });
+
+    const progressKeys = [
+        'actualUsed', 'difference', 'status', 'actualPurchases', 'actualSpend',
+        'messages', 'doNotBuyBefore', 'isCurrent'
+    ];
+
+    return next.map((row, index) => {
+        const weekNum = row?.week ?? index + 1;
+        const prior = byWeek.get(Number(weekNum)) || (row?.weekStart ? byStart.get(String(row.weekStart)) : null);
+        if (!prior) return row;
+        const merged = { ...row };
+        progressKeys.forEach(key => {
+            if (prior[key] !== undefined) merged[key] = prior[key];
+        });
+        return merged;
+    });
+}
+
+function resolveTaperFormEditingPlanId() {
+    const fromState = taperFormPlanId ? String(taperFormPlanId) : '';
+    const fromInput = document.getElementById('taper-editing-plan-id')?.value?.trim() || '';
+    const fromSelection = (taperEditingPlan && selectedTaperPlanId) ? String(selectedTaperPlanId) : '';
+    return fromState || fromInput || fromSelection || null;
+}
+
 function handleTaperSubmit(e) {
     e.preventDefault();
-    const substanceId = document.getElementById('taper-substance')?.value;
+    const editingPlanId = resolveTaperFormEditingPlanId();
+    const existingPlan = editingPlanId ? getTaperPlanById(editingPlanId) : null;
+    const substanceId = existingPlan?.substanceId
+        || document.getElementById('taper-substance')?.value;
     const sub = getSubstance(substanceId);
     if (!sub?.taperTrackingEnabled) return alert('Taper tracking is disabled for this substance.');
     const planName = document.getElementById('taper-plan-name')?.value?.trim();
     if (!planName) return alert('Plan name is required.');
     const reductionType = document.getElementById('reduction-type')?.value;
-    const existingPlan = taperFormPlanId ? getTaperPlanById(taperFormPlanId) : null;
     const startDate = document.getElementById('start-date')?.value
         || existingPlan?.startDate
         || (existingPlan?.createdAt ? getLocalDateFromIso(existingPlan.createdAt) : null)
@@ -49580,16 +49687,29 @@ function handleTaperSubmit(e) {
     }
 
     ensureTaperPlansV2(appData);
+    const scrollY = typeof window !== 'undefined' ? window.scrollY : 0;
     const built = buildTaperPlanFromForm(substanceId, existingPlan);
     built.name = planName;
     const setPrimary = !!document.getElementById('taper-set-primary')?.checked;
     const wasEdit = !!existingPlan;
 
     if (existingPlan) {
+        const preservedId = existingPlan.id;
+        const preservedCreatedAt = existingPlan.createdAt;
+        const previousWeekly = existingPlan.weeklyTargets;
+        const previousStatus = getTaperPlanStatus(existingPlan);
+        const previousPrimary = !!existingPlan.isPrimary;
         Object.assign(existingPlan, built);
-        existingPlan.id = taperFormPlanId;
+        // Update in place — never mint a new id when editing (even if the name changes).
+        existingPlan.id = preservedId;
+        existingPlan.createdAt = preservedCreatedAt;
+        existingPlan.substanceId = substanceId;
+        existingPlan.status = previousStatus;
+        existingPlan.isPaused = previousStatus === 'paused';
+        existingPlan.isPrimary = previousPrimary;
+        existingPlan.weeklyTargets = mergeWeeklyTargetsPreservingProgress(previousWeekly, built.weeklyTargets);
         if (setPrimary) setTaperPlanPrimary(existingPlan.id, substanceId);
-        selectedTaperPlanId = existingPlan.id;
+        selectedTaperPlanId = preservedId;
     } else {
         built.id = generateUniqueId('taper');
         built.status = 'active';
@@ -49602,11 +49722,19 @@ function handleTaperSubmit(e) {
 
     syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
+    // Leave edit mode and return to the same plan's dashboard (selection preserved above).
     taperEditingPlan = false;
     taperFormPlanId = null;
+    setInputValue('taper-editing-plan-id', '');
     document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
     setText('taper-generate-btn', 'Save Plan');
+    setText('taper-setup-title', 'Create Taper Plan');
     refreshTaperDashboard();
+    if (typeof window !== 'undefined' && Number.isFinite(scrollY)) {
+        requestAnimationFrame(() => {
+            try { window.scrollTo(0, scrollY); } catch { /* ignore */ }
+        });
+    }
     alert(wasEdit ? 'Plan updated!' : 'Taper plan saved!');
 }
 
@@ -50086,6 +50214,7 @@ function editTaperPlan() {
 function cancelTaperEdit() {
     taperEditingPlan = false;
     taperFormPlanId = null;
+    setInputValue('taper-editing-plan-id', '');
     document.getElementById('taper-setup')?.classList.add('hidden');
     setText('taper-generate-btn', 'Save Plan');
     setText('taper-setup-title', 'Create Taper Plan');
@@ -52812,6 +52941,8 @@ function __getRecoveryTrackerTestExports() {
         getTaperByWeekColumnLabel,
         getDefaultTaperByWeekColumnSettings,
         filterTaperByWeekColumnSettingsToCatalog,
+        resolveTaperByWeekColumnSubstanceId,
+        findMigratableTaperByWeekColumnSettings,
         getTableColumnConfig,
         getEffectiveColumnOrder,
         saveTableColumnConfig,
@@ -52827,6 +52958,28 @@ function __getRecoveryTrackerTestExports() {
         openColumnSettingsModal,
         renderColumnSettingsList,
         closeColumnSettingsModal,
+        applyColumnSettingsFromModal,
+        readColumnSettingsFromModal,
+        resetTableColumnConfig,
+        mergeWeeklyTargetsPreservingProgress,
+        resolveTaperFormEditingPlanId,
+        handleTaperSubmit,
+        editTaperPlanById,
+        buildTaperPlanFromForm,
+        getTaperPlanById,
+        getSelectedTaperPlan,
+        selectedTaperPlanIdRef: {
+            get value() { return selectedTaperPlanId; },
+            set value(v) { selectedTaperPlanId = v; }
+        },
+        taperFormPlanIdRef: {
+            get value() { return taperFormPlanId; },
+            set value(v) { taperFormPlanId = v; }
+        },
+        taperEditingPlanRef: {
+            get value() { return taperEditingPlan; },
+            set value(v) { taperEditingPlan = v; }
+        },
         COLUMN_SETTINGS_STORAGE_KEY,
         loadColumnSettingsStore,
         getBuyMonthSummaryRows,

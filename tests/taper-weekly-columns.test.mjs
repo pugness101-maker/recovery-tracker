@@ -255,8 +255,14 @@ test('hiding and restoring optional columns', () => {
     assert.ok(order.includes('runningAmountSpent'));
 });
 
-test('column settings persistence per substance family', () => {
-    const rt = setup(makeData({ substance: makeSubstance('nicotine'), taperPlansV2: [] }));
+test('column settings persistence per substance', () => {
+    const rt = setup(makeData({
+        substance: makeSubstance('nicotine'),
+        taperPlansV2: []
+    }));
+    // Add coke so both substances exist for independent prefs.
+    rt.__getTestAppData().substances.push(makeSubstance('coke'));
+
     const vapePlan = {
         substanceId: NICOTINE_ID,
         reductionType: 'nicotine-vape-purchase'
@@ -264,8 +270,8 @@ test('column settings persistence per substance family', () => {
     const cokePlan = { substanceId: COKE_ID, reductionType: 'reduce-amount' };
     const nicotineKey = rt.getTaperByWeekColumnVariantKey(NICOTINE_ID, vapePlan);
     const cokeKey = rt.getTaperByWeekColumnVariantKey(COKE_ID, cokePlan);
-    assert.equal(nicotineKey, 'nicotine');
-    assert.equal(cokeKey, 'cocaine');
+    assert.equal(nicotineKey, NICOTINE_ID);
+    assert.equal(cokeKey, COKE_ID);
 
     rt.saveTableColumnConfig('taperByWeek', {
         order: ['week', 'dates', 'planned', 'used', 'difference', 'status', 'runningAmountBought'],
@@ -273,7 +279,7 @@ test('column settings persistence per substance family', () => {
             week: true, dates: true, planned: true, used: true, difference: true, status: true,
             runningAmountBought: true, buyInterval: true
         },
-        widths: { runningAmountBought: 150 }
+        widths: { runningAmountBought: 150, week: 180 }
     }, nicotineKey);
 
     rt.saveTableColumnConfig('taperByWeek', {
@@ -282,7 +288,7 @@ test('column settings persistence per substance family', () => {
             week: true, dates: true, planned: true, used: true, difference: true, status: true,
             runningAmountBought: false
         },
-        widths: {}
+        widths: { week: 72 }
     }, cokeKey);
 
     const reloaded = rt.loadColumnSettingsStore();
@@ -290,7 +296,55 @@ test('column settings persistence per substance family', () => {
     const cokeStorage = reloaded[rt.resolveColumnStorageKey('taperByWeek', cokeKey)];
     assert.equal(nicotineStorage.visible.runningAmountBought, true);
     assert.equal(nicotineStorage.widths.runningAmountBought, 150);
+    assert.equal(nicotineStorage.widths.week, 180);
     assert.equal(cokeStorage.visible.runningAmountBought, false);
+    assert.equal(cokeStorage.widths.week, 72);
+    assert.equal(rt.getTableColumnWidthPx('taperByWeek', 'week', nicotineKey), 180);
+    assert.equal(rt.getTableColumnWidthPx('taperByWeek', 'week', cokeKey), 72);
+});
+
+test('Weekly Table width 72→180 applies to colgroup and migrates family keys', () => {
+    const plan = makeCokeTaperPlan();
+    const rt = setup(makeData({ substance: makeSubstance('coke'), taperPlansV2: [plan] }));
+    const substanceKey = rt.getTaperByWeekColumnVariantKey(COKE_ID, plan);
+    assert.equal(substanceKey, COKE_ID);
+
+    // Legacy family-scoped prefs should migrate onto the substance key.
+    const familyKey = 'cocaine';
+    rt.saveTableColumnConfig('taperByWeek', {
+        order: ['week', 'dates', 'planned', 'used', 'difference', 'status'],
+        visible: {
+            week: true, dates: true, planned: true, used: true, difference: true, status: true
+        },
+        widths: { week: 72 }
+    }, familyKey);
+
+    // Clear substance key if save wrote through resolve — write family key directly.
+    const store = rt.loadColumnSettingsStore();
+    store['taperByWeek::cocaine'] = store['taperByWeek::cocaine'] || store[`taperByWeek::${familyKey}`];
+    delete store[`taperByWeek::${COKE_ID}`];
+    rt.localStorage.setItem(rt.COLUMN_SETTINGS_STORAGE_KEY, JSON.stringify(store));
+
+    assert.equal(rt.getTableColumnWidthPx('taperByWeek', 'week', substanceKey), 72);
+    assert.ok(rt.loadColumnSettingsStore()[`taperByWeek::${COKE_ID}`], 'migrates to substance key');
+
+    const cfg = rt.getTableColumnConfig('taperByWeek', substanceKey);
+    rt.saveTableColumnConfig('taperByWeek', {
+        ...cfg,
+        widths: { ...cfg.widths, week: 180 }
+    }, substanceKey);
+
+    assert.equal(rt.getTableColumnWidthPx('taperByWeek', 'week', substanceKey), 180);
+    const layout = rt.getCustomizableTableColumnLayout('taperByWeek', ['week'], substanceKey);
+    assert.equal(layout[0].widthPx, 180);
+    assert.match(rt.buildTableColgroup('taperByWeek', ['week'], substanceKey), /data-col="week"[^>]*width:180px/);
+
+    // Reset defaults only for this substance.
+    rt.resetTableColumnConfig('taperByWeek', substanceKey);
+    assert.equal(
+        rt.getTableColumnWidthPx('taperByWeek', 'week', substanceKey),
+        rt.getDefaultTaperByWeekColumnSettings(COKE_ID, plan).widths.week
+    );
 });
 
 test('cocaine catalog excludes nicotine and alcohol columns', () => {
@@ -514,16 +568,17 @@ test('reordering Status/Difference/Bought/Running/Spending persists and keeps sh
         assert.ok(col.widthPx >= col.minWidthPx, `${col.id} width respects min-width`);
     });
 
-    // Long header labels get content-based minimums wider than a tiny saved width.
+    // Saved widths control layout (not label-length estimates).
     const runningBought = layout.find(c => c.id === 'runningAmountBought');
-    assert.ok(runningBought.minWidthPx >= 140);
-    assert.ok(runningBought.widthPx >= runningBought.minWidthPx);
+    assert.equal(runningBought.widthPx, 90);
+    assert.equal(rt.getTableColumnWidthPx('taperByWeek', 'runningAmountBought', variantKey), 90);
 
     const colgroup = rt.buildTableColgroup('taperByWeek', order, variantKey);
     order.forEach(id => {
         assert.match(colgroup, new RegExp(`data-col="${id}"[^>]*min-width:`));
         assert.equal((colgroup.match(new RegExp(`data-col="${id}"`, 'g')) || []).length, 1);
     });
+    assert.match(colgroup, /data-col="runningAmountBought"[^>]*width:90px/);
 
     // Persist across reload of the column settings store.
     const stored = rt.loadColumnSettingsStore()[rt.resolveColumnStorageKey('taperByWeek', variantKey)];
@@ -547,7 +602,15 @@ test('Weekly Table render shares header/body column order and widths without dup
             week: true, status: true, difference: true, bought: true, runningAmountBought: true,
             spent: true, runningAmountSpent: true, dates: true, planned: true, used: true
         },
-        widths: { status: 88, difference: 96, bought: 84, runningAmountBought: 150, spent: 90, runningAmountSpent: 150 }
+        widths: {
+            week: 180,
+            status: 88,
+            difference: 96,
+            bought: 84,
+            runningAmountBought: 150,
+            spent: 90,
+            runningAmountSpent: 150
+        }
     }, variantKey);
 
     const tableHost = { id: 'taper-weekly-table', innerHTML: '' };
@@ -558,6 +621,7 @@ test('Weekly Table render shares header/body column order and widths without dup
         ['taper-weekly-customize-columns', { classList: { remove() {}, add() {} } }]
     ]);
     rt.document.getElementById = (id) => nodes.get(id) || null;
+    rt.selectedTaperPlanIdRef.value = plan.id;
 
     rt.reorderTableColumnOrder('taperByWeek', 'status', 'bought', true, variantKey);
     rt.reorderTableColumnOrder('taperByWeek', 'difference', 'runningAmountSpent', false, variantKey);
@@ -567,6 +631,7 @@ test('Weekly Table render shares header/body column order and widths without dup
     assert.match(html, /column-reorderable/);
     assert.match(html, /taper-weekly-table-scroll/);
     assert.match(html, /table-layout:fixed/);
+    assert.match(html, /data-col="week"[^>]*width:180px/);
 
     const thCols = [...html.matchAll(/<th[^>]*data-col="([^"]+)"/g)].map(m => m[1]);
     const tdFirstRow = html.match(/<tbody><tr[^>]*>([\s\S]*?)<\/tr>/);
@@ -594,4 +659,5 @@ test('weekly table CSS prevents cell overlap and keeps sticky headers', () => {
     assert.match(css, /column-drop-before/);
     assert.match(css, /column-drop-after/);
     assert.match(css, /#taper-weekly-table\.taper-table-wrap\s*\{[^}]*overflow:\s*visible/s);
+    assert.match(css, /#taper-weekly-table \.taper-by-week-table\.customizable-table\s*\{[^}]*table-layout:\s*fixed/s);
 });
