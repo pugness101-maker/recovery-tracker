@@ -22,11 +22,12 @@ test('seeds editable default presets', () => {
         'Depleted',
         'High Spending',
         'Below Taper Plan',
-        'Taper Exceeded'
+        'Taper Warning',
+        'Recovery Streak'
     ].join('|'));
     const state = rt.getConditionalColorRulesState();
     assert.equal(state.enabled, true);
-    assert.ok(state.rules.length >= 8);
+    assert.ok(state.rules.length >= 9);
 });
 
 test('comparisons: eq/neq/gt/lt/between/contains/empty/boolean/pct/daysSince', () => {

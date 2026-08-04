@@ -1627,7 +1627,8 @@ const CCR_PRESET_COLORS = Object.freeze({
     depleted: { background: 'rgba(158, 158, 158, 0.28)', text: '#424242', border: '#9e9e9e' },
     highSpending: { background: 'rgba(244, 67, 54, 0.22)', text: '#b71c1c', border: '#ef5350' },
     belowTaper: { background: 'rgba(76, 175, 80, 0.22)', text: '#1b5e20', border: '#66bb6a' },
-    taperExceeded: { background: 'rgba(244, 67, 54, 0.22)', text: '#b71c1c', border: '#e57373' }
+    taperExceeded: { background: 'rgba(244, 67, 54, 0.22)', text: '#b71c1c', border: '#e57373' },
+    recoveryStreak: { background: 'rgba(33, 150, 243, 0.22)', text: '#0d47a1', border: '#2196f3' }
 });
 
 const CCR_LIGHT_TEXT_OVERRIDES = Object.freeze({
@@ -1638,7 +1639,8 @@ const CCR_LIGHT_TEXT_OVERRIDES = Object.freeze({
     depleted: { text: '#424242' },
     highSpending: { text: '#b71c1c' },
     belowTaper: { text: '#1b5e20' },
-    taperExceeded: { text: '#b71c1c' }
+    taperExceeded: { text: '#b71c1c' },
+    recoveryStreak: { text: '#0d47a1' }
 });
 
 const CCR_DARK_TEXT_OVERRIDES = Object.freeze({
@@ -1649,7 +1651,8 @@ const CCR_DARK_TEXT_OVERRIDES = Object.freeze({
     depleted: { text: '#bdbdbd' },
     highSpending: { text: '#ef9a9a' },
     belowTaper: { text: '#a5d6a7' },
-    taperExceeded: { text: '#ef9a9a' }
+    taperExceeded: { text: '#ef9a9a' },
+    recoveryStreak: { text: '#90caf9' }
 });
 
 function ccrNewId(prefix = 'ccr') {
@@ -1778,7 +1781,7 @@ function getConditionalColorPresetRules(theme = 'dark') {
         },
         {
             id: 'preset-taper-exceeded',
-            name: 'Taper Exceeded',
+            name: 'Taper Warning',
             enabled: true,
             isPreset: true,
             presetId: 'taperExceeded',
@@ -1790,7 +1793,23 @@ function getConditionalColorPresetRules(theme = 'dark') {
             colors: color('taperExceeded'),
             priority: 125,
             stopProcessing: false,
-            statusLabel: 'Over plan'
+            statusLabel: ''
+        },
+        {
+            id: 'preset-recovery-streak',
+            name: 'Recovery Streak',
+            enabled: true,
+            isPreset: true,
+            presetId: 'recoveryStreak',
+            substanceScope: 'all',
+            sectionScope: ['dashboard', 'status', 'insights'],
+            metric: 'daysSinceUse',
+            operator: 'gte',
+            value: 7,
+            colors: color('recoveryStreak'),
+            priority: 85,
+            stopProcessing: false,
+            statusLabel: ''
         }
     ];
 }
@@ -1895,6 +1914,10 @@ function normalizeConditionalColorRule(raw, index = 0) {
     }
 
     const colors = raw.colors && typeof raw.colors === 'object' ? raw.colors : {};
+    const border = normalizeHexColor(colors.border, '#4caf50');
+    const lastModified = raw.lastModified
+        ? String(raw.lastModified)
+        : (raw.updatedAt ? String(raw.updatedAt) : '');
     return {
         id: String(raw.id || ccrNewId()),
         name: String(raw.name || `Rule ${index + 1}`).slice(0, 80),
@@ -1911,11 +1934,13 @@ function normalizeConditionalColorRule(raw, index = 0) {
         colors: {
             background: String(colors.background || 'rgba(76, 175, 80, 0.22)'),
             text: normalizeHexColor(colors.text, '#81c784'),
-            border: normalizeHexColor(colors.border, '#4caf50')
+            border,
+            accent: normalizeHexColor(colors.accent || colors.border, border)
         },
         priority: Number.isFinite(Number(raw.priority)) ? Number(raw.priority) : (100 - index),
         stopProcessing: !!raw.stopProcessing,
-        statusLabel: raw.statusLabel != null ? String(raw.statusLabel).slice(0, 40) : ''
+        statusLabel: raw.statusLabel != null ? String(raw.statusLabel).slice(0, 40) : '',
+        lastModified
     };
 }
 
@@ -2269,12 +2294,16 @@ function evaluateSpendColors(amount, options = {}, data = appData) {
 
 function saveConditionalColorRule(rule, data = appData) {
     const state = ensureConditionalColorRules(data);
-    const normalized = normalizeConditionalColorRule(rule, state.rules.length);
+    const normalized = normalizeConditionalColorRule({
+        ...rule,
+        lastModified: new Date().toISOString()
+    }, state.rules.length);
     if (!normalized) return null;
     const idx = state.rules.findIndex(r => r.id === normalized.id);
     if (idx >= 0) state.rules[idx] = normalized;
     else state.rules.push(normalized);
     persistConditionalColorRulesState({ rules: state.rules }, data);
+    invalidateConditionalColorRuleMatchCache();
     return normalized;
 }
 
@@ -2282,6 +2311,7 @@ function deleteConditionalColorRule(ruleId, data = appData) {
     const state = ensureConditionalColorRules(data);
     state.rules = state.rules.filter(r => r.id !== ruleId);
     persistConditionalColorRulesState({ rules: state.rules }, data);
+    invalidateConditionalColorRuleMatchCache();
     return state.rules;
 }
 
@@ -2295,10 +2325,12 @@ function duplicateConditionalColorRule(ruleId, data = appData) {
         name: `${src.name} (copy)`,
         isPreset: false,
         presetId: null,
-        priority: (Number(src.priority) || 0) + 1
+        priority: (Number(src.priority) || 0) + 1,
+        lastModified: new Date().toISOString()
     });
     state.rules.push(copy);
     persistConditionalColorRulesState({ rules: state.rules }, data);
+    invalidateConditionalColorRuleMatchCache();
     return copy;
 }
 
@@ -2307,7 +2339,9 @@ function setConditionalColorRuleEnabled(ruleId, enabled, data = appData) {
     const rule = state.rules.find(r => r.id === ruleId);
     if (!rule) return null;
     rule.enabled = !!enabled;
+    rule.lastModified = new Date().toISOString();
     persistConditionalColorRulesState({ rules: state.rules }, data);
+    invalidateConditionalColorRuleMatchCache();
     return rule;
 }
 
@@ -2323,19 +2357,26 @@ function reorderConditionalColorRule(ruleId, direction, data = appData) {
     const tmp = a.priority;
     a.priority = b.priority;
     b.priority = tmp;
-    // If priorities were equal, nudge
     if (a.priority === b.priority) {
         a.priority = (Number(a.priority) || 0) + (direction < 0 ? 1 : -1);
     }
+    a.lastModified = new Date().toISOString();
+    b.lastModified = a.lastModified;
     persistConditionalColorRulesState({ rules: sorted }, data);
+    invalidateConditionalColorRuleMatchCache();
     return sorted;
 }
 
 function resetConditionalColorRulesToPresets(data = appData) {
     const theme = (typeof resolvedTheme !== 'undefined' ? resolvedTheme : 'dark') || 'dark';
     const state = getDefaultConditionalColorRulesState(theme);
+    state.rules = state.rules.map((r, i) => normalizeConditionalColorRule({
+        ...r,
+        lastModified: new Date().toISOString()
+    }, i));
     data.settings[ccrStorageKey()] = state;
     if (typeof saveData === 'function') saveData(data);
+    invalidateConditionalColorRuleMatchCache();
     return state;
 }
 
@@ -2377,11 +2418,474 @@ function importConditionalColorRulesJson(jsonText, data = appData, { replace = f
         state.enabled = !!parsed.enabled;
     }
     persistConditionalColorRulesState({ rules: state.rules, enabled: state.enabled }, data);
+    invalidateConditionalColorRuleMatchCache();
     return state;
 }
 
 function setConditionalColorRulesEnabled(enabled, data = appData) {
     return persistConditionalColorRulesState({ enabled: !!enabled }, data);
+}
+
+// ——— Color Rule Manager (central CCR management) ———
+
+const CCR_MANAGER_SORT_OPTIONS = Object.freeze([
+    { id: 'priority', label: 'Priority' },
+    { id: 'name', label: 'Name' },
+    { id: 'metric', label: 'Metric' },
+    { id: 'substance', label: 'Substance' },
+    { id: 'lastModified', label: 'Last Modified' }
+]);
+
+const CCR_SECTION_USAGE_LABELS = Object.freeze({
+    dashboard: 'Dashboard',
+    status: 'Status badges',
+    useHistory: 'Use History',
+    inventory: 'Inventory',
+    purchaseHistory: 'Purchase History',
+    insights: 'Insights',
+    spending: 'Spending Summary',
+    taper: 'Weekly Taper',
+    calendar: 'Calendar',
+    all: 'All sections'
+});
+
+let ccrManagerUiState = {
+    search: '',
+    substance: 'all',
+    section: 'all',
+    metric: 'all',
+    enabled: 'all',
+    sort: 'priority',
+    sortDir: 'desc',
+    selectedIds: []
+};
+
+let ccrMatchCountCache = { key: '', counts: Object.create(null) };
+let ccrDragRuleId = null;
+
+function invalidateConditionalColorRuleMatchCache() {
+    ccrMatchCountCache = { key: '', counts: Object.create(null) };
+}
+
+function getCcrManagerUiState() {
+    if (!ccrManagerUiState.selectedIds) ccrManagerUiState.selectedIds = [];
+    return ccrManagerUiState;
+}
+
+function setCcrManagerFilters(patch = {}) {
+    const state = getCcrManagerUiState();
+    Object.assign(state, patch);
+    if (patch.selectedIds) state.selectedIds = [...patch.selectedIds];
+    return state;
+}
+
+function formatCcrConditionSummary(rule) {
+    if (!rule) return '—';
+    const op = CCR_OPERATORS.find(o => o.id === rule.operator);
+    const opLabel = op?.label || rule.operator;
+    if (rule.operator === 'between') {
+        return `${opLabel} ${rule.value ?? '—'} – ${rule.valueTo ?? '—'}`;
+    }
+    if (rule.operator === 'empty' || rule.operator === 'notEmpty'
+        || rule.operator === 'true' || rule.operator === 'false') {
+        return opLabel;
+    }
+    if (rule.operator === 'pctAboveTarget' || rule.operator === 'pctBelowTarget') {
+        return `${opLabel} ${rule.value ?? '—'}% (target ${rule.targetValue ?? '—'})`;
+    }
+    return `${opLabel} ${rule.value ?? ''}`.trim();
+}
+
+function formatCcrSubstanceScopeLabel(rule, data = appData) {
+    const scope = rule?.substanceScope;
+    if (scope == null || scope === 'all') return 'All substances';
+    const ids = Array.isArray(scope) ? scope : [scope];
+    return ids.map(id => {
+        const sub = (data.substances || []).find(s => s.id === id);
+        return sub?.name || id;
+    }).join(', ') || 'All substances';
+}
+
+function formatCcrSectionScopeLabel(rule) {
+    const scope = rule?.sectionScope || ['all'];
+    if (!scope.length || scope.includes('all')) return 'All sections';
+    return scope.map(id => CCR_SECTION_USAGE_LABELS[id] || id).join(', ');
+}
+
+function getConditionalColorRuleUsage(rule) {
+    const scope = rule?.sectionScope || ['all'];
+    if (!scope.length || scope.includes('all')) {
+        return Object.keys(CCR_SECTION_USAGE_LABELS)
+            .filter(id => id !== 'all')
+            .map(id => ({ id, label: CCR_SECTION_USAGE_LABELS[id], used: true }));
+    }
+    return Object.keys(CCR_SECTION_USAGE_LABELS)
+        .filter(id => id !== 'all')
+        .map(id => ({
+            id,
+            label: CCR_SECTION_USAGE_LABELS[id],
+            used: scope.includes(id)
+        }));
+}
+
+function scopesOverlapSubstances(a, b) {
+    if (a == null || a === 'all' || b == null || b === 'all') return true;
+    const aa = Array.isArray(a) ? a.map(String) : [String(a)];
+    const bb = Array.isArray(b) ? b.map(String) : [String(b)];
+    return aa.some(id => bb.includes(id));
+}
+
+function scopesOverlapSections(a, b) {
+    const aa = (!a || !a.length || a.includes('all')) ? null : a;
+    const bb = (!b || !b.length || b.includes('all')) ? null : b;
+    if (!aa || !bb) return true;
+    return aa.some(id => bb.includes(id));
+}
+
+function ccrNumericRange(rule) {
+    const v = ccrCoerceNumber(rule.value);
+    const v2 = ccrCoerceNumber(rule.valueTo);
+    switch (rule.operator) {
+        case 'eq':
+            return v == null ? null : { lo: v, hi: v };
+        case 'gt':
+        case 'gte':
+            return v == null ? null : { lo: v, hi: Infinity };
+        case 'lt':
+        case 'lte':
+            return v == null ? null : { lo: -Infinity, hi: v };
+        case 'between':
+            if (v == null || v2 == null) return null;
+            return { lo: Math.min(v, v2), hi: Math.max(v, v2) };
+        case 'pctAboveTarget':
+        case 'pctBelowTarget':
+        case 'daysSince':
+            return v == null ? null : { lo: v, hi: Infinity };
+        default:
+            return null;
+    }
+}
+
+function ccrRangesOverlap(a, b) {
+    if (!a || !b) return true; // unknown → treat as potential conflict
+    return a.lo <= b.hi && b.lo <= a.hi;
+}
+
+/**
+ * Detect rules that share metric + substance + section with overlapping conditions.
+ */
+function detectConditionalColorRuleConflicts(rules = null, data = appData) {
+    const list = (rules || getConditionalColorRules(data)).slice();
+    const byId = Object.create(null);
+    list.forEach(rule => { byId[rule.id] = []; });
+
+    for (let i = 0; i < list.length; i++) {
+        for (let j = i + 1; j < list.length; j++) {
+            const a = list[i];
+            const b = list[j];
+            if (!a || !b) continue;
+            if (a.metric !== b.metric) continue;
+            if (!scopesOverlapSubstances(a.substanceScope, b.substanceScope)) continue;
+            if (!scopesOverlapSections(a.sectionScope, b.sectionScope)) continue;
+            if (a.operator === 'contains' || b.operator === 'contains'
+                || a.operator === 'empty' || b.operator === 'empty'
+                || a.operator === 'notEmpty' || b.operator === 'notEmpty'
+                || a.operator === 'true' || b.operator === 'true'
+                || a.operator === 'false' || b.operator === 'false') {
+                if (a.operator === b.operator) {
+                    byId[a.id].push(b);
+                    byId[b.id].push(a);
+                }
+                continue;
+            }
+            if (ccrRangesOverlap(ccrNumericRange(a), ccrNumericRange(b))) {
+                byId[a.id].push(b);
+                byId[b.id].push(a);
+            }
+        }
+    }
+    return byId;
+}
+
+function buildConditionalColorRuleMatchContexts(data = appData, { maxSamples = 200 } = {}) {
+    const contexts = [];
+    const push = (ctx) => {
+        if (contexts.length < maxSamples) contexts.push(ctx);
+    };
+    (data.logs || []).slice(-80).forEach(log => {
+        const amount = parseFloat(log.amount);
+        if (Number.isFinite(amount)) {
+            push({
+                substanceId: log.substanceId,
+                section: 'useHistory',
+                metric: 'useAmount',
+                value: amount
+            });
+        }
+        if (log.transactionType) {
+            push({
+                substanceId: log.substanceId,
+                section: 'useHistory',
+                metric: 'transactionType',
+                value: log.transactionType,
+                textValue: String(log.transactionType)
+            });
+        }
+    });
+    (data.purchases || []).slice(-80).forEach(p => {
+        const spend = typeof getPurchaseSpendAmount === 'function' ? getPurchaseSpendAmount(p) : parseFloat(p.totalCost);
+        if (Number.isFinite(spend)) {
+            push({
+                substanceId: getPurchaseSubstanceId(p),
+                section: 'spending',
+                metric: 'spend',
+                value: spend
+            });
+        }
+        const pct = typeof getPurchasePercentRemaining === 'function'
+            ? getPurchasePercentRemaining(p)
+            : null;
+        if (pct != null && Number.isFinite(Number(pct))) {
+            push({
+                substanceId: getPurchaseSubstanceId(p),
+                section: 'inventory',
+                metric: 'inventoryPercent',
+                value: Number(pct)
+            });
+        }
+    });
+    // Lightweight synthetic contexts so presets still produce match stats when data is sparse
+    push({ substanceId: 'all', section: 'dashboard', metric: 'useVsTarget', value: 0.5, target: 1 });
+    push({ substanceId: 'all', section: 'dashboard', metric: 'useVsTarget', value: 0.85, target: 1 });
+    push({ substanceId: 'all', section: 'dashboard', metric: 'useVsTarget', value: 1.2, target: 1 });
+    push({ substanceId: 'all', section: 'taper', metric: 'taperPlannedVsActual', value: 0.8, target: 1 });
+    push({ substanceId: 'all', section: 'taper', metric: 'taperPlannedVsActual', value: 1.3, target: 1 });
+    push({ substanceId: 'all', section: 'dashboard', metric: 'daysSinceUse', value: 10 });
+    return contexts;
+}
+
+function getCcrMatchCountCacheKey(data = appData) {
+    const state = data?.settings?.[ccrStorageKey()] || {};
+    return [
+        (data.logs || []).length,
+        (data.purchases || []).length,
+        (state.rules || []).length,
+        state.enabled === false ? 0 : 1,
+        (state.rules || []).map(r => `${r.id}:${r.enabled}:${r.priority}:${r.metric}:${r.operator}:${r.value}`).join('|')
+    ].join('::');
+}
+
+/**
+ * Count how many sampled records currently match each rule.
+ * Reuses compareConditionalColorRule — does not re-implement condition logic.
+ */
+function computeConditionalColorRuleMatchCounts(data = appData, options = {}) {
+    const key = getCcrMatchCountCacheKey(data);
+    if (!options.force && ccrMatchCountCache.key === key) {
+        return { ...ccrMatchCountCache.counts };
+    }
+    const rules = getConditionalColorRules(data);
+    const counts = Object.create(null);
+    rules.forEach(r => { counts[r.id] = 0; });
+    const contexts = buildConditionalColorRuleMatchContexts(data, options);
+    contexts.forEach(ctx => {
+        rules.forEach(rule => {
+            if (!rule.enabled) return;
+            if (!ruleMatchesSubstanceScope(rule, ctx.substanceId)) return;
+            if (!ruleMatchesSectionScope(rule, ctx.section)) return;
+            if (!ruleMatchesMetric(rule, ctx.metric)) return;
+            if (compareConditionalColorRule(rule, ctx)) counts[rule.id] += 1;
+        });
+    });
+    ccrMatchCountCache = { key, counts: { ...counts } };
+    return counts;
+}
+
+function getConditionalColorRuleMatchCount(ruleId, data = appData) {
+    const counts = computeConditionalColorRuleMatchCounts(data);
+    return counts[ruleId] || 0;
+}
+
+function filterAndSortConditionalColorRules(rules, filters = getCcrManagerUiState(), data = appData) {
+    const search = String(filters.search || '').trim().toLowerCase();
+    let list = (rules || []).slice();
+
+    if (search) {
+        list = list.filter(rule => {
+            const hay = [
+                rule.name,
+                rule.metric,
+                rule.operator,
+                formatCcrConditionSummary(rule),
+                formatCcrSubstanceScopeLabel(rule, data),
+                formatCcrSectionScopeLabel(rule),
+                rule.statusLabel || ''
+            ].join(' ').toLowerCase();
+            return hay.includes(search);
+        });
+    }
+    if (filters.substance && filters.substance !== 'all') {
+        list = list.filter(rule => ruleMatchesSubstanceScope(rule, filters.substance));
+    }
+    if (filters.section && filters.section !== 'all') {
+        list = list.filter(rule => ruleMatchesSectionScope(rule, filters.section));
+    }
+    if (filters.metric && filters.metric !== 'all') {
+        list = list.filter(rule => rule.metric === filters.metric);
+    }
+    if (filters.enabled === 'enabled') list = list.filter(r => r.enabled);
+    if (filters.enabled === 'disabled') list = list.filter(r => !r.enabled);
+
+    const dir = filters.sortDir === 'asc' ? 1 : -1;
+    const sortKey = filters.sort || 'priority';
+    list.sort((a, b) => {
+        let av;
+        let bv;
+        if (sortKey === 'name') {
+            av = String(a.name || '').toLowerCase();
+            bv = String(b.name || '').toLowerCase();
+            return av < bv ? -dir : av > bv ? dir : 0;
+        }
+        if (sortKey === 'metric') {
+            av = String(a.metric || '');
+            bv = String(b.metric || '');
+            return av < bv ? -dir : av > bv ? dir : 0;
+        }
+        if (sortKey === 'substance') {
+            av = formatCcrSubstanceScopeLabel(a, data).toLowerCase();
+            bv = formatCcrSubstanceScopeLabel(b, data).toLowerCase();
+            return av < bv ? -dir : av > bv ? dir : 0;
+        }
+        if (sortKey === 'lastModified') {
+            av = a.lastModified || '';
+            bv = b.lastModified || '';
+            return av < bv ? -dir : av > bv ? dir : 0;
+        }
+        // priority (default)
+        av = Number(a.priority) || 0;
+        bv = Number(b.priority) || 0;
+        return (av - bv) * dir;
+    });
+    return list;
+}
+
+function bulkSetConditionalColorRulesEnabled(ruleIds, enabled, data = appData) {
+    const ids = new Set((ruleIds || []).map(String));
+    if (!ids.size) return [];
+    const state = ensureConditionalColorRules(data);
+    state.rules.forEach(rule => {
+        if (ids.has(rule.id)) {
+            rule.enabled = !!enabled;
+            rule.lastModified = new Date().toISOString();
+        }
+    });
+    persistConditionalColorRulesState({ rules: state.rules }, data);
+    invalidateConditionalColorRuleMatchCache();
+    return state.rules.filter(r => ids.has(r.id));
+}
+
+function bulkDeleteConditionalColorRules(ruleIds, data = appData) {
+    const ids = new Set((ruleIds || []).map(String));
+    if (!ids.size) return [];
+    const state = ensureConditionalColorRules(data);
+    const removed = state.rules.filter(r => ids.has(r.id));
+    state.rules = state.rules.filter(r => !ids.has(r.id));
+    persistConditionalColorRulesState({ rules: state.rules }, data);
+    invalidateConditionalColorRuleMatchCache();
+    const ui = getCcrManagerUiState();
+    ui.selectedIds = ui.selectedIds.filter(id => !ids.has(id));
+    return removed;
+}
+
+function exportConditionalColorRulesSelectionJson(ruleIds, data = appData) {
+    const ids = new Set((ruleIds || []).map(String));
+    const state = ensureConditionalColorRules(data);
+    const rules = state.rules.filter(r => ids.has(r.id));
+    return JSON.stringify({
+        app: 'recovery-tracker-conditional-color-rules',
+        version: state.version || 1,
+        exportedAt: new Date().toISOString(),
+        enabled: state.enabled,
+        rules
+    }, null, 2);
+}
+
+/**
+ * Install recovery presets without overwriting existing rules unless replace=true.
+ */
+function loadRecoveryColorRulePresets(data = appData, { replace = false, theme = null } = {}) {
+    const resolved = theme
+        || (typeof resolvedTheme !== 'undefined' ? resolvedTheme : 'dark')
+        || 'dark';
+    const presets = getConditionalColorPresetRules(resolved).map((r, i) => normalizeConditionalColorRule({
+        ...r,
+        lastModified: new Date().toISOString()
+    }, i));
+    const state = ensureConditionalColorRules(data);
+    if (replace) {
+        state.rules = presets;
+    } else {
+        const byPresetId = new Set(state.rules.map(r => r.presetId).filter(Boolean));
+        const byName = new Set(state.rules.map(r => String(r.name || '').toLowerCase()));
+        presets.forEach(preset => {
+            if (preset.presetId && byPresetId.has(preset.presetId)) return;
+            if (byName.has(String(preset.name || '').toLowerCase())) return;
+            preset.id = ccrNewId('preset');
+            state.rules.push(preset);
+        });
+    }
+    persistConditionalColorRulesState({ rules: state.rules }, data);
+    invalidateConditionalColorRuleMatchCache();
+    return state;
+}
+
+function setConditionalColorRulePriorityOrder(orderedIds, data = appData) {
+    const state = ensureConditionalColorRules(data);
+    const byId = new Map(state.rules.map(r => [r.id, r]));
+    const ordered = [];
+    (orderedIds || []).forEach(id => {
+        if (byId.has(id)) {
+            ordered.push(byId.get(id));
+            byId.delete(id);
+        }
+    });
+    // Append any leftover rules
+    byId.forEach(rule => ordered.push(rule));
+    // Highest priority at top of list
+    const base = 1000;
+    ordered.forEach((rule, index) => {
+        rule.priority = base - index;
+        rule.lastModified = new Date().toISOString();
+    });
+    persistConditionalColorRulesState({ rules: ordered }, data);
+    invalidateConditionalColorRuleMatchCache();
+    return ordered;
+}
+
+function formatCcrLastModifiedLabel(iso) {
+    if (!iso) return '—';
+    try {
+        const d = new Date(iso);
+        if (Number.isNaN(d.getTime())) return '—';
+        return d.toLocaleString();
+    } catch (_) {
+        return '—';
+    }
+}
+
+function renderCcrColorPreview(rule) {
+    const c = rule?.colors || {};
+    const bg = c.background || 'transparent';
+    const text = c.text || 'var(--text-primary)';
+    const border = c.border || 'var(--border)';
+    const accent = c.accent || border;
+    return `<div class="ccr-color-preview" role="img" aria-label="Background ${escapeAttr(bg)}, text ${escapeAttr(text)}, border ${escapeAttr(border)}, accent ${escapeAttr(accent)}">
+        <span class="ccr-swatch-bg" style="background:${escapeAttr(bg)};border-color:${escapeAttr(border)}" title="Background"></span>
+        <span class="ccr-swatch-text" style="color:${escapeAttr(text)}" title="Text">Aa</span>
+        <span class="ccr-swatch-border" style="border-color:${escapeAttr(border)}" title="Border"></span>
+        <span class="ccr-swatch-accent" style="background:${escapeAttr(accent)}" title="Accent"></span>
+        <span class="ccr-swatch-sr">${escapeHtml(`BG ${bg} · Text ${text} · Border ${border} · Accent ${accent}`)}</span>
+    </div>`;
 }
 
 // ——— Conditional Color Rules UI ———
@@ -2522,25 +3026,67 @@ function renderConditionalColorRulesList() {
     const enabledToggle = document.getElementById('ccr-rules-enabled');
     if (enabledToggle) enabledToggle.checked = state.enabled !== false;
 
-    const rules = state.rules.slice().sort((a, b) => (Number(b.priority) || 0) - (Number(a.priority) || 0));
-    if (!rules.length) {
-        root.innerHTML = '<p class="empty-hint">No rules yet. Add a rule or restore presets.</p>';
+    const filters = getCcrManagerUiState();
+    const rules = filterAndSortConditionalColorRules(state.rules, filters);
+    const conflicts = detectConditionalColorRuleConflicts(state.rules);
+    const matchCounts = computeConditionalColorRuleMatchCounts();
+    const selected = new Set(filters.selectedIds || []);
+
+    const countEl = document.getElementById('ccr-manager-result-count');
+    if (countEl) {
+        countEl.textContent = `${rules.length} rule${rules.length === 1 ? '' : 's'} shown · ${state.rules.length} total`;
+    }
+
+    if (!state.rules.length) {
+        root.innerHTML = '<p class="empty-hint">No rules yet. Add a rule or load recovery presets.</p>';
         return;
     }
+    if (!rules.length) {
+        root.innerHTML = '<p class="empty-hint">No rules match the current search/filters.</p>';
+        return;
+    }
+
+    const metricLabel = (id) => CCR_METRICS.find(m => m.id === id)?.label || id;
+
     root.innerHTML = rules.map(rule => {
-        const swatchStyle = buildConditionalColorInlineStyle({ style: rule.colors, matched: [rule] });
-        return `<article class="ccr-rule-card${!rule.enabled ? ' is-disabled' : ''}" data-rule-id="${escapeAttr(rule.id)}">
+        const conflictList = conflicts[rule.id] || [];
+        const conflictHtml = conflictList.length
+            ? `<button type="button" class="ccr-conflict-btn" title="${escapeAttr(conflictList.map(c => c.name).join(', '))}" aria-label="May conflict with ${escapeAttr(conflictList.map(c => c.name).join(', '))}" onclick="jumpToConflictingColorRule('${escapeAttr(conflictList[0].id)}')">⚠ May conflict with ${escapeHtml(conflictList[0].name)}${conflictList.length > 1 ? ` (+${conflictList.length - 1})` : ''}</button>`
+            : '';
+        const usage = getConditionalColorRuleUsage(rule)
+            .filter(u => u.used)
+            .map(u => `<span class="ccr-usage-chip">✓ ${escapeHtml(u.label)}</span>`)
+            .join(' ');
+        const matchCount = matchCounts[rule.id] || 0;
+        const checked = selected.has(rule.id) ? 'checked' : '';
+        return `<article class="ccr-rule-card ccr-manager-row${!rule.enabled ? ' is-disabled' : ''}" data-rule-id="${escapeAttr(rule.id)}" draggable="true" ondragstart="onCcrRuleDragStart(event, '${escapeAttr(rule.id)}')" ondragover="onCcrRuleDragOver(event)" ondrop="onCcrRuleDrop(event, '${escapeAttr(rule.id)}')" ondragend="onCcrRuleDragEnd()" tabindex="0" role="listitem" aria-label="${escapeAttr(rule.name)}">
+            <div class="ccr-rule-card-select">
+                <label class="ccr-select-mini">
+                    <input type="checkbox" ${checked} aria-label="Select ${escapeAttr(rule.name)}" onchange="toggleCcrManagerRuleSelection('${escapeAttr(rule.id)}', this.checked)">
+                    <span class="ccr-drag-handle" title="Drag to set priority" aria-hidden="true">⋮⋮</span>
+                </label>
+            </div>
             <div class="ccr-rule-card-main">
-                <span class="ccr-rule-swatch"${swatchStyle ? ` style="${escapeAttr(swatchStyle)}"` : ''}></span>
-                <div>
-                    <strong>${escapeHtml(rule.name)}</strong>
-                    <p class="ccr-rule-meta">${escapeHtml(rule.metric)} · ${escapeHtml(rule.operator)} · priority ${escapeHtml(String(rule.priority))}${rule.statusLabel ? ` · ${escapeHtml(rule.statusLabel)}` : ''}</p>
+                <label class="ccr-enable-mini">
+                    <input type="checkbox" ${rule.enabled ? 'checked' : ''} aria-label="Enable ${escapeAttr(rule.name)}" onchange="setConditionalColorRuleEnabled('${escapeAttr(rule.id)}', this.checked); renderConditionalColorRulesSettings();">
+                    <span>On</span>
+                </label>
+                ${renderCcrColorPreview(rule)}
+                <div class="ccr-rule-card-body">
+                    <strong class="ccr-rule-name">${escapeHtml(rule.name)}</strong>
+                    <p class="ccr-rule-meta">
+                        <span>${escapeHtml(formatCcrSubstanceScopeLabel(rule))}</span>
+                        · <span>${escapeHtml(formatCcrSectionScopeLabel(rule))}</span>
+                        · <span>${escapeHtml(metricLabel(rule.metric))}</span>
+                        · <span>${escapeHtml(formatCcrConditionSummary(rule))}</span>
+                        · <span>Priority ${escapeHtml(String(rule.priority))}</span>
+                    </p>
+                    <p class="ccr-rule-meta ccr-rule-usage">${usage || '<span class="ccr-usage-chip">✓ All sections</span>'}</p>
+                    <p class="ccr-rule-meta">Matches: <strong>${escapeHtml(String(matchCount))}</strong> record${matchCount === 1 ? '' : 's'} · Updated ${escapeHtml(formatCcrLastModifiedLabel(rule.lastModified))}</p>
+                    ${conflictHtml}
                 </div>
             </div>
             <div class="ccr-rule-card-actions">
-                <label class="ccr-enable-mini"><input type="checkbox" ${rule.enabled ? 'checked' : ''} onchange="setConditionalColorRuleEnabled('${escapeAttr(rule.id)}', this.checked); renderConditionalColorRulesSettings();"> On</label>
-                <button type="button" class="secondary-btn btn-sm" onclick="reorderConditionalColorRule('${escapeAttr(rule.id)}', -1); renderConditionalColorRulesSettings();">↑</button>
-                <button type="button" class="secondary-btn btn-sm" onclick="reorderConditionalColorRule('${escapeAttr(rule.id)}', 1); renderConditionalColorRulesSettings();">↓</button>
                 <button type="button" class="secondary-btn btn-sm" onclick="openConditionalColorRuleEditor('${escapeAttr(rule.id)}')">Edit</button>
                 <button type="button" class="secondary-btn btn-sm" onclick="duplicateConditionalColorRule('${escapeAttr(rule.id)}'); renderConditionalColorRulesSettings();">Duplicate</button>
                 <button type="button" class="danger-btn btn-sm" onclick="confirmDeleteConditionalColorRule('${escapeAttr(rule.id)}')">Delete</button>
@@ -2549,8 +3095,219 @@ function renderConditionalColorRulesList() {
     }).join('');
 }
 
+function populateCcrManagerFilterSelects() {
+    const substanceEl = document.getElementById('ccr-manager-filter-substance');
+    if (substanceEl) {
+        const current = substanceEl.value || getCcrManagerUiState().substance || 'all';
+        const substances = typeof getActiveSubstances === 'function' ? getActiveSubstances() : (appData.substances || []);
+        substanceEl.innerHTML = `<option value="all">All substances</option>` + substances.map(s =>
+            `<option value="${escapeAttr(s.id)}">${escapeHtml(s.icon || '')} ${escapeHtml(s.name)}</option>`
+        ).join('');
+        substanceEl.value = [...substanceEl.options].some(o => o.value === current) ? current : 'all';
+    }
+    const sectionEl = document.getElementById('ccr-manager-filter-section');
+    if (sectionEl && !sectionEl.dataset.ready) {
+        sectionEl.innerHTML = `<option value="all">All sections</option>` + CCR_SECTIONS.map(s =>
+            `<option value="${escapeAttr(s.id)}">${escapeHtml(s.label)}</option>`
+        ).join('');
+        sectionEl.dataset.ready = '1';
+    }
+    const metricEl = document.getElementById('ccr-manager-filter-metric');
+    if (metricEl && !metricEl.dataset.ready) {
+        metricEl.innerHTML = `<option value="all">All metrics</option>` + CCR_METRICS.map(m =>
+            `<option value="${escapeAttr(m.id)}">${escapeHtml(m.label)}</option>`
+        ).join('');
+        metricEl.dataset.ready = '1';
+    }
+    const sortEl = document.getElementById('ccr-manager-sort');
+    if (sortEl && !sortEl.dataset.ready) {
+        sortEl.innerHTML = CCR_MANAGER_SORT_OPTIONS.map(o =>
+            `<option value="${escapeAttr(o.id)}">${escapeHtml(o.label)}</option>`
+        ).join('');
+        sortEl.dataset.ready = '1';
+    }
+    syncCcrManagerFilterControls();
+}
+
+function syncCcrManagerFilterControls() {
+    const f = getCcrManagerUiState();
+    const setVal = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.value = value;
+    };
+    setVal('ccr-manager-search', f.search || '');
+    setVal('ccr-manager-filter-substance', f.substance || 'all');
+    setVal('ccr-manager-filter-section', f.section || 'all');
+    setVal('ccr-manager-filter-metric', f.metric || 'all');
+    setVal('ccr-manager-filter-enabled', f.enabled || 'all');
+    setVal('ccr-manager-sort', f.sort || 'priority');
+    setVal('ccr-manager-sort-dir', f.sortDir || 'desc');
+}
+
+function onCcrManagerFiltersChanged() {
+    setCcrManagerFilters({
+        search: document.getElementById('ccr-manager-search')?.value || '',
+        substance: document.getElementById('ccr-manager-filter-substance')?.value || 'all',
+        section: document.getElementById('ccr-manager-filter-section')?.value || 'all',
+        metric: document.getElementById('ccr-manager-filter-metric')?.value || 'all',
+        enabled: document.getElementById('ccr-manager-filter-enabled')?.value || 'all',
+        sort: document.getElementById('ccr-manager-sort')?.value || 'priority',
+        sortDir: document.getElementById('ccr-manager-sort-dir')?.value || 'desc'
+    });
+    renderConditionalColorRulesList();
+}
+
+function toggleCcrManagerRuleSelection(ruleId, checked) {
+    const ui = getCcrManagerUiState();
+    const id = String(ruleId);
+    if (checked) {
+        if (!ui.selectedIds.includes(id)) ui.selectedIds.push(id);
+    } else {
+        ui.selectedIds = ui.selectedIds.filter(x => x !== id);
+    }
+}
+
+function selectAllVisibleCcrManagerRules(checked) {
+    const ui = getCcrManagerUiState();
+    const visible = filterAndSortConditionalColorRules(getConditionalColorRules(), ui).map(r => r.id);
+    if (checked) {
+        const set = new Set([...ui.selectedIds, ...visible]);
+        ui.selectedIds = [...set];
+    } else {
+        const drop = new Set(visible);
+        ui.selectedIds = ui.selectedIds.filter(id => !drop.has(id));
+    }
+    renderConditionalColorRulesList();
+}
+
+function getSelectedCcrManagerRuleIds() {
+    return getCcrManagerUiState().selectedIds.slice();
+}
+
+function bulkEnableSelectedColorRules() {
+    const ids = getSelectedCcrManagerRuleIds();
+    if (!ids.length) {
+        if (typeof showToast === 'function') showToast('Select rules first');
+        return;
+    }
+    bulkSetConditionalColorRulesEnabled(ids, true);
+    renderConditionalColorRulesSettings();
+    if (typeof showToast === 'function') showToast(`Enabled ${ids.length} rule${ids.length === 1 ? '' : 's'}`);
+}
+
+function bulkDisableSelectedColorRules() {
+    const ids = getSelectedCcrManagerRuleIds();
+    if (!ids.length) {
+        if (typeof showToast === 'function') showToast('Select rules first');
+        return;
+    }
+    bulkSetConditionalColorRulesEnabled(ids, false);
+    renderConditionalColorRulesSettings();
+    if (typeof showToast === 'function') showToast(`Disabled ${ids.length} rule${ids.length === 1 ? '' : 's'}`);
+}
+
+function bulkDeleteSelectedColorRules() {
+    const ids = getSelectedCcrManagerRuleIds();
+    if (!ids.length) {
+        if (typeof showToast === 'function') showToast('Select rules first');
+        return;
+    }
+    if (!confirm(`Delete ${ids.length} selected color rule${ids.length === 1 ? '' : 's'}? This does not change tracked data.`)) return;
+    bulkDeleteConditionalColorRules(ids);
+    renderConditionalColorRulesSettings();
+    if (typeof showToast === 'function') showToast('Selected rules deleted');
+}
+
+function downloadSelectedColorRulesExport() {
+    const ids = getSelectedCcrManagerRuleIds();
+    if (!ids.length) {
+        if (typeof showToast === 'function') showToast('Select rules first');
+        return;
+    }
+    const json = exportConditionalColorRulesSelectionJson(ids);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `recovery-tracker-color-rules-selected-${getLocalDateString?.() || 'export'}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+}
+
+function loadRecoveryColorPresetsFromUi() {
+    const state = ensureConditionalColorRules();
+    let replace = true;
+    if (state.rules.length) {
+        replace = confirm('Load Recovery Presets.\n\nOK = replace existing rules\nCancel = keep existing and only add missing presets');
+    }
+    loadRecoveryColorRulePresets(appData, { replace });
+    renderConditionalColorRulesSettings();
+    if (typeof showToast === 'function') {
+        showToast(replace ? 'Recovery presets loaded (replaced)' : 'Missing recovery presets added');
+    }
+}
+
+function confirmResetColorRulesToPresets() {
+    if (!confirm('Reset all color rules to default Recovery presets? Existing custom rules will be removed.')) return;
+    resetConditionalColorRulesToPresets();
+    renderConditionalColorRulesSettings();
+    if (typeof showToast === 'function') showToast('Color rules reset to presets');
+}
+
+function jumpToConflictingColorRule(ruleId) {
+    const safeId = String(ruleId || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+    const el = document.querySelector(`.ccr-rule-card[data-rule-id="${safeId}"]`);
+    if (el) {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+        el.classList.add('ccr-rule-flash');
+        el.focus?.();
+        setTimeout(() => el.classList.remove('ccr-rule-flash'), 1600);
+    }
+    openConditionalColorRuleEditor(ruleId);
+}
+
+function onCcrRuleDragStart(event, ruleId) {
+    ccrDragRuleId = ruleId;
+    try {
+        event.dataTransfer.setData('text/plain', ruleId);
+        event.dataTransfer.effectAllowed = 'move';
+    } catch (_) { /* ignore */ }
+    event.currentTarget?.classList.add('is-dragging');
+}
+
+function onCcrRuleDragOver(event) {
+    event.preventDefault();
+    try { event.dataTransfer.dropEffect = 'move'; } catch (_) { /* ignore */ }
+}
+
+function onCcrRuleDrop(event, targetRuleId) {
+    event.preventDefault();
+    const fromId = ccrDragRuleId || (() => {
+        try { return event.dataTransfer.getData('text/plain'); } catch (_) { return null; }
+    })();
+    if (!fromId || fromId === targetRuleId) return;
+    const ui = getCcrManagerUiState();
+    const visible = filterAndSortConditionalColorRules(getConditionalColorRules(), ui).map(r => r.id);
+    const fromIdx = visible.indexOf(fromId);
+    const toIdx = visible.indexOf(targetRuleId);
+    if (fromIdx < 0 || toIdx < 0) return;
+    visible.splice(fromIdx, 1);
+    visible.splice(toIdx, 0, fromId);
+    // Keep non-visible rules after visible ones
+    const allIds = getConditionalColorRules().map(r => r.id);
+    const rest = allIds.filter(id => !visible.includes(id));
+    setConditionalColorRulePriorityOrder([...visible, ...rest]);
+    renderConditionalColorRulesSettings();
+}
+
+function onCcrRuleDragEnd() {
+    ccrDragRuleId = null;
+    document.querySelectorAll('.ccr-rule-card.is-dragging').forEach(el => el.classList.remove('is-dragging'));
+}
+
 function renderConditionalColorRulesSettings() {
     populateCcrSubstanceSelect();
+    populateCcrManagerFilterSelects();
     const metricEl = document.getElementById('ccr-rule-metric');
     if (metricEl && !metricEl.options.length) {
         metricEl.innerHTML = CCR_METRICS.map(m => `<option value="${m.id}">${escapeHtml(m.label)}</option>`).join('');
@@ -56702,6 +57459,24 @@ function __getRecoveryTrackerTestExports() {
         importConditionalColorRulesJson,
         setConditionalColorRulesEnabled,
         persistConditionalColorRulesState,
+        filterAndSortConditionalColorRules,
+        detectConditionalColorRuleConflicts,
+        computeConditionalColorRuleMatchCounts,
+        getConditionalColorRuleMatchCount,
+        getConditionalColorRuleUsage,
+        formatCcrConditionSummary,
+        formatCcrSubstanceScopeLabel,
+        formatCcrSectionScopeLabel,
+        bulkSetConditionalColorRulesEnabled,
+        bulkDeleteConditionalColorRules,
+        exportConditionalColorRulesSelectionJson,
+        loadRecoveryColorRulePresets,
+        setConditionalColorRulePriorityOrder,
+        getCcrManagerUiState,
+        setCcrManagerFilters,
+        invalidateConditionalColorRuleMatchCache,
+        renderCcrColorPreview,
+        CCR_MANAGER_SORT_OPTIONS,
         getUsageVsTargetBadge,
         renderStatusBadge,
         wrapWithConditionalColor,

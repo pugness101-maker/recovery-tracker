@@ -2618,24 +2618,77 @@
                     <p class="settings-hint">Comparisons respect the selected substance and shared date filter, reuse normalized metrics, and skip % change when the previous value is zero. Custom date ranges compare to the immediately preceding range of the same length. Conditional rules can target previous value, numeric change, % change, or direction.</p>
 
                     <div class="ccr-settings-block" id="conditional-color-rules-root">
-                        <h3 class="ccr-settings-title">Conditional Color Rules</h3>
-                        <p class="settings-hint">Color-code cards, badges, history rows, inventory, Insights, taper tables, and calendar entries from shared rules. Rules change appearance only — never your data. Status labels stay visible so color is not the only cue.</p>
+                        <h3 class="ccr-settings-title">Color Rule Manager</h3>
+                        <p class="settings-hint">Central place to manage all conditional color rules. Rules change appearance only — never your data. Status labels are optional and are never invented automatically for charts, rows, cards, badges, or tables.</p>
                         <label class="settings-toggle-row" for="ccr-rules-enabled">
                             <input type="checkbox" id="ccr-rules-enabled" checked onchange="onConditionalColorRulesEnabledToggle(this.checked)">
                             <span>Enable conditional color rules</span>
                         </label>
-                        <div class="ccr-toolbar">
+
+                        <div class="ccr-manager-toolbar ccr-toolbar" role="toolbar" aria-label="Color rule actions">
                             <button type="button" class="submit-btn btn-sm" onclick="openConditionalColorRuleEditor()">Add rule</button>
-                            <button type="button" class="secondary-btn btn-sm" onclick="resetConditionalColorRulesToPresets(); renderConditionalColorRulesSettings();">Restore presets</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="loadRecoveryColorPresetsFromUi()">Load Recovery Presets</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="confirmResetColorRulesToPresets()">Reset to default presets</button>
                             <button type="button" class="secondary-btn btn-sm" onclick="downloadConditionalColorRulesExport()">Export rules</button>
                             <label class="secondary-btn btn-sm ccr-import-label">
                                 Import rules
                                 <input type="file" id="ccr-import-file" accept="application/json,.json" class="hidden" onchange="onConditionalColorRulesImportFile(event)">
                             </label>
                         </div>
-                        <div id="ccr-rules-list" class="ccr-rules-list" aria-live="polite"></div>
 
-                        <div id="ccr-rule-editor" class="ccr-rule-editor hidden">
+                        <div class="ccr-manager-filters" role="search" aria-label="Filter color rules">
+                            <div class="form-group ccr-manager-search-group">
+                                <label for="ccr-manager-search">Search rules</label>
+                                <input type="search" id="ccr-manager-search" placeholder="Name, metric, condition…" oninput="onCcrManagerFiltersChanged()" autocomplete="off">
+                            </div>
+                            <div class="form-group">
+                                <label for="ccr-manager-filter-substance">Substance</label>
+                                <select id="ccr-manager-filter-substance" onchange="onCcrManagerFiltersChanged()"></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="ccr-manager-filter-section">Section / page</label>
+                                <select id="ccr-manager-filter-section" onchange="onCcrManagerFiltersChanged()"></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="ccr-manager-filter-metric">Metric</label>
+                                <select id="ccr-manager-filter-metric" onchange="onCcrManagerFiltersChanged()"></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="ccr-manager-filter-enabled">Status</label>
+                                <select id="ccr-manager-filter-enabled" onchange="onCcrManagerFiltersChanged()">
+                                    <option value="all">All</option>
+                                    <option value="enabled">Enabled</option>
+                                    <option value="disabled">Disabled</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label for="ccr-manager-sort">Sort by</label>
+                                <select id="ccr-manager-sort" onchange="onCcrManagerFiltersChanged()"></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="ccr-manager-sort-dir">Order</label>
+                                <select id="ccr-manager-sort-dir" onchange="onCcrManagerFiltersChanged()">
+                                    <option value="desc">Descending</option>
+                                    <option value="asc">Ascending</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="ccr-manager-bulk" role="group" aria-label="Bulk rule actions">
+                            <label class="ccr-enable-mini">
+                                <input type="checkbox" id="ccr-manager-select-all" onchange="selectAllVisibleCcrManagerRules(this.checked)">
+                                <span>Select visible</span>
+                            </label>
+                            <button type="button" class="secondary-btn btn-sm" onclick="bulkEnableSelectedColorRules()">Enable selected</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="bulkDisableSelectedColorRules()">Disable selected</button>
+                            <button type="button" class="danger-btn btn-sm" onclick="bulkDeleteSelectedColorRules()">Delete selected</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="downloadSelectedColorRulesExport()">Export selected</button>
+                            <span id="ccr-manager-result-count" class="ccr-manager-result-count" aria-live="polite"></span>
+                        </div>
+
+                        <div id="ccr-rules-list" class="ccr-rules-list" role="list" aria-live="polite"></div>
+
+                        <div id="ccr-rule-editor" class="ccr-rule-editor hidden" role="region" aria-label="Color rule editor">
                             <h4>Edit rule</h4>
                             <div class="form-group">
                                 <label for="ccr-rule-name">Rule name</label>
@@ -2688,8 +2741,9 @@
                                     <input type="number" id="ccr-rule-priority" step="1" oninput="updateCcrLivePreview()">
                                 </div>
                                 <div class="form-group">
-                                    <label for="ccr-rule-status-label">Visible status label</label>
-                                    <input type="text" id="ccr-rule-status-label" maxlength="40" placeholder="Optional label" oninput="updateCcrLivePreview()">
+                                    <label for="ccr-rule-status-label">Visible status label (optional)</label>
+                                    <input type="text" id="ccr-rule-status-label" maxlength="40" placeholder="Optional label — leave blank for color only" oninput="updateCcrLivePreview()">
+                                    <p class="field-hint">Labels stay optional. Nothing is auto-added to charts, rows, cards, badges, or tables.</p>
                                 </div>
                             </div>
                             <label class="settings-toggle-row" for="ccr-rule-stop">
