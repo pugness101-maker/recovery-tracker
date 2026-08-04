@@ -47184,22 +47184,71 @@ function onManualWeeklyUnitChange() {
     renderManualWeeklyTargetsEditor(collectManualWeeklyTargetsFromForm());
 }
 
+function sumManualWeeklyPlannedAmount(targets, options = {}) {
+    const mode = options.mode === 'percent' ? 'percent' : 'amount';
+    const rows = Array.isArray(targets) ? targets : [];
+    if (mode === 'amount') {
+        // Sum the amounts the user typed — do not round each week first.
+        return rows.reduce((sum, entry) => {
+            const n = parseFloat(entry?.targetAmount);
+            return sum + (Number.isFinite(n) ? n : 0);
+        }, 0);
+    }
+    const plan = {
+        manualWeeklyMode: 'percent',
+        manualWeeklyBaseline: options.baseline
+    };
+    return rows.reduce((sum, entry) => {
+        const amount = resolveManualWeekTargetAmount(entry, plan);
+        return sum + (Number.isFinite(amount) ? amount : 0);
+    }, 0);
+}
+
+function formatManualWeeklyPlannedTotal(total, unit) {
+    const n = parseFloat(total);
+    const safe = Number.isFinite(n) ? Math.round((n + Number.EPSILON) * 10) / 10 : 0;
+    return `${safe.toFixed(1)}${unit ? ` ${unit}` : ''}`;
+}
+
+function updateManualWeeklyPlannedTotal(targets = null) {
+    const summary = document.getElementById('manual-weekly-planned-total');
+    const valueEl = document.getElementById('manual-weekly-planned-total-value');
+    if (!summary || !valueEl) return;
+
+    const mode = getManualWeeklyModeFromForm();
+    // Amount mode is where weekly goals are entered as absolute amounts.
+    if (mode !== 'amount') {
+        summary.classList.add('hidden');
+        return;
+    }
+    summary.classList.remove('hidden');
+    const list = targets || collectManualWeeklyTargetsFromForm();
+    const total = sumManualWeeklyPlannedAmount(list, {
+        mode: 'amount',
+        baseline: getManualWeeklyBaselineFromForm()
+    });
+    const unit = getManualWeeklyUnitFromForm();
+    valueEl.textContent = formatManualWeeklyPlannedTotal(total, unit);
+}
+
 function updateManualWeeklyComputedPreviews() {
     const mode = getManualWeeklyModeFromForm();
-    if (mode !== 'percent') return;
-    const baseline = getManualWeeklyBaselineFromForm() || 0;
-    const unit = getManualWeeklyUnitFromForm();
-    document.querySelectorAll('.manual-week-row').forEach(row => {
-        const input = row.querySelector('.manual-week-percent-input');
-        const preview = row.querySelector('.manual-week-computed');
-        if (!input || !preview) return;
-        const pct = parseFloat(input.value) || 0;
-        const amt = baseline > 0 ? resolveManualWeekTargetAmount({ targetPercent: pct }, {
-            manualWeeklyMode: 'percent',
-            manualWeeklyBaseline: baseline
-        }) : 0;
-        preview.textContent = amt > 0 ? `(${formatTaperAmount(amt, unit)})` : '';
-    });
+    if (mode === 'percent') {
+        const baseline = getManualWeeklyBaselineFromForm() || 0;
+        const unit = getManualWeeklyUnitFromForm();
+        document.querySelectorAll('.manual-week-row').forEach(row => {
+            const input = row.querySelector('.manual-week-percent-input');
+            const preview = row.querySelector('.manual-week-computed');
+            if (!input || !preview) return;
+            const pct = parseFloat(input.value) || 0;
+            const amt = baseline > 0 ? resolveManualWeekTargetAmount({ targetPercent: pct }, {
+                manualWeeklyMode: 'percent',
+                manualWeeklyBaseline: baseline
+            }) : 0;
+            preview.textContent = amt > 0 ? `(${formatTaperAmount(amt, unit)})` : '';
+        });
+    }
+    updateManualWeeklyPlannedTotal();
 }
 
 function getManualWeeklyWeekNumber(plan, dateStr) {
@@ -47295,10 +47344,11 @@ function renderManualWeeklyTargetsEditor(targets) {
         }
         return `<div class="manual-week-row" data-week="${weekNum}">
             <label>Week ${weekNum} Goal</label>
-            <input type="number" class="manual-week-target-input" data-week="${weekNum}" min="0" step="0.1" value="${t.targetAmount ?? ''}" placeholder="0">
+            <input type="number" class="manual-week-target-input" data-week="${weekNum}" min="0" step="0.1" value="${t.targetAmount ?? ''}" placeholder="0" oninput="updateManualWeeklyPlannedTotal()">
             <span class="manual-week-unit">${unit}</span>
         </div>`;
     }).join('');
+    updateManualWeeklyPlannedTotal(list);
 }
 
 function collectManualWeeklyTargetsFromForm() {
@@ -53545,6 +53595,10 @@ function __getRecoveryTrackerTestExports() {
         extractManualWeeklyTargetsFromPlan,
         planHasCustomWeeklySchedule,
         deriveFormulaFieldsFromWeeklyTargets,
+        sumManualWeeklyPlannedAmount,
+        formatManualWeeklyPlannedTotal,
+        updateManualWeeklyPlannedTotal,
+        renderManualWeeklyTargetsEditor,
         applyBuiltTaperPlanToExisting,
         getTaperFormWritableFields,
         getTaperFormSnapshot,

@@ -3294,6 +3294,35 @@ input[type="range"]::-webkit-slider-thumb {
     margin-bottom: 10px;
 }
 
+.manual-weekly-planned-total {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin: 4px 0 12px;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    background: color-mix(in srgb, var(--accent, #2e7d32) 10%, var(--card-bg, var(--bg, #fff)));
+}
+
+.manual-weekly-planned-total.hidden {
+    display: none;
+}
+
+.manual-weekly-planned-total-label {
+    font-size: 0.95rem;
+    font-weight: 600;
+    color: var(--text);
+}
+
+.manual-weekly-planned-total strong {
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: 0.01em;
+}
+
 .manual-week-row {
     display: flex;
     align-items: center;
