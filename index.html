@@ -2571,9 +2571,123 @@
                             <option value="comfortable">Comfortable</option>
                         </select>
                     </div>
+
+                    <div class="ccr-settings-block" id="conditional-color-rules-root">
+                        <h3 class="ccr-settings-title">Conditional Color Rules</h3>
+                        <p class="settings-hint">Color-code cards, badges, history rows, inventory, Insights, taper tables, and calendar entries from shared rules. Rules change appearance only — never your data. Status labels stay visible so color is not the only cue.</p>
+                        <label class="settings-toggle-row" for="ccr-rules-enabled">
+                            <input type="checkbox" id="ccr-rules-enabled" checked onchange="onConditionalColorRulesEnabledToggle(this.checked)">
+                            <span>Enable conditional color rules</span>
+                        </label>
+                        <div class="ccr-toolbar">
+                            <button type="button" class="submit-btn btn-sm" onclick="openConditionalColorRuleEditor()">Add rule</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="resetConditionalColorRulesToPresets(); renderConditionalColorRulesSettings();">Restore presets</button>
+                            <button type="button" class="secondary-btn btn-sm" onclick="downloadConditionalColorRulesExport()">Export rules</button>
+                            <label class="secondary-btn btn-sm ccr-import-label">
+                                Import rules
+                                <input type="file" id="ccr-import-file" accept="application/json,.json" class="hidden" onchange="onConditionalColorRulesImportFile(event)">
+                            </label>
+                        </div>
+                        <div id="ccr-rules-list" class="ccr-rules-list" aria-live="polite"></div>
+
+                        <div id="ccr-rule-editor" class="ccr-rule-editor hidden">
+                            <h4>Edit rule</h4>
+                            <div class="form-group">
+                                <label for="ccr-rule-name">Rule name</label>
+                                <input type="text" id="ccr-rule-name" maxlength="80" oninput="updateCcrLivePreview()">
+                            </div>
+                            <label class="settings-toggle-row" for="ccr-rule-enabled">
+                                <input type="checkbox" id="ccr-rule-enabled" checked onchange="updateCcrLivePreview()">
+                                <span>Rule enabled</span>
+                            </label>
+                            <div class="form-group">
+                                <label for="ccr-rule-substance">Substance scope</label>
+                                <select id="ccr-rule-substance"></select>
+                            </div>
+                            <div class="form-group">
+                                <label for="ccr-rule-sections">Page / section scope</label>
+                                <select id="ccr-rule-sections" multiple size="6"></select>
+                                <p class="field-hint">Hold Ctrl/Cmd to select multiple. Choose “All sections” alone to apply everywhere.</p>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="ccr-rule-metric">Metric / field</label>
+                                    <select id="ccr-rule-metric" onchange="updateCcrLivePreview()"></select>
+                                </div>
+                                <div class="form-group">
+                                    <label for="ccr-rule-operator">Comparison</label>
+                                    <select id="ccr-rule-operator" onchange="updateCcrOperatorFieldsVisibility(); updateCcrLivePreview();"></select>
+                                </div>
+                            </div>
+                            <div class="form-row" id="ccr-value-row">
+                                <div class="form-group">
+                                    <label for="ccr-rule-value">Comparison value</label>
+                                    <input type="text" id="ccr-rule-value" oninput="updateCcrLivePreview()">
+                                </div>
+                            </div>
+                            <div class="form-row hidden" id="ccr-value-to-row">
+                                <div class="form-group">
+                                    <label for="ccr-rule-value-to">Range end</label>
+                                    <input type="text" id="ccr-rule-value-to" oninput="updateCcrLivePreview()">
+                                </div>
+                            </div>
+                            <div class="form-row hidden" id="ccr-target-row">
+                                <div class="form-group">
+                                    <label for="ccr-rule-target">Target value</label>
+                                    <input type="text" id="ccr-rule-target" oninput="updateCcrLivePreview()">
+                                </div>
+                            </div>
+                            <div class="form-row">
+                                <div class="form-group">
+                                    <label for="ccr-rule-priority">Priority (higher wins)</label>
+                                    <input type="number" id="ccr-rule-priority" step="1" oninput="updateCcrLivePreview()">
+                                </div>
+                                <div class="form-group">
+                                    <label for="ccr-rule-status-label">Visible status label</label>
+                                    <input type="text" id="ccr-rule-status-label" maxlength="40" placeholder="On track" oninput="updateCcrLivePreview()">
+                                </div>
+                            </div>
+                            <label class="settings-toggle-row" for="ccr-rule-stop">
+                                <input type="checkbox" id="ccr-rule-stop" onchange="updateCcrLivePreview()">
+                                <span>Stop processing after this rule matches</span>
+                            </label>
+                            <div class="ccr-color-grid">
+                                <div class="form-group">
+                                    <label for="ccr-rule-bg">Background</label>
+                                    <input type="text" id="ccr-rule-bg" placeholder="rgba(...) or #hex" oninput="updateCcrLivePreview()">
+                                </div>
+                                <div class="form-group">
+                                    <label for="ccr-rule-text-picker">Text color</label>
+                                    <div class="ccr-color-inputs">
+                                        <input type="color" id="ccr-rule-text-picker" oninput="syncCcrColorInputs(this)">
+                                        <input type="text" id="ccr-rule-text-hex" maxlength="9" oninput="syncCcrColorInputs(this)">
+                                        <input type="hidden" id="ccr-rule-text">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label for="ccr-rule-border-picker">Border color</label>
+                                    <div class="ccr-color-inputs">
+                                        <input type="color" id="ccr-rule-border-picker" oninput="syncCcrColorInputs(this)">
+                                        <input type="text" id="ccr-rule-border-hex" maxlength="9" oninput="syncCcrColorInputs(this)">
+                                        <input type="hidden" id="ccr-rule-border">
+                                    </div>
+                                </div>
+                            </div>
+                            <p id="ccr-contrast-warning" class="ccr-contrast-warning" aria-live="polite"></p>
+                            <div class="ccr-preview-block">
+                                <span class="settings-hint">Live preview</span>
+                                <div id="ccr-live-preview" class="ccr-live-preview"></div>
+                            </div>
+                            <div class="ccr-editor-actions">
+                                <button type="button" class="submit-btn" onclick="saveConditionalColorRuleFromForm()">Save rule</button>
+                                <button type="button" class="secondary-btn" onclick="closeConditionalColorRuleEditor()">Cancel</button>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="appearance-reset-row">
                         <button type="button" class="secondary-btn" id="appearance-reset-all" onclick="resetAppearanceSettings()">Reset Appearance</button>
-                        <p class="settings-hint">Restores Auto View, 100% zoom, and default spacing.</p>
+                        <p class="settings-hint">Restores Auto View, 100% zoom, and default spacing. Color rules are kept — use Restore presets above to reset them.</p>
                     </div>
                 </div>
                     </div>
