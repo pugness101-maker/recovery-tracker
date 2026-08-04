@@ -43,17 +43,17 @@ test('normalizeMetricProgress: above target clamps visual bar at 100%', () => {
     assert.equal(p.exceedsTarget, true);
 });
 
-test('normalizeMetricProgress: zero target is invalid unless percent provided', () => {
+test('normalizeMetricProgress: zero target avoids percentage', () => {
     const rt = setup();
     const zero = rt.normalizeMetricProgress({ current: 5, target: 0 });
     assert.equal(zero.valid, false);
     assert.equal(zero.percent, null);
     assert.equal(zero.visualPercent, 0);
+    assert.equal(zero.target, 0);
 
     const withPct = rt.normalizeMetricProgress({ current: 5, target: 0, percent: 40 });
-    assert.equal(withPct.valid, true);
-    assert.equal(withPct.percent, 40);
-    assert.equal(withPct.visualPercent, 40);
+    assert.equal(withPct.valid, false);
+    assert.equal(withPct.percent, null);
 });
 
 test('normalizeMetricProgress: missing values', () => {
@@ -75,6 +75,7 @@ test('renderMetricProgressCell keeps value and clamps bar when over target', () 
     const rt = setup();
     const data = rt.__getTestAppData();
     data.settings.showInCellProgressBars = true;
+    rt.setTargetLinesEnabled(false, data);
     rt.__setTestAppData(data);
 
     const html = rt.renderMetricProgressCell('2.4 g / 3 g', {
@@ -86,6 +87,7 @@ test('renderMetricProgressCell keeps value and clamps bar when over target', () 
     assert.match(html, /metric-progress-fill/);
     assert.match(html, /width:80%/);
     assert.match(html, />80%</);
+    assert.match(html, /metric-progress-target-marker/);
 
     const over = rt.renderMetricProgressCell('15 / 10', {
         current: 15,
@@ -94,14 +96,17 @@ test('renderMetricProgressCell keeps value and clamps bar when over target', () 
     });
     assert.match(over, /15 \/ 10/);
     assert.match(over, /width:100%/);
-    assert.match(over, />150%</);
+    assert.match(over, />150%/);
     assert.match(over, /data-exceeds-target="true"/);
+    assert.match(over, /metric-progress-target-marker/);
+    assert.match(over, /left:66\.7%/);
 });
 
 test('progress bars can be turned off', () => {
     const rt = setup();
     const data = rt.__getTestAppData();
     data.settings.showInCellProgressBars = false;
+    rt.setTargetLinesEnabled(false, data);
     rt.__setTestAppData(data);
 
     const html = rt.renderMetricProgressCell('2.4 g / 3 g', {
@@ -119,7 +124,9 @@ test('progress bars can be turned off', () => {
 
 test('rule-based colors tint the fill; no invented labels', () => {
     const rt = setup();
-    rt.ensureConditionalColorRules(rt.__getTestAppData());
+    const data = rt.__getTestAppData();
+    rt.setTargetLinesEnabled(false, data);
+    rt.ensureConditionalColorRules(data);
     const ccr = rt.evaluateInventoryColors(15, { section: 'inventory' });
     assert.ok(ccr.matched.length >= 1);
 
@@ -131,11 +138,10 @@ test('rule-based colors tint the fill; no invented labels', () => {
         target: 100,
         percent: 15,
         ccrResult: ccr,
-        data: rt.__getTestAppData()
+        data
     });
     assert.match(html, /background:/);
     assert.doesNotMatch(html, /ccr-status-label/);
-    // Neutral path (no rule) has no inline fill background from CCR
     const neutral = rt.renderMetricProgressBar(rt.normalizeMetricProgress({ current: 50, target: 100 }), {});
     assert.doesNotMatch(neutral, /background:#|background:rgb/);
     assert.match(neutral, /width:50%/);
@@ -149,10 +155,11 @@ test('light and dark themes style metric progress tracks', () => {
     assert.match(css, /\.metric-progress-fill\.rd-progress-fill\s*\{[^}]*var\(--text-secondary/);
 
     const rt = setup();
-    const html = rt.renderMetricProgressCell('80%', { current: 80, target: 100 });
+    const data = rt.__getTestAppData();
+    rt.setTargetLinesEnabled(false, data);
+    const html = rt.renderMetricProgressCell('80%', { current: 80, target: 100, data });
     assert.match(html, /metric-progress-track/);
     assert.match(html, /metric-progress-fill/);
-    // Theme is applied via CSS variables / data-theme selectors — markup stays theme-agnostic.
     assert.doesNotMatch(html, /data-theme=/);
 });
 

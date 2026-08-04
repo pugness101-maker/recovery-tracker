@@ -523,35 +523,349 @@ function normalizeMetricProgress({ current, target, percent } = {}) {
     let pct = percent == null || percent === '' ? null : Number(percent);
 
     const validCurrent = cur != null && Number.isFinite(cur);
-    const validTarget = tgt != null && Number.isFinite(tgt) && tgt > 0;
+    const validTargetPositive = tgt != null && Number.isFinite(tgt) && tgt > 0;
+    const validTargetFinite = tgt != null && Number.isFinite(tgt);
     const validPercent = pct != null && Number.isFinite(pct);
 
-    if (!validPercent && validCurrent && validTarget) {
+    if (!validPercent && validCurrent && validTargetPositive) {
         pct = (cur / tgt) * 100;
+    }
+    // Never invent a percentage when the target is zero or missing.
+    if (validTargetFinite && !(tgt > 0)) {
+        pct = null;
+    }
+
+    const scaleMax = (validCurrent && validTargetPositive)
+        ? Math.max(Math.abs(cur), Math.abs(tgt), 0)
+        : (validTargetPositive ? Math.abs(tgt) : (validCurrent ? Math.abs(cur) : 0));
+
+    let targetMarkerPercent = null;
+    if (validTargetPositive && scaleMax > 0) {
+        targetMarkerPercent = Math.max(0, Math.min(100, (Math.abs(tgt) / scaleMax) * 100));
     }
 
     if (pct == null || !Number.isFinite(pct)) {
         return {
             current: validCurrent ? cur : null,
-            target: validTarget ? tgt : null,
+            target: validTargetFinite ? tgt : null,
             percent: null,
             visualPercent: 0,
+            fillPercent: 0,
+            targetMarkerPercent,
+            scaleMax: scaleMax || null,
             ratio: null,
             valid: false,
             exceedsTarget: false
         };
     }
 
+    const exceedsTarget = pct > 100;
+    // When over target, expand the track to current so the target marker sits inside the range.
+    let fillPercent;
+    if (validCurrent && validTargetPositive && exceedsTarget && scaleMax > 0) {
+        fillPercent = Math.max(0, Math.min(100, (Math.abs(cur) / scaleMax) * 100));
+    } else {
+        fillPercent = Math.max(0, Math.min(100, pct));
+    }
     const visualPercent = Math.max(0, Math.min(100, pct));
+
     return {
         current: validCurrent ? cur : null,
-        target: validTarget ? tgt : null,
+        target: validTargetFinite ? tgt : null,
         percent: pct,
         visualPercent,
+        fillPercent,
+        targetMarkerPercent,
+        scaleMax: scaleMax || null,
         ratio: pct / 100,
         valid: true,
-        exceedsTarget: pct > 100
+        exceedsTarget
     };
+}
+
+const TARGET_LINE_COLOR_SCOPES = Object.freeze([
+    { id: 'entire', label: 'Entire card or row' },
+    { id: 'current', label: 'Current value' },
+    { id: 'difference', label: 'Difference only' },
+    { id: 'percentage', label: 'Percentage only' },
+    { id: 'targetMarker', label: 'Target marker only' }
+]);
+
+const TARGET_LINE_METRIC_DIRECTIONS = Object.freeze({
+    use: 'lowerIsBetter',
+    taper: 'lowerIsBetter',
+    spend: 'lowerIsBetter',
+    purchaseCount: 'lowerIsBetter',
+    nicotineStrength: 'lowerIsBetter',
+    streak: 'higherIsBetter',
+    noUseDays: 'higherIsBetter',
+    vapeLifespan: 'higherIsBetter',
+    nicotineFreeHours: 'higherIsBetter',
+    daysBetweenPurchases: 'higherIsBetter',
+    inventory: 'neutral'
+});
+
+const TARGET_LINE_DEFAULT_COLORS = Object.freeze({
+    favorable: { background: 'rgba(76, 175, 80, 0.18)', text: '#2e7d32', border: '#4caf50', fill: '#4caf50' },
+    near: { background: 'rgba(255, 183, 77, 0.18)', text: '#ef6c00', border: '#ffb74d', fill: '#ffb74d' },
+    unfavorable: { background: 'rgba(239, 83, 80, 0.16)', text: '#c62828', border: '#ef5350', fill: '#ef5350' },
+    neutral: { background: '', text: '', border: '', fill: '' }
+});
+
+function getDefaultTargetLinePrefs() {
+    return {
+        enabled: true,
+        colorScope: 'difference'
+    };
+}
+
+function normalizeTargetLineColorScope(scope) {
+    const id = String(scope || '').trim();
+    return TARGET_LINE_COLOR_SCOPES.some(s => s.id === id) ? id : 'difference';
+}
+
+function normalizeTargetLineDirection(directionOrMetricKind) {
+    if (directionOrMetricKind === 'lowerIsBetter'
+        || directionOrMetricKind === 'higherIsBetter'
+        || directionOrMetricKind === 'neutral') {
+        return directionOrMetricKind;
+    }
+    return TARGET_LINE_METRIC_DIRECTIONS[directionOrMetricKind] || 'lowerIsBetter';
+}
+
+function ensureTargetLinePrefs(data = appData) {
+    if (!data.settings) data.settings = {};
+    const defaults = getDefaultTargetLinePrefs();
+    const raw = data.settings.targetLinePrefs && typeof data.settings.targetLinePrefs === 'object'
+        ? data.settings.targetLinePrefs
+        : {};
+    data.settings.targetLinePrefs = {
+        enabled: raw.enabled === undefined
+            ? (data.settings.showTargetLines === undefined ? defaults.enabled : !!data.settings.showTargetLines)
+            : !!raw.enabled,
+        colorScope: normalizeTargetLineColorScope(raw.colorScope ?? data.settings.targetLineColorScope)
+    };
+    data.settings.showTargetLines = data.settings.targetLinePrefs.enabled;
+    data.settings.targetLineColorScope = data.settings.targetLinePrefs.colorScope;
+    return data.settings.targetLinePrefs;
+}
+
+function getTargetLinePrefs(data = appData) {
+    return ensureTargetLinePrefs(data);
+}
+
+function isTargetLinesEnabled(data = appData) {
+    return getTargetLinePrefs(data).enabled !== false;
+}
+
+function getTargetLineColorScope(data = appData) {
+    return getTargetLinePrefs(data).colorScope;
+}
+
+function setTargetLinesEnabled(enabled, data = appData) {
+    const prefs = ensureTargetLinePrefs(data);
+    prefs.enabled = !!enabled;
+    data.settings.showTargetLines = prefs.enabled;
+    if (typeof saveData === 'function') saveData(data);
+    syncTargetLineSettingsUI(data);
+    refreshMetricProgressDisplays();
+    return prefs.enabled;
+}
+
+function setTargetLineColorScope(scope, data = appData) {
+    const prefs = ensureTargetLinePrefs(data);
+    prefs.colorScope = normalizeTargetLineColorScope(scope);
+    data.settings.targetLineColorScope = prefs.colorScope;
+    if (typeof saveData === 'function') saveData(data);
+    syncTargetLineSettingsUI(data);
+    refreshMetricProgressDisplays();
+    return prefs.colorScope;
+}
+
+function syncTargetLineSettingsUI(data = appData) {
+    const prefs = getTargetLinePrefs(data);
+    const toggle = document.getElementById('appearance-show-target-lines');
+    if (toggle) toggle.checked = prefs.enabled !== false;
+    const scope = document.getElementById('appearance-target-line-color-scope');
+    if (scope) scope.value = prefs.colorScope;
+}
+
+function refreshMetricProgressDisplays() {
+    try {
+        if (typeof renderPurchaseHistory === 'function') renderPurchaseHistory();
+        if (typeof renderTaperWeeklyTable === 'function' && typeof currentSubstanceId !== 'undefined') {
+            renderTaperWeeklyTable(currentSubstanceId);
+        }
+        if (typeof renderRecoveryDashboard === 'function') renderRecoveryDashboard();
+        if (typeof updateDashboard === 'function') updateDashboard();
+        if (typeof renderFinancialAnalyticsView === 'function') renderFinancialAnalyticsView();
+    } catch (_) { /* ignore refresh errors */ }
+}
+
+function formatMetricTargetLineValue(value, unit = '') {
+    if (value == null || value === '' || !Number.isFinite(Number(value))) return '—';
+    const n = Number(value);
+    const amt = typeof formatAmount === 'function' ? formatAmount(n) : String(n);
+    const u = unit == null ? '' : String(unit).trim();
+    return u ? `${amt} ${u}` : amt;
+}
+
+function formatMetricTargetLineDifference(diff, unit = '') {
+    if (diff == null || !Number.isFinite(Number(diff))) return '—';
+    const n = Number(diff);
+    const u = unit == null ? '' : String(unit).trim();
+    const absAmt = typeof formatAmount === 'function' ? formatAmount(Math.abs(n)) : String(Math.abs(n));
+    const withUnit = u ? `${absAmt} ${u}` : absAmt;
+    if (Math.abs(n) < 1e-9) return withUnit;
+    return `${n > 0 ? '+' : '−'}${withUnit}`;
+}
+
+/**
+ * Shared target-line model from already-normalized current/target values.
+ * Callers must not recalculate metric math inside table/card renderers.
+ */
+function buildMetricTargetLine({
+    current,
+    target,
+    percent,
+    direction,
+    metricKind,
+    unit = '',
+    currentLabel = null,
+    targetLabel = null,
+    nearBandPct = 10
+} = {}) {
+    const dir = normalizeTargetLineDirection(direction || metricKind || 'lowerIsBetter');
+    const progress = normalizeMetricProgress({ current, target, percent });
+    const cur = progress.current;
+    const tgt = progress.target;
+    const hasCurrent = cur != null && Number.isFinite(cur);
+    const hasTarget = tgt != null && Number.isFinite(tgt);
+    const difference = (hasCurrent && hasTarget) ? (cur - tgt) : null;
+    const pct = (hasTarget && tgt > 0 && progress.percent != null && Number.isFinite(progress.percent))
+        ? progress.percent
+        : null;
+
+    let tone = 'neutral';
+    if (!hasCurrent || !hasTarget) {
+        tone = 'missing';
+    } else if (dir === 'neutral') {
+        tone = 'neutral';
+    } else if (!(tgt > 0) && pct == null) {
+        tone = 'neutral';
+    } else {
+        const band = Number.isFinite(Number(nearBandPct)) ? Math.max(0, Number(nearBandPct)) : 10;
+        const absPctDelta = pct != null ? Math.abs(pct - 100) : null;
+        const onTarget = difference != null && Math.abs(difference) < 1e-9;
+        if (onTarget) {
+            tone = 'favorable';
+        } else if (dir === 'lowerIsBetter') {
+            if (cur < tgt) tone = 'favorable';
+            else if (absPctDelta != null && absPctDelta <= band) tone = 'near';
+            else tone = 'unfavorable';
+        } else {
+            // higherIsBetter
+            if (cur > tgt) tone = 'favorable';
+            else if (absPctDelta != null && absPctDelta <= band) tone = 'near';
+            else tone = 'unfavorable';
+        }
+    }
+
+    const curDisplay = currentLabel != null && currentLabel !== ''
+        ? String(currentLabel)
+        : formatMetricTargetLineValue(cur, unit);
+    const tgtDisplay = targetLabel != null && targetLabel !== ''
+        ? String(targetLabel)
+        : formatMetricTargetLineValue(tgt, unit);
+
+    return {
+        current: hasCurrent ? cur : null,
+        target: hasTarget ? tgt : null,
+        difference,
+        percent: pct,
+        direction: dir,
+        tone,
+        unit: unit || '',
+        currentDisplay: hasCurrent ? curDisplay : '—',
+        targetDisplay: hasTarget ? tgtDisplay : '—',
+        differenceDisplay: formatMetricTargetLineDifference(difference, unit),
+        percentDisplay: pct == null ? '—' : `${Math.round(pct * 10) / 10}% of target`,
+        progress,
+        valid: hasCurrent || hasTarget
+    };
+}
+
+function getTargetLineDefaultColorSet(tone) {
+    return TARGET_LINE_DEFAULT_COLORS[tone] || TARGET_LINE_DEFAULT_COLORS.neutral;
+}
+
+/**
+ * Resolve colors for a target line. Custom CCR styles always override defaults.
+ */
+function resolveMetricTargetLineColors(targetLine, ccrResult = null, colorScope = null, data = appData) {
+    const scope = normalizeTargetLineColorScope(colorScope || getTargetLineColorScope(data));
+    const defaults = getTargetLineDefaultColorSet(targetLine?.tone);
+    const hasCcr = !!(ccrResult?.matched?.length && ccrResult.style);
+    const ccr = hasCcr ? {
+        background: ccrResult.style.background || '',
+        text: ccrResult.style.text || '',
+        border: ccrResult.style.border || '',
+        fill: ccrResult.style.background || ccrResult.style.border || ccrResult.style.text || ''
+    } : null;
+    const active = ccr || defaults;
+    return {
+        scope,
+        hasCustomRule: hasCcr,
+        tone: targetLine?.tone || 'neutral',
+        entire: scope === 'entire' ? active : null,
+        current: scope === 'current' ? active : null,
+        difference: scope === 'difference' ? active : null,
+        percentage: scope === 'percentage' ? active : null,
+        targetMarker: scope === 'targetMarker' ? active : null,
+        fill: (scope === 'entire' || scope === 'targetMarker') ? (active.fill || active.border || '') : '',
+        active
+    };
+}
+
+function buildTargetLinePartStyle(colorSet) {
+    if (!colorSet) return '';
+    return [
+        colorSet.background ? `background:${colorSet.background}` : '',
+        colorSet.text ? `color:${colorSet.text}` : '',
+        colorSet.border ? `border-color:${colorSet.border}` : ''
+    ].filter(Boolean).join(';');
+}
+
+function renderMetricTargetLine(targetLine, {
+    ccrResult = null,
+    colorScope = null,
+    data = appData,
+    showBar = true,
+    compact = false
+} = {}) {
+    if (!targetLine || !isTargetLinesEnabled(data)) return '';
+    const colors = resolveMetricTargetLineColors(targetLine, ccrResult, colorScope, data);
+    const wrapStyle = buildTargetLinePartStyle(colors.entire);
+    const currentStyle = buildTargetLinePartStyle(colors.current);
+    const diffStyle = buildTargetLinePartStyle(colors.difference);
+    const pctStyle = buildTargetLinePartStyle(colors.percentage);
+    const progress = targetLine.progress || normalizeMetricProgress(targetLine);
+    const barHtml = showBar && isInCellProgressBarsEnabled(data) && progress?.valid
+        ? renderMetricProgressBar(progress, {
+            ccrResult,
+            showPercent: false,
+            targetLineColors: colors,
+            data
+        })
+        : '';
+    const compactClass = compact ? ' metric-target-line--compact' : '';
+    return `<div class="metric-target-line${compactClass} metric-tl-tone-${escapeAttr(targetLine.tone || 'neutral')}${colors.hasCustomRule ? ' ccr-applied' : ''}" data-color-scope="${escapeAttr(colors.scope)}"${wrapStyle ? ` style="${escapeAttr(wrapStyle)}"` : ''}>
+        <div class="metric-tl-row metric-tl-current"${currentStyle ? ` style="${escapeAttr(currentStyle)}"` : ''}><span class="metric-tl-label">Current:</span> <span class="metric-tl-value">${escapeHtml(targetLine.currentDisplay)}</span></div>
+        <div class="metric-tl-row metric-tl-target"><span class="metric-tl-label">Target:</span> <span class="metric-tl-value">${escapeHtml(targetLine.targetDisplay)}</span></div>
+        <div class="metric-tl-row metric-tl-diff"${diffStyle ? ` style="${escapeAttr(diffStyle)}"` : ''}><span class="metric-tl-label">Difference:</span> <span class="metric-tl-value">${escapeHtml(targetLine.differenceDisplay)}</span></div>
+        <div class="metric-tl-row metric-tl-pct"${pctStyle ? ` style="${escapeAttr(pctStyle)}"` : ''}><span class="metric-tl-value">${escapeHtml(targetLine.percentDisplay)}</span></div>
+        ${barHtml}
+    </div>`;
 }
 
 function isInCellProgressBarsEnabled(data = appData) {
@@ -564,57 +878,116 @@ function setInCellProgressBarsEnabled(enabled, data = appData) {
     if (typeof saveData === 'function') saveData(data);
     const el = document.getElementById('appearance-show-progress-bars');
     if (el) el.checked = !!enabled;
-    try {
-        if (typeof renderPurchaseHistory === 'function') renderPurchaseHistory();
-        if (typeof renderTaperWeeklyTable === 'function' && typeof currentSubstanceId !== 'undefined') {
-            renderTaperWeeklyTable(currentSubstanceId);
-        }
-        if (typeof renderRecoveryDashboard === 'function') renderRecoveryDashboard();
-        if (typeof updateDashboard === 'function') updateDashboard();
-    } catch (_) { /* ignore refresh errors */ }
+    refreshMetricProgressDisplays();
     return !!enabled;
 }
 
 function syncInCellProgressBarsToggle() {
     const el = document.getElementById('appearance-show-progress-bars');
     if (el) el.checked = isInCellProgressBarsEnabled();
+    syncTargetLineSettingsUI();
 }
 
-function getMetricProgressFillStyle(ccrResult) {
+function getMetricProgressFillStyle(ccrResult, targetLineColors = null) {
     if (ccrResult?.matched?.length && ccrResult.style) {
         const fill = ccrResult.style.background || ccrResult.style.border || ccrResult.style.text;
         if (fill) return `background:${fill}`;
     }
+    if (targetLineColors?.fill) return `background:${targetLineColors.fill}`;
+    if (targetLineColors?.active?.fill) return `background:${targetLineColors.active.fill}`;
     return '';
 }
 
-function renderMetricProgressBar(progress, { ccrResult = null, showPercent = true } = {}) {
+function renderMetricProgressBar(progress, {
+    ccrResult = null,
+    showPercent = true,
+    targetLineColors = null,
+    data = appData
+} = {}) {
     if (!progress?.valid) return '';
-    const fillStyle = getMetricProgressFillStyle(ccrResult);
+    const colors = targetLineColors || null;
+    const fillStyle = getMetricProgressFillStyle(ccrResult, colors);
+    const fillWidth = Math.round((progress.fillPercent ?? progress.visualPercent) * 10) / 10;
     const visual = Math.round(progress.visualPercent * 10) / 10;
     const truePct = Math.round(progress.percent * 10) / 10;
+    const marker = progress.targetMarkerPercent;
+    const showMarker = marker != null && Number.isFinite(marker) && marker >= 0 && marker <= 100;
+    const markerStyleParts = [`left:${Math.round(marker * 10) / 10}%`];
+    if (colors?.targetMarker?.fill || colors?.targetMarker?.border || colors?.targetMarker?.text) {
+        const mFill = colors.targetMarker.fill || colors.targetMarker.border || colors.targetMarker.text;
+        markerStyleParts.push(`background:${mFill}`);
+    } else if (colors?.scope === 'targetMarker' && colors?.active?.fill) {
+        markerStyleParts.push(`background:${colors.active.fill}`);
+    }
     const pctLabel = showPercent
         ? `<span class="metric-progress-pct">${escapeHtml(String(truePct))}%</span>`
         : '';
+    const markerHtml = showMarker
+        ? `<span class="metric-progress-target-marker" title="Target" aria-hidden="true" style="${escapeAttr(markerStyleParts.join(';'))}"></span>`
+        : '';
     return `<div class="metric-progress-track-row">
-        <div class="metric-progress-track rd-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${escapeAttr(String(visual))}"${progress.exceedsTarget ? ' data-exceeds-target="true"' : ''}>
-            <div class="metric-progress-fill rd-progress-fill"${fillStyle ? ` style="${escapeAttr(fillStyle)};width:${visual}%"` : ` style="width:${visual}%"`}></div>
+        <div class="metric-progress-track rd-progress" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="${escapeAttr(String(visual))}"${progress.exceedsTarget ? ' data-exceeds-target="true"' : ''}${showMarker ? ` data-has-target-marker="true"` : ''}>
+            <div class="metric-progress-fill rd-progress-fill"${fillStyle ? ` style="${escapeAttr(fillStyle)};width:${fillWidth}%"` : ` style="width:${fillWidth}%"`}></div>
+            ${markerHtml}
         </div>
         ${pctLabel}
     </div>`;
 }
 
 /**
- * Shared cell/card renderer: keeps valueHtml visible, optional bar underneath.
+ * Shared cell/card renderer: keeps value visible, optional target line + progress bar.
  * Callers pass already-normalized current/target/percent — no per-table math here.
  */
 function renderMetricProgressCell(valueHtml, options = {}) {
-    if (!isInCellProgressBarsEnabled(options.data || appData)) return valueHtml;
+    const data = options.data || appData;
     const progress = normalizeMetricProgress(options);
+    const targetLinesOn = isTargetLinesEnabled(data);
+    const barsOn = isInCellProgressBarsEnabled(data);
+
+    if (targetLinesOn && (options.current != null || options.target != null || options.currentLabel || options.targetLabel)) {
+        const tl = buildMetricTargetLine({
+            current: options.current,
+            target: options.target,
+            percent: options.percent,
+            direction: options.direction,
+            metricKind: options.metricKind,
+            unit: options.unit || '',
+            currentLabel: options.currentLabel,
+            targetLabel: options.targetLabel,
+            nearBandPct: options.nearBandPct
+        });
+        if (tl.valid) {
+            return renderMetricTargetLine(tl, {
+                ccrResult: options.ccrResult || null,
+                colorScope: options.colorScope,
+                data,
+                showBar: barsOn && options.showBar !== false,
+                compact: options.compact === true
+            });
+        }
+    }
+
+    if (!barsOn) return valueHtml;
     if (!progress.valid) return valueHtml;
+    const defaultColors = (!options.ccrResult?.matched?.length && options.metricKind)
+        ? resolveMetricTargetLineColors(
+            buildMetricTargetLine({
+                current: options.current,
+                target: options.target,
+                percent: options.percent,
+                direction: options.direction,
+                metricKind: options.metricKind
+            }),
+            null,
+            options.colorScope,
+            data
+        )
+        : null;
     const bar = renderMetricProgressBar(progress, {
         ccrResult: options.ccrResult || null,
-        showPercent: options.showPercent !== false
+        showPercent: options.showPercent !== false,
+        targetLineColors: defaultColors,
+        data
     });
     if (!bar) return valueHtml;
     const ccrClass = options.ccrResult?.matched?.length ? ' ccr-applied' : '';
@@ -640,13 +1013,14 @@ function resetAppearanceSettings() {
     appData.settings.phoneViewZoom = APPEARANCE_ZOOM_DEFAULT;
     appData.settings.laptopViewZoom = APPEARANCE_ZOOM_DEFAULT;
     appData.settings.appearanceSpacing = 'default';
-    // Keep progress-bar preference; only reset layout/spacing/zoom/view.
+    // Keep progress-bar / target-line preferences; only reset layout/spacing/zoom/view.
     saveData(appData);
     applyAppearanceViewMode('auto');
     setupAppearanceViewModeListener();
     applyAppearanceZoom(APPEARANCE_ZOOM_DEFAULT);
     applyAppearanceSpacing('default');
     syncInCellProgressBarsToggle();
+    syncTargetLineSettingsUI();
     if (typeof updateStatsCalendarLayoutForViewMode === 'function') {
         updateStatsCalendarLayoutForViewMode();
     }
@@ -13615,12 +13989,36 @@ function renderFinancialBudgetsPanel(dataset, data = appData) {
                     <span class="fin-badge ${finToneClass(ev.tone)}">${escapeHtml(ev.statusLabel)}</span>
                 </header>
                 ${ev.needsReview ? '<p class="fin-warning">This budget needs review — check the amount and dates.</p>' : ''}
-                <div class="fin-progress"><span class="fin-progress-fill ${finToneClass(ev.tone)}" style="width:${pct}%"></span></div>
+                ${(() => {
+                    const spendCcr = typeof evaluateSpendColors === 'function'
+                        ? evaluateSpendColors(ev.spent, {
+                            substanceId: ev.budget.substanceId,
+                            section: 'spending'
+                        })
+                        : null;
+                    const curSym = getCurrencySymbol();
+                    if (isTargetLinesEnabled() || isInCellProgressBarsEnabled()) {
+                        return renderMetricProgressCell(
+                            `<strong>${escapeHtml(finMoney(ev.spent))}</strong> of ${escapeHtml(finMoney(ev.amount))}`,
+                            {
+                                current: ev.spent,
+                                target: ev.amount > 0 ? ev.amount : null,
+                                percent: ev.pct == null ? null : ev.pct * 100,
+                                ccrResult: spendCcr,
+                                metricKind: 'spend',
+                                currentLabel: finMoney(ev.spent),
+                                targetLabel: finMoney(ev.amount),
+                                unit: curSym
+                            }
+                        );
+                    }
+                    return `<div class="fin-progress"><span class="fin-progress-fill ${finToneClass(ev.tone)}" style="width:${pct}%"></span></div>
                 <p class="fin-budget-numbers">
                     <strong>${escapeHtml(finMoney(ev.spent))}</strong> of ${escapeHtml(finMoney(ev.amount))}
                     · ${escapeHtml(finPctLabel(ev.pct))} used
                     · ${escapeHtml(finMoney(ev.remaining))} left
-                </p>
+                </p>`;
+                })()}
                 <p class="fin-budget-meta">
                     ${escapeHtml(ev.period.label)} · ${ev.daysRemaining} day${ev.daysRemaining === 1 ? '' : 's'} left
                     · Projected ${escapeHtml(finMoney(ev.projectedFinal))} <span class="fin-badge fin-tone-neutral">${escapeHtml(FINANCIAL_ESTIMATE_LABEL)}</span>
@@ -23337,6 +23735,12 @@ const defaultData = {
         laptopViewZoom: 100,
         appearanceSpacing: 'default',
         showInCellProgressBars: true,
+        showTargetLines: true,
+        targetLineColorScope: 'difference',
+        targetLinePrefs: {
+            enabled: true,
+            colorScope: 'difference'
+        },
         conditionalColorRules: null
     },
     taperPlans: {},
@@ -23841,6 +24245,7 @@ function ensureAppDataSettings(data) {
     } else {
         data.settings.showInCellProgressBars = !!data.settings.showInCellProgressBars;
     }
+    ensureTargetLinePrefs(data);
     if (data.settings.useCustomNamesInCsvExport === undefined) {
         data.settings.useCustomNamesInCsvExport = false;
     } else {
@@ -26579,7 +26984,15 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
                     current: remAmt,
                     target: boughtAmt > 0 ? boughtAmt : null,
                     percent: remPct,
-                    ccrResult: ccr
+                    ccrResult: ccr,
+                    metricKind: 'inventory',
+                    currentLabel: remAmt != null
+                        ? formatAmountWithUnit(remAmt, purchase.unit || unit)
+                        : null,
+                    targetLabel: boughtAmt > 0
+                        ? formatAmountWithUnit(boughtAmt, purchase.unit || unit)
+                        : null,
+                    unit: purchase.unit || unit || ''
                 }),
                 'purchase-remaining-cell'
             );
@@ -26590,7 +27003,11 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
                 renderMetricProgressCell(escapeHtml(`${pctUsed}%`), {
                     current: pctUsed,
                     target: 100,
-                    percent: pctUsed
+                    percent: pctUsed,
+                    metricKind: 'use',
+                    currentLabel: `${pctUsed}%`,
+                    targetLabel: '100%',
+                    unit: '%'
                 })
             );
         case 'supplyDuration': {
@@ -26668,7 +27085,11 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
                         current: ctx.budgetSpent,
                         target: ctx.budgetAmount,
                         percent: (ctx.budgetSpent / ctx.budgetAmount) * 100,
-                        ccrResult: ccr
+                        ccrResult: ccr,
+                        metricKind: 'spend',
+                        currentLabel: `${getCurrencySymbol()}${Number(ctx.budgetSpent).toFixed(2)}`,
+                        targetLabel: `${getCurrencySymbol()}${Number(ctx.budgetAmount).toFixed(2)}`,
+                        unit: getCurrencySymbol()
                     }
                 )
             );
@@ -27016,6 +27437,7 @@ function initializeApp() {
     initAppearanceViewMode();
     initAppearanceZoom();
     if (typeof syncInCellProgressBarsToggle === 'function') syncInCellProgressBarsToggle();
+    if (typeof syncTargetLineSettingsUI === 'function') syncTargetLineSettingsUI();
     if (typeof initConditionalColorRulesUi === 'function') initConditionalColorRulesUi();
     setupEventListeners();
     ensureAppDataSubstancesReady(appData);
@@ -40329,7 +40751,14 @@ function renderRecoveryStatusCards(cards) {
                                 `${streak} day${streak === 1 ? '' : 's'}`,
                                 `${goal} day goal`
                             )),
-                            { current: streak, target: goal }
+                            {
+                                current: streak,
+                                target: goal,
+                                metricKind: 'streak',
+                                currentLabel: `${streak} day${streak === 1 ? '' : 's'}`,
+                                targetLabel: `${goal} day goal`,
+                                unit: 'days'
+                            }
                         );
                     })()
                 }</dd></div>
@@ -40379,7 +40808,11 @@ function renderRecoveryActivePlans(plans) {
                             {
                                 current: plan.actualUse,
                                 target: plan.weeklyTarget,
-                                ccrResult: taperCcr
+                                ccrResult: taperCcr,
+                                metricKind: 'taper',
+                                currentLabel: formatAmountWithUnit(plan.actualUse, plan.unit),
+                                targetLabel: formatAmountWithUnit(plan.weeklyTarget, plan.unit),
+                                unit: plan.unit || ''
                             }
                         )
                         : (plan.actualUse != null ? escapeHtml(formatAmountWithUnit(plan.actualUse, plan.unit)) : '—')
@@ -40398,7 +40831,11 @@ function renderRecoveryActivePlans(plans) {
                                 target: plan.spendingTarget,
                                 ccrResult: typeof evaluateSpendColors === 'function'
                                     ? evaluateSpendColors(plan.actualSpending, { substanceId: plan.substanceId, section: 'dashboard' })
-                                    : null
+                                    : null,
+                                metricKind: 'spend',
+                                currentLabel: `${cur}${Number(plan.actualSpending).toFixed(2)}`,
+                                targetLabel: `${cur}${Number(plan.spendingTarget).toFixed(2)}`,
+                                unit: cur
                             }
                         )
                         : (plan.actualSpending != null ? `${cur}${Number(plan.actualSpending).toFixed(2)}` : '—')
@@ -40444,14 +40881,24 @@ function renderRecoveryInventoryOverview(groups) {
                         current: item.remainingAmount,
                         target: item.boughtAmount,
                         percent: item.percentRemaining,
-                        ccrResult: invCcr
+                        ccrResult: invCcr,
+                        metricKind: 'inventory',
+                        currentLabel: item.remainingLabel,
+                        targetLabel: item.boughtAmount != null
+                            ? formatAmountWithUnit(item.boughtAmount, item.remainingUnit)
+                            : null,
+                        unit: item.remainingUnit || ''
                     });
                     const pctCell = item.percentRemaining != null
                         ? renderMetricProgressCell(escapeHtml(`${item.percentRemaining}%`), {
                             current: item.percentRemaining,
                             target: 100,
                             percent: item.percentRemaining,
-                            ccrResult: invCcr
+                            ccrResult: invCcr,
+                            metricKind: 'inventory',
+                            currentLabel: `${item.percentRemaining}%`,
+                            targetLabel: '100%',
+                            unit: '%'
                         })
                         : '—';
                     return `
@@ -40485,10 +40932,19 @@ function renderRecoveryMilestones(milestones) {
     el.innerHTML = milestones.map(m => {
         const pair = formatMetricProgressPair(String(m.current), String(m.target));
         const metaExtra = m.timeRemaining ? ` · ${escapeHtml(m.timeRemaining)}` : '';
-        const progressMeta = isInCellProgressBarsEnabled()
+        const metricKind = /streak|no-use|no use/i.test(m.name || '') ? 'streak' : 'taper';
+        const progressMeta = (isTargetLinesEnabled() || isInCellProgressBarsEnabled())
             ? renderMetricProgressCell(
                 `${escapeHtml(pair)}${metaExtra}`,
-                { current: m.current, target: m.target, percent: m.progressPct }
+                {
+                    current: m.current,
+                    target: m.target,
+                    percent: m.progressPct,
+                    metricKind,
+                    currentLabel: String(m.current),
+                    targetLabel: String(m.target),
+                    unit: /day/i.test(m.timeRemaining || m.name || '') ? 'days' : ''
+                }
             )
             : `Progress: ${escapeHtml(pair)}${metaExtra}`;
         return `
@@ -40499,7 +40955,7 @@ function renderRecoveryMilestones(milestones) {
             </header>
             <div class="rd-milestone-meta">${progressMeta}</div>
             ${m.targetDate ? `<p class="rd-milestone-meta">Target date: ${escapeHtml(formatDate(m.targetDate))}</p>` : ''}
-            ${isInCellProgressBarsEnabled() ? '' : rdProgressBar(m.progressPct)}
+            ${(!isTargetLinesEnabled() && !isInCellProgressBarsEnabled()) ? rdProgressBar(m.progressPct) : ''}
         </article>`;
     }).join('');
 }
@@ -52414,14 +52870,32 @@ function buildTaperByWeekCellValues(row, plan, substanceId, unit, displayUnit) {
 
     const usedWithBar = renderMetricProgressCell(
         escapeHtml(formatMetricProgressPair(usedDisplay, plannedDisplay)),
-        { current: row.used, target: row.planned, ccrResult: taperCcr }
+        {
+            current: row.used,
+            target: row.planned,
+            ccrResult: taperCcr,
+            metricKind: isReduceNicotinePlan(plan) ? 'nicotineStrength' : 'taper',
+            currentLabel: usedDisplay,
+            targetLabel: plannedDisplay,
+            unit: diffUnit,
+            compact: true
+        }
     );
     const spentDisplay = formatTaperMoney(row.spent);
     const spendPlannedDisplay = row.spendPlanned != null ? formatTaperMoney(row.spendPlanned) : '—';
     const spentWithBar = row.spendPlanned != null
         ? renderMetricProgressCell(
             escapeHtml(formatMetricProgressPair(spentDisplay, spendPlannedDisplay)),
-            { current: row.spent, target: row.spendPlanned, ccrResult: spendCcr }
+            {
+                current: row.spent,
+                target: row.spendPlanned,
+                ccrResult: spendCcr,
+                metricKind: 'spend',
+                currentLabel: spentDisplay,
+                targetLabel: spendPlannedDisplay,
+                unit: getCurrencySymbol(),
+                compact: true
+            }
         )
         : spentDisplay;
     const boughtDisplay = formatTaperWeeklyAmountBought(row.weeklyPurchaseTotals || createEmptyTaperPurchaseTotals(), plan, substanceId, unit);
@@ -52429,14 +52903,30 @@ function buildTaperByWeekCellValues(row, plan, substanceId, unit, displayUnit) {
     const boughtWithBar = (buyLimit != null && buyLimit > 0 && boughtCount != null)
         ? renderMetricProgressCell(
             escapeHtml(formatMetricProgressPair(boughtDisplay, buyPlannedDisplay)),
-            { current: boughtCount, target: buyLimit }
+            {
+                current: boughtCount,
+                target: buyLimit,
+                metricKind: 'purchaseCount',
+                currentLabel: boughtDisplay,
+                targetLabel: buyPlannedDisplay,
+                unit,
+                compact: true
+            }
         )
         : boughtDisplay;
     const nicFreeDisplay = nicFreeActual != null ? `${formatAmount(nicFreeActual, 1)} h` : '—';
     const nicFreeWithBar = (nicFreeGoal != null && nicFreeGoal > 0 && nicFreeActual != null)
         ? renderMetricProgressCell(
             escapeHtml(formatMetricProgressPair(nicFreeDisplay, `${formatAmount(nicFreeGoal, 1)} h`)),
-            { current: nicFreeActual, target: nicFreeGoal }
+            {
+                current: nicFreeActual,
+                target: nicFreeGoal,
+                metricKind: 'nicotineFreeHours',
+                currentLabel: nicFreeDisplay,
+                targetLabel: `${formatAmount(nicFreeGoal, 1)} h`,
+                unit: 'h',
+                compact: true
+            }
         )
         : nicFreeDisplay;
     const lifeGoalDisplay = lifespanGoalVal != null
@@ -52446,7 +52936,15 @@ function buildTaperByWeekCellValues(row, plan, substanceId, unit, displayUnit) {
     const lifespanWithBar = (lifespanGoalVal != null && lifespanGoalVal > 0 && lifespanActual != null)
         ? renderMetricProgressCell(
             escapeHtml(formatMetricProgressPair(lifeActualDisplay, lifeGoalDisplay)),
-            { current: lifespanActual, target: lifespanGoalVal }
+            {
+                current: lifespanActual,
+                target: lifespanGoalVal,
+                metricKind: 'vapeLifespan',
+                currentLabel: lifeActualDisplay,
+                targetLabel: lifeGoalDisplay,
+                unit: 'days',
+                compact: true
+            }
         )
         : lifeGoalDisplay;
 
@@ -55963,6 +56461,23 @@ function __getRecoveryTrackerTestExports() {
         renderMetricProgressBar,
         renderMetricProgressCell,
         formatMetricProgressPair,
+        getDefaultTargetLinePrefs,
+        ensureTargetLinePrefs,
+        getTargetLinePrefs,
+        isTargetLinesEnabled,
+        getTargetLineColorScope,
+        setTargetLinesEnabled,
+        setTargetLineColorScope,
+        syncTargetLineSettingsUI,
+        normalizeTargetLineColorScope,
+        normalizeTargetLineDirection,
+        buildMetricTargetLine,
+        formatMetricTargetLineValue,
+        formatMetricTargetLineDifference,
+        resolveMetricTargetLineColors,
+        renderMetricTargetLine,
+        TARGET_LINE_COLOR_SCOPES,
+        TARGET_LINE_METRIC_DIRECTIONS,
         escapeHtml,
         escapeAttr,
         renderUseHistoryBodyCell,

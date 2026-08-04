@@ -2575,7 +2575,22 @@
                         <input type="checkbox" id="appearance-show-progress-bars" checked onchange="setInCellProgressBarsEnabled(this.checked)">
                         <span>Show progress bars in tables and cards</span>
                     </label>
-                    <p class="settings-hint">Optional bars under supported values (inventory remaining, taper vs plan, spending vs budget, purchase limits, streak/lifespan/nicotine-free goals). Numeric values stay visible. Bars use conditional-rule colors when a rule matches.</p>
+                    <p class="settings-hint">Optional bars under supported values (inventory remaining, taper vs plan, spending vs budget, purchase limits, streak/lifespan/nicotine-free goals). Numeric values stay visible. Bars use conditional-rule colors when a rule matches. A target marker appears on the bar when the target falls within the displayed range.</p>
+                    <label class="settings-toggle-row" for="appearance-show-target-lines">
+                        <input type="checkbox" id="appearance-show-target-lines" checked onchange="setTargetLinesEnabled(this.checked)">
+                        <span>Show target lines (current, target, difference, % of target)</span>
+                    </label>
+                    <div class="form-group">
+                        <label for="appearance-target-line-color-scope">Target line color applies to</label>
+                        <select id="appearance-target-line-color-scope" onchange="setTargetLineColorScope(this.value)">
+                            <option value="entire">Entire card or row</option>
+                            <option value="current">Current value</option>
+                            <option value="difference" selected>Difference only</option>
+                            <option value="percentage">Percentage only</option>
+                            <option value="targetMarker">Target marker only</option>
+                        </select>
+                    </div>
+                    <p class="settings-hint">Target lines show current vs plan/goal/cap with difference and percent of target. Favorable direction depends on the metric (lower is better for use and spending; higher for streaks and lifespan). Default green / amber / red tones apply when no matching conditional color rule exists; custom rules always override. Labels are never invented.</p>
 
                     <div class="ccr-settings-block" id="conditional-color-rules-root">
                         <h3 class="ccr-settings-title">Conditional Color Rules</h3>
