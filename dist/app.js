@@ -1650,7 +1650,7 @@ function ccrMetricDef({
 const CCR_METRICS = Object.freeze([
     // ——— Universal / shared ———
     ccrMetricDef({ key: 'useAmount', label: 'Use amount', group: 'use', substances: ['all', 'coke'], unitType: 'amount' }),
-    ccrMetricDef({ key: 'sessionDuration', label: 'Duration', group: 'use', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'minutes' }),
+    ccrMetricDef({ key: 'sessionDuration', label: 'Duration', group: 'use', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours' }),
     ccrMetricDef({ key: 'breakSincePreviousUse', label: 'Break since previous use', group: 'use', substances: ['all', 'coke', 'nicotine', 'lsd', 'xanax', 'alcohol'], unitType: 'hours' }),
     ccrMetricDef({
         key: 'useVsTarget',
@@ -2309,6 +2309,21 @@ function normalizeConditionalColorRule(raw, index = 0) {
     const lastModified = raw.lastModified
         ? String(raw.lastModified)
         : (raw.updatedAt ? String(raw.updatedAt) : '');
+    let valueUnit = raw.valueUnit == null || raw.valueUnit === '' ? null : String(raw.valueUnit);
+    let durationValueVersion = raw.durationValueVersion == null
+        ? null
+        : Number(raw.durationValueVersion);
+    if (metric === 'sessionDuration') {
+        if (valueUnit !== 'hours' && valueUnit !== 'minutes') {
+            if (durationValueVersion === 2 || raw.valueInputUnit === 'hours') valueUnit = 'hours';
+            else valueUnit = 'minutes'; // legacy saved Duration rules stored minutes
+        }
+        if (valueUnit === 'hours') durationValueVersion = 2;
+        else if (durationValueVersion == null) durationValueVersion = 1;
+    } else {
+        valueUnit = null;
+        durationValueVersion = null;
+    }
     return {
         id: String(raw.id || ccrNewId()),
         name: String(raw.name || `Rule ${index + 1}`).slice(0, 80),
@@ -2322,6 +2337,8 @@ function normalizeConditionalColorRule(raw, index = 0) {
         value: raw.value === undefined ? null : raw.value,
         valueTo: raw.valueTo === undefined ? null : raw.valueTo,
         targetValue: raw.targetValue === undefined ? null : raw.targetValue,
+        valueUnit,
+        durationValueVersion,
         colors: {
             // Empty string = no background override. Missing key keeps legacy default.
             background: Object.prototype.hasOwnProperty.call(colors, 'background')
@@ -2391,6 +2408,68 @@ function ccrCoerceNumber(value) {
     return Number.isFinite(n) ? n : null;
 }
 
+function isCcrDurationMetric(metric) {
+    return migrateCcrMetricKey(metric) === 'sessionDuration';
+}
+
+/** Duration rules: new rules use hours; legacy rules without a unit are minutes. */
+function getCcrDurationValueUnit(rule) {
+    if (!isCcrDurationMetric(rule?.metric)) return null;
+    if (rule.valueUnit === 'hours' || rule.valueUnit === 'minutes') return rule.valueUnit;
+    if (rule.durationValueVersion === 2 || rule.valueInputUnit === 'hours') return 'hours';
+    return 'minutes';
+}
+
+function ccrDurationHoursToMinutes(hours) {
+    const n = ccrCoerceNumber(hours);
+    if (n == null) return null;
+    return n * 60;
+}
+
+function ccrDurationMinutesToHours(minutes) {
+    const n = ccrCoerceNumber(minutes);
+    if (n == null) return null;
+    return Math.round((n / 60) * 1000) / 1000;
+}
+
+/** Comparison thresholds for Duration rules, always in minutes. */
+function getCcrRuleCompareMinutes(rule, field = 'value') {
+    const raw = field === 'valueTo' ? rule?.valueTo : rule?.value;
+    const n = ccrCoerceNumber(raw);
+    if (n == null) return null;
+    if (!isCcrDurationMetric(rule?.metric)) return n;
+    return getCcrDurationValueUnit(rule) === 'hours' ? n * 60 : n;
+}
+
+function getCcrDurationEditorValues(rule) {
+    if (!isCcrDurationMetric(rule?.metric)) {
+        return {
+            value: rule?.value == null ? '' : String(rule.value),
+            valueTo: rule?.valueTo == null ? '' : String(rule.valueTo)
+        };
+    }
+    const unit = getCcrDurationValueUnit(rule);
+    const toEditor = (raw) => {
+        const n = ccrCoerceNumber(raw);
+        if (n == null) return '';
+        const hours = unit === 'hours' ? n : ccrDurationMinutesToHours(n);
+        return hours == null ? '' : String(hours);
+    };
+    return { value: toEditor(rule.value), valueTo: toEditor(rule.valueTo) };
+}
+
+function formatCcrDurationThresholdLabel(minutes) {
+    const n = ccrCoerceNumber(minutes);
+    if (n == null || !Number.isFinite(n) || n < 0) return '—';
+    if (n === 0) return '0m';
+    if (typeof formatDurationHours === 'function') return formatDurationHours(n / 60);
+    const hours = n / 60;
+    const h = Math.floor(hours);
+    const m = Math.round((hours - h) * 60);
+    if (h > 0) return m > 0 ? `${h}h ${m}m` : `${h}h`;
+    return `${m}m`;
+}
+
 function ccrIsEmpty(value) {
     if (value == null) return true;
     if (typeof value === 'string') return value.trim() === '';
@@ -2404,8 +2483,12 @@ function compareConditionalColorRule(rule, context = {}) {
     const rawValue = context.value;
     const textValue = context.textValue != null ? String(context.textValue) : (rawValue == null ? '' : String(rawValue));
     const numValue = ccrCoerceNumber(rawValue);
-    const compare = ccrCoerceNumber(rule.value);
-    const compareTo = ccrCoerceNumber(rule.valueTo);
+    const compare = isCcrDurationMetric(rule.metric)
+        ? getCcrRuleCompareMinutes(rule, 'value')
+        : ccrCoerceNumber(rule.value);
+    const compareTo = isCcrDurationMetric(rule.metric)
+        ? getCcrRuleCompareMinutes(rule, 'valueTo')
+        : ccrCoerceNumber(rule.valueTo);
     const target = ccrCoerceNumber(context.target != null ? context.target : rule.targetValue);
 
     try {
@@ -2887,6 +2970,35 @@ function setCcrManagerFilters(patch = {}) {
 
 function formatCcrConditionSummary(rule) {
     if (!rule) return '—';
+    if (isCcrDurationMetric(rule.metric)) {
+        const lo = formatCcrDurationThresholdLabel(getCcrRuleCompareMinutes(rule, 'value'));
+        const hi = formatCcrDurationThresholdLabel(getCcrRuleCompareMinutes(rule, 'valueTo'));
+        switch (rule.operator) {
+            case 'lt':
+                return `Duration less than ${lo}`;
+            case 'lte':
+                return `Duration at most ${lo}`;
+            case 'gt':
+                return `Duration greater than ${lo}`;
+            case 'gte':
+                return `Duration at least ${lo}`;
+            case 'eq':
+                return `Duration equals ${lo}`;
+            case 'neq':
+                return `Duration not ${lo}`;
+            case 'between':
+            case 'betweenInclusive':
+                return `Duration between ${lo} and ${hi}`;
+            case 'betweenExclusive':
+                return `Duration between ${lo} and ${hi} (exclusive)`;
+            case 'empty':
+                return 'Duration empty';
+            case 'notEmpty':
+                return 'Duration not empty';
+            default:
+                break;
+        }
+    }
     const op = CCR_OPERATORS.find(o => o.id === rule.operator);
     const opLabel = op?.label || rule.operator;
     if (rule.operator === 'between' || rule.operator === 'betweenInclusive' || rule.operator === 'betweenExclusive') {
@@ -2949,8 +3061,12 @@ function scopesOverlapSections(a, b) {
 }
 
 function ccrNumericRange(rule) {
-    const v = ccrCoerceNumber(rule.value);
-    const v2 = ccrCoerceNumber(rule.valueTo);
+    const v = isCcrDurationMetric(rule?.metric)
+        ? getCcrRuleCompareMinutes(rule, 'value')
+        : ccrCoerceNumber(rule.value);
+    const v2 = isCcrDurationMetric(rule?.metric)
+        ? getCcrRuleCompareMinutes(rule, 'valueTo')
+        : ccrCoerceNumber(rule.valueTo);
     switch (rule.operator) {
         case 'eq':
             return v == null ? null : { lo: v, hi: v, loExclusive: false, hiExclusive: false };
@@ -3377,13 +3493,14 @@ function getCcrEditorDraftFromForm() {
     const sections = [...(get('ccr-rule-sections')?.selectedOptions || [])].map(o => o.value);
     const substance = get('ccr-rule-substance')?.value || 'all';
     const backgroundRaw = get('ccr-rule-bg')?.value ?? '';
-    return normalizeConditionalColorRule({
+    const metric = get('ccr-rule-metric')?.value || 'useAmount';
+    const draft = {
         id: ccrEditingRuleId || ccrNewId(),
         name: get('ccr-rule-name')?.value || 'Untitled rule',
         enabled: get('ccr-rule-enabled')?.checked !== false,
         substanceScope: substance,
         sectionScope: sections.length ? sections : ['all'],
-        metric: get('ccr-rule-metric')?.value || 'useAmount',
+        metric,
         operator: get('ccr-rule-operator')?.value || 'gt',
         value: get('ccr-rule-value')?.value ?? '',
         valueTo: get('ccr-rule-value-to')?.value ?? '',
@@ -3396,7 +3513,12 @@ function getCcrEditorDraftFromForm() {
             text: get('ccr-rule-text') ? get('ccr-rule-text').value : '#81c784',
             border: get('ccr-rule-border') ? get('ccr-rule-border').value : '#4caf50'
         }
-    });
+    };
+    if (isCcrDurationMetric(metric)) {
+        draft.valueUnit = 'hours';
+        draft.durationValueVersion = 2;
+    }
+    return normalizeConditionalColorRule(draft);
 }
 
 function setCcrBackgroundOpacityUi(percent) {
@@ -3459,8 +3581,14 @@ function fillCcrEditorForm(rule) {
     set('ccr-rule-substance', Array.isArray(r.substanceScope) ? (r.substanceScope[0] || 'all') : r.substanceScope);
     populateCcrMetricSelect(r.metric);
     set('ccr-rule-operator', r.operator);
-    set('ccr-rule-value', r.value);
-    set('ccr-rule-value-to', r.valueTo);
+    if (isCcrDurationMetric(r.metric)) {
+        const editorVals = getCcrDurationEditorValues(r);
+        set('ccr-rule-value', editorVals.value);
+        set('ccr-rule-value-to', editorVals.valueTo);
+    } else {
+        set('ccr-rule-value', r.value);
+        set('ccr-rule-value-to', r.valueTo);
+    }
     set('ccr-rule-target', r.targetValue);
     set('ccr-rule-priority', r.priority);
     set('ccr-rule-stop', r.stopProcessing, 'checked');
@@ -3490,6 +3618,33 @@ function fillCcrEditorForm(rule) {
     updateCcrRangeVisualizer();
 }
 
+function updateCcrDurationValueLabels() {
+    const metric = document.getElementById('ccr-rule-metric')?.value;
+    const op = document.getElementById('ccr-rule-operator')?.value;
+    const isDur = isCcrDurationMetric(metric);
+    const isBetween = op === 'between' || op === 'betweenInclusive' || op === 'betweenExclusive';
+    const valueLabel = document.getElementById('ccr-rule-value-label')
+        || document.querySelector('label[for="ccr-rule-value"]');
+    const valueToLabel = document.getElementById('ccr-rule-value-to-label')
+        || document.querySelector('label[for="ccr-rule-value-to"]');
+    const hint = document.getElementById('ccr-duration-value-hint');
+    if (valueLabel) {
+        if (isDur && isBetween) valueLabel.textContent = 'Minimum hours';
+        else if (isDur) valueLabel.textContent = 'Comparison value (hours)';
+        else valueLabel.textContent = 'Comparison value';
+    }
+    if (valueToLabel) {
+        valueToLabel.textContent = isDur ? 'Maximum hours' : 'Range end';
+    }
+    hint?.classList.toggle('hidden', !isDur);
+}
+
+function onCcrMetricChanged() {
+    updateCcrDurationValueLabels();
+    updateCcrOperatorFieldsVisibility();
+    updateCcrLivePreview();
+}
+
 function updateCcrOperatorFieldsVisibility() {
     const op = document.getElementById('ccr-rule-operator')?.value;
     const valueRow = document.getElementById('ccr-value-row');
@@ -3501,6 +3656,7 @@ function updateCcrOperatorFieldsVisibility() {
     valueRow?.classList.toggle('hidden', !needsValue);
     valueToRow?.classList.toggle('hidden', !needsTo);
     targetRow?.classList.toggle('hidden', !needsTarget);
+    updateCcrDurationValueLabels();
     updateCcrRangeVisualizer();
 }
 
@@ -4153,8 +4309,11 @@ function getCcrSiblingRangeRules(seedRule = null, data = appData) {
         });
 }
 
-function formatCcrRangeTick(n) {
+function formatCcrRangeTick(n, rule = null) {
     if (!Number.isFinite(n)) return n > 0 ? '∞' : '−∞';
+    if (rule && isCcrDurationMetric(rule.metric)) {
+        return formatCcrDurationThresholdLabel(n);
+    }
     if (Math.abs(n - Math.round(n)) < 1e-9) return String(Math.round(n));
     return String(Math.round(n * 100) / 100);
 }
@@ -4190,12 +4349,13 @@ function renderCcrRangeVisualizer(rules = null, highlightId = null) {
     });
     const uniqueTicks = [...new Set(ticks.map(t => Math.round(t * 1000) / 1000))].sort((a, b) => a - b);
     if (!uniqueTicks.length) uniqueTicks.push(0);
-    const axis = uniqueTicks.map(formatCcrRangeTick).join('────') + '────+';
+    const durationSample = list.find(r => isCcrDurationMetric(r.metric)) || null;
+    const axis = uniqueTicks.map(t => formatCcrRangeTick(t, durationSample)).join('────') + '────+';
     const markers = list.map(rule => {
         const range = ccrNumericRange(rule);
         const mark = ccrRangeSwatchEmoji(rule);
         const active = highlightId && rule.id === highlightId ? ' is-active' : '';
-        return `<span class="ccr-range-marker${active}" title="${escapeAttr(rule.name + ': ' + formatCcrConditionSummary(rule))}">${mark}<span class="ccr-range-marker-label">${escapeHtml(formatCcrRangeTick(range.lo))}–${escapeHtml(formatCcrRangeTick(range.hi))}</span></span>`;
+        return `<span class="ccr-range-marker${active}" title="${escapeAttr(rule.name + ': ' + formatCcrConditionSummary(rule))}">${mark}<span class="ccr-range-marker-label">${escapeHtml(formatCcrRangeTick(range.lo, rule))}–${escapeHtml(formatCcrRangeTick(range.hi, rule))}</span></span>`;
     }).join('');
     return `
         <div class="ccr-range-visualizer" role="img" aria-label="Range map for related color rules">
@@ -4240,6 +4400,17 @@ function buildNextCcrRangeDraft(src) {
         nextValue = range.lo;
         nextValueTo = '';
     }
+    // Duration ranges are computed in minutes; persist next draft in hours.
+    let valueUnit = source.valueUnit;
+    let durationValueVersion = source.durationValueVersion;
+    if (isCcrDurationMetric(source.metric)) {
+        valueUnit = 'hours';
+        durationValueVersion = 2;
+        nextValue = ccrDurationMinutesToHours(nextValue);
+        if (nextValueTo !== '' && nextValueTo != null) {
+            nextValueTo = ccrDurationMinutesToHours(nextValueTo);
+        }
+    }
     return normalizeConditionalColorRule({
         ...source,
         id: ccrNewId(),
@@ -4247,6 +4418,8 @@ function buildNextCcrRangeDraft(src) {
         operator,
         value: nextValue,
         valueTo: operator.startsWith('between') ? nextValueTo : '',
+        valueUnit,
+        durationValueVersion,
         priority: (Number(source.priority) || 0) - 1,
         statusLabel: '',
         isPreset: false,
@@ -58818,6 +58991,15 @@ function __getRecoveryTrackerTestExports() {
         buildCcrMetricSelectOptionsHtml,
         populateCcrMetricSelect,
         onCcrSubstanceScopeChanged,
+        isCcrDurationMetric,
+        getCcrDurationValueUnit,
+        ccrDurationHoursToMinutes,
+        ccrDurationMinutesToHours,
+        getCcrRuleCompareMinutes,
+        getCcrDurationEditorValues,
+        formatCcrDurationThresholdLabel,
+        updateCcrDurationValueLabels,
+        onCcrMetricChanged,
         updateAppearanceZoomLayoutMetrics,
         normalizeAppearanceSpacing,
         getAppearanceSpacing,

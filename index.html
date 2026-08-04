@@ -2710,7 +2710,7 @@
                             <div class="form-row">
                                 <div class="form-group">
                                     <label for="ccr-rule-metric">Metric / field</label>
-                                    <select id="ccr-rule-metric" onchange="updateCcrLivePreview()"></select>
+                                    <select id="ccr-rule-metric" onchange="onCcrMetricChanged()"></select>
                                 </div>
                                 <div class="form-group">
                                     <label for="ccr-rule-operator">Comparison</label>
@@ -2719,13 +2719,14 @@
                             </div>
                             <div class="form-row" id="ccr-value-row">
                                 <div class="form-group">
-                                    <label for="ccr-rule-value">Comparison value</label>
+                                    <label for="ccr-rule-value" id="ccr-rule-value-label">Comparison value</label>
                                     <input type="text" id="ccr-rule-value" oninput="updateCcrLivePreview()">
+                                    <p class="field-hint hidden" id="ccr-duration-value-hint">Enter duration in hours. Decimals are allowed.</p>
                                 </div>
                             </div>
                             <div class="form-row hidden" id="ccr-value-to-row">
                                 <div class="form-group">
-                                    <label for="ccr-rule-value-to">Range end</label>
+                                    <label for="ccr-rule-value-to" id="ccr-rule-value-to-label">Range end</label>
                                     <input type="text" id="ccr-rule-value-to" oninput="updateCcrLivePreview()">
                                 </div>
                             </div>
