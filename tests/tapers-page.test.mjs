@@ -239,7 +239,7 @@ test('saving creates taper and Active list updates', () => {
     rt.setGoalsPlansView('active', { persist: false, skipRoute: true });
     assert.equal(workspace.hidden, true);
     assert.match(nodes.get('tapers-root').innerHTML, /Fresh taper/);
-    assert.match(nodes.get('tapers-root').innerHTML, /active taper/i);
+    assert.match(nodes.get('tapers-root').innerHTML, /active .*taper/i);
 });
 
 test('taper templates are available and apply opens the form', () => {
