@@ -29643,26 +29643,51 @@ function renderPurchaseBoughtMetaInner(purchase) {
     return '';
 }
 
+function getPurchaseHistoryBoughtDisplayHtml(purchase) {
+    if (isVapePuffPurchase(purchase)) {
+        return formatVapePurchaseQuantitySummary(purchase);
+    }
+    if (isNicotinePurchase(purchase)) {
+        return formatNicotinePurchaseQuantitySummary(purchase);
+    }
+    if (isWeedPurchase(purchase)) {
+        return formatWeedPurchaseDisplayLine(purchase);
+    }
+    if (isLsdPurchase(purchase)) {
+        return `<div>${formatLsdPurchaseDisplayLine(purchase)}</div>
+            <div class="purchase-vape-meta">${formatLsdPurchaseCostLine(purchase)}</div>`;
+    }
+    if (isXanaxPurchase(purchase)) {
+        return `<div>${formatXanaxPurchaseDisplayLine(purchase)}</div>
+            <div class="purchase-vape-meta">${formatXanaxPurchaseCostLine(purchase)}</div>`;
+    }
+    const bought = getPurchaseQuantityBought(purchase);
+    const unit = purchase.unit || 'units';
+    const meta = renderPurchaseBoughtMetaInner(purchase);
+    if (meta) {
+        return `<div>${formatAmount(bought)}${unit}</div>${meta}`;
+    }
+    return `${formatAmount(bought)}${unit}`;
+}
+
 function renderPurchaseWeedBoughtCell(purchase) {
-    return phTd('bought', formatWeedPurchaseDisplayLine(purchase), 'purchase-weed-bought-cell');
+    return phTd('bought', getPurchaseHistoryBoughtDisplayHtml(purchase), 'purchase-weed-bought-cell');
 }
 
 function renderPurchaseLsdBoughtCell(purchase) {
-    return phTd('bought', `<div>${formatLsdPurchaseDisplayLine(purchase)}</div>
-        <div class="purchase-vape-meta">${formatLsdPurchaseCostLine(purchase)}</div>`, 'purchase-lsd-bought-cell');
+    return phTd('bought', getPurchaseHistoryBoughtDisplayHtml(purchase), 'purchase-lsd-bought-cell');
 }
 
 function renderPurchaseXanaxBoughtCell(purchase) {
-    return phTd('bought', `<div>${formatXanaxPurchaseDisplayLine(purchase)}</div>
-        <div class="purchase-vape-meta">${formatXanaxPurchaseCostLine(purchase)}</div>`, 'purchase-xanax-bought-cell');
+    return phTd('bought', getPurchaseHistoryBoughtDisplayHtml(purchase), 'purchase-xanax-bought-cell');
 }
 
 function renderPurchaseVapeBoughtCell(purchase) {
-    return phTd('bought', formatVapePurchaseQuantitySummary(purchase), 'purchase-vape-bought-cell purchase-quantity-compact');
+    return phTd('bought', getPurchaseHistoryBoughtDisplayHtml(purchase), 'purchase-vape-bought-cell purchase-quantity-compact');
 }
 
 function renderPurchaseNicotineBoughtCell(purchase) {
-    return phTd('bought', formatNicotinePurchaseQuantitySummary(purchase), 'purchase-nicotine-bought-cell purchase-quantity-compact');
+    return phTd('bought', getPurchaseHistoryBoughtDisplayHtml(purchase), 'purchase-nicotine-bought-cell purchase-quantity-compact');
 }
 
 function renderPurchaseInventoryStatusButtons(purchase) {
@@ -29717,13 +29742,7 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
             if (isXanaxPurchase(purchase)) {
                 return renderPurchaseXanaxBoughtCell(purchase);
             }
-            {
-                const meta = renderPurchaseBoughtMetaInner(purchase);
-                if (meta) {
-                    return phTd('bought', `<div>${formatAmount(bought)}${unit}</div>${meta}`);
-                }
-            }
-            return phTd('bought', `${formatAmount(bought)}${unit}`);
+            return phTd('bought', getPurchaseHistoryBoughtDisplayHtml(purchase));
         case 'remaining': {
             const remDisplay = formatPurchaseRemainingDisplay(purchase);
             const remAmt = getPurchaseRemainingAmount(purchase);
@@ -41311,14 +41330,14 @@ function togglePurchaseLinkedLogs(purchaseId) {
     if (expandedPurchaseIds.has(id)) expandedPurchaseIds.delete(id);
     else expandedPurchaseIds.add(id);
 
-    const detail = document.getElementById(`purchase-detail-${id}`);
-    const btn = document.querySelector(`[data-purchase-toggle="${CSS.escape(String(id))}"]`);
     const expanded = expandedPurchaseIds.has(id);
-    if (detail) detail.classList.toggle('hidden', !expanded);
-    if (btn) {
+    document.querySelectorAll(`[data-purchase-detail="${CSS.escape(String(id))}"]`).forEach((detail) => {
+        detail.classList.toggle('hidden', !expanded);
+    });
+    document.querySelectorAll(`[data-purchase-toggle="${CSS.escape(String(id))}"]`).forEach((btn) => {
         btn.setAttribute('aria-expanded', expanded ? 'true' : 'false');
         btn.textContent = expanded ? 'Hide Linked Logs' : 'View Linked Logs';
-    }
+    });
 }
 
 function getBuyStats(substanceId) {
@@ -41388,6 +41407,119 @@ function getFilteredPurchasesForPurchaseHistory() {
     return getInventoryFilteredPurchases(getSelectedSubstanceFilterId());
 }
 
+function renderPurchaseHistoryCardField(label, valueHtml) {
+    return `<div class="purchase-history-card-field">
+        <span class="purchase-history-card-label">${escapeHtml(label)}</span>
+        <div class="purchase-history-card-value">${valueHtml || '—'}</div>
+    </div>`;
+}
+
+function renderPurchaseHistoryCard(ctx) {
+    const {
+        purchase, sub, cur, store, remaining, pctUsed, supply, unit,
+        breakCell, supplyDurationLabel, totalNum, expanded, toggleLabel
+    } = ctx;
+    const pid = normalizePurchaseId(purchase.id);
+    const checked = inventorySelectedIds.has(pid) ? 'checked' : '';
+    const boughtHtml = getPurchaseHistoryBoughtDisplayHtml(purchase);
+    const remDisplay = formatPurchaseRemainingDisplay(purchase);
+    const remAmt = getPurchaseRemainingAmount(purchase);
+    const boughtAmt = getPurchaseQuantityBought(purchase);
+    const remainingHtml = (boughtAmt > 0 && remAmt != null)
+        ? escapeHtml(formatMetricProgressPair(
+            formatAmountWithUnit(remAmt, purchase.unit || unit),
+            formatAmountWithUnit(boughtAmt, purchase.unit || unit)
+        ))
+        : remDisplay;
+
+    let costMain = fmtSheetMoney(totalNum, cur);
+    if (typeof evaluateSpendColors === 'function') {
+        const ccr = evaluateSpendColors(totalNum, {
+            substanceId: getPurchaseSubstanceId(purchase),
+            section: 'purchaseHistory'
+        });
+        if (ccr.matched.length) {
+            costMain = wrapWithConditionalColor(costMain, ccr, { keepLabel: true });
+        }
+    }
+    const cpu = getPurchaseHistoryCostPerUnit(purchase, totalNum);
+    const cpuSuffix = getPurchaseHistoryCostPerUnitSuffix(purchase);
+    const costHtml = `${costMain} <small>(${fmtSheetMoney(cpu, cur)}/${cpuSuffix})</small>`;
+    const storeHtml = escapeHtml(typeof formatPurchaseSourceDisplay === 'function'
+        ? formatPurchaseSourceDisplay(purchase)
+        : (store || '—'));
+    const statusHtml = `<span class="purchase-supply-status ${escapeAttr(supply.className)}"${supply.style ? ` style="${escapeAttr(supply.style)}"` : ''}>${escapeHtml(supply.label)}</span>`;
+
+    const detailRows = [];
+    detailRows.push(renderPurchaseHistoryCardField(
+        'Substance',
+        `${escapeHtml(sub?.icon || '')} ${escapeHtml(getSubstanceDisplayName(sub))}${renderPurchaseAcquisitionBadge(purchase)}`
+    ));
+    if (purchase.paymentMethod) {
+        detailRows.push(renderPurchaseHistoryCardField('Payment', escapeHtml(purchase.paymentMethod)));
+    }
+    detailRows.push(renderPurchaseHistoryCardField('Used', escapeHtml(`${pctUsed}%`)));
+    if (supplyDurationLabel) {
+        detailRows.push(renderPurchaseHistoryCardField('Supply duration', escapeHtml(supplyDurationLabel)));
+    }
+    if (breakCell && breakCell !== '—') {
+        detailRows.push(renderPurchaseHistoryCardField('Break', breakCell));
+    }
+    if (isVapePuffPurchase(purchase)) {
+        const flavor = getVapePurchaseFlavor(purchase);
+        if (flavor) detailRows.push(renderPurchaseHistoryCardField('Flavor', escapeHtml(flavor)));
+    }
+    if (purchase.notes) {
+        detailRows.push(renderPurchaseHistoryCardField('Notes', escapeHtml(purchase.notes)));
+    }
+    const acquisition = getPurchaseAcquisitionType(purchase);
+    if (acquisition && acquisition !== 'purchased') {
+        detailRows.push(renderPurchaseHistoryCardField('Acquisition', escapeHtml(acquisition)));
+    }
+
+    const markEmptyBtn = isVapePuffPurchase(purchase) && remaining > INVENTORY_EPS
+        ? `<button type="button" class="secondary-btn btn-sm" data-mark-vape-empty="${escapeAttr(pid)}">Mark empty</button>`
+        : '';
+    const vapeLifecycleBtns = isVapePuffPurchase(purchase)
+        ? `<button type="button" class="secondary-btn btn-sm" data-mark-vape-finished="${escapeAttr(pid)}">Mark Finished</button>`
+        : '';
+    const statusBtns = renderPurchaseInventoryStatusButtons(purchase);
+
+    return `<article class="purchase-history-card" data-purchase-id="${escapeAttr(pid)}">
+        <div class="purchase-history-card-top">
+            <label class="purchase-history-card-check">
+                <input type="checkbox" class="inventory-select-cb" data-inventory-select="${escapeAttr(pid)}" ${checked} aria-label="Select purchase">
+            </label>
+            <div class="purchase-history-card-fields">
+                ${renderPurchaseHistoryCardField('Date', escapeHtml(formatDate(purchase.date || '')))}
+                ${renderPurchaseHistoryCardField('Amount / Quantity', boughtHtml)}
+                ${renderPurchaseHistoryCardField('Cost', costHtml)}
+                ${renderPurchaseHistoryCardField('Remaining', remainingHtml)}
+                ${renderPurchaseHistoryCardField('Store', storeHtml)}
+                ${renderPurchaseHistoryCardField('Status', statusHtml)}
+            </div>
+        </div>
+        <details class="purchase-history-card-details">
+            <summary>Details</summary>
+            <div class="purchase-history-card-details-body">
+                ${detailRows.join('')}
+            </div>
+        </details>
+        <div id="purchase-detail-card-${escapeAttr(pid)}" class="purchase-linked-detail purchase-history-card-linked${expanded ? '' : ' hidden'}" data-purchase-detail="${escapeAttr(pid)}">
+            ${renderPurchaseLinkedLogsPanel(purchase)}
+        </div>
+        <div class="purchase-history-card-actions">
+            <button type="button" class="secondary-btn btn-sm purchase-expand-btn" data-purchase-toggle="${escapeAttr(pid)}" data-toggle-purchase-logs="${escapeAttr(pid)}" aria-expanded="${expanded ? 'true' : 'false'}">${toggleLabel}</button>
+            <button type="button" class="secondary-btn btn-sm" data-edit-purchase="${escapeAttr(pid)}">Edit</button>
+            <button type="button" class="secondary-btn btn-sm" data-duplicate-purchase-now="${escapeAttr(pid)}">Duplicate</button>
+            ${markEmptyBtn}
+            ${vapeLifecycleBtns}
+            ${statusBtns}
+            <button type="button" class="delete-btn btn-sm" data-delete-purchase="${escapeAttr(pid)}">Delete</button>
+        </div>
+    </article>`;
+}
+
 function renderPurchaseHistory(substanceId, containerId = null) {
     // Column customization must not change which substance/filter drives the rows.
     // Ignore dashboard substance overrides from presentation-only callers.
@@ -41422,6 +41554,8 @@ function renderPurchaseHistory(substanceId, containerId = null) {
         html += renderPurchaseHistoryHeaderCell(colId);
     });
     html += '</tr></thead><tbody>';
+
+    let cardsHtml = '<div class="purchase-history-cards" aria-label="Purchase history cards">';
 
     // Chronological running totals (calc oldest→newest), display order unchanged.
     const chrono = purchases.slice().sort((a, b) => {
@@ -41509,13 +41643,15 @@ function renderPurchaseHistory(substanceId, containerId = null) {
             html += renderPurchaseHistoryBodyCell(colId, rowCtx);
         });
         html += '</tr>';
-        html += `<tr id="purchase-detail-${escapeAttr(purchaseId)}" class="purchase-linked-detail${expanded ? '' : ' hidden'}">
+        html += `<tr id="purchase-detail-${escapeAttr(purchaseId)}" class="purchase-linked-detail${expanded ? '' : ' hidden'}" data-purchase-detail="${escapeAttr(purchaseId)}">
             <td colspan="${purchaseColumns.length}">${renderPurchaseLinkedLogsPanel(purchase)}</td>
         </tr>`;
+        cardsHtml += renderPurchaseHistoryCard(rowCtx);
     });
 
     html += '</tbody></table></div>';
-    container.innerHTML = html;
+    cardsHtml += '</div>';
+    container.innerHTML = html + cardsHtml;
     document.getElementById('inventory-select-all')?.addEventListener('change', (e) => {
         const checked = e.target.checked;
         purchases.forEach(p => {

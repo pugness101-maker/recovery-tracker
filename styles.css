@@ -78,13 +78,24 @@
     --bottom-nav-clearance: calc(110px + env(safe-area-inset-bottom, 0px));
 }
 
+html {
+    max-width: 100%;
+    overflow-x: hidden;
+}
+
 body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
     background: var(--bg);
     color: var(--text);
     line-height: 1.6;
     min-height: 100vh;
+    max-width: 100%;
+    overflow-x: hidden;
     zoom: var(--app-zoom);
+}
+
+button {
+    margin: 0;
 }
 
 @supports not (zoom: 1) {
@@ -100,12 +111,18 @@ body {
 
 .app-container {
     max-width: 600px;
+    width: 100%;
+    min-width: 0;
     margin: 0 auto;
+    overflow-x: hidden;
 }
 
 main {
     padding: 16px;
     padding-bottom: var(--bottom-nav-clearance);
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: hidden;
 }
 
 header {
@@ -993,7 +1010,6 @@ h3 {
 .stat-card.highlight .stat-value {
     color: var(--accent-light);
 }
-}
 
 .chart-container {
     height: 150px;
@@ -1045,10 +1061,14 @@ form {
 .form-row {
     display: flex;
     gap: 12px;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .form-row .form-group {
     flex: 1;
+    min-width: 0;
+    max-width: 100%;
 }
 
 label {
@@ -1067,6 +1087,8 @@ input[type="search"],
 select,
 textarea {
     width: 100%;
+    max-width: 100%;
+    min-width: 0;
     padding: 12px;
     background: var(--input-bg);
     border: 1px solid var(--input-border);
@@ -3001,10 +3023,20 @@ input[type="range"]::-webkit-slider-thumb {
 
 .settings-radio-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     margin: 4px 0;
     font-size: 0.92rem;
+    max-width: 100%;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.settings-radio-row input {
+    flex: 0 0 auto;
+    margin-top: 0.2em;
 }
 
 .taper-workspace:not([hidden]) {
@@ -4074,18 +4106,22 @@ input[type="range"]::-webkit-slider-thumb {
     justify-content: center;
     flex: 1 1 0;
     min-width: 0;
-    padding: 8px 4px;
+    max-width: 100%;
+    margin: 0;
+    padding: 8px 2px;
     cursor: pointer;
     transition: color 0.2s;
 }
 
-.nav-btn span:first-child {
+.nav-btn > span:first-child {
     font-size: 1.4rem;
     margin-bottom: 4px;
+    line-height: 1;
 }
 
-.nav-btn span:last-child {
-    font-size: 0.7rem;
+.nav-btn-label-full,
+.nav-btn-label-short {
+    font-size: 0.65rem;
     line-height: 1.15;
     white-space: nowrap;
     overflow: hidden;
@@ -5194,8 +5230,9 @@ body.table-col-resizing {
         grid-template-columns: 1fr;
     }
 
-    :root[data-view-mode="auto"] .bottom-nav .nav-btn span:last-child {
-        font-size: 0.6rem;
+    :root[data-view-mode="auto"] .bottom-nav .nav-btn-label-full,
+    :root[data-view-mode="auto"] .bottom-nav .nav-btn-label-short {
+        font-size: 0.58rem;
     }
 
 }
@@ -5221,12 +5258,13 @@ body.table-col-resizing {
         padding: 12px;
     }
     
-    :root[data-view-mode="auto"] .nav-btn span:first-child {
-        font-size: 1.2rem;
+    :root[data-view-mode="auto"] .nav-btn > span:first-child {
+        font-size: 1.15rem;
     }
     
-    :root[data-view-mode="auto"] .nav-btn span:last-child {
-        font-size: 0.65rem;
+    :root[data-view-mode="auto"] .nav-btn-label-full,
+    :root[data-view-mode="auto"] .nav-btn-label-short {
+        font-size: 0.58rem;
     }
 
 }
@@ -6845,16 +6883,28 @@ body.table-col-resizing {
 
 .settings-toggle-row {
     display: flex;
-    align-items: center;
+    align-items: flex-start;
     gap: 8px;
     margin-top: 12px;
     font-size: 0.88rem;
     color: var(--text-primary);
     cursor: pointer;
+    max-width: 100%;
+    min-width: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .settings-toggle-row input {
+    flex: 0 0 auto;
+    margin-top: 0.2em;
     accent-color: var(--accent);
+}
+
+.settings-toggle-row > span {
+    flex: 1 1 auto;
+    min-width: 0;
 }
 
 .column-settings-width-label {
@@ -7197,12 +7247,211 @@ body.purchase-history-col-resizing {
     white-space: normal;
 }
 
+/* Mobile purchase cards — hidden on desktop; shown ≤600px / phone layout */
+.purchase-history-cards {
+    display: none;
+    flex-direction: column;
+    gap: 12px;
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    margin: 0 0 16px;
+    padding-bottom: 8px;
+}
+
+.purchase-history-card {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px;
+    overflow: hidden;
+}
+
+.purchase-history-card-top {
+    display: flex;
+    gap: 10px;
+    align-items: flex-start;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.purchase-history-card-check {
+    flex: 0 0 auto;
+    padding-top: 2px;
+}
+
+.purchase-history-card-check input {
+    width: 1rem;
+    height: 1rem;
+    accent-color: var(--accent);
+}
+
+.purchase-history-card-fields {
+    flex: 1 1 auto;
+    min-width: 0;
+    max-width: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+.purchase-history-card-field {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.purchase-history-card-label {
+    font-size: 0.72rem;
+    font-weight: 600;
+    color: var(--text-secondary);
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+}
+
+.purchase-history-card-value {
+    min-width: 0;
+    max-width: 100%;
+    font-size: 0.92rem;
+    color: var(--text-primary);
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
+}
+
+.purchase-history-card-details {
+    margin-top: 10px;
+    padding-top: 8px;
+    border-top: 1px solid var(--border);
+    min-width: 0;
+    max-width: 100%;
+}
+
+.purchase-history-card-details > summary {
+    cursor: pointer;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: var(--accent);
+    list-style: none;
+    padding: 4px 0;
+}
+
+.purchase-history-card-details > summary::-webkit-details-marker {
+    display: none;
+}
+
+.purchase-history-card-details-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+    min-width: 0;
+}
+
+.purchase-history-card-linked {
+    margin-top: 10px;
+    min-width: 0;
+    max-width: 100%;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+}
+
+.purchase-history-card-linked.hidden {
+    display: none;
+}
+
+.purchase-history-card-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+    padding-top: 10px;
+    border-top: 1px solid var(--border);
+    min-width: 0;
+    max-width: 100%;
+}
+
+.purchase-history-card-actions .secondary-btn,
+.purchase-history-card-actions .delete-btn {
+    flex: 1 1 calc(50% - 8px);
+    min-width: 0;
+    max-width: 100%;
+    margin: 0;
+    white-space: normal;
+    overflow-wrap: anywhere;
+    text-align: center;
+}
+
+@media (max-width: 600px) {
+
+    :root[data-view-mode="auto"] .purchase-history-scroll {
+        display: none !important;
+    }
+
+    :root[data-view-mode="auto"] .purchase-history-cards {
+        display: flex;
+    }
+
+    :root[data-view-mode="auto"] #purchase-history-customize-columns,
+    :root[data-view-mode="auto"] .purchase-history-header {
+        display: none;
+    }
+
+}
+
+:root[data-view-layout="phone"] .purchase-history-scroll {
+    display: none !important;
+}
+
+:root[data-view-layout="phone"] .purchase-history-cards {
+    display: flex;
+}
+
+:root[data-view-layout="phone"] #purchase-history-customize-columns,
+:root[data-view-layout="phone"] .purchase-history-header {
+    display: none;
+}
+
+:root[data-view-layout="laptop"] .purchase-history-cards {
+    display: none !important;
+}
+
+:root[data-view-layout="laptop"] .purchase-history-scroll {
+    display: block;
+}
+
+:root[data-view-layout="phone"] #buy-tracker-tab {
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: var(--bottom-nav-clearance);
+}
+
+:root[data-view-layout="phone"] #buy-tracker-tab .inventory-page-header {
+    padding-top: 0;
+}
+
+:root[data-view-layout="phone"] #purchase-history-list,
+:root[data-view-layout="phone"] .purchase-history-cards {
+    padding-bottom: calc(28px + env(safe-area-inset-bottom, 0px));
+}
+
+:root[data-view-layout="phone"] .collapsible-section[data-section="purchaseHistory"] .section-content {
+    padding-bottom: 20px;
+}
+
 @media (max-width: 700px) {
 
     :root[data-view-mode="auto"] .purchase-history-scroll {
         overflow-x: visible;
     }
 
+    /* Legacy stacked-table styles kept only when cards are unavailable.
+       Prefer .purchase-history-cards on phone widths. */
     :root[data-view-mode="auto"] .purchase-history-table.inventory-history-table {
         min-width: 0 !important;
         display: block;
@@ -7219,7 +7468,7 @@ body.purchase-history-col-resizing {
 
     :root[data-view-mode="auto"] .purchase-history-table.inventory-history-table .inventory-history-row {
         display: grid;
-        grid-template-columns: 1fr;
+        grid-template-columns: minmax(0, 1fr);
         gap: 10px;
         padding: 14px 12px;
         border-bottom: 1px solid var(--border);
@@ -7266,80 +7515,13 @@ body.purchase-history-col-resizing {
 
     :root[data-view-mode="auto"] .purchase-history-actions-wrap {
         gap: 8px;
+        flex-wrap: wrap;
     }
 
 }
 
-
-    :root[data-view-layout="phone"] .purchase-history-scroll {
-        overflow-x: visible;
-    }
-
-    :root[data-view-layout="phone"] .purchase-history-table.inventory-history-table {
-        min-width: 0 !important;
-        display: block;
-        width: 100%;
-    }
-
-    :root[data-view-layout="phone"] .purchase-history-table.inventory-history-table thead {
-        display: none;
-    }
-
-    :root[data-view-layout="phone"] .purchase-history-table.inventory-history-table tbody {
-        display: block;
-    }
-
-    :root[data-view-layout="phone"] .purchase-history-table.inventory-history-table .inventory-history-row {
-        display: grid;
-        grid-template-columns: 1fr;
-        gap: 10px;
-        padding: 14px 12px;
-        border-bottom: 1px solid var(--border);
-    }
-
-    :root[data-view-layout="phone"] .purchase-history-table.inventory-history-table .inventory-history-row > td {
-        display: block;
-        width: 100%;
-        min-width: 0;
-        padding: 0;
-        border: none;
-    }
-
-    :root[data-view-layout="phone"] .purchase-history-table.inventory-history-table .inventory-history-row > td::before {
-        content: attr(data-label);
-        display: block;
-        font-weight: 600;
-        font-size: 0.72rem;
-        color: var(--text-secondary);
-        text-transform: uppercase;
-        letter-spacing: 0.02em;
-        margin-bottom: 4px;
-    }
-
-    :root[data-view-layout="phone"] .purchase-history-table.inventory-history-table .inventory-history-row > td.actions-cell::before {
-        content: 'Actions';
-    }
-
-    :root[data-view-layout="phone"] .purchase-history-table.inventory-history-table .purchase-linked-detail {
-        display: block;
-        border-bottom: 1px solid var(--border);
-    }
-
-    :root[data-view-layout="phone"] .purchase-history-table.inventory-history-table .purchase-linked-detail > td {
-        display: block;
-        width: 100%;
-        padding: 0;
-        border: none;
-    }
-
-    :root[data-view-layout="phone"] .purchase-history-table.inventory-history-table .purchase-linked-detail > td::before {
-        display: none;
-    }
-
-    :root[data-view-layout="phone"] .purchase-history-actions-wrap {
-        gap: 8px;
-    }
-
+/* Legacy phone table-as-card transforms removed — Purchase History uses
+   .purchase-history-cards on phone (table scroll hidden). */
 
 
 .sheet-table {
@@ -8743,8 +8925,8 @@ html[data-theme="light"] .ccr-contrast-warning.ccr-contrast-bad {
 .purchase-history-table [data-col="payment"] { min-width: 110px; }
 .purchase-history-table [data-col="notes"] { min-width: 220px; }
 .purchase-history-table [data-col="actions"] { min-width: 220px; }
-.purchase-history-actions-wrap { flex-wrap: nowrap; overflow-x: auto; }
-.purchase-history-actions-wrap .btn-sm { white-space: nowrap; flex-shrink: 0; }
+.purchase-history-actions-wrap { flex-wrap: wrap; overflow-x: visible; max-width: 100%; }
+.purchase-history-actions-wrap .btn-sm { white-space: normal; flex: 1 1 auto; min-width: 0; }
 
 /* Stats Calendar View */
 .stats-calendar-toolbar {
@@ -9357,12 +9539,22 @@ body > .app-container {
 :root[data-view-layout="phone"] .nav-btn {
     flex-direction: column;
     min-height: 52px;
-    padding: 8px 4px;
+    padding: 6px 1px;
+    margin: 0;
 }
 
-:root[data-view-layout="phone"] .nav-btn span:first-child {
-    font-size: 1.4rem;
-    margin-bottom: 4px;
+:root[data-view-layout="phone"] .nav-btn > span:first-child {
+    font-size: 1.25rem;
+    margin-bottom: 2px;
+}
+
+:root[data-view-layout="phone"] .nav-btn-label-full {
+    display: none;
+}
+
+:root[data-view-layout="phone"] .nav-btn-label-short {
+    display: block;
+    font-size: 0.6rem;
 }
 
 :root[data-view-layout="phone"] main {
@@ -9440,13 +9632,18 @@ body > .app-container {
     border-radius: 8px;
 }
 
-:root[data-view-layout="laptop"] .nav-btn span:first-child {
+:root[data-view-layout="laptop"] .nav-btn > span:first-child {
     font-size: 1.1rem;
     margin-bottom: 0;
 }
 
-:root[data-view-layout="laptop"] .nav-btn span:last-child {
+:root[data-view-layout="laptop"] .nav-btn-label-full {
+    display: inline;
     font-size: 0.85rem;
+}
+
+:root[data-view-layout="laptop"] .nav-btn-label-short {
+    display: none;
 }
 
 :root[data-view-layout="laptop"] .nav-btn.active {
@@ -10632,7 +10829,7 @@ html[data-theme="light"] .metric-pc-tone-unfavorable .metric-pc-change .metric-p
 }
 @media (max-width: 720px) {
     .nav-btn-label-full { display: none; }
-    .nav-btn-label-short { display: inline; }
+    .nav-btn-label-short { display: block; }
     .combined-subnav { display: none; }
     .combined-subnav-mobile-label {
         display: block;
@@ -10955,3 +11152,216 @@ html[data-theme="light"] .metric-pc-tone-unfavorable .metric-pc-change .metric-p
 }
 .buy-source-meta { margin-top: 8px; }
 #buy-source-group .settings-hint { margin-top: 6px; }
+
+/* ——— Phone / Capacitor overflow & safe-area (do not change laptop) ——— */
+:root[data-view-layout="laptop"],
+:root[data-view-layout="laptop"] body {
+    overflow-x: auto;
+}
+
+:root[data-view-layout="phone"],
+:root[data-view-layout="phone"] body {
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
+    overscroll-behavior-x: none;
+}
+
+:root[data-view-layout="phone"] .app-container,
+:root[data-view-layout="phone"] main,
+:root[data-view-layout="phone"] .tab,
+:root[data-view-layout="phone"] .collapsible-section,
+:root[data-view-layout="phone"] .section-content,
+:root[data-view-layout="phone"] .settings-section,
+:root[data-view-layout="phone"] .stats-section,
+:root[data-view-layout="phone"] form,
+:root[data-view-layout="phone"] .card,
+:root[data-view-layout="phone"] .taper-card,
+:root[data-view-layout="phone"] .taper-setup,
+:root[data-view-layout="phone"] .taper-plan,
+:root[data-view-layout="phone"] .taper-suggest-banner,
+:root[data-view-layout="phone"] .taper-current-metrics,
+:root[data-view-layout="phone"] .taper-type-suggestions,
+:root[data-view-layout="phone"] .settings-radio-fieldset,
+:root[data-view-layout="phone"] .goal-form-grid,
+:root[data-view-layout="phone"] .ct-form-grid,
+:root[data-view-layout="phone"] .fin-form-grid {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+    box-sizing: border-box;
+}
+
+:root[data-view-layout="phone"] .section-toggle {
+    width: 100%;
+    max-width: 100%;
+    margin: 0;
+    gap: 8px;
+    min-width: 0;
+}
+
+:root[data-view-layout="phone"] .section-toggle > span:first-child {
+    min-width: 0;
+    flex: 1 1 auto;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    white-space: normal;
+}
+
+:root[data-view-layout="phone"] .form-row,
+:root[data-view-layout="phone"] .ccr-metric-picker-row,
+:root[data-view-layout="phone"] .ccr-color-inputs,
+:root[data-view-layout="phone"] .appearance-reset-row {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+:root[data-view-layout="phone"] .form-row .form-group,
+:root[data-view-layout="phone"] .goal-form-grid > *,
+:root[data-view-layout="phone"] .ct-form-grid > *,
+:root[data-view-layout="phone"] .fin-form-grid > *,
+:root[data-view-layout="phone"] .fin-filters > *,
+:root[data-view-layout="phone"] .pa-filters-grid > *,
+:root[data-view-layout="phone"] .taper-current-metrics-grid > * {
+    min-width: 0;
+    max-width: 100%;
+}
+
+:root[data-view-layout="phone"] .goal-form-grid,
+:root[data-view-layout="phone"] .ct-form-grid,
+:root[data-view-layout="phone"] .fin-form-grid,
+:root[data-view-layout="phone"] .fin-filters,
+:root[data-view-layout="phone"] .pa-filters-grid,
+:root[data-view-layout="phone"] .goal-filters,
+:root[data-view-layout="phone"] .taper-current-metrics-grid {
+    grid-template-columns: minmax(0, 1fr);
+    width: 100%;
+    max-width: 100%;
+}
+
+:root[data-view-layout="phone"] .appearance-view-mode-control,
+:root[data-view-layout="phone"] .appearance-zoom-presets {
+    width: 100%;
+    max-width: 100%;
+    min-width: 0;
+}
+
+:root[data-view-layout="phone"] .appearance-view-mode-btn,
+:root[data-view-layout="phone"] .appearance-zoom-preset-btn,
+:root[data-view-layout="phone"] .submit-btn,
+:root[data-view-layout="phone"] .secondary-btn,
+:root[data-view-layout="phone"] .danger-btn,
+:root[data-view-layout="phone"] .taper-suggest-chip,
+:root[data-view-layout="phone"] .taper-chip-btn {
+    max-width: 100%;
+    min-width: 0;
+    margin: 0;
+}
+
+:root[data-view-layout="phone"] .appearance-zoom-presets {
+    display: flex;
+    flex-wrap: wrap;
+}
+
+:root[data-view-layout="phone"] .appearance-zoom-preset-btn {
+    flex: 1 1 calc(50% - 6px);
+}
+
+:root[data-view-layout="phone"] .taper-suggest-chip-row,
+:root[data-view-layout="phone"] .taper-suggest-banner-actions,
+:root[data-view-layout="phone"] .taper-inline-suggest {
+    max-width: 100%;
+    min-width: 0;
+}
+
+:root[data-view-layout="phone"] .taper-suggest-preview {
+    grid-template-columns: 1fr;
+}
+
+:root[data-view-layout="phone"] .settings-hint,
+:root[data-view-layout="phone"] .settings-radio-fieldset legend,
+:root[data-view-layout="phone"] p,
+:root[data-view-layout="phone"] li,
+:root[data-view-layout="phone"] label,
+:root[data-view-layout="phone"] h2,
+:root[data-view-layout="phone"] h3,
+:root[data-view-layout="phone"] h4 {
+    overflow-wrap: anywhere;
+    word-break: break-word;
+    max-width: 100%;
+}
+
+:root[data-view-layout="phone"] .ct-subnav,
+:root[data-view-layout="phone"] .combined-subnav,
+:root[data-view-layout="phone"] .ccr-toolbar {
+    max-width: 100%;
+    min-width: 0;
+    overflow-x: auto;
+    overscroll-behavior-x: contain;
+    -webkit-overflow-scrolling: touch;
+}
+
+:root[data-view-layout="phone"] .bottom-nav {
+    width: 100%;
+    max-width: 600px;
+    left: 0;
+    right: 0;
+    transform: none;
+    margin: 0 auto;
+    padding-left: max(2px, env(safe-area-inset-left, 0px));
+    padding-right: max(2px, env(safe-area-inset-right, 0px));
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+:root[data-view-layout="phone"] header {
+    padding-top: max(12px, env(safe-area-inset-top, 0px));
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+}
+
+:root[data-view-layout="phone"] main {
+    padding-bottom: var(--bottom-nav-clearance);
+    padding-left: max(12px, env(safe-area-inset-left, 0px));
+    padding-right: max(12px, env(safe-area-inset-right, 0px));
+}
+
+@media (max-width: 600px) {
+    :root[data-view-layout="phone"] main {
+        padding-top: 12px;
+        padding-bottom: var(--bottom-nav-clearance);
+    }
+
+    :root[data-view-layout="phone"] .section-content {
+        padding: 0 12px 12px;
+    }
+
+    :root[data-view-layout="phone"] .section-toggle {
+        padding: 12px;
+    }
+
+    :root[data-view-layout="phone"] form,
+    :root[data-view-layout="phone"] .taper-card,
+    :root[data-view-layout="phone"] .taper-setup,
+    :root[data-view-layout="phone"] .taper-plan,
+    :root[data-view-layout="phone"] .taper-suggest-banner,
+    :root[data-view-layout="phone"] .taper-current-metrics,
+    :root[data-view-layout="phone"] .taper-type-suggestions {
+        padding-left: 12px;
+        padding-right: 12px;
+    }
+
+    :root[data-view-layout="phone"] .goal-form-grid,
+    :root[data-view-layout="phone"] .ct-form-grid,
+    :root[data-view-layout="phone"] .fin-form-grid,
+    :root[data-view-layout="phone"] .fin-filters,
+    :root[data-view-layout="phone"] .pa-filters-grid,
+    :root[data-view-layout="phone"] .goal-filters,
+    :root[data-view-layout="phone"] .taper-current-metrics-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+
+    :root[data-view-layout="phone"] .use-log-datetime-grid,
+    :root[data-view-layout="phone"] .use-log-amount-grid {
+        grid-template-columns: minmax(0, 1fr);
+    }
+}
