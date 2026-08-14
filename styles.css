@@ -12613,11 +12613,16 @@ body.experience-simple .use-log-page [data-section="bulkActions"] {
 .glance-status-grid {
     display: grid;
     gap: 12px;
+    width: 100%;
+}
+
+.today-glance {
+    gap: 20px;
 }
 
 .glance-today-grid,
 .glance-status-grid {
-    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
 }
 
 .glance-today-card,
@@ -12626,7 +12631,8 @@ body.experience-simple .use-log-page [data-section="bulkActions"] {
     background: var(--card);
     border: 1px solid var(--border);
     border-radius: 12px;
-    padding: 12px 14px;
+    padding: 14px 16px;
+    min-width: 0;
 }
 
 .glance-today-card h3,
@@ -12656,6 +12662,40 @@ body.experience-simple .use-log-page [data-section="bulkActions"] {
     display: flex;
     flex-wrap: wrap;
     gap: 8px;
+}
+
+.glance-actions {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    width: 100%;
+}
+
+.glance-actions .submit-btn,
+.glance-actions .secondary-btn {
+    width: 100%;
+    min-height: 44px;
+}
+
+body.layout-redesign #dashboard-tab .dash-safety,
+body.layout-redesign #simple-home,
+body.layout-redesign #advanced-home-wrap,
+body.layout-redesign #dashboard-tab .dash-header-meta,
+body.layout-redesign #dashboard-tab .dash-substance-field,
+body.layout-redesign #home-last-saved {
+    display: none !important;
+}
+
+body.layout-redesign #dashboard-tab {
+    width: 100%;
+    max-width: none;
+}
+
+body.layout-redesign .layout-home-header {
+    margin-bottom: 8px;
+}
+
+body.layout-redesign .layout-home-header .dash-title {
+    font-size: 1.5rem;
 }
 
 .use-log-totals-extra {
@@ -12719,8 +12759,41 @@ body.experience-simple .use-log-page [data-section="bulkActions"] {
     width: calc(100% - 240px);
 }
 
-:root[data-view-layout="laptop"] .bottom-nav {
-    display: none;
+:root[data-view-layout="laptop"] .bottom-nav,
+:root[data-view-layout="laptop"] body.experience-simple .bottom-nav,
+:root[data-view-layout="laptop"] body.layout-redesign .bottom-nav,
+:root[data-view-layout="laptop"] body.experience-simple.layout-redesign .bottom-nav {
+    display: none !important;
+}
+
+:root[data-view-layout="laptop"] body.layout-redesign .app-container {
+    max-width: none;
+    min-width: 0;
+    width: calc(100% - 240px);
+    margin-left: 240px;
+}
+
+:root[data-view-layout="laptop"] body.layout-redesign main {
+    max-width: none;
+    width: 100%;
+}
+
+:root[data-view-layout="laptop"] .glance-today-grid {
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+}
+
+:root[data-view-layout="laptop"] .glance-status-grid {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+:root[data-view-layout="laptop"] .glance-actions {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+@media (max-width: 1200px) {
+    :root[data-view-layout="laptop"] .glance-status-grid {
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
 }
 
 :root[data-view-layout="laptop"] main {

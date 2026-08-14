@@ -29347,44 +29347,65 @@ function getLayoutStatusSnapshot(data = appData) {
     };
 }
 
+function getLayoutTodayActivityLabel(card = {}) {
+    const unit = String(card.unit || card.usedLabel || '').toLowerCase();
+    const name = String(card.name || '').toLowerCase();
+    const id = String(card.substanceId || '').toLowerCase();
+    const haystack = `${unit} ${name} ${id}`;
+    if (haystack.includes('puff') || haystack.includes('nicotine')) return 'puffs today';
+    if (haystack.includes('lsd') || haystack.includes('tab') || haystack.includes('µg') || haystack.includes('ug')) {
+        return 'tabs / µg today';
+    }
+    if (haystack.includes('xanax') || haystack.includes('alprazolam') || haystack.includes('pill')) {
+        return 'pills / mg today';
+    }
+    return 'used today';
+}
+
+function getLayoutTodayCards(data = appData) {
+    const substances = typeof getActiveSubstances === 'function'
+        ? getActiveSubstances(data)
+        : (data?.substances || []).filter(s => s && s.active !== false);
+    if (typeof buildSimpleTodayCard === 'function') {
+        return substances.map(sub => buildSimpleTodayCard(sub, data));
+    }
+    if (typeof buildSimpleHomeDataset === 'function') {
+        return buildSimpleHomeDataset(data).cards || [];
+    }
+    return [];
+}
+
 function renderTodayAtAGlance(data = appData) {
     if (typeof document === 'undefined') return;
     const root = document.getElementById('today-glance');
     if (!root) return;
 
-    const homeDataset = typeof buildSimpleHomeDataset === 'function'
-        ? buildSimpleHomeDataset(data)
-        : { cards: [] };
+    const cards = getLayoutTodayCards(data);
     const status = getLayoutStatusSnapshot(data);
-    const lastSaved = document.getElementById('dashboard-last-saved')?.textContent
-        || document.getElementById('settings-last-saved')?.textContent
-        || 'Last Saved: —';
-    const savedEl = document.getElementById('home-last-saved');
-    if (savedEl) savedEl.textContent = lastSaved;
 
-    const todayCards = homeDataset.cards.length
-        ? homeDataset.cards.map(card => `
+    const todayCards = cards.length
+        ? cards.map(card => `
             <article class="glance-today-card" data-substance-id="${escapeLayoutHtml(card.substanceId)}">
                 <h3>${escapeLayoutHtml(card.name)}</h3>
                 <p class="glance-today-amount">${escapeLayoutHtml(card.usedLabel)}</p>
-                <p class="glance-today-label">used today</p>
+                <p class="glance-today-label">${escapeLayoutHtml(getLayoutTodayActivityLabel(card))}</p>
             </article>`)
         : `<p class="empty-hint">No substances to show yet. Add one in Settings.</p>`;
 
     root.innerHTML = `
         <section class="layout-section" aria-labelledby="glance-today-heading">
-            <h3 id="glance-today-heading" class="layout-section-title">Today</h3>
+            <h3 id="glance-today-heading" class="layout-section-title visually-hidden">Today</h3>
             <div class="glance-today-grid">${todayCards}</div>
         </section>
         <section class="layout-section" aria-labelledby="glance-status-heading">
-            <h3 id="glance-status-heading" class="layout-section-title">Current status</h3>
+            <h3 id="glance-status-heading" class="layout-section-title visually-hidden">Current status</h3>
             <div class="glance-status-grid">
                 <article class="glance-status-card"><span>Active Inventory</span><strong>${status.activeItems}</strong></article>
                 <article class="glance-status-card"><span>Spending This Month</span><strong>${escapeLayoutHtml(formatLayoutMoney(status.spentMonth))}</strong></article>
                 <article class="glance-status-card"><span>Taper Status</span><strong>${escapeLayoutHtml(status.taperLabel)}</strong></article>
                 <article class="glance-status-card"><span>Time Since Last Use</span><strong>${escapeLayoutHtml(status.timeSince)}</strong></article>
                 <article class="glance-status-card"><span>Last Purchase</span><strong>${escapeLayoutHtml(status.lastPurchaseLabel)}</strong></article>
-                <article class="glance-status-card"><span>Current Streak</span><strong>${status.streakDays} day${status.streakDays === 1 ? '' : 's'}</strong></article>
+                <article class="glance-status-card"><span>Streak</span><strong>${status.streakDays} day${status.streakDays === 1 ? '' : 's'}</strong></article>
             </div>
         </section>
         <section class="layout-section" aria-labelledby="glance-actions-heading">
@@ -29746,6 +29767,14 @@ function installLayoutHooks() {
     if (typeof renderRecoveryDashboard === 'function') {
         const original = renderRecoveryDashboard;
         renderRecoveryDashboard = function patchedRenderRecoveryDashboard() {
+            original.apply(this, arguments);
+            renderTodayAtAGlance();
+        };
+    }
+
+    if (typeof renderSimpleHome === 'function') {
+        const original = renderSimpleHome;
+        renderSimpleHome = function patchedRenderSimpleHome() {
             original.apply(this, arguments);
             renderTodayAtAGlance();
         };
@@ -64937,6 +64966,8 @@ function __getRecoveryTrackerTestExports() {
         initLayoutRedesign,
         applyLayoutRedesign,
         renderTodayAtAGlance,
+        getLayoutTodayCards,
+        getLayoutTodayActivityLabel,
         setLayoutInventoryView,
         setLayoutTaperWorkspaceView,
         setLayoutSettingsCategory,

@@ -164,24 +164,23 @@
         <main>
             <!-- Dashboard Tab -->
             <section id="dashboard-tab" class="tab active dashboard-page">
-                <div class="safety-notice dash-safety">
+                <div class="safety-notice dash-safety layout-legacy-hidden">
                     <strong>Safety Note:</strong> If you feel unsafe, may overdose, or have severe withdrawal symptoms, call emergency services or a medical professional immediately.
                 </div>
 
-                <div id="simple-home" class="simple-home" aria-live="polite"></div>
+                <div id="simple-home" class="simple-home layout-legacy-hidden" aria-live="polite"></div>
 
-                <div id="advanced-home-wrap" class="advanced-home-wrap">
-                <header class="dash-header page-header-row">
+                <header class="dash-header page-header-row layout-home-header">
                     <div class="dash-header-top">
                         <h2 class="dash-title">Today at a Glance</h2>
-                        <div class="dash-header-meta">
+                        <div class="dash-header-meta layout-legacy-hidden">
                             <p class="dash-main-substance" id="dashboard-main-substance">Main: —</p>
                             <p class="dash-viewing-label" id="dashboard-viewing-label">Viewing: —</p>
                             <p class="rd-header-range layout-legacy-hidden" id="rd-header-range">Date range: —</p>
-                            <p class="last-saved-status dash-last-saved" id="home-last-saved" data-last-saved-display>Last Saved: Never</p>
+                            <p class="last-saved-status dash-last-saved layout-legacy-hidden" id="home-last-saved">Last Saved: Never</p>
                         </div>
                     </div>
-                    <div class="form-group dash-substance-field">
+                    <div class="form-group dash-substance-field layout-legacy-hidden">
                         <label for="dashboard-substance">Substance</label>
                         <select id="dashboard-substance" onchange="setSelectedDashboardSubstance(this.value)"></select>
                     </div>
@@ -189,6 +188,7 @@
 
                 <div id="today-glance" class="today-glance" aria-live="polite"></div>
 
+                <div id="advanced-home-wrap" class="advanced-home-wrap layout-legacy-hidden">
                 <div id="recovery-dashboard" class="recovery-dashboard layout-legacy-hidden" hidden aria-hidden="true">
                     <div class="rd-date-controls" id="rd-date-controls">
                         <div class="rd-date-presets" role="group" aria-label="Dashboard date range">

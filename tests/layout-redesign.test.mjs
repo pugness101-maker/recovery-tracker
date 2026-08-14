@@ -12,6 +12,9 @@ test('layout redesign markup uses the approved page hierarchy', () => {
     assert.match(html, /id="app-sidebar"/);
     assert.match(html, /Today at a Glance/);
     assert.match(html, /id="today-glance"/);
+    assert.match(html, /id="simple-home"[^>]*layout-legacy-hidden/);
+    assert.match(html, /dash-safety layout-legacy-hidden/);
+    assert.doesNotMatch(html, /id="home-last-saved"[^>]*data-last-saved-display/);
     assert.match(html, /data-inv-view="active"/);
     assert.match(html, /data-inv-view="purchases"/);
     assert.match(html, /data-inv-view="history"/);
@@ -24,6 +27,9 @@ test('layout redesign markup uses the approved page hierarchy', () => {
     assert.match(html, /setInsightsCalendarView\('money'\)">Spending</);
     assert.doesNotMatch(html, /Low Stock Alerts/);
     assert.match(html, /data-section="recentUse"/);
+    const glanceIdx = html.indexOf('id="today-glance"');
+    const wrapIdx = html.indexOf('id="advanced-home-wrap"');
+    assert.ok(glanceIdx > 0 && wrapIdx > glanceIdx, 'today-glance must render outside the legacy advanced home wrap');
 });
 
 test('layout redesign CSS includes sidebar and shared cards', () => {
@@ -32,6 +38,9 @@ test('layout redesign CSS includes sidebar and shared cards', () => {
     assert.match(css, /\.today-glance/);
     assert.match(css, /\.layout-legacy-hidden/);
     assert.match(css, /data-view-layout="laptop"\] \.app-sidebar/);
+    assert.match(css, /body\.layout-redesign #simple-home/);
+    assert.match(css, /body\.experience-simple\.layout-redesign \.bottom-nav/);
+    assert.match(css, /glance-status-grid \{\s*grid-template-columns: repeat\(6/);
 });
 
 test('layout helpers keep inventory views and settings categories', () => {
@@ -41,4 +50,8 @@ test('layout helpers keep inventory views and settings categories', () => {
     assert.deepEqual([...rt.LAYOUT_SETTINGS_CATEGORIES], ['substances', 'data', 'appearance', 'advanced', 'about']);
     assert.equal(typeof rt.renderTodayAtAGlance, 'function');
     assert.equal(typeof rt.setLayoutInventoryView, 'function');
+    assert.equal(rt.getLayoutTodayActivityLabel({ name: 'Coke', unit: 'g' }), 'used today');
+    assert.equal(rt.getLayoutTodayActivityLabel({ name: 'Nicotine', unit: 'puffs' }), 'puffs today');
+    assert.equal(rt.getLayoutTodayActivityLabel({ name: 'LSD', unit: 'tabs' }), 'tabs / µg today');
+    assert.equal(rt.getLayoutTodayActivityLabel({ name: 'Xanax', unit: 'mg' }), 'pills / mg today');
 });
