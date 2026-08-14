@@ -48,6 +48,18 @@ The browser never receives the service-role key.
 
 See comments at the end of `supabase/migrations/001_recovery_tracker_cloud.sql`. Automated checks live in `tests/cloud-rls-schema.test.mjs` (SQL text). After applying the migration, run the two-user checks in the SQL editor before production.
 
+If `001` was already applied, also run `002_secure_definer_privileges.sql`.
+
+### SECURITY DEFINER privileges
+
+| Function | Client RPC? | Grants |
+|---|---|---|
+| `public.delete_own_cloud_data()` | Yes (Delete Cloud Data) | `EXECUTE` for `authenticated` only. Restricted to `auth.uid()`. `search_path` is empty; tables are schema-qualified. |
+| `public.ensure_own_profile()` | No | No `EXECUTE` for `public`, `anon`, or `authenticated`. |
+| `public.rls_auto_enable()` | No (event-trigger helper) | `EXECUTE` revoked from `public`, `anon`, and `authenticated` when the function exists. |
+
+PostgreSQL grants `EXECUTE` to `PUBLIC` by default; both migrations revoke that before applying the minimum client grant.
+
 ## Environment variables
 
 Local (`.env.local`) and Vercel (Production, Preview, and Development):
@@ -64,4 +76,4 @@ Local (`.env.local`) and Vercel (Production, Preview, and Development):
 
 Tables (all owned by `user_id`, RLS `user_id = auth.uid()`): `profiles`, `user_settings`, `substances`, `use_logs`, `purchases`, `taper_plans`, `contacts`, `cravings`, `budgets`.
 
-Apply `supabase/migrations/001_recovery_tracker_cloud.sql` on a new project before enabling production sync. Do not invent credentials or deploy an incomplete schema.
+Apply `supabase/migrations/001_recovery_tracker_cloud.sql` on a new project before enabling production sync. If 001 was already applied, run `002_secure_definer_privileges.sql` as well. Do not invent credentials or deploy an incomplete schema.

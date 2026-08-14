@@ -155,12 +155,14 @@ create policy "budgets_own" on public.budgets
     using (user_id = auth.uid())
     with check (user_id = auth.uid());
 
--- Authenticated users can wipe their own cloud rows (not Auth user deletion).
+-- Client RPC: authenticated users may wipe their own cloud rows (not Auth user deletion).
+-- SECURITY DEFINER is required so one RPC can delete across tables; every DELETE is
+-- still scoped to auth.uid(). Empty search_path + schema-qualified names prevent hijacking.
 create or replace function public.delete_own_cloud_data()
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
     uid uuid := auth.uid();
@@ -181,13 +183,17 @@ end;
 $$;
 
 revoke all on function public.delete_own_cloud_data() from public;
+revoke all on function public.delete_own_cloud_data() from anon;
+revoke all on function public.delete_own_cloud_data() from authenticated;
 grant execute on function public.delete_own_cloud_data() to authenticated;
 
+-- Internal helper only. The app never calls this over PostgREST; profiles are
+-- inserted via RLS on public.profiles. Do not grant to anon or authenticated.
 create or replace function public.ensure_own_profile()
 returns void
 language plpgsql
 security definer
-set search_path = public
+set search_path = ''
 as $$
 declare
     uid uuid := auth.uid();
@@ -197,12 +203,41 @@ begin
     end if;
     insert into public.profiles (user_id)
     values (uid)
-    on conflict (user_id) do update set updated_at = now();
+    on conflict (user_id) do update set updated_at = pg_catalog.now();
 end;
 $$;
 
 revoke all on function public.ensure_own_profile() from public;
-grant execute on function public.ensure_own_profile() to authenticated;
+revoke all on function public.ensure_own_profile() from anon;
+revoke all on function public.ensure_own_profile() from authenticated;
+
+-- rls_auto_enable is a Supabase/event-trigger helper, not a Recovery Tracker RPC.
+-- It must not be callable by public, anon, or authenticated.
+do $revoke_rls_auto_enable$
+declare
+    fn_sig text;
+begin
+    for fn_sig in
+        select p.oid::regprocedure::text
+        from pg_catalog.pg_proc p
+        join pg_catalog.pg_namespace n on n.oid = p.pronamespace
+        where n.nspname = 'public'
+          and p.proname = 'rls_auto_enable'
+    loop
+        execute format('revoke all on function %s from public', fn_sig);
+        execute format('revoke all on function %s from anon', fn_sig);
+        execute format('revoke all on function %s from authenticated', fn_sig);
+        begin
+            execute format('alter function %s set search_path = ''''', fn_sig);
+        exception
+            when insufficient_privilege then
+                null;
+            when undefined_function then
+                null;
+        end;
+    end loop;
+end;
+$revoke_rls_auto_enable$;
 
 grant usage on schema public to authenticated;
 grant select, insert, update, delete on public.profiles to authenticated;
@@ -223,3 +258,5 @@ grant select, insert, update, delete on public.budgets to authenticated;
 -- 3. As user B, `select * from public.use_logs` must not return A's row.
 -- 4. As user B, inserting a row with user_id = A's uuid must fail the WITH CHECK policy.
 -- 5. There is no goals table. PIN hashes must never be stored in user_settings.payload.
+-- 6. delete_own_cloud_data() is executable by authenticated only (client Delete Cloud Data).
+--    ensure_own_profile() and rls_auto_enable() must not be executable by public, anon, or authenticated.
