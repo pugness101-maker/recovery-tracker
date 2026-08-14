@@ -317,7 +317,7 @@ function renderSimpleHome(data = appData) {
            </div>`;
 
     const lastSaved = formatSimpleLastSaved(
-        document.getElementById('dashboard-last-saved')?.textContent
+        document.querySelector('[data-last-saved-display]')?.textContent
         || document.getElementById('settings-last-saved')?.textContent
         || 'Last Saved: —'
     );

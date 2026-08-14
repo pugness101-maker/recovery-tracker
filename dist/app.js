@@ -13,6 +13,54 @@ const APPEARANCE_VIEW_MODE_LAPTOP_MQ = '(min-width: 768px)';
 const COLUMN_PRESET_IDS = Object.freeze(['basic', 'cost', 'inventory', 'detailed']);
 const USE_BREAK_FIELDS = Object.freeze(['breakMinutes', 'breakHours', 'breakText']);
 const BUY_BREAK_FIELDS = Object.freeze(['buyBreakMinutes', 'buyBreakHours', 'buyBreakText']);
+
+/** Startup / migration constants — must initialize before loadData() runs at module load. */
+const PURCHASE_TAPER_MODES = Object.freeze([
+    'none',
+    'combined',
+    'weekly_buy_amount',
+    'weekly_spend',
+    'monthly_buy_amount',
+    'monthly_spend',
+    'manual_weekly_buy_amount',
+    'manual_weekly_spend'
+]);
+
+const PURCHASE_TAPER_FORM_MODE_MAP = Object.freeze({
+    reduce_buy_amount: 'weekly_buy_amount',
+    reduce_buy_spend: 'weekly_spend',
+    fixed_weekly_purchase_limit: 'weekly_buy_amount',
+    fixed_weekly_spending_limit: 'weekly_spend',
+    fixed_monthly_purchase_cap: 'monthly_buy_amount',
+    fixed_monthly_spending_cap: 'monthly_spend'
+});
+
+const PURCHASE_TAPER_MODE_LABELS = Object.freeze({
+    none: 'None',
+    combined: 'Combined rules',
+    reduce_buy_amount: 'Reduce purchase amount',
+    reduce_buy_spend: 'Reduce purchase cost',
+    weekly_buy_amount: 'Fixed weekly purchase limit',
+    weekly_spend: 'Fixed weekly spending limit',
+    monthly_buy_amount: 'Fixed monthly purchase cap',
+    monthly_spend: 'Fixed monthly spending cap',
+    manual_weekly_buy_amount: 'Manual weekly buy plan',
+    manual_weekly_spend: 'Manual weekly spending plan'
+});
+
+const BUYING_REDUCTION_RULE_KEYS = Object.freeze([
+    'reducePurchaseAmount',
+    'reducePurchaseCost',
+    'weeklyPurchaseLimit',
+    'weeklySpendingLimit',
+    'monthlyPurchaseCap',
+    'monthlySpendingCap',
+    'manualWeeklyBuyPlan',
+    'manualWeeklySpendingPlan'
+]);
+
+const AUTO_SPEND_BASELINE_RANGES = Object.freeze(['last-30', 'last-60', 'last-90', 'plan-period', 'custom']);
+
 const DEFAULT_DASHBOARD_WIDGETS = Object.freeze([
     'todayUsed', 'weekUsed', 'monthUsed', 'spentMonth', 'monthCap', 'streak', 'quickActions'
 ]);
@@ -12671,53 +12719,6 @@ const TAPER_START_FROM = Object.freeze({
     COPY: 'copy-existing'
 });
 
-/** Purchase / buying-reduction config — must exist before loadData() migration runs. */
-const PURCHASE_TAPER_MODES = [
-    'none',
-    'combined',
-    'weekly_buy_amount',
-    'weekly_spend',
-    'monthly_buy_amount',
-    'monthly_spend',
-    'manual_weekly_buy_amount',
-    'manual_weekly_spend'
-];
-
-const PURCHASE_TAPER_FORM_MODE_MAP = {
-    reduce_buy_amount: 'weekly_buy_amount',
-    reduce_buy_spend: 'weekly_spend',
-    fixed_weekly_purchase_limit: 'weekly_buy_amount',
-    fixed_weekly_spending_limit: 'weekly_spend',
-    fixed_monthly_purchase_cap: 'monthly_buy_amount',
-    fixed_monthly_spending_cap: 'monthly_spend'
-};
-
-const PURCHASE_TAPER_MODE_LABELS = {
-    none: 'None',
-    combined: 'Combined rules',
-    reduce_buy_amount: 'Reduce purchase amount',
-    reduce_buy_spend: 'Reduce purchase cost',
-    weekly_buy_amount: 'Fixed weekly purchase limit',
-    weekly_spend: 'Fixed weekly spending limit',
-    monthly_buy_amount: 'Fixed monthly purchase cap',
-    monthly_spend: 'Fixed monthly spending cap',
-    manual_weekly_buy_amount: 'Manual weekly buy plan',
-    manual_weekly_spend: 'Manual weekly spending plan'
-};
-
-const BUYING_REDUCTION_RULE_KEYS = [
-    'reducePurchaseAmount',
-    'reducePurchaseCost',
-    'weeklyPurchaseLimit',
-    'weeklySpendingLimit',
-    'monthlyPurchaseCap',
-    'monthlySpendingCap',
-    'manualWeeklyBuyPlan',
-    'manualWeeklySpendingPlan'
-];
-
-const AUTO_SPEND_BASELINE_RANGES = ['last-30', 'last-60', 'last-90', 'plan-period', 'custom'];
-
 function ensureTaperMyTemplates(data = appData) {
     if (!data.settings || typeof data.settings !== 'object') data.settings = {};
     if (!Array.isArray(data.settings.taperMyTemplates)) data.settings.taperMyTemplates = [];
@@ -12892,6 +12893,7 @@ function legacyPlanToV2(legacyPlan, substanceId, data) {
     };
 }
 
+/** Read-only legacy mirror for import/export compatibility. taperPlansV2 is the writable store. */
 function syncLegacyTaperPlansFromV2(data) {
     if (!data.taperPlans) data.taperPlans = {};
     const substanceIds = new Set((data.taperPlansV2 || []).map(p => p.substanceId));
@@ -12900,6 +12902,10 @@ function syncLegacyTaperPlansFromV2(data) {
         if (primary) data.taperPlans[substanceId] = primary;
         else delete data.taperPlans[substanceId];
     });
+}
+
+function prepareTaperDataForPersistence(data = appData) {
+    syncLegacyTaperPlansFromV2(data);
 }
 
 function migrateTaperPlansToV2IfNeeded(data) {
@@ -12944,7 +12950,6 @@ function setTaperPlanPrimary(planId, substanceId = null) {
     });
     plan.isPrimary = true;
     plan.updatedAt = new Date().toISOString();
-    syncLegacyTaperPlansFromV2(appData);
 }
 
 function formatTaperPlanOptionLabel(plan) {
@@ -26221,14 +26226,23 @@ let inventorySourcePickerMounted = false;
 let inventorySourcePickerMountWarned = false;
 
 function isInventorySourceDomElement(node) {
-    return !!node && typeof node.insertAdjacentHTML === 'function';
+    return !!node && typeof node === 'object' && !Array.isArray(node) && typeof node.insertAdjacentHTML === 'function';
+}
+
+function isInventorySourceMountTarget(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+    if (typeof node.insertAdjacentHTML === 'function') return true;
+    if (typeof Node !== 'undefined' && node instanceof Node && node.nodeType === 1) return true;
+    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node) || node, 'innerHTML')
+        || Object.getOwnPropertyDescriptor(node, 'innerHTML');
+    return !!(desc && typeof desc.set === 'function');
 }
 
 function mountBuySourcePickerHtml(html) {
     if (typeof document === 'undefined') return false;
     const hasPickerMarkup = () => html.includes('id="buy-source-group"') || html.includes("id='buy-source-group'");
     const mount = document.getElementById('buy-source-mount');
-    if (mount && typeof mount.innerHTML === 'string') {
+    if (isInventorySourceMountTarget(mount)) {
         mount.innerHTML = html;
         return hasPickerMarkup();
     }
@@ -26775,7 +26789,7 @@ function renderSimpleHome(data = appData) {
            </div>`;
 
     const lastSaved = formatSimpleLastSaved(
-        document.getElementById('dashboard-last-saved')?.textContent
+        document.querySelector('[data-last-saved-display]')?.textContent
         || document.getElementById('settings-last-saved')?.textContent
         || 'Last Saved: —'
     );
@@ -32553,6 +32567,7 @@ function normalizeMainSubstances(data) {
 
 function saveData(data) {
     try {
+        prepareTaperDataForPersistence(data);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         const savedAt = new Date().toISOString();
         localStorage.setItem(LAST_SAVED_KEY, savedAt);
@@ -32584,10 +32599,13 @@ function formatLastSaved(iso) {
 
 function updateLastSavedDisplay(iso) {
     const label = `Last Saved: ${formatLastSaved(iso || getLastSavedTimestamp())}`;
-    ['dashboard-last-saved', 'settings-last-saved'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.textContent = label;
-    });
+    if (typeof document !== 'undefined') {
+        document.querySelectorAll('[data-last-saved-display]').forEach(el => {
+            el.textContent = label;
+        });
+    }
+    const settingsEl = typeof document !== 'undefined' ? document.getElementById('settings-last-saved') : null;
+    if (settingsEl) settingsEl.textContent = label;
     updateAutoBackupDisplay();
 }
 
@@ -55731,7 +55749,7 @@ function syncTaperPlanDataForPlan(plan, data = appData) {
 }
 
 function syncTaperPlanData(substanceId, data = appData) {
-    const plan = getPrimaryTaperPlan(substanceId, data) || data?.taperPlans?.[substanceId];
+    const plan = getPrimaryTaperPlan(substanceId, data);
     syncTaperPlanDataForPlan(plan, data);
 }
 
@@ -57353,7 +57371,6 @@ function archiveSelectedTaperPlan() {
         const next = getTaperPlansForSubstance(plan.substanceId).find(p => p.id !== plan.id && p.status === 'active');
         if (next) setTaperPlanPrimary(next.id, plan.substanceId);
     }
-    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
     selectedTaperPlanId = resolveDefaultTaperPlanForSubstance(plan.substanceId)?.id || null;
     refreshTaperDashboard();
@@ -57656,7 +57673,6 @@ function pauseTaperPlanById(planId) {
     const plan = getTaperPlanById(planId);
     if (!plan) return;
     setTaperPlanStatus(plan, 'paused');
-    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
     renderManageTaperPlansList();
     refreshTaperDashboard();
@@ -57666,7 +57682,6 @@ function resumeTaperPlanById(planId) {
     const plan = getTaperPlanById(planId);
     if (!plan) return;
     setTaperPlanStatus(plan, 'active');
-    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
     renderManageTaperPlansList();
     refreshTaperDashboard();
@@ -57681,7 +57696,6 @@ function completeTaperPlanById(planId) {
         const next = getTaperPlansForSubstance(plan.substanceId).find(p => p.id !== plan.id && p.status === 'active');
         if (next) setTaperPlanPrimary(next.id, plan.substanceId);
     }
-    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
     renderManageTaperPlansList();
     refreshTaperDashboard();
@@ -57697,7 +57711,6 @@ function archiveTaperPlanById(planId) {
         const next = getTaperPlansForSubstance(plan.substanceId).find(p => p.id !== plan.id && p.status === 'active');
         if (next) setTaperPlanPrimary(next.id, plan.substanceId);
     }
-    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
     if (selectedTaperPlanId === planId) {
         selectedTaperPlanId = resolveDefaultTaperPlanForSubstance(plan.substanceId)?.id || null;
@@ -57738,7 +57751,6 @@ function deleteTaperPlanById(planId, options = {}) {
     (appData.taperPlansV2 || []).forEach(p => {
         if (String(p.id) === String(planId)) p.isPrimary = false;
     });
-    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
     // Deleting a taper must not touch logs, purchases, inventory, or substances.
     if ((appData.logs || []).length !== logsBefore
@@ -59509,7 +59521,6 @@ function handleTaperSubmit(e) {
             }
         }
 
-        syncLegacyTaperPlansFromV2(appData);
         const persisted = saveData(appData);
         if (!persisted) {
             return fail('Could not write plan to local storage. Check browser storage and try again.');
@@ -60374,6 +60385,7 @@ function downloadBlob(blob, filename) {
 }
 
 function cleanExportData(data) {
+    prepareTaperDataForPersistence(data);
     return {
         substances: (data.substances || []).map(s => ({
             id: s.id,
@@ -63445,6 +63457,8 @@ function __getRecoveryTrackerTestExports() {
         validateTaperPlanDates,
         detectSuspiciousDuplicateTapers,
         reportSuspiciousDuplicateTapers,
+        prepareTaperDataForPersistence,
+        syncLegacyTaperPlansFromV2,
         bindTaperFormSubmitHandlers,
         renderTaperFormDateSummary,
         renderTaperPlan,
@@ -63565,6 +63579,7 @@ function __getRecoveryTrackerTestExports() {
         collectInventorySourceOptions,
         initInventorySource,
         isInventorySourceDomElement,
+        isInventorySourceMountTarget,
         ensureBuySourcePickerMounted,
         mountBuySourcePickerHtml,
         applyBuySourceAcquisitionUiPatch,

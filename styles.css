@@ -10465,10 +10465,6 @@ html[data-theme="light"] .metric-pc-tone-unfavorable .metric-pc-change .metric-p
     .rd-home-charts {
         grid-template-columns: 1fr;
     }
-
-    .rd-alert {
-        flex-direction: column;
-    }
 }
 
 

@@ -653,14 +653,23 @@ let inventorySourcePickerMounted = false;
 let inventorySourcePickerMountWarned = false;
 
 function isInventorySourceDomElement(node) {
-    return !!node && typeof node.insertAdjacentHTML === 'function';
+    return !!node && typeof node === 'object' && !Array.isArray(node) && typeof node.insertAdjacentHTML === 'function';
+}
+
+function isInventorySourceMountTarget(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+    if (typeof node.insertAdjacentHTML === 'function') return true;
+    if (typeof Node !== 'undefined' && node instanceof Node && node.nodeType === 1) return true;
+    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node) || node, 'innerHTML')
+        || Object.getOwnPropertyDescriptor(node, 'innerHTML');
+    return !!(desc && typeof desc.set === 'function');
 }
 
 function mountBuySourcePickerHtml(html) {
     if (typeof document === 'undefined') return false;
     const hasPickerMarkup = () => html.includes('id="buy-source-group"') || html.includes("id='buy-source-group'");
     const mount = document.getElementById('buy-source-mount');
-    if (mount && typeof mount.innerHTML === 'string') {
+    if (isInventorySourceMountTarget(mount)) {
         mount.innerHTML = html;
         return hasPickerMarkup();
     }
