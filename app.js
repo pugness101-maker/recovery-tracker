@@ -26451,6 +26451,33 @@ function formatSimpleUsage(substanceId, amount, data = appData) {
     return `${n}${unit ? ` ${unit}` : ''}`;
 }
 
+function getSimpleSubstanceDisplayName(subOrId, data = appData) {
+    if (typeof getSubstanceDisplayName === 'function') {
+        return getSubstanceDisplayName(subOrId, data);
+    }
+    if (subOrId && typeof subOrId === 'object') return subOrId.name || subOrId.id || '';
+    return String(subOrId || '');
+}
+
+function formatSimpleLastSaved(raw) {
+    const text = String(raw || 'Last Saved: —').trim();
+    if (/^Last Saved:/i.test(text)) return text.replace(/^Last Saved:\s*/i, 'Last Saved: ');
+    return `Last Saved: ${text}`;
+}
+
+function formatSimpleSpendPeriodLabel(bounds) {
+    if (!bounds) return 'Estimated spending';
+    if (bounds.key === 'all') return 'Estimated spending · All time';
+    const days = Number(bounds.days) || Number(bounds.key);
+    if (Number.isFinite(days) && days > 0) return `Estimated spending · ${days} days`;
+    return 'Estimated spending';
+}
+
+function formatSimpleAxisDate(dateStr) {
+    if (typeof formatShortMonthDay === 'function') return formatShortMonthDay(dateStr);
+    return dateStr || '';
+}
+
 function getRecentAverageUsage(substanceId, days = 7, data = appData) {
     if (!substanceId || typeof getCanonicalUsageInRange !== 'function') return 0;
     const today = getLocalDateString();
@@ -26481,7 +26508,7 @@ function buildSimpleTodayCard(substance, data = appData) {
         : (substance.defaultUnit || '');
     return {
         substanceId,
-        name: substance.name || substanceId,
+        name: getSimpleSubstanceDisplayName(substance, data) || substance.name || substanceId,
         unit,
         used,
         usedLabel: formatSimpleUsage(substanceId, used, data),
@@ -26522,22 +26549,30 @@ function renderSimpleHome(data = appData) {
     const dataset = buildSimpleHomeDataset(data);
     const cardsHtml = dataset.cards.length
         ? dataset.cards.map(card => {
-            const vs = card.vsRecent == null
+            const vsRow = card.vsRecent == null
                 ? ''
-                : `<p class="sm-today-vs">${card.vsRecent <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(card.vsRecent))}% vs recent average</p>`;
-            const goalLine = card.goal != null
-                ? `<p class="sm-today-goal">Goal: ≤ ${escapeHtml(card.goalLabel)}</p>
-                   <p class="sm-today-remaining">${escapeHtml(card.remainingLabel)} remaining</p>`
-                : `<p class="sm-today-goal">${escapeHtml(card.status.label)}</p>`;
+                : `<div class="sm-today-row">
+                    <dt>vs recent</dt>
+                    <dd class="${card.vsRecent <= 0 ? 'sm-vs-down' : 'sm-vs-up'}">${card.vsRecent <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(card.vsRecent))}%</dd>
+                   </div>`;
+            const meta = card.goal != null
+                ? `<dl class="sm-today-meta">
+                    <div class="sm-today-row"><dt>Goal</dt><dd>≤ ${escapeHtml(card.goalLabel)}</dd></div>
+                    <div class="sm-today-row"><dt>Remaining</dt><dd>${escapeHtml(card.remainingLabel)}</dd></div>
+                    ${vsRow}
+                   </dl>`
+                : `<dl class="sm-today-meta">
+                    <div class="sm-today-row"><dt>Goal</dt><dd>${escapeHtml(card.status.label)}</dd></div>
+                    ${vsRow}
+                   </dl>`;
             return `
                 <article class="sm-today-card status-${escapeHtml(card.status.key)}" data-substance-id="${escapeHtml(card.substanceId)}">
                     <header class="sm-today-card-head">
                         <h3>${escapeHtml(card.name)}</h3>
                         <span class="sm-status-pill">${escapeHtml(card.status.label)}</span>
                     </header>
-                    <p class="sm-today-amount">${escapeHtml(card.usedLabel)} today</p>
-                    ${goalLine}
-                    ${vs}
+                    <p class="sm-today-amount">${escapeHtml(card.usedLabel)} <span class="sm-today-amount-label">today</span></p>
+                    ${meta}
                     <button type="button" class="sm-card-quick-btn" onclick="openSimpleQuickLog('${escapeHtml(card.substanceId)}')">Quick Log</button>
                 </article>`;
         }).join('')
@@ -26546,9 +26581,11 @@ function renderSimpleHome(data = appData) {
             <p class="settings-hint">Tap Quick Log to record use in a few taps.</p>
            </div>`;
 
-    const lastSaved = document.getElementById('dashboard-last-saved')?.textContent
+    const lastSaved = formatSimpleLastSaved(
+        document.getElementById('dashboard-last-saved')?.textContent
         || document.getElementById('settings-last-saved')?.textContent
-        || 'Last Saved: —';
+        || 'Last Saved: —'
+    );
 
     root.innerHTML = `
         <div class="sm-home-header">
@@ -26556,16 +26593,16 @@ function renderSimpleHome(data = appData) {
                 <h2 class="sm-home-title">Today</h2>
                 <p class="sm-home-sub">How am I doing today?</p>
             </div>
-            <p class="last-saved-status sm-last-saved">${escapeHtml(lastSaved.replace(/^Last Saved:\\s*/i, 'Last Saved: '))}</p>
+            <p class="last-saved-status sm-last-saved">${escapeHtml(lastSaved)}</p>
         </div>
         <div class="sm-primary-actions" role="group" aria-label="Primary actions">
             <button type="button" class="sm-action-btn sm-action-primary" onclick="openSimpleQuickLog()">Quick Log</button>
-            <button type="button" class="sm-action-btn" onclick="openSimpleLogDetails()">Log Details</button>
-            <button type="button" class="sm-action-btn" onclick="openSimpleProgress()">View Progress</button>
+            <button type="button" class="sm-action-btn sm-action-secondary" onclick="openSimpleLogDetails()">Log Details</button>
+            <button type="button" class="sm-action-btn sm-action-secondary" onclick="openSimpleProgress()">View Progress</button>
         </div>
         <div class="sm-today-grid" id="sm-today-grid">${cardsHtml}</div>
         <div class="sm-home-footer">
-            <button type="button" class="secondary-btn btn-sm" onclick="showAdvancedHomeDashboard()">Show full dashboard</button>
+            <button type="button" class="sm-text-btn" onclick="showAdvancedHomeDashboard()">Show full dashboard</button>
         </div>`;
 }
 
@@ -26894,6 +26931,7 @@ function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
     const streak = typeof computeRecoveryStreakDays === 'function'
         ? computeRecoveryStreakDays(substanceId)
         : { days: 0 };
+    // Estimated spending: reuse the canonical use-cost engine for the selected range.
     const spend = typeof getCanonicalCostInRange === 'function'
         ? getCanonicalCostInRange(substanceId, bounds.startDate, bounds.endDate, data)
         : 0;
@@ -26927,6 +26965,8 @@ function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
         status,
         streakDays: streak?.days ?? 0,
         spend,
+        spendPeriodLabel: formatSimpleSpendPeriodLabel(bounds),
+        displayName: getSimpleSubstanceDisplayName(substanceId, data),
         series,
         unit: typeof getSubstanceDisplayUnit === 'function'
             ? getSubstanceDisplayUnit(substanceId, data)
@@ -26943,7 +26983,17 @@ function renderSimpleProgressChart(series) {
             <div class="sm-chart-bar status-${escapeHtml(s.status.key)}" style="height:${h}%"></div>
         </div>`;
     }).join('');
-    return `<div class="sm-trend-chart" role="img" aria-label="Use trend">${bars}</div>`;
+    const startLabel = formatSimpleAxisDate(series[0].date);
+    const endLabel = formatSimpleAxisDate(series[series.length - 1].date);
+    return `<div class="sm-trend-card">
+        <div class="sm-trend-chart" role="img" aria-label="Use trend">
+            ${bars}
+        </div>
+        <div class="sm-trend-axis">
+            <span>${escapeHtml(startLabel)}</span>
+            <span>${escapeHtml(endLabel)}</span>
+        </div>
+    </div>`;
 }
 
 function renderSimpleProgressCalendar(dataset, monthStr) {
@@ -26984,13 +27034,15 @@ function renderSimpleProgressCalendar(dataset, monthStr) {
     const prevMonth = formatYYYYMMDD(new Date(year, month - 1, 1)).slice(0, 7);
     const nextMonth = formatYYYYMMDD(new Date(year, month + 1, 1)).slice(0, 7);
     return `
-        <div class="sm-cal-header">
-            <button type="button" class="secondary-btn btn-sm" onclick="setSimpleProgressCalendarMonth('${prevMonth}')" aria-label="Previous month">‹</button>
-            <h4>${escapeHtml(label)}</h4>
-            <button type="button" class="secondary-btn btn-sm" onclick="setSimpleProgressCalendarMonth('${nextMonth}')" aria-label="Next month">›</button>
-        </div>
-        <div class="sm-cal-dow">${['S','M','T','W','T','F','S'].map(d => `<span>${d}</span>`).join('')}</div>
-        <div class="sm-cal-grid">${cells.join('')}</div>`;
+        <div class="sm-cal-card">
+            <div class="sm-cal-header">
+                <button type="button" class="sm-cal-nav" onclick="setSimpleProgressCalendarMonth('${prevMonth}')" aria-label="Previous month">‹</button>
+                <h4>${escapeHtml(label)}</h4>
+                <button type="button" class="sm-cal-nav" onclick="setSimpleProgressCalendarMonth('${nextMonth}')" aria-label="Next month">›</button>
+            </div>
+            <div class="sm-cal-dow">${['S','M','T','W','T','F','S'].map(d => `<span>${d}</span>`).join('')}</div>
+            <div class="sm-cal-grid">${cells.join('')}</div>
+        </div>`;
 }
 
 function setSimpleProgressCalendarMonth(monthStr) {
@@ -27039,17 +27091,18 @@ function renderSimpleProgress(data = appData) {
             ? formatMoneyOrDash(dataset.spend)
             : `$${Number(dataset.spend).toFixed(2)}`)
         : '—';
+    const spendPeriodLabel = dataset.spendPeriodLabel || formatSimpleSpendPeriodLabel(dataset.bounds);
 
     root.innerHTML = `
         <div class="sm-progress-header">
             <h2>Progress</h2>
-            <p class="settings-hint">A simple look at how things are going.</p>
+            <p class="sm-progress-sub">A simple look at how things are going.</p>
         </div>
         <div class="sm-progress-controls">
             <label class="sm-field">
                 <span>Substance</span>
                 <select id="sm-progress-substance" onchange="onSimpleProgressSubstanceChange(this.value)">
-                    ${substances.map(s => `<option value="${escapeHtml(s.id)}"${s.id === substanceId ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}
+                    ${substances.map(s => `<option value="${escapeHtml(s.id)}"${s.id === substanceId ? ' selected' : ''}>${escapeHtml(getSimpleSubstanceDisplayName(s, data))}</option>`).join('')}
                 </select>
             </label>
             <div class="sm-range-pills" role="group" aria-label="Progress range">
@@ -27066,18 +27119,23 @@ function renderSimpleProgress(data = appData) {
             <div class="sm-metric"><span class="sm-metric-label">Change</span><strong>${escapeHtml(pctLabel)}</strong></div>
             <div class="sm-metric"><span class="sm-metric-label">Break / streak</span><strong>${dataset.streakDays} day${dataset.streakDays === 1 ? '' : 's'}</strong></div>
             <div class="sm-metric"><span class="sm-metric-label">Goal</span><strong>${escapeHtml(dataset.status.label)}</strong></div>
-            <div class="sm-metric"><span class="sm-metric-label">Estimated spending</span><strong>${escapeHtml(spendLabel)}</strong></div>
+            <div class="sm-metric"><span class="sm-metric-label">${escapeHtml(spendPeriodLabel)}</span><strong>${escapeHtml(spendLabel)}</strong></div>
         </div>
-        <section class="sm-progress-section">
-            <h3>Trend</h3>
+        <section class="sm-progress-section sm-trend-section">
+            <div class="sm-section-head">
+                <h3>Trend</h3>
+                <p class="sm-section-sub">${escapeHtml(dataset.bounds.label)}</p>
+            </div>
             ${renderSimpleProgressChart(dataset.series)}
         </section>
-        <section class="sm-progress-section">
-            <h3>Calendar</h3>
+        <section class="sm-progress-section sm-cal-section">
+            <div class="sm-section-head">
+                <h3>Calendar</h3>
+            </div>
             <div id="sm-progress-calendar">${renderSimpleProgressCalendar(dataset, month)}</div>
         </section>
         <div class="sm-progress-footer">
-            <button type="button" class="secondary-btn" onclick="openDetailedAnalyticsFromSimple()">View Detailed Analytics</button>
+            <button type="button" class="sm-text-btn" onclick="openDetailedAnalyticsFromSimple()">View Detailed Analytics</button>
         </div>`;
 }
 
@@ -60963,6 +61021,7 @@ function __getRecoveryTrackerTestExports() {
         buildNormalizedSubstanceMetrics,
         getCanonicalUsageOnDate,
         getCanonicalUsageInRange,
+        getCanonicalCostInRange,
         scanDataHealth,
         previewDataHealthRepairs,
         applyDataHealthRepairs,
@@ -61611,6 +61670,8 @@ function __getRecoveryTrackerTestExports() {
         resolveSimpleGoalStatus,
         SIMPLE_PLAN_INTENTS,
         EXPERIENCE_PROGRESS_RANGES,
+        getSimpleSubstanceDisplayName,
+        formatSimpleSpendPeriodLabel,
         ensureInsightsFilters,
         getInsightsFilters,
         persistInsightsFilters,

@@ -105,6 +105,9 @@
                     <strong>Safety Note:</strong> If you feel unsafe, may overdose, or have severe withdrawal symptoms, call emergency services or a medical professional immediately.
                 </div>
 
+                <div id="simple-home" class="simple-home" aria-live="polite"></div>
+
+                <div id="advanced-home-wrap" class="advanced-home-wrap">
                 <header class="dash-header">
                     <div class="dash-header-top">
                         <h2 class="dash-title">Recovery Dashboard</h2>
@@ -302,7 +305,7 @@
                 <span class="hidden" id="dash-time-since-last-use"></span>
                 <span class="hidden" id="quick-log-btn"></span>
                 <span class="hidden" id="quick-undo-btn"></span>
-            </section>
+                </div><!-- /advanced-home-wrap -->
             </section>
 
             <!-- Log Tab -->
@@ -331,7 +334,7 @@
                     </button>
                     <div class="section-content">
                 <form id="use-log-form" class="use-log-form">
-                    <div class="use-log-entry-toggle use-entry-type-three" id="use-entry-type-group">
+                    <div class="use-log-entry-toggle use-entry-type-three sm-log-more-field" id="use-entry-type-group">
                         <button type="button" class="use-entry-toggle-btn type-toggle-btn active" data-type="quick" onclick="selectUseEntryType('quick')">
                             <span class="use-entry-toggle-icon">⚡</span>
                             <span class="use-entry-toggle-label">Quick Use</span>
@@ -347,7 +350,7 @@
                         <input type="hidden" id="use-type" value="quick">
                     </div>
 
-                    <div class="use-log-field-block" id="use-transaction-type-block">
+                    <div class="use-log-field-block sm-log-more-field" id="use-transaction-type-block">
                         <span class="use-log-field-label">Transaction Type</span>
                         <div class="use-tx-pills" role="group" aria-label="Transaction type">
                             <button type="button" class="use-tx-pill active" data-tx="use" data-tx-group="use" onclick="setUseTransactionType('use')">Personal Use</button>
@@ -416,6 +419,7 @@
                                 <select id="use-unit" required></select>
                             </div>
                         </div>
+                        <div id="sm-recent-amounts" class="sm-recent-amounts hidden" aria-live="polite"></div>
 
                         <div class="form-group use-log-compact hidden" id="use-alcohol-custom-unit-group">
                             <label for="use-alcohol-custom-unit">Custom unit name</label>
@@ -619,8 +623,9 @@
                     </div>
 
                     <details class="use-log-advanced" id="use-advanced-section">
-                        <summary class="use-log-advanced-summary">Advanced options</summary>
+                        <summary class="use-log-advanced-summary">More Options</summary>
                         <div class="use-log-advanced-body">
+                            <div id="sm-more-options-slot" class="sm-more-options-slot"></div>
                             <div id="use-inventory-fields-group">
                                 <div class="form-group use-log-compact">
                                     <label for="use-purchase-link-mode" id="use-purchase-link-label">Use From Inventory</label>
@@ -706,6 +711,11 @@
             <!-- Calendar Tab -->
             <!-- Tapers Tab -->
             <section id="goals-plans-tab" class="tab combined-page goals-plans-page">
+                <div id="simple-plan-wizard" class="simple-plan-wizard hidden" aria-live="polite"></div>
+                <div class="sm-plan-simple-actions sm-only">
+                    <button type="button" class="submit-btn" id="sm-new-plan-btn" onclick="openSimplePlanWizard()">New Plan</button>
+                    <button type="button" class="secondary-btn" onclick="document.getElementById('goals-plans-tab')?.classList.add('sm-show-advanced-plan')">Advanced Plan Settings</button>
+                </div>
                 <div class="page-header-row combined-page-header">
                     <div class="page-title-block">
                         <h2>Tapers</h2>
@@ -746,7 +756,7 @@
                         </div>
                     </div>
 
-                <div id="taper-plan-toolbar" class="taper-plan-toolbar hidden">
+                <div id="taper-plan-toolbar" class="taper-plan-toolbar hidden" data-sm-plan-advanced="true">
                     <div class="taper-plan-toolbar-left">
                         <div class="page-substance-selector substance-select-card taper-plan-select-card">
                             <label for="taper-plan-select" class="page-substance-label">Plan</label>
@@ -1421,6 +1431,9 @@
 
             <!-- Insights & Calendar Tab -->
             <section id="insights-calendar-tab" class="tab combined-page insights-calendar-page">
+                <div id="simple-progress" class="simple-progress" aria-live="polite"></div>
+
+                <div id="advanced-insights-wrap" class="advanced-insights-wrap">
                 <div class="page-header-row combined-page-header">
                     <div>
                         <h2>Insights &amp; Calendar</h2>
@@ -2022,6 +2035,7 @@
                     <p id="ic-error-message">Could not load Insights &amp; Calendar.</p>
                     <button type="button" class="secondary-btn btn-sm" onclick="renderInsightsCalendarCombinedView()">Retry</button>
                 </div>
+                </div><!-- /advanced-insights-wrap -->
             </section>
 
 
@@ -2425,7 +2439,6 @@
                 </form>
                     </div>
                 </div>
-
             </section>
 
 
@@ -2440,6 +2453,27 @@
                     </button>
                     <div class="section-content">
                 <div class="settings-section">
+                    <div class="form-group experience-mode-group">
+                        <label id="experience-mode-label">Experience Mode</label>
+                        <div class="experience-mode-control" role="group" aria-labelledby="experience-mode-label">
+                            <button type="button" class="experience-mode-btn active" data-experience-mode="simple" aria-pressed="true" onclick="onExperienceModeChange('simple')">Simple</button>
+                            <button type="button" class="experience-mode-btn" data-experience-mode="advanced" aria-pressed="false" onclick="onExperienceModeChange('advanced')">Advanced</button>
+                        </div>
+                        <select id="experience-mode" class="experience-mode-select visually-hidden" aria-label="Experience Mode" onchange="onExperienceModeChange(this.value)">
+                            <option value="simple">Simple</option>
+                            <option value="advanced">Advanced</option>
+                        </select>
+                        <p class="settings-hint">Simple focuses on daily logging and progress. Advanced keeps the full Recovery Tracker toolkit (inventory, detailed insights, custom columns, data health).</p>
+                    </div>
+                    <div id="sm-advanced-more" class="sm-advanced-more">
+                        <h3 class="settings-subhead">Advanced / More</h3>
+                        <p class="settings-hint">These stay available anytime. Switch to Advanced Mode for the full navigation, or open them here.</p>
+                        <div class="sm-advanced-more-actions">
+                            <button type="button" class="secondary-btn" onclick="onExperienceModeChange('advanced'); switchTab('buy-tracker-tab')">Inventory</button>
+                            <button type="button" class="secondary-btn" onclick="onExperienceModeChange('advanced'); switchTab('insights-calendar-tab')">Detailed Insights</button>
+                            <button type="button" class="secondary-btn" onclick="switchTab('buy-tracker-tab')">Open Inventory (keep Simple)</button>
+                        </div>
+                    </div>
                     <div class="form-group">
                         <label for="theme-preference">Theme</label>
                         <select id="theme-preference" onchange="setThemePreference(this.value)">
@@ -3025,7 +3059,7 @@
             <span class="nav-btn-label-full">Log</span>
             <span class="nav-btn-label-short">Log</span>
         </button>
-        <button class="nav-btn" data-tab="buy-tracker-tab" onclick="switchTab('buy-tracker-tab')">
+        <button class="nav-btn" data-tab="buy-tracker-tab" data-sm-nav="inventory" onclick="switchTab('buy-tracker-tab')">
             <span aria-hidden="true">📦</span>
             <span class="nav-btn-label-full">Inventory</span>
             <span class="nav-btn-label-short">Stock</span>

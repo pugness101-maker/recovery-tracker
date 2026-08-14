@@ -2454,12 +2454,12 @@
                     <div class="section-content">
                 <div class="settings-section">
                     <div class="form-group experience-mode-group">
-                        <label id="experience-mode-label" for="experience-mode">Experience Mode</label>
+                        <label id="experience-mode-label">Experience Mode</label>
                         <div class="experience-mode-control" role="group" aria-labelledby="experience-mode-label">
                             <button type="button" class="experience-mode-btn active" data-experience-mode="simple" aria-pressed="true" onclick="onExperienceModeChange('simple')">Simple</button>
                             <button type="button" class="experience-mode-btn" data-experience-mode="advanced" aria-pressed="false" onclick="onExperienceModeChange('advanced')">Advanced</button>
                         </div>
-                        <select id="experience-mode" aria-label="Experience Mode" onchange="onExperienceModeChange(this.value)">
+                        <select id="experience-mode" class="experience-mode-select visually-hidden" aria-label="Experience Mode" onchange="onExperienceModeChange(this.value)">
                             <option value="simple">Simple</option>
                             <option value="advanced">Advanced</option>
                         </select>

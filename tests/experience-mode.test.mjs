@@ -66,6 +66,10 @@ test('Experience Mode markup and CSS exist', () => {
     assert.match(css, /\.sm-today-card/);
     assert.match(css, /\.sm-trend-chart/);
     assert.match(css, /\.sm-cal-grid/);
+    assert.match(css, /\.experience-mode-select/);
+    assert.match(css, /max-width: 22\.5rem/);
+    assert.match(html, /experience-mode-select/);
+    assert.match(html, /visually-hidden/);
 });
 
 test('new installs default to Simple; existing users migrate to Advanced', () => {
@@ -159,6 +163,70 @@ test('progress dataset uses same range engine and does not invent combined units
     assert.ok(dataset.series.length >= 1);
     assert.ok(Number.isFinite(dataset.dailyAvg));
     assert.equal(dataset.unit, 'g');
+});
+
+test('simple home uses polished substance display names instead of raw ids', () => {
+    const rt = setup({
+        substances: [{
+            id: 'coke',
+            name: 'coke',
+            trackingMode: 'powder',
+            primaryUnit: 'g',
+            defaultUnit: 'g',
+            units: ['g'],
+            active: true,
+            isMain: true,
+            taperTrackingEnabled: true
+        }]
+    });
+    const data = rt.__getTestAppData();
+    const card = rt.buildSimpleTodayCard({ id: 'coke', name: 'coke', defaultUnit: 'g' }, data);
+    assert.equal(card.substanceId, 'coke');
+    assert.equal(card.name, 'Coke');
+    assert.equal(rt.getSimpleSubstanceDisplayName('coke', data), 'Coke');
+    assert.notEqual(card.name, 'coke');
+});
+
+test('estimated spending uses canonical cost engine and selected date range', () => {
+    const rt = setup({
+        logs: [
+            { id: 1, substanceId: 'coke', date: '2026-08-01', amount: 0.5, unit: 'g', transactionType: 'use', type: 'quick' },
+            { id: 2, substanceId: 'coke', date: '2026-08-13', amount: 0.2, unit: 'g', transactionType: 'use', type: 'quick' }
+        ],
+        purchases: [
+            { id: 1, substanceId: 'coke', date: '2026-08-01', amount: 1, totalCost: 80, costPerUnit: 80, transactionType: 'buy' }
+        ]
+    });
+    if (typeof rt.setTestReferenceDate === 'function') rt.setTestReferenceDate('2026-08-13');
+    const data = rt.__getTestAppData();
+    const dataset = rt.buildSimpleProgressDataset('coke', '30', data);
+    assert.equal(dataset.bounds.key, '30');
+    assert.equal(dataset.bounds.days, 30);
+    assert.equal(dataset.bounds.endDate, '2026-08-13');
+    assert.equal(dataset.spendPeriodLabel, 'Estimated spending · 30 days');
+    const expected = rt.getCanonicalCostInRange('coke', dataset.bounds.startDate, dataset.bounds.endDate, data);
+    assert.equal(dataset.spend, expected);
+    assert.equal(rt.formatSimpleSpendPeriodLabel({ key: 'all', days: 100 }), 'Estimated spending · All time');
+    assert.equal(rt.formatSimpleSpendPeriodLabel({ key: '7', days: 7 }), 'Estimated spending · 7 days');
+});
+
+test('simple mode polish CSS keeps compact calendar and one experience-mode control', () => {
+    const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
+    const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+    assert.match(css, /\.sm-cal-card/);
+    assert.match(css, /max-width: 22\.5rem/);
+    assert.match(css, /aspect-ratio: 1 \/ 1/);
+    assert.match(css, /:root\[data-view-layout="laptop"\] body\.experience-simple \.bottom-nav/);
+    assert.match(css, /:root\[data-view-layout="phone"\] body\.experience-simple \.bottom-nav/);
+    assert.match(css, /env\(safe-area-inset-bottom/);
+    assert.match(css, /\.sm-today-grid \{[\s\S]*grid-template-columns: 1fr/);
+    assert.match(css, /:root\[data-view-layout="phone"\] \.sm-today-grid/);
+    assert.match(css, /auto-fill, minmax\(280px/);
+    assert.doesNotMatch(css, /(?:^|\n)body\.experience-simple \.bottom-nav \{/);
+    assert.match(html, /class="experience-mode-select visually-hidden"/);
+    assert.match(html, /data-experience-mode="simple"/);
+    assert.match(html, /for="theme-preference"/);
+    assert.match(html, /appearance-view-mode/);
 });
 
 test('plan intents remain available and export includes experienceMode', () => {
