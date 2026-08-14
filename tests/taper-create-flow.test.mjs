@@ -222,16 +222,20 @@ test('New Taper still creates after using Edit', () => {
     assert.ok(data.taperPlansV2.find(p => p.name === 'After edit taper'));
 });
 
-test('New Taper still creates after using Duplicate, and Duplicate mints its own id', () => {
+test('New Taper still creates after using Duplicate, and Duplicate save mints its own id', () => {
     const rt = setupApp([makePlan()]);
     const { nodes } = installDom(rt);
 
-    rt.duplicateTaperPlanById('existing-taper');
+    assert.equal(rt.duplicateTaperPlanById('existing-taper'), true);
+    assert.equal(rt.getTaperUiState().mode, 'duplicate');
+    assert.equal(rt.__getTestAppData().taperPlansV2.length, 1);
+
+    fillCreateForm(nodes, 'Duplicated taper');
+    assert.equal(rt.handleTaperSubmit({ preventDefault() {} }), true);
     const afterDuplicate = rt.__getTestAppData().taperPlansV2;
     assert.equal(afterDuplicate.length, 2);
     const copy = afterDuplicate.find(p => p.id !== 'existing-taper');
     assert.notEqual(copy.id, 'existing-taper');
-    assert.equal(rt.selectedTaperPlanIdRef.value, copy.id);
 
     assert.equal(rt.openUnifiedNewTaper(), true);
     assert.equal(rt.getTaperFormMode(), 'create');

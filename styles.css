@@ -2178,6 +2178,24 @@ input[type="range"]::-webkit-slider-thumb {
     align-items: flex-end;
 }
 
+.taper-plan-date-summary,
+.taper-plan-time-progress,
+.taper-form-date-summary {
+    font-size: 0.85rem;
+    color: var(--text-muted);
+    margin: 6px 0 0;
+}
+
+.taper-form-date-summary.is-invalid {
+    color: var(--danger);
+}
+
+.goal-card-time-progress {
+    margin-top: 2px;
+    font-size: 0.82rem;
+    color: var(--text-muted);
+}
+
 .taper-show-archived-toggle {
     display: flex;
     align-items: center;

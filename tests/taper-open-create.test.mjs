@@ -219,7 +219,7 @@ test('selecting a taper from the dropdown opens that taper dashboard', () => {
     rt.onTaperPlanChange();
 
     assert.equal(rt.selectedTaperPlanIdRef.value, 'taper-b');
-    assert.equal(rt.getTaperFormMode(), 'create');
+    assert.equal(rt.getTaperUiState().mode, 'view');
     assert.equal(rt.taperEditingPlanRef.value, false);
     assert.equal(nodes.get('taper-setup').classList.contains('hidden'), true);
     assert.equal(nodes.get('taper-dashboard').classList.contains('hidden'), false);
@@ -238,8 +238,8 @@ test('Open button opens the correct taper without entering create mode', () => {
     rt.openUnifiedTaperRecord('taper-b');
 
     assert.equal(rt.selectedTaperPlanIdRef.value, 'taper-b');
+    assert.equal(rt.getTaperUiState().mode, 'view');
     assert.equal(rt.taperEditingPlanRef.value, false);
-    assert.equal(rt.resolveTaperFormEditingPlanId(), null);
     assert.equal(nodes.get('taper-dashboard').classList.contains('hidden'), false);
     assert.equal(nodes.get('taper-setup').classList.contains('hidden'), true);
 });
