@@ -836,6 +836,24 @@
                         </div>
                     </div>
 
+                    <div class="collapsible-section" data-section="taperPeriodSummary">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperPeriodSummary')">
+                            <span>Taper Summary</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
+                            <div id="taper-period-summary" class="taper-period-summary">
+                                <p id="taper-period-range-label" class="taper-period-range-label">—</p>
+                                <div class="taper-mini-stats">
+                                    <div class="taper-mini-stat"><span>Total used</span><strong id="taper-period-total-used">—</strong></div>
+                                    <div class="taper-mini-stat"><span>Average per day</span><strong id="taper-period-avg-day">—</strong></div>
+                                    <div class="taper-mini-stat"><span>Total cost</span><strong id="taper-period-total-cost">—</strong></div>
+                                    <div class="taper-mini-stat"><span>Average cost per day</span><strong id="taper-period-avg-cost-day">—</strong></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="collapsible-section" data-section="taperCurrentWeekSummary">
                         <button type="button" class="section-toggle" onclick="toggleSection('taperCurrentWeekSummary')">
                             <span>Current Week Summary</span>

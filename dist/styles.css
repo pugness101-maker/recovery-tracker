@@ -2517,7 +2517,15 @@ input[type="range"]::-webkit-slider-thumb {
     line-height: 1.25;
 }
 
-.taper-current-week-summary .taper-progress-panel-head {
+.taper-period-summary .taper-period-range-label {
+    margin: 0 0 0.75rem;
+    color: var(--text-muted, #64748b);
+    font-size: 0.875rem;
+}
+
+.taper-period-summary .taper-mini-stats {
+    margin-top: 0;
+}
     margin-bottom: 8px;
 }
 

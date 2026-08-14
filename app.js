@@ -1210,6 +1210,9 @@ function refreshPreviousPeriodCompareDisplays() {
         if (typeof updateDashboard === 'function') updateDashboard();
         if (typeof renderStats === 'function') renderStats();
         else if (typeof refreshInsightsView === 'function') refreshInsightsView();
+        if (typeof renderTaperPeriodSummary === 'function' && typeof currentSubstanceId !== 'undefined') {
+            renderTaperPeriodSummary(currentSubstanceId);
+        }
         if (typeof renderTaperCurrentWeekSummary === 'function' && typeof currentSubstanceId !== 'undefined') {
             renderTaperCurrentWeekSummary(currentSubstanceId);
         }
@@ -29775,6 +29778,7 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     chartBuilder: true,
     statsMoreMetrics: true,
     taperPlanHeader: false,
+    taperPeriodSummary: false,
     taperCurrentWeekSummary: false,
     taperWeeklyTable: false,
     taperSpendingPurchases: true,
@@ -58815,6 +58819,116 @@ function renderPurchasePacingTimeline(substanceId) {
     container.innerHTML = html;
 }
 
+function getTaperPeriodUsageBounds(plan, today = getLocalDateString()) {
+    const startDate = plan?.startDate;
+    const endDate = plan?.endDate;
+    if (!startDate || !endDate) {
+        return { ok: false, reason: 'missing-dates' };
+    }
+    if (String(endDate) < String(startDate)) {
+        return { ok: false, reason: 'invalid-range' };
+    }
+    const todayStr = String(today || getLocalDateString());
+    const totalDays = countDaysInRange(startDate, endDate);
+    if (todayStr < startDate) {
+        return {
+            ok: true,
+            startDate,
+            endDate,
+            usageStart: startDate,
+            usageEnd: startDate,
+            elapsedDays: 0,
+            totalDays,
+            notStarted: true,
+            complete: false
+        };
+    }
+    const usageEnd = todayStr > endDate ? endDate : todayStr;
+    const elapsedDays = countDaysInRange(startDate, usageEnd);
+    return {
+        ok: true,
+        startDate,
+        endDate,
+        usageStart: startDate,
+        usageEnd,
+        elapsedDays,
+        totalDays,
+        notStarted: false,
+        complete: todayStr > endDate
+    };
+}
+
+function getTaperPeriodSummary(plan, substanceId, data = appData, today = getLocalDateString()) {
+    if (!plan || !substanceId || plan.substanceId !== substanceId) return null;
+    const bounds = getTaperPeriodUsageBounds(plan, today);
+    if (!bounds.ok) return { ...bounds, substanceId };
+
+    const unit = getTaperTrackingUnit(plan, substanceId);
+    const displayUnit = isVapeNicotineSubstanceId(substanceId, data) ? 'puffs' : unit;
+    let totalUsed = 0;
+    let totalCost = 0;
+    if (!bounds.notStarted && bounds.elapsedDays > 0) {
+        totalUsed = getCanonicalUsageInRange(substanceId, bounds.usageStart, bounds.usageEnd, data);
+        totalCost = getCanonicalCostInRange(substanceId, bounds.usageStart, bounds.usageEnd, data);
+    }
+    const elapsedDays = bounds.elapsedDays || 0;
+    return {
+        ...bounds,
+        substanceId,
+        unit: displayUnit,
+        totalUsed,
+        totalCost,
+        avgPerDay: elapsedDays > 0 ? totalUsed / elapsedDays : 0,
+        avgCostPerDay: elapsedDays > 0 ? totalCost / elapsedDays : 0
+    };
+}
+
+function renderTaperPeriodSummary(substanceId) {
+    const plan = getSelectedTaperPlan();
+    const sub = getSubstance(substanceId);
+    if (!plan || !sub || plan.substanceId !== substanceId) return;
+
+    const summary = getTaperPeriodSummary(plan, substanceId);
+    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+
+    if (!summary?.ok) {
+        set(
+            'taper-period-range-label',
+            summary?.reason === 'missing-dates' ? 'Set start and end dates to see taper totals.' : '—'
+        );
+        set('taper-period-total-used', '—');
+        set('taper-period-avg-day', '—');
+        set('taper-period-total-cost', '—');
+        set('taper-period-avg-cost-day', '—');
+        return;
+    }
+
+    const rangeLabel = summary.notStarted
+        ? `${formatCompactTaperDateRange(summary.startDate, summary.endDate)} · not started yet`
+        : summary.complete
+            ? `${formatCompactTaperDateRange(summary.startDate, summary.endDate)} · complete`
+            : `${formatCompactTaperDateRange(summary.startDate, summary.endDate)} · ${summary.elapsedDays} of ${summary.totalDays} days elapsed`;
+    set('taper-period-range-label', rangeLabel);
+
+    const usePuffFormat = isReducePuffsPlan(plan) || isVapeNicotineSubstanceId(substanceId);
+    const formatUsage = (value) => (usePuffFormat
+        ? formatTaperActualAmount(value, summary.unit)
+        : formatTaperAmount(value, summary.unit));
+
+    if (summary.notStarted) {
+        set('taper-period-total-used', formatUsage(0));
+        set('taper-period-avg-day', formatUsage(0));
+        set('taper-period-total-cost', formatTaperMoney(0));
+        set('taper-period-avg-cost-day', formatTaperMoney(0));
+        return;
+    }
+
+    set('taper-period-total-used', formatUsage(summary.totalUsed));
+    set('taper-period-avg-day', formatUsage(summary.avgPerDay));
+    set('taper-period-total-cost', formatTaperMoney(summary.totalCost));
+    set('taper-period-avg-cost-day', formatTaperMoney(summary.avgCostPerDay));
+}
+
 function renderTaperCurrentWeekSummary(substanceId) {
     const plan = getSelectedTaperPlan();
     const sub = getSubstance(substanceId);
@@ -59867,6 +59981,7 @@ function renderTaperPlan() {
     applyTaperMetricVisibilityToDashboard();
     renderTaperPlanSummary(substanceId);
     renderLegacyPuffConvertBanner(substanceId);
+    renderTaperPeriodSummary(substanceId);
     renderTaperCurrentWeekSummary(substanceId);
     renderTaperWeeklyTable(substanceId);
     renderTaperSpendingPurchases(substanceId);
@@ -63360,6 +63475,9 @@ function __getRecoveryTrackerTestExports() {
         getCurrentManualWeekRow,
         getManualWeeklyWeekNumber,
         getTaperWeeklySummary,
+        getTaperPeriodUsageBounds,
+        getTaperPeriodSummary,
+        renderTaperPeriodSummary,
         getPlannedWeeklyTarget,
         resolvePlanCostPerGram,
         computeWeightedAverageCostPerGram,
