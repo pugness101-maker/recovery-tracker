@@ -9501,8 +9501,8 @@ function restoreChangeHistoryEntry(entryId, { confirmRestore = true } = {}) {
     }
     createAutoBackup('before-history-restore');
     pushChangeHistory('before-restore', { restoredId: entryId });
-    appData = normalizeAppDataSafe(entry.snapshot);
-    normalizeAppData(appData);
+    const snapshotClone = JSON.parse(JSON.stringify(entry.snapshot));
+    appData = normalizeAppDataSafe(snapshotClone);
     saveData(appData);
     refreshAppAfterDataChange();
     renderChangeHistoryPanel();
@@ -29278,6 +29278,8 @@ function migrateFromV1(v1) {
 let appDataLoadedFromStorage = false;
 /** Set during loadData when normalization/migration changed persistable data. */
 let appDataPersistAfterLoad = false;
+/** Test-only: counts normalizeAppData invocations within the current VM session. */
+let normalizeAppDataInvocationCount = 0;
 
 const PERSIST_COMPARE_VOLATILE_KEYS = new Set(['updatedAt', 'scannedAt']);
 
@@ -29433,6 +29435,7 @@ function migrateUseLogsToLogs(data) {
 }
 
 function normalizeAppData(data) {
+    normalizeAppDataInvocationCount += 1;
     normalizeLegacyRefs(data);
     migrateUseLogsToLogs(data);
     data.logs = data.logs || [];
@@ -63289,6 +63292,8 @@ function __getRecoveryTrackerTestExports() {
         pushChangeHistory,
         loadChangeHistory,
         restoreChangeHistoryEntry,
+        getNormalizeAppDataInvocationCount: () => normalizeAppDataInvocationCount,
+        resetNormalizeAppDataInvocationCount: () => { normalizeAppDataInvocationCount = 0; },
         buildImportPreview,
         getColumnPresetDefinition,
         applyColumnPreset,

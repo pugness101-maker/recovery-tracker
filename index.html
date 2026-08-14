@@ -2464,6 +2464,33 @@
             <section id="settings-tab" class="tab">
                 <h2>Settings</h2>
 
+                <div class="collapsible-section" data-section="settingsBackup">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsBackup')">
+                        <span>Account &amp; Data</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section">
+                    <h3>Data &amp; Backup</h3>
+                    <p id="settings-last-saved" class="last-saved-status">Last Saved: Never</p>
+                    <p class="last-saved-status">Last auto-backup: <span id="settings-auto-backup-date">Never</span></p>
+                    <p class="data-storage-note">Data is stored only in this browser (localStorage). A local backup is created automatically before import, reset, migration, or bulk repair.</p>
+                    <input type="file" id="import-json-input" accept=".json,application/json" class="hidden" onchange="handleImportJsonFile(event)">
+                    <div class="data-management-buttons">
+                        <button type="button" class="secondary-btn" onclick="exportJsonBackup()">Export JSON Backup</button>
+                        <button type="button" class="secondary-btn" onclick="triggerImportJsonBackup()">Import JSON Backup</button>
+                        <button type="button" class="secondary-btn" onclick="restoreLastAutoBackup()">Restore Last Backup</button>
+                        <button type="button" class="secondary-btn" onclick="exportDataCsv()">Export CSV</button>
+                    </div>
+                    <label class="settings-toggle-row" for="settings-use-custom-names-in-csv">
+                        <input type="checkbox" id="settings-use-custom-names-in-csv">
+                        <span>Use custom names in CSV export</span>
+                    </label>
+                    <p class="settings-hint">Off by default so CSV headers stay stable. Turn on to use your Display names in table CSV exports.</p>
+                </div>
+                    </div>
+                </div>
+
                 <div class="collapsible-section" data-section="settingsAppearance">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsAppearance')">
                         <span>Appearance</span>
@@ -3017,33 +3044,6 @@
                             <p class="settings-hint">Shared contacts for Log, Inventory, Tapers, and Insights. Archiving never deletes history.</p>
                             <div id="contacts-root" class="contacts-root" aria-live="polite"></div>
                         </div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="settingsBackup">
-                    <button type="button" class="section-toggle" onclick="toggleSection('settingsBackup')">
-                        <span>Account &amp; Data</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                <div class="settings-section">
-                    <h3>Data &amp; Backup</h3>
-                    <p id="settings-last-saved" class="last-saved-status">Last Saved: Never</p>
-                    <p class="last-saved-status">Last auto-backup: <span id="settings-auto-backup-date">Never</span></p>
-                    <p class="data-storage-note">Data is stored only in this browser (localStorage). A local backup is created automatically before import, reset, migration, or bulk repair.</p>
-                    <input type="file" id="import-json-input" accept=".json,application/json" class="hidden" onchange="handleImportJsonFile(event)">
-                    <div class="data-management-buttons">
-                        <button type="button" class="secondary-btn" onclick="exportJsonBackup()">Export JSON Backup</button>
-                        <button type="button" class="secondary-btn" onclick="triggerImportJsonBackup()">Import JSON Backup</button>
-                        <button type="button" class="secondary-btn" onclick="restoreLastAutoBackup()">Restore Last Backup</button>
-                        <button type="button" class="secondary-btn" onclick="exportDataCsv()">Export CSV</button>
-                    </div>
-                    <label class="settings-toggle-row" for="settings-use-custom-names-in-csv">
-                        <input type="checkbox" id="settings-use-custom-names-in-csv">
-                        <span>Use custom names in CSV export</span>
-                    </label>
-                    <p class="settings-hint">Off by default so CSV headers stay stable. Turn on to use your Display names in table CSV exports.</p>
-                </div>
                     </div>
                 </div>
 
