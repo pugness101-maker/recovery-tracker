@@ -6,5 +6,10 @@
     "test": "node --test tests/**/*.test.mjs",
     "build": "node scripts/build.mjs",
     "lint": "node --check app.js"
+  },
+  "dependencies": {
+    "@capacitor/cli": "^8.5.0",
+    "@capacitor/core": "^8.5.0",
+    "@capacitor/ios": "^8.5.0"
   }
 }
