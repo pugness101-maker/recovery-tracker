@@ -11,6 +11,8 @@ const THEME_PREFERENCE_KEY = 'recoveryTracker.themePreference';
 const APPEARANCE_VIEW_MODES = Object.freeze(['auto', 'phone', 'laptop']);
 const APPEARANCE_VIEW_MODE_LAPTOP_MQ = '(min-width: 768px)';
 const COLUMN_PRESET_IDS = Object.freeze(['basic', 'cost', 'inventory', 'detailed']);
+const USE_BREAK_FIELDS = Object.freeze(['breakMinutes', 'breakHours', 'breakText']);
+const BUY_BREAK_FIELDS = Object.freeze(['buyBreakMinutes', 'buyBreakHours', 'buyBreakText']);
 const DEFAULT_DASHBOARD_WIDGETS = Object.freeze([
     'todayUsed', 'weekUsed', 'monthUsed', 'spentMonth', 'monthCap', 'streak', 'quickActions'
 ]);
@@ -35104,9 +35106,6 @@ function formatBreakText(minutes) {
     return `${mins}m`;
 }
 
-const USE_BREAK_FIELDS = Object.freeze(['breakMinutes', 'breakHours', 'breakText']);
-const BUY_BREAK_FIELDS = Object.freeze(['buyBreakMinutes', 'buyBreakHours', 'buyBreakText']);
-
 function clearUseBreakFields(log) {
     USE_BREAK_FIELDS.forEach(field => delete log[field]);
 }
@@ -64203,6 +64202,7 @@ function __getRecoveryTrackerTestExports() {
         createMemoryCloudTransport,
         setCloudTransportForTests,
         getCloudSyncStatus,
+        initCloudSync,
         getCloudAuthState,
         getCloudConfig,
         onLocalDataSaved,

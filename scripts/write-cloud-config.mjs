@@ -6,6 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { applyCspToHtml, DEFAULT_SUPABASE_URL } from './csp.mjs';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const dist = join(root, 'dist');
@@ -44,6 +45,13 @@ window.__RECOVERY_TRACKER_CLOUD__ = {
 
 mkdirSync(dist, { recursive: true });
 writeFileSync(join(dist, 'cloud-config.js'), body);
+
+const htmlPath = join(dist, 'index.html');
+if (existsSync(htmlPath)) {
+    const html = readFileSync(htmlPath, 'utf8');
+    writeFileSync(htmlPath, applyCspToHtml(html, url || DEFAULT_SUPABASE_URL));
+}
+
 console.log(configured
     ? 'Wrote dist/cloud-config.js (cloud configured)'
     : 'Wrote dist/cloud-config.js (cloud not configured)');
