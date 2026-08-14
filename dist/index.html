@@ -92,6 +92,69 @@
         </div>
     </noscript>
     <div class="app-container">
+        <aside class="app-sidebar" id="app-sidebar" aria-label="Desktop sidebar">
+            <div class="sidebar-brand">
+                <p class="sidebar-app-name">Recovery Tracker</p>
+            </div>
+            <nav class="sidebar-nav" aria-label="Main Menu">
+                <p class="sidebar-heading">Main Menu</p>
+                <button type="button" class="nav-btn active" data-tab="dashboard-tab" onclick="switchTab('dashboard-tab')">
+                    <span aria-hidden="true">🏠</span>
+                    <span>Home</span>
+                </button>
+                <button type="button" class="nav-btn" data-tab="use-log-tab" onclick="switchTab('use-log-tab')">
+                    <span aria-hidden="true">📝</span>
+                    <span>Log</span>
+                </button>
+                <button type="button" class="nav-btn" data-tab="buy-tracker-tab" onclick="switchTab('buy-tracker-tab')">
+                    <span aria-hidden="true">📦</span>
+                    <span>Inventory</span>
+                </button>
+                <button type="button" class="nav-btn" data-tab="goals-plans-tab" onclick="switchTab('goals-plans-tab')">
+                    <span aria-hidden="true">🎯</span>
+                    <span>Tapers</span>
+                </button>
+                <button type="button" class="nav-btn" data-tab="insights-calendar-tab" onclick="switchTab('insights-calendar-tab')">
+                    <span aria-hidden="true">📈</span>
+                    <span>Insights</span>
+                </button>
+                <button type="button" class="nav-btn" data-tab="settings-tab" onclick="switchTab('settings-tab')">
+                    <span aria-hidden="true">⚙️</span>
+                    <span>Settings</span>
+                </button>
+            </nav>
+            <div class="sidebar-block">
+                <p class="sidebar-heading">Active Substance</p>
+                <label class="sidebar-field">
+                    <span class="visually-hidden">Active substance</span>
+                    <select id="sidebar-substance" class="page-substance-select" onchange="onSidebarSubstanceChange()"></select>
+                </label>
+            </div>
+            <div class="sidebar-block">
+                <p class="sidebar-heading">Quick Add</p>
+                <div class="sidebar-actions">
+                    <button type="button" class="secondary-btn btn-sm" onclick="openLayoutLogUse()">Log Use</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="openLayoutAddPurchase()">Add Purchase</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="openLayoutAddInventory()">Add Inventory</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="openLayoutAddAdjustment()">Add Adjustment</button>
+                </div>
+            </div>
+            <div class="sidebar-block">
+                <p class="sidebar-heading">Shortcuts</p>
+                <div class="sidebar-actions">
+                    <button type="button" class="secondary-btn btn-sm" onclick="openLayoutCalendar()">Calendar</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="openLayoutProgress()">Progress</button>
+                    <button type="button" class="secondary-btn btn-sm" onclick="openLayoutExport()">Export Data</button>
+                </div>
+            </div>
+            <div class="sidebar-block sidebar-mode-block">
+                <p class="sidebar-heading">Simple Mode</p>
+                <div class="experience-mode-control sidebar-mode-control" role="group" aria-label="Experience Mode">
+                    <button type="button" class="experience-mode-btn active" data-experience-mode="simple" aria-pressed="true" onclick="onExperienceModeChange('simple')">Simple</button>
+                    <button type="button" class="experience-mode-btn" data-experience-mode="advanced" aria-pressed="false" onclick="onExperienceModeChange('advanced')">Advanced</button>
+                </div>
+            </div>
+        </aside>
         <header>
             <h1>Recovery Tracker</h1>
             <p class="subtitle">Track your progress, one day at a time</p>
@@ -101,30 +164,32 @@
         <main>
             <!-- Dashboard Tab -->
             <section id="dashboard-tab" class="tab active dashboard-page">
-                <div class="safety-notice dash-safety">
+                <div class="safety-notice dash-safety layout-legacy-hidden">
                     <strong>Safety Note:</strong> If you feel unsafe, may overdose, or have severe withdrawal symptoms, call emergency services or a medical professional immediately.
                 </div>
 
-                <div id="simple-home" class="simple-home" aria-live="polite"></div>
+                <div id="simple-home" class="simple-home layout-legacy-hidden" aria-live="polite"></div>
 
-                <div id="advanced-home-wrap" class="advanced-home-wrap">
-                <header class="dash-header">
+                <header class="dash-header page-header-row layout-home-header">
                     <div class="dash-header-top">
-                        <h2 class="dash-title">Recovery Dashboard</h2>
-                        <div class="dash-header-meta">
+                        <h2 class="dash-title">Today at a Glance</h2>
+                        <div class="dash-header-meta layout-legacy-hidden">
                             <p class="dash-main-substance" id="dashboard-main-substance">Main: —</p>
                             <p class="dash-viewing-label" id="dashboard-viewing-label">Viewing: —</p>
-                            <p class="rd-header-range" id="rd-header-range">Date range: —</p>
-                            <p class="last-saved-status dash-last-saved" data-last-saved-display>Last Saved: Never</p>
+                            <p class="rd-header-range layout-legacy-hidden" id="rd-header-range">Date range: —</p>
+                            <p class="last-saved-status dash-last-saved layout-legacy-hidden" id="home-last-saved" data-last-saved-display aria-hidden="true">Last Saved: Never</p>
                         </div>
                     </div>
-                    <div class="form-group dash-substance-field">
-                        <label for="dashboard-substance">Viewing</label>
+                    <div class="form-group dash-substance-field layout-legacy-hidden">
+                        <label for="dashboard-substance">Substance</label>
                         <select id="dashboard-substance" onchange="setSelectedDashboardSubstance(this.value)"></select>
                     </div>
                 </header>
 
-                <div id="recovery-dashboard" class="recovery-dashboard" aria-live="polite">
+                <div id="today-glance" class="today-glance" aria-live="polite"></div>
+
+                <div id="advanced-home-wrap" class="advanced-home-wrap layout-legacy-hidden">
+                <div id="recovery-dashboard" class="recovery-dashboard layout-legacy-hidden" hidden aria-hidden="true">
                     <div class="rd-date-controls" id="rd-date-controls">
                         <div class="rd-date-presets" role="group" aria-label="Dashboard date range">
                             <button type="button" class="rd-date-btn" data-rd-preset="today" onclick="setRecoveryDashboardPreset('today')">Today</button>
@@ -317,14 +382,24 @@
                     </div>
                 </div>
 
-                <div class="use-log-filter-bar">
-                    <span class="use-log-filter-label">Show</span>
-                    <button type="button" class="use-log-filter-btn active" data-filter="all" onclick="setUseLogFilter('all')">All</button>
-                    <button type="button" class="use-log-filter-btn" data-filter="today" onclick="setUseLogFilter('today')">Today</button>
-                    <button type="button" class="use-log-filter-btn" data-filter="week" onclick="setUseLogFilter('week')">This Week</button>
-                    <button type="button" class="use-log-filter-btn" data-filter="month" onclick="setUseLogFilter('month')">This Month</button>
+                <div class="page-toolbar use-log-toolbar">
+                    <div class="use-log-filter-bar">
+                        <span class="use-log-filter-label">Date Range</span>
+                        <button type="button" class="use-log-filter-btn active" data-filter="all" onclick="setUseLogFilter('all')">All</button>
+                        <button type="button" class="use-log-filter-btn" data-filter="today" onclick="setUseLogFilter('today')">Today</button>
+                        <button type="button" class="use-log-filter-btn" data-filter="week" onclick="setUseLogFilter('week')">This Week</button>
+                        <button type="button" class="use-log-filter-btn" data-filter="month" onclick="setUseLogFilter('month')">This Month</button>
+                    </div>
+                    <div class="page-toolbar-actions">
+                        <button type="button" class="secondary-btn btn-sm" onclick="toggleSection('useLogForm')">Filters</button>
+                        <button type="button" class="secondary-btn btn-sm" id="use-log-columns-btn" onclick="document.getElementById('use-history-customize-columns')?.click()">Column Settings</button>
+                        <button type="button" class="submit-btn btn-sm" onclick="openLayoutLogUse()">+ Log Use</button>
+                    </div>
                 </div>
-                <div id="use-log-totals" class="use-log-totals"></div>
+                <section class="layout-section" aria-labelledby="use-log-summary-heading">
+                    <h3 id="use-log-summary-heading" class="layout-section-title">Summary</h3>
+                    <div id="use-log-totals" class="use-log-totals"></div>
+                </section>
 
                 <div class="collapsible-section" data-section="useLogForm">
                     <button type="button" class="section-toggle" onclick="toggleSection('useLogForm')">
@@ -659,7 +734,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="recentUse">
+                <div class="collapsible-section layout-legacy-hidden" data-section="recentUse" hidden>
                     <button type="button" class="section-toggle" onclick="toggleSection('recentUse')">
                         <span>Recent Use</span>
                         <span class="chevron">⌄</span>
@@ -667,6 +742,27 @@
                     <div class="section-content">
                 <div class="recent-logs use-log-recent">
                     <div id="recent-use-list" class="use-recent-list"></div>
+                </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="useHistory">
+                    <button type="button" class="section-toggle" onclick="toggleSection('useHistory')">
+                        <span>History</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="use-history-section use-log-history">
+                    <div class="use-history-toolbar" id="use-history-toolbar">
+                        <label class="use-history-select-all-label">
+                            <input type="checkbox" id="use-history-select-all" aria-label="Select all visible sessions">
+                            Select all
+                        </label>
+                        <button type="button" class="secondary-btn use-history-clear-btn" id="use-history-clear-selection">Clear</button>
+                        <span class="use-history-selected-count" id="use-history-selected-count">0 selected</span>
+                        <button type="button" class="secondary-btn use-history-columns-btn" id="use-history-customize-columns">Customize Columns</button>
+                    </div>
+                    <div id="use-history-table-wrap"></div>
                 </div>
                     </div>
                 </div>
@@ -686,27 +782,6 @@
                             <button type="button" class="secondary-btn" id="manual-link-selected-btn" onclick="openManualBulkLinkModal()" disabled>📎 Manual Link Selected</button>
                         </div>
                     </div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="useHistory">
-                    <button type="button" class="section-toggle" onclick="toggleSection('useHistory')">
-                        <span>Use History</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                <div class="use-history-section use-log-history">
-                    <div class="use-history-toolbar" id="use-history-toolbar">
-                        <label class="use-history-select-all-label">
-                            <input type="checkbox" id="use-history-select-all" aria-label="Select all visible sessions">
-                            Select all
-                        </label>
-                        <button type="button" class="secondary-btn use-history-clear-btn" id="use-history-clear-selection">Clear</button>
-                        <span class="use-history-selected-count" id="use-history-selected-count">0 selected</span>
-                        <button type="button" class="secondary-btn use-history-columns-btn" id="use-history-customize-columns">Customize Columns</button>
-                    </div>
-                    <div id="use-history-table-wrap"></div>
-                </div>
                     </div>
                 </div>
             </section>
@@ -743,6 +818,11 @@
                     <nav class="combined-subnav" id="gp-subnav" aria-label="Tapers sections" role="tablist">
                         <button type="button" class="combined-subnav-btn active" data-gp-view="overview" onclick="setGoalsPlansView('overview')">Overview</button>
                         <button type="button" class="combined-subnav-btn" data-gp-view="templates" onclick="setGoalsPlansView('templates')">Templates</button>
+                    </nav>
+                    <nav class="combined-subnav taper-workspace-nav" aria-label="Plan sections" role="tablist">
+                        <button type="button" class="combined-subnav-btn active" data-taper-workspace="weekly" onclick="setLayoutTaperWorkspaceView('weekly')">Weekly Progress</button>
+                        <button type="button" class="combined-subnav-btn" data-taper-workspace="purchases" onclick="setLayoutTaperWorkspaceView('purchases')">Purchases &amp; Cost</button>
+                        <button type="button" class="combined-subnav-btn" data-taper-workspace="details" onclick="setLayoutTaperWorkspaceView('details')">Plan Details</button>
                     </nav>
                 </div>
 
@@ -1482,8 +1562,8 @@
                 <div id="advanced-insights-wrap" class="advanced-insights-wrap">
                 <div class="page-header-row combined-page-header">
                     <div>
-                        <h2>Insights &amp; Calendar</h2>
-                        <p class="settings-hint">Analytics and calendar share the same filters and date context where possible.</p>
+                        <h2>Insights</h2>
+                        <p class="settings-hint">Analytics for the selected substance and date range. Insights &amp; Calendar share the same filters.</p>
                     </div>
                 </div>
 
@@ -1491,17 +1571,17 @@
                     <label class="combined-subnav-mobile-label" for="ic-subnav-select">View</label>
                     <select id="ic-subnav-select" class="combined-subnav-select" aria-label="Insights and Calendar view" onchange="setInsightsCalendarView(this.value)">
                         <option value="overview">Overview</option>
-                        <option value="calendar">Calendar</option>
                         <option value="use">Use</option>
-                        <option value="money">Money</option>
+                        <option value="money">Spending</option>
+                        <option value="calendar">Calendar</option>
                         <option value="more">More</option>
                     </select>
-                    <nav class="combined-subnav" id="ic-subnav" aria-label="Insights and Calendar sections" role="tablist">
+                    <nav class="combined-subnav" id="ic-subnav" aria-label="Insights sections" role="tablist">
                         <button type="button" class="combined-subnav-btn active" data-ic-view="overview" onclick="setInsightsCalendarView('overview')">Overview</button>
-                        <button type="button" class="combined-subnav-btn" data-ic-view="calendar" onclick="setInsightsCalendarView('calendar')">Calendar</button>
                         <button type="button" class="combined-subnav-btn" data-ic-view="use" onclick="setInsightsCalendarView('use')">Use</button>
-                        <button type="button" class="combined-subnav-btn" data-ic-view="money" onclick="setInsightsCalendarView('money')">Money</button>
-                        <button type="button" class="combined-subnav-btn" data-ic-view="more" onclick="setInsightsCalendarView('more')">More</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="money" onclick="setInsightsCalendarView('money')">Spending</button>
+                        <button type="button" class="combined-subnav-btn" data-ic-view="calendar" onclick="setInsightsCalendarView('calendar')">Calendar</button>
+                        <button type="button" class="combined-subnav-btn layout-secondary-tab" data-ic-view="more" onclick="setInsightsCalendarView('more')">More</button>
                     </nav>
                 </div>
 
@@ -1805,7 +1885,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="statsCalendarView" data-ic-panels="overview use">
+                <div class="collapsible-section" data-section="statsCalendarView" data-ic-panels="use">
                     <button type="button" class="section-toggle" onclick="toggleSection('statsCalendarView')">
                         <span>Calendar View</span>
                         <span class="chevron">⌄</span>
@@ -2043,7 +2123,7 @@
                 </div>
 
                 </div>
-                    <div class="collapsible-section" data-section="statsPlanAnalytics" id="plan-analytics-section" data-ic-panels="more overview">
+                    <div class="collapsible-section" data-section="statsPlanAnalytics" id="plan-analytics-section" data-ic-panels="more">
                         <button type="button" class="section-toggle" onclick="toggleSection('statsPlanAnalytics')">
                             <span>Plan Analytics</span>
                             <span class="chevron">⌄</span>
@@ -2085,21 +2165,30 @@
                     </div>
                 </div>
 
+                <div class="combined-subnav-wrap inventory-view-nav">
+                    <nav class="combined-subnav" aria-label="Inventory views" role="tablist">
+                        <button type="button" class="combined-subnav-btn active" data-inv-view="active" onclick="setLayoutInventoryView('active')">Active</button>
+                        <button type="button" class="combined-subnav-btn" data-inv-view="purchases" onclick="setLayoutInventoryView('purchases')">Purchases</button>
+                        <button type="button" class="combined-subnav-btn" data-inv-view="history" onclick="setLayoutInventoryView('history')">History</button>
+                    </nav>
+                </div>
+
                 <div id="inventory-summary-cards" class="inventory-summary-wrap"></div>
 
                 <section class="inventory-filter-card">
                     <div class="inventory-toolbar">
                         <input type="search" id="inventory-search" class="inventory-search-input" placeholder="Search store, notes…" oninput="applyInventorySearchFilters()">
                         <select id="inventory-filter-status" class="inventory-status-select" onchange="applyInventorySearchFilters()" aria-label="Status">
-                            <option value="all" selected>All status</option>
-                            <option value="active">Active</option>
+                            <option value="all">All status</option>
+                            <option value="active" selected>Active</option>
                             <option value="depleted">Depleted</option>
                             <option value="gifted">Gifted</option>
                             <option value="hidden">Hidden</option>
                         </select>
                         <button type="button" id="inventory-filter-toggle" class="inventory-more-filters-btn secondary-btn btn-sm" onclick="toggleInventoryFiltersPanel()">
-                            More filters<span id="inventory-filter-count"></span>
+                            Filters<span id="inventory-filter-count"></span>
                         </button>
+                        <button type="button" class="submit-btn btn-sm" onclick="openLayoutAddPurchase()">+ Add Purchase</button>
                     </div>
                     <div id="inventory-filter-chips" class="inventory-filter-chips hidden"></div>
                     <div id="inventory-filter-panel" class="inventory-filter-panel hidden">
@@ -2148,7 +2237,7 @@
 
                 <div class="collapsible-section" data-section="purchaseHistory">
                     <button type="button" class="section-toggle" onclick="toggleSection('purchaseHistory')">
-                        <span>Purchase History</span>
+                        <span>Inventory</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content" id="purchase-history-content">
@@ -2475,14 +2564,26 @@
                 </form>
                     </div>
                 </div>
+
+                <div id="inventory-detail-panel" class="ct-detail-panel hidden" aria-hidden="true" role="dialog" aria-label="Inventory details">
+                    <div class="ct-detail-panel-backdrop" onclick="closeInventoryDetail()"></div>
+                    <aside class="ct-detail-panel-sheet" id="inventory-detail-body"></aside>
+                </div>
             </section>
 
 
             <!-- Settings Tab -->
             <section id="settings-tab" class="tab">
                 <h2>Settings</h2>
+                <nav class="settings-cat-nav" aria-label="Settings categories">
+                    <button type="button" class="combined-subnav-btn active" data-settings-cat-btn="substances" onclick="setLayoutSettingsCategory('substances')">Substances</button>
+                    <button type="button" class="combined-subnav-btn" data-settings-cat-btn="data" onclick="setLayoutSettingsCategory('data')">Data &amp; Sync</button>
+                    <button type="button" class="combined-subnav-btn" data-settings-cat-btn="appearance" onclick="setLayoutSettingsCategory('appearance')">Appearance</button>
+                    <button type="button" class="combined-subnav-btn" data-settings-cat-btn="advanced" onclick="setLayoutSettingsCategory('advanced')">Advanced</button>
+                    <button type="button" class="combined-subnav-btn" data-settings-cat-btn="about" onclick="setLayoutSettingsCategory('about')">About</button>
+                </nav>
 
-                <div class="collapsible-section" data-section="settingsBackup">
+                <div class="collapsible-section" data-section="settingsBackup" data-settings-cat="data">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsBackup')">
                         <span>Account &amp; Data</span>
                         <span class="chevron">⌄</span>
@@ -2509,7 +2610,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="settingsAppearance">
+                <div class="collapsible-section" data-section="settingsAppearance" data-settings-cat="appearance">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsAppearance')">
                         <span>Appearance</span>
                         <span class="chevron">⌄</span>
@@ -2978,7 +3079,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="settingsTaperSuggestions">
+                <div class="collapsible-section" data-section="settingsTaperSuggestions" data-settings-cat="substances">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsTaperSuggestions')">
                         <span>Taper Suggestions</span>
                         <span class="chevron">⌄</span>
@@ -3001,7 +3102,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="settingsSubstances">
+                <div class="collapsible-section" data-section="settingsSubstances" data-settings-cat="substances">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsSubstances')">
                         <span>Manage Substances</span>
                         <span class="chevron">⌄</span>
@@ -3015,7 +3116,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="settingsDataHealth">
+                <div class="collapsible-section" data-section="settingsDataHealth" data-settings-cat="data">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsDataHealth')">
                         <span>Data Health</span>
                         <span class="chevron">⌄</span>
@@ -3036,7 +3137,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="settingsDashboardLayout">
+                <div class="collapsible-section" data-section="settingsDashboardLayout" data-settings-cat="advanced">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsDashboardLayout')">
                         <span>Daily Dashboard</span>
                         <span class="chevron">⌄</span>
@@ -3051,7 +3152,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="settingsContacts">
+                <div class="collapsible-section" data-section="settingsContacts" data-settings-cat="data">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsContacts')">
                         <span>Data &amp; Contacts</span>
                         <span class="chevron">⌄</span>
@@ -3065,7 +3166,7 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="settingsDangerZone">
+                <div class="collapsible-section" data-section="settingsDangerZone" data-settings-cat="data">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsDangerZone')">
                         <span>Danger Zone</span>
                         <span class="chevron">⌄</span>
@@ -3075,6 +3176,38 @@
                     <p class="settings-hint">Permanently delete all logs, substances, and settings. An automatic backup is created first.</p>
                     <button type="button" class="danger-btn" onclick="clearAllData()">Delete data from this device</button>
                 </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="settingsAdvancedTools" data-settings-cat="advanced">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsAdvancedTools')">
+                        <span>Columns &amp; Calculations</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="settings-section">
+                            <p class="settings-hint">Column customization stays on each table (Log History, Inventory, Taper Weekly). Use Column Settings there to show, hide, rename, or reorder fields. Conditional color rules and in-cell calculations are under Appearance.</p>
+                            <div class="data-management-buttons">
+                                <button type="button" class="secondary-btn" onclick="switchTab('use-log-tab'); document.getElementById('use-history-customize-columns')?.click()">Log columns</button>
+                                <button type="button" class="secondary-btn" onclick="switchTab('buy-tracker-tab'); document.getElementById('purchase-history-customize-columns')?.click()">Inventory columns</button>
+                                <button type="button" class="secondary-btn" onclick="switchTab('goals-plans-tab'); document.getElementById('taper-weekly-customize-columns')?.click()">Taper columns</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="settingsAbout" data-settings-cat="about">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsAbout')">
+                        <span>About</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                        <div class="settings-section">
+                            <h3>Recovery Tracker</h3>
+                            <p class="settings-hint">Local-first recovery logging. Data stays on this device in <code>recovery-tracker-v2</code>.</p>
+                            <p class="settings-hint">Version 2.0</p>
+                            <p class="settings-hint">If you feel unsafe, may overdose, or have severe withdrawal symptoms, call emergency services or a medical professional immediately.</p>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -3104,7 +3237,7 @@
         </button>
         <button class="nav-btn" data-tab="insights-calendar-tab" onclick="switchTab('insights-calendar-tab')">
             <span aria-hidden="true">📈</span>
-            <span class="nav-btn-label-full">Insights &amp; Calendar</span>
+            <span class="nav-btn-label-full">Insights</span>
             <span class="nav-btn-label-short">Insights</span>
         </button>
         <button class="nav-btn" data-tab="settings-tab" onclick="switchTab('settings-tab')">

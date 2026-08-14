@@ -14,7 +14,12 @@ test('layout redesign markup uses the approved page hierarchy', () => {
     assert.match(html, /id="today-glance"/);
     assert.match(html, /id="simple-home"[^>]*layout-legacy-hidden/);
     assert.match(html, /dash-safety layout-legacy-hidden/);
-    assert.doesNotMatch(html, /id="home-last-saved"[^>]*data-last-saved-display/);
+    const homeSaved = html.match(/<p\b[^>]*id="home-last-saved"[^>]*>/);
+    assert.ok(homeSaved, 'home-last-saved compatibility hook must exist');
+    assert.match(homeSaved[0], /data-last-saved-display/);
+    assert.match(homeSaved[0], /layout-legacy-hidden/);
+    assert.ok((html.match(/data-last-saved-display/g) || []).length >= 2, 'dashboard should expose last-saved display hooks');
+    assert.doesNotMatch(html, /id="dashboard-last-saved"/);
     assert.match(html, /data-inv-view="active"/);
     assert.match(html, /data-inv-view="purchases"/);
     assert.match(html, /data-inv-view="history"/);
