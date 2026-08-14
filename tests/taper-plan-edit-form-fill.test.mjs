@@ -301,6 +301,7 @@ test('Edit form loads every saved field from the selected plan', () => {
     const nodes = installEditFormDom(rt);
     rt.selectedTaperPlanIdRef.value = plan.id;
     rt.taperFormPlanIdRef.value = plan.id;
+    rt.taperFormModeRef.value = 'edit';
     rt.taperEditingPlanRef.value = true;
 
     rt.fillTaperFormFromPlan(plan);
@@ -373,6 +374,7 @@ test('changing one field on save preserves unchanged plan fields and linked goal
     const nodes = installEditFormDom(rt);
     rt.selectedTaperPlanIdRef.value = plan.id;
     rt.taperFormPlanIdRef.value = plan.id;
+    rt.taperFormModeRef.value = 'edit';
     rt.taperEditingPlanRef.value = true;
     nodes.get('taper-editing-plan-id').value = plan.id;
 
@@ -407,6 +409,7 @@ test('edit values persist across storage reload', () => {
     const nodes = installEditFormDom(rt);
     rt.selectedTaperPlanIdRef.value = plan.id;
     rt.taperFormPlanIdRef.value = plan.id;
+    rt.taperFormModeRef.value = 'edit';
     rt.taperEditingPlanRef.value = true;
     nodes.get('taper-editing-plan-id').value = plan.id;
     rt.fillTaperFormFromPlan(plan);
@@ -478,6 +481,7 @@ test('Edit form loads custom weeklyTargets into Manual weekly editor (not blank 
     const nodes = installEditFormDom(rt);
     rt.selectedTaperPlanIdRef.value = plan.id;
     rt.taperFormPlanIdRef.value = plan.id;
+    rt.taperFormModeRef.value = 'edit';
     rt.taperEditingPlanRef.value = true;
 
     // editTaperPlanById migrates then fills — reproduce that order.
@@ -497,6 +501,7 @@ test('saving custom weekly edit preserves week 2 target and progress', () => {
     const nodes = installEditFormDom(rt);
     rt.selectedTaperPlanIdRef.value = plan.id;
     rt.taperFormPlanIdRef.value = plan.id;
+    rt.taperFormModeRef.value = 'edit';
     rt.taperEditingPlanRef.value = true;
     nodes.get('taper-editing-plan-id').value = plan.id;
 

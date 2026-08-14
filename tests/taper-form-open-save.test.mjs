@@ -74,9 +74,9 @@ function installDom(rt) {
     const records = put('tapers-root', {
         className: 'combined-subview',
         hidden: true,
-        dataset: { gpView: 'active history templates' }
+        dataset: { gpView: 'history templates' }
     });
-    records.getAttribute = (name) => (name === 'data-gp-view' ? 'active history templates' : null);
+    records.getAttribute = (name) => (name === 'data-gp-view' ? 'history templates' : null);
     const workspace = put('taper-tab', { className: 'taper-page taper-workspace', hidden: true });
     const setup = put('taper-setup', { className: 'taper-editor-panel hidden' });
     put('taper-dashboard', { className: 'hidden' });
@@ -193,7 +193,7 @@ test('New Taper opens the form workspace without a blank view', () => {
     assert.equal(rt.taperFormInitializedRef.value, true);
 });
 
-test('saving a new taper persists and appears in Active', () => {
+test('saving a new taper persists and appears in Overview', () => {
     const rt = setupApp();
     const { nodes, workspace, setup } = installDom(rt);
     rt.openUnifiedNewTaper();
@@ -216,7 +216,7 @@ test('saving a new taper persists and appears in Active', () => {
     assert.equal(saved.priority, 'high');
     assert.equal(workspace.hidden, true);
     assert.ok(setup.classList.contains('hidden'));
-    assert.match(nodes.get('tapers-root').innerHTML, /Fresh create taper/);
+    assert.match(nodes.get('gp-overview-root').innerHTML, /Fresh create taper/);
 });
 
 test('Edit Taper opens filled form and save updates the existing record', () => {

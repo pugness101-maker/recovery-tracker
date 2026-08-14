@@ -599,7 +599,7 @@ html = tryReplace(html,
     `            <section id="goals-plans-tab" class="tab combined-page goals-plans-page">
                 <div id="simple-plan-wizard" class="simple-plan-wizard hidden" aria-live="polite"></div>
                 <div class="sm-plan-simple-actions sm-only">
-                    <button type="button" class="submit-btn" id="sm-new-plan-btn" onclick="openSimplePlanWizard()">New Plan</button>
+                    <button type="button" class="submit-btn" id="sm-new-plan-btn" onclick="openSimplePlanWizard()">New Taper</button>
                     <button type="button" class="secondary-btn" onclick="document.getElementById('goals-plans-tab')?.classList.add('sm-show-advanced-plan')">Advanced Plan Settings</button>
                 </div>
                 <div class="page-header-row combined-page-header">

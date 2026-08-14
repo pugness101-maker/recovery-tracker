@@ -11337,18 +11337,26 @@ function populatePageSubstanceSelect(selectId, { includeAll = false, substances 
 
 function syncPageSubstanceSelectors(skipId = null) {
     const resolvedSelected = resolveSelectedSubstanceId(selectedSubstanceId);
+    const optionList = (el) => {
+        if (!el?.options) return [];
+        try {
+            return [...el.options];
+        } catch (_) {
+            return Array.isArray(el.options) ? el.options : [];
+        }
+    };
     if (skipId !== 'use-log-substance') {
         const el = document.getElementById('use-log-substance');
-        if (el && [...el.options].some(o => o.value === resolvedSelected)) el.value = resolvedSelected;
+        if (el && optionList(el).some(o => o.value === resolvedSelected)) el.value = resolvedSelected;
     }
     if (skipId !== 'inventory-substance') {
         const el = document.getElementById('inventory-substance');
-        if (el && [...el.options].some(o => o.value === resolvedSelected)) el.value = resolvedSelected;
+        if (el && optionList(el).some(o => o.value === resolvedSelected)) el.value = resolvedSelected;
     }
     if (skipId !== 'taper-substance') {
         const taperEl = document.getElementById('taper-substance');
         const taperSelected = getTaperSubstanceId();
-        if (taperEl && [...taperEl.options].some(o => o.value === taperSelected)) {
+        if (taperEl && optionList(taperEl).some(o => o.value === taperSelected)) {
             taperEl.value = taperSelected;
         }
     }
@@ -12563,6 +12571,8 @@ const TAPER_PLAN_STATUSES = ['active', 'paused', 'completed', 'archived'];
 
 let selectedTaperPlanId = null;
 let taperFormPlanId = null;
+/** Explicit form mode: 'create' | 'edit'. Create must never fall back to selectedTaperPlanId. */
+let taperFormMode = 'create';
 let showArchivedTaperPlans = false;
 let taperManagePlansFilter = 'active';
 
@@ -15972,9 +15982,9 @@ if (typeof window !== 'undefined') {
 // ——— Combined navigation: Tapers + Insights & Calendar ———
 
 const COMBINED_NAV_ROUTE_REDIRECTS = {
-    '/goals': { tab: 'goals-plans-tab', view: 'active' },
-    '/plan': { tab: 'goals-plans-tab', view: 'active' },
-    '/plans': { tab: 'goals-plans-tab', view: 'active' },
+    '/goals': { tab: 'goals-plans-tab', view: 'overview' },
+    '/plan': { tab: 'goals-plans-tab', view: 'overview' },
+    '/plans': { tab: 'goals-plans-tab', view: 'overview' },
     '/insights': { tab: 'insights-calendar-tab', view: 'overview' },
     '/calendar': { tab: 'insights-calendar-tab', view: 'calendar' },
     '/goals-plans': { tab: 'goals-plans-tab', view: null },
@@ -15989,7 +15999,6 @@ const COMBINED_NAV_ROUTE_REDIRECTS = {
 
 const GOALS_PLANS_VIEWS = [
     'overview',
-    'active',
     'history',
     'templates'
 ];
@@ -16003,12 +16012,12 @@ const INSIGHTS_CALENDAR_VIEWS = [
 ];
 
 const LEGACY_TAB_TO_COMBINED = {
-    'goals-tab': { tab: 'goals-plans-tab', view: 'active' },
-    goals: { tab: 'goals-plans-tab', view: 'active' },
-    'taper-tab': { tab: 'goals-plans-tab', view: 'active' },
-    taper: { tab: 'goals-plans-tab', view: 'active' },
-    plan: { tab: 'goals-plans-tab', view: 'active' },
-    'plan-tab': { tab: 'goals-plans-tab', view: 'active' },
+    'goals-tab': { tab: 'goals-plans-tab', view: 'overview' },
+    goals: { tab: 'goals-plans-tab', view: 'overview' },
+    'taper-tab': { tab: 'goals-plans-tab', view: 'overview' },
+    taper: { tab: 'goals-plans-tab', view: 'overview' },
+    plan: { tab: 'goals-plans-tab', view: 'overview' },
+    'plan-tab': { tab: 'goals-plans-tab', view: 'overview' },
     'stats-tab': { tab: 'insights-calendar-tab', view: 'overview' },
     stats: { tab: 'insights-calendar-tab', view: 'overview' },
     insights: { tab: 'insights-calendar-tab', view: 'overview' },
@@ -16043,6 +16052,7 @@ function ensureCombinedNavPrefs(data = appData) {
         data.settings.combinedNav = { ...defaults, goalsPlansCollapsed: { ...defaults.goalsPlansCollapsed } };
     }
     const prefs = data.settings.combinedNav;
+    if (prefs.goalsPlansView === 'active') prefs.goalsPlansView = 'overview';
     if (!GOALS_PLANS_VIEWS.includes(prefs.goalsPlansView)) prefs.goalsPlansView = defaults.goalsPlansView;
     // Migrate legacy Insights subviews into Overview / Calendar / Use / Money / More
     if (typeof normalizeCombinedView === 'function') {
@@ -16093,13 +16103,14 @@ function persistActiveTab(tabId, data = appData) {
 function normalizeCombinedView(view, allowed, fallback) {
     const raw = String(view || '').trim().toLowerCase();
     const aliases = {
-        goals: 'active',
-        plan: 'active',
-        plans: 'active',
-        taper: 'active',
-        tapers: 'active',
-        'active-goals': 'active',
-        'active-plans': 'active',
+        active: 'overview',
+        goals: 'overview',
+        plan: 'overview',
+        plans: 'overview',
+        taper: 'overview',
+        tapers: 'overview',
+        'active-goals': 'overview',
+        'active-plans': 'overview',
         'goal-history': 'history',
         'plan-history': 'history',
         compare: 'more',
@@ -16301,7 +16312,7 @@ function openGoalCreateForm() { if (typeof openUnifiedNewTaper === 'function') o
 function openGoalDetail() {}
 function openGoalEditForm() {}
 function renderGoalsView() {
-    if (typeof renderGoalsPlansRecordsView === 'function') renderGoalsPlansRecordsView('active');
+    if (typeof setGoalsPlansView === 'function') setGoalsPlansView('overview');
 }
 function goalIsAllSubstances(id) {
     return !id || id === 'all' || id === DASHBOARD_ALL;
@@ -16617,6 +16628,7 @@ function renderUnifiedGoalPlanCard(record, data = appData) {
     const pauseAction = `pauseUnifiedTaperRecord('${escapeHtml(record.id)}')`;
     const completeAction = `completeUnifiedTaperRecord('${escapeHtml(record.id)}')`;
     const archiveAction = `archiveUnifiedTaperRecord('${escapeHtml(record.id)}')`;
+    const deleteAction = `deleteUnifiedTaperRecord('${escapeHtml(record.id)}')`;
     return `
         <article class="goal-card unified-goal-plan-card" data-record-type="taper" data-record-id="${escapeAttr(record.id)}">
             <header class="goal-card-head">
@@ -16641,6 +16653,7 @@ function renderUnifiedGoalPlanCard(record, data = appData) {
                 ${record.status === 'paused' ? '' : `<button type="button" class="btn-small" onclick="${pauseAction}">Pause</button>`}
                 ${record.status === 'completed' ? '' : `<button type="button" class="btn-small" onclick="${completeAction}">Complete</button>`}
                 ${record.status === 'archived' ? '' : `<button type="button" class="btn-small" onclick="${archiveAction}">Archive</button>`}
+                <button type="button" class="btn-small btn-danger" onclick="${deleteAction}">Delete</button>
             </div>
         </article>`;
 }
@@ -16731,9 +16744,15 @@ function applyTaperTemplate(templateId) {
 function renderGoalsPlansRecordsView(view = null) {
     const root = tapersRootEl();
     if (!root) return;
-    const activeView = view || ensureCombinedNavPrefs().goalsPlansView || 'active';
+    const activeView = view || ensureCombinedNavPrefs().goalsPlansView || 'history';
     if (activeView === 'templates') {
         renderTaperTemplatesView();
+        return;
+    }
+    if (activeView === 'overview' || activeView === 'active') {
+        // Active tab removed — active tapers live on Overview.
+        const rootOverview = document.getElementById('gp-overview-root');
+        if (rootOverview) rootOverview.innerHTML = renderGoalsPlansOverviewHtml(buildGoalsPlansOverview());
         return;
     }
     const data = appData;
@@ -16757,7 +16776,7 @@ function renderGoalsPlansRecordsView(view = null) {
         <div class="goal-view unified-goals-plans-view">
             <header class="goal-view-head">
                 <div>
-                    <h2 class="goal-view-title">${activeView === 'history' ? 'History' : 'Active'}</h2>
+                    <h2 class="goal-view-title">${activeView === 'history' ? 'History' : 'Tapers'}</h2>
                     <p class="goal-view-sub">${activeTapers} active ${escapeHtml(substanceLabel)} taper${activeTapers === 1 ? '' : 's'}</p>
                 </div>
                 <div class="goal-view-actions">
@@ -16788,7 +16807,9 @@ function attachUnifiedTaperSurface(..._ids) {
 function openUnifiedNewTaper() {
     const prefs = ensureCombinedNavPrefs();
     const current = prefs.goalsPlansView || 'overview';
-    const stay = current === 'overview' || current === 'active' || current === 'templates' ? current : 'active';
+    const stay = (current === 'overview' || current === 'history' || current === 'templates')
+        ? current
+        : 'overview';
     // Keep the editor mount alive while syncing the subnav — hideTaperWorkspace would blank the page.
     setGoalsPlansView(stay, { persist: true, skipRoute: false, keepTaperEditor: true });
     showTaperWorkspace();
@@ -16802,18 +16823,23 @@ function openUnifiedNewTaper() {
 }
 
 function openUnifiedTaperRecord(planId) {
-    setGoalsPlansView('active', { persist: true, keepTaperEditor: true });
+    setGoalsPlansView('overview', { persist: true, keepTaperEditor: true });
     showTaperWorkspace();
     if (typeof openTaperPlanFromManage === 'function') openTaperPlanFromManage(planId);
 }
 
 function editUnifiedTaperRecord(planId) {
-    setGoalsPlansView('active', { persist: true, keepTaperEditor: true });
+    const prefs = ensureCombinedNavPrefs();
+    const current = prefs.goalsPlansView || 'overview';
+    const stay = (current === 'overview' || current === 'history' || current === 'templates')
+        ? current
+        : 'overview';
+    setGoalsPlansView(stay, { persist: true, keepTaperEditor: true });
     showTaperWorkspace();
     const opened = typeof editTaperPlanById === 'function' ? editTaperPlanById(planId) : false;
     if (opened === false) {
         hideTaperWorkspace();
-        setGoalsPlansView('active', { persist: true, skipRoute: true });
+        setGoalsPlansView(stay, { persist: true, skipRoute: true });
         return;
     }
     ensureTaperSetupVisible();
@@ -16822,13 +16848,13 @@ function editUnifiedTaperRecord(planId) {
 function duplicateUnifiedTaperRecord(planId) {
     if (typeof duplicateTaperPlanById === 'function') duplicateTaperPlanById(planId);
     hideTaperWorkspace();
-    setGoalsPlansView('active', { persist: true });
-    renderGoalsPlansRecordsView('active');
+    setGoalsPlansView('overview', { persist: true });
+    if (typeof refreshTapersCombinedViews === 'function') refreshTapersCombinedViews();
 }
 
 function pauseUnifiedTaperRecord(planId) {
     if (typeof pauseTaperPlanById === 'function') pauseTaperPlanById(planId);
-    renderGoalsPlansRecordsView('active');
+    if (typeof refreshTapersCombinedViews === 'function') refreshTapersCombinedViews();
 }
 
 function completeUnifiedTaperRecord(planId) {
@@ -16841,6 +16867,10 @@ function archiveUnifiedTaperRecord(planId) {
     if (typeof archiveTaperPlanById === 'function') archiveTaperPlanById(planId);
     setGoalsPlansView('history', { persist: true });
     renderGoalsPlansRecordsView('history');
+}
+
+function deleteUnifiedTaperRecord(planId) {
+    if (typeof deleteTaperPlanById === 'function') deleteTaperPlanById(planId);
 }
 
 function buildGoalsPlansOverview(data = appData, options = {}) {
@@ -17019,7 +17049,7 @@ function setGoalsPlansView(view, options = {}) {
     if (next === 'overview') {
         const root = document.getElementById('gp-overview-root');
         if (root) root.innerHTML = renderGoalsPlansOverviewHtml(buildGoalsPlansOverview());
-    } else if (next === 'active' || next === 'history' || next === 'templates') {
+    } else if (next === 'history' || next === 'templates') {
         if (typeof renderGoalsPlansRecordsView === 'function') renderGoalsPlansRecordsView(next);
     }
 
@@ -17124,7 +17154,7 @@ function renderPlanAnalyticsPanel(data = appData) {
                 <td>${escapeHtml(plan.name || 'Taper')}</td>
                 <td>${escapeHtml(status)}</td>
                 <td><button type="button" class="btn-small" onclick="setInsightsCalendarView('calendar')">Calendar</button>
-                    <button type="button" class="btn-small" onclick="switchTab('goals-plans-tab'); setGoalsPlansView('active'); openTaperPlanFromManage('${escapeHtml(plan.id)}');">Open</button></td>
+                    <button type="button" class="btn-small" onclick="switchTab('goals-plans-tab'); setGoalsPlansView('overview'); openTaperPlanFromManage('${escapeHtml(plan.id)}');">Open</button></td>
             </tr>`;
         }).join('');
         panel.innerHTML = `
@@ -56570,12 +56600,13 @@ function showNewTaperPlan() {
         return false;
     }
     if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return false;
+    taperFormMode = 'create';
     taperFormPlanId = null;
     taperEditingPlan = true;
     resetTaperFormLifecycleState();
     setInputValue('taper-editing-plan-id', '');
     setText('taper-setup-title', 'Create Taper Plan');
-    setText('taper-generate-btn', 'Save Plan');
+    setText('taper-generate-btn', 'Save Taper');
     ensureTaperSetupVisible();
     try {
         const substanceId = getTaperSubstanceId();
@@ -56769,6 +56800,7 @@ function editTaperPlanById(planId) {
     if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return false;
     selectedTaperPlanId = planId;
     taperFormPlanId = planId;
+    taperFormMode = 'edit';
     taperEditingPlan = true;
     resetTaperFormLifecycleState();
     // Backup before normalizing/migrating plan data for edit.
@@ -56777,11 +56809,18 @@ function editTaperPlanById(planId) {
     // Keep substance selector aligned with the plan without firing change handlers
     // that would clear taperFormPlanId / selectedTaperPlanId.
     const substanceEl = document.getElementById('taper-substance');
-    if (substanceEl && plan.substanceId && [...substanceEl.options].some(o => o.value === plan.substanceId)) {
-        substanceEl.value = plan.substanceId;
+    if (substanceEl && plan.substanceId) {
+        const options = substanceEl.options
+            ? [...substanceEl.options]
+            : [];
+        if (!options.length || options.some(o => o.value === plan.substanceId)) {
+            substanceEl.value = plan.substanceId;
+        }
     }
     if (plan.substanceId) {
-        setSelectedSubstanceId(plan.substanceId, { source: 'taper', refresh: false });
+        try {
+            setSelectedSubstanceId(plan.substanceId, { source: 'taper', refresh: false });
+        } catch (_) { /* soft — test DOM may omit full substance selects */ }
     }
     setInputValue('taper-editing-plan-id', planId);
     try {
@@ -56852,27 +56891,58 @@ function archiveTaperPlanById(planId) {
 
 function deleteTaperPlanById(planId, options = {}) {
     const plan = getTaperPlanById(planId);
-    if (!plan) return;
-    if (!options.skipConfirm && !confirm('Delete this taper plan? This cannot be undone.')) return;
+    if (!plan) return false;
+    if (!options.skipConfirm && !confirm(`Delete "${plan.name || 'this taper'}"? This cannot be undone.`)) return false;
     const substanceId = plan.substanceId;
-    const wasPrimary = plan.isPrimary;
+    const wasPrimary = !!plan.isPrimary;
+    const logsBefore = (appData.logs || []).length;
+    const purchasesBefore = (appData.purchases || []).length;
+    const substancesBefore = (appData.substances || []).length;
     appData.taperPlansV2 = (appData.taperPlansV2 || []).filter(p => p.id !== planId);
+    let nextPrimaryId = null;
     if (wasPrimary) {
         const next = getTaperPlansForSubstance(substanceId).find(p => p.status === 'active')
-            || getTaperPlansForSubstance(substanceId, appData, { includeArchived: true })[0];
-        if (next) setTaperPlanPrimary(next.id, substanceId);
+            || getTaperPlansForSubstance(substanceId, appData, { includeArchived: true })[0]
+            || null;
+        if (next) {
+            setTaperPlanPrimary(next.id, substanceId);
+            nextPrimaryId = next.id;
+        }
     }
     if (selectedTaperPlanId === planId) {
-        selectedTaperPlanId = resolveDefaultTaperPlanForSubstance(substanceId)?.id || null;
+        selectedTaperPlanId = nextPrimaryId
+            || resolveDefaultTaperPlanForSubstance(substanceId)?.id
+            || null;
     }
     if (taperFormPlanId === planId) {
         taperFormPlanId = null;
+        taperFormMode = 'create';
         taperEditingPlan = false;
+        setInputValue('taper-editing-plan-id', '');
     }
+    // Guard: never leave a dangling primary pointing at the deleted id.
+    (appData.taperPlansV2 || []).forEach(p => {
+        if (String(p.id) === String(planId)) p.isPrimary = false;
+    });
     syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
-    renderManageTaperPlansList();
-    refreshTaperDashboard();
+    // Deleting a taper must not touch logs, purchases, inventory, or substances.
+    if ((appData.logs || []).length !== logsBefore
+        || (appData.purchases || []).length !== purchasesBefore
+        || (appData.substances || []).length !== substancesBefore) {
+        console.error('[tapers] delete unexpectedly mutated non-taper data');
+    }
+    if (typeof hideTaperWorkspace === 'function') hideTaperWorkspace();
+    if (typeof renderManageTaperPlansList === 'function') renderManageTaperPlansList();
+    if (typeof refreshTaperDashboard === 'function') refreshTaperDashboard();
+    if (typeof refreshTapersCombinedViews === 'function') refreshTapersCombinedViews();
+    return true;
+}
+
+function deleteSelectedTaperPlan() {
+    const plan = getSelectedTaperPlan();
+    if (!plan) return false;
+    return deleteTaperPlanById(plan.id);
 }
 
 function toggleTaperPlanTypeFields(options = {}) {
@@ -58370,10 +58440,11 @@ function mergeWeeklyTargetsPreservingProgress(previousWeeks, nextWeeks) {
 }
 
 function resolveTaperFormEditingPlanId() {
+    // Create mode must never inherit selectedTaperPlanId / fall back into edit.
+    if (taperFormMode === 'create') return null;
     const fromState = taperFormPlanId ? String(taperFormPlanId) : '';
     const fromInput = document.getElementById('taper-editing-plan-id')?.value?.trim() || '';
-    const fromSelection = (taperEditingPlan && selectedTaperPlanId) ? String(selectedTaperPlanId) : '';
-    return fromState || fromInput || fromSelection || null;
+    return fromState || fromInput || null;
 }
 
 function handleTaperSubmitClick(e) {
@@ -58384,7 +58455,7 @@ function handleTaperSubmitClick(e) {
 function handleTaperSubmit(e) {
     if (e?.preventDefault) e.preventDefault();
     const btn = document.getElementById('taper-generate-btn');
-    const previousBtnLabel = btn?.textContent || 'Save Plan';
+    const previousBtnLabel = btn?.textContent || 'Save Taper';
 
     const fail = (message) => {
         setTaperFormStatus(message, 'error');
@@ -58414,10 +58485,15 @@ function handleTaperSubmit(e) {
             return fail('Plan form is still loading. Please wait a moment and try again.');
         }
 
-        const editingPlanId = resolveTaperFormEditingPlanId();
+        const editingPlanId = taperFormMode === 'edit' ? resolveTaperFormEditingPlanId() : null;
         const existingPlan = editingPlanId ? getTaperPlanById(editingPlanId) : null;
-        if (editingPlanId && !existingPlan) {
+        if (taperFormMode === 'edit' && editingPlanId && !existingPlan) {
             return fail('Could not find the selected plan to update. Reload and try again.');
+        }
+        if (taperFormMode === 'create' && (taperFormPlanId || document.getElementById('taper-editing-plan-id')?.value?.trim())) {
+            // Hard guard: create must not silently mutate an existing taper.
+            taperFormPlanId = null;
+            setInputValue('taper-editing-plan-id', '');
         }
 
         const substanceId = existingPlan?.substanceId
@@ -58618,30 +58694,31 @@ function handleTaperSubmit(e) {
             return fail('Could not write plan to local storage. Check browser storage and try again.');
         }
 
-        // Leave edit mode and show the saved taper on the Active list.
+        // Leave edit mode and show the saved taper on Overview.
         taperEditingPlan = false;
         taperFormPlanId = null;
+        taperFormMode = 'create';
         setInputValue('taper-editing-plan-id', '');
         resetTaperFormLifecycleState();
         document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
-        setText('taper-generate-btn', 'Save Plan');
+        setText('taper-generate-btn', 'Save Taper');
         setText('taper-setup-title', 'Create Taper Plan');
         refreshTaperDashboard();
         if (typeof hideTaperWorkspace === 'function') hideTaperWorkspace();
         if (typeof setGoalsPlansView === 'function') {
-            setGoalsPlansView('active', { persist: true });
-        } else if (typeof renderGoalsPlansRecordsView === 'function') {
-            renderGoalsPlansRecordsView('active');
+            setGoalsPlansView('overview', { persist: true });
+        } else if (typeof refreshTapersCombinedViews === 'function') {
+            refreshTapersCombinedViews();
         }
         if (typeof window !== 'undefined' && Number.isFinite(scrollY)) {
             requestAnimationFrame(() => {
                 try { window.scrollTo(0, scrollY); } catch { /* ignore */ }
             });
         }
-        setTaperFormStatus('Plan saved', 'success');
+        setTaperFormStatus('Taper saved', 'success');
         if (btn) {
             btn.disabled = false;
-            btn.textContent = 'Save Plan';
+            btn.textContent = 'Save Taper';
         }
         return true;
     } catch (err) {
@@ -59241,16 +59318,17 @@ function cancelTaperEdit() {
     if (taperFormDirty && !confirmDiscardTaperFormChanges()) return;
     taperEditingPlan = false;
     taperFormPlanId = null;
+    taperFormMode = 'create';
     setInputValue('taper-editing-plan-id', '');
     resetTaperFormLifecycleState();
     document.getElementById('taper-setup')?.classList.add('hidden');
     document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
-    setText('taper-generate-btn', 'Save Plan');
+    setText('taper-generate-btn', 'Save Taper');
     setText('taper-setup-title', 'Create Taper Plan');
     refreshTaperDashboard();
     if (typeof hideTaperWorkspace === 'function') hideTaperWorkspace();
     if (typeof setGoalsPlansView === 'function') {
-        setGoalsPlansView(ensureCombinedNavPrefs().goalsPlansView || 'active', { persist: true });
+        setGoalsPlansView(ensureCombinedNavPrefs().goalsPlansView || 'overview', { persist: true });
     }
 }
 
@@ -62065,6 +62143,7 @@ function __getRecoveryTrackerTestExports() {
         },
         getTaperPlanById,
         getSelectedTaperPlan,
+        getPrimaryTaperPlan,
         selectedTaperPlanIdRef: {
             get value() { return selectedTaperPlanId; },
             set value(v) { selectedTaperPlanId = v; }
@@ -62072,6 +62151,10 @@ function __getRecoveryTrackerTestExports() {
         taperFormPlanIdRef: {
             get value() { return taperFormPlanId; },
             set value(v) { taperFormPlanId = v; }
+        },
+        taperFormModeRef: {
+            get value() { return taperFormMode; },
+            set value(v) { taperFormMode = v === 'edit' ? 'edit' : 'create'; }
         },
         taperEditingPlanRef: {
             get value() { return taperEditingPlan; },
@@ -62460,6 +62543,9 @@ function __getRecoveryTrackerTestExports() {
         pauseUnifiedTaperRecord,
         completeUnifiedTaperRecord,
         archiveUnifiedTaperRecord,
+        deleteUnifiedTaperRecord,
+        deleteTaperPlanById,
+        deleteSelectedTaperPlan,
         pauseTaperPlanById,
         duplicateTaperPlanById,
         completeTaperPlanById,
@@ -62475,6 +62561,7 @@ function __getRecoveryTrackerTestExports() {
         applyTaperTemplate,
         showNewTaperPlan,
         editTaperPlanById,
+        resolveTaperFormEditingPlanId,
         handleTaperSubmit,
         buildTaperPlanFromForm,
         applyBuiltTaperPlanToExisting,

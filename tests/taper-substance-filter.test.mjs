@@ -82,9 +82,9 @@ function installDom(rt, substanceId = COKE_ID) {
     const records = put('tapers-root', {
         className: 'combined-subview',
         hidden: true,
-        dataset: { gpView: 'active history templates' }
+        dataset: { gpView: 'history templates' }
     });
-    records.getAttribute = (name) => (name === 'data-gp-view' ? 'active history templates' : null);
+    records.getAttribute = (name) => (name === 'data-gp-view' ? 'history templates' : null);
     put('taper-tab', { className: 'taper-page taper-workspace', hidden: true });
     put('taper-setup', { className: 'hidden' });
     put('taper-dashboard', { className: 'hidden' });
@@ -279,22 +279,22 @@ test('Current taper step respects substance', () => {
     assert.doesNotMatch(String(nicOverview.currentPlanWeek), /Coke/);
 });
 
-test('Active and History respect substance', () => {
+test('Overview and History respect substance', () => {
     const { rt, nodes, substanceSelect } = setupApp({ selectedSubstance: COKE_ID });
 
-    rt.setGoalsPlansView('active', { persist: false, skipRoute: true });
-    let html = nodes.get('tapers-root').innerHTML;
+    rt.setGoalsPlansView('overview', { persist: false, skipRoute: true });
+    let html = nodes.get('gp-overview-root').innerHTML;
     assert.match(html, /Coke taper/);
     assert.doesNotMatch(html, /Nicotine taper/);
-    assert.match(html, /1 active Coke taper/);
+    assert.match(html, /Active Coke tapers/i);
 
     substanceSelect.value = NICOTINE_ID;
     rt.onTaperSubstanceChange();
-    rt.setGoalsPlansView('active', { persist: false, skipRoute: true });
-    html = nodes.get('tapers-root').innerHTML;
+    rt.setGoalsPlansView('overview', { persist: false, skipRoute: true });
+    html = nodes.get('gp-overview-root').innerHTML;
     assert.match(html, /Nicotine taper/);
     assert.doesNotMatch(html, /Coke taper/);
-    assert.match(html, /1 active Nicotine taper/);
+    assert.match(html, /Active Nicotine tapers/i);
 
     rt.setGoalsPlansView('history', { persist: false, skipRoute: true });
     html = nodes.get('tapers-root').innerHTML;
@@ -341,17 +341,18 @@ test('empty state does not fall back to another substance', () => {
     assert.equal(overview.closestGoalDeadline, null);
 });
 
-test('Open Edit Duplicate Pause Complete Archive and New Taper still work under filter', () => {
+test('Open Edit Duplicate Pause Complete Archive Delete and New Taper still work under filter', () => {
     const { rt, nodes, substanceSelect } = setupApp({ selectedSubstance: COKE_ID });
-    rt.setGoalsPlansView('active', { persist: false, skipRoute: true });
-    let html = nodes.get('tapers-root').innerHTML;
+    rt.setGoalsPlansView('overview', { persist: false, skipRoute: true });
+    let html = nodes.get('gp-overview-root').innerHTML;
     assert.match(html, /onclick="openUnifiedTaperRecord\('coke-active'\)"/);
     assert.match(html, /onclick="editUnifiedTaperRecord\('coke-active'\)"/);
     assert.match(html, /onclick="duplicateUnifiedTaperRecord\('coke-active'\)"/);
     assert.match(html, /onclick="pauseUnifiedTaperRecord\('coke-active'\)"/);
     assert.match(html, /onclick="completeUnifiedTaperRecord\('coke-active'\)"/);
     assert.match(html, /onclick="archiveUnifiedTaperRecord\('coke-active'\)"/);
-    assert.match(html, /onclick="openUnifiedNewTaper\(\)"/);
+    assert.match(html, /onclick="deleteUnifiedTaperRecord\('coke-active'\)"/);
+    assert.match(html, /onclick="openUnifiedNewTaper\(\);?"/);
 
     substanceSelect.value = NICOTINE_ID;
     rt.onTaperSubstanceChange();

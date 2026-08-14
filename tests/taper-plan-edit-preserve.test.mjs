@@ -175,6 +175,7 @@ test('editing a taper plan updates in place and keeps the same active plan id', 
     rt.__setTestAppData(makeData([primary, secondary]));
     rt.selectedTaperPlanIdRef.value = primary.id;
     rt.taperFormPlanIdRef.value = null; // simulate lost in-memory edit id
+    rt.taperFormModeRef.value = 'edit';
     rt.taperEditingPlanRef.value = true;
 
     const nodes = installTaperFormDom(rt, {
@@ -207,13 +208,23 @@ test('editing a taper plan updates in place and keeps the same active plan id', 
     assert.equal(other.id, 'taper-coke-2');
 });
 
-test('resolveTaperFormEditingPlanId falls back to selected plan while editing', () => {
+test('resolveTaperFormEditingPlanId uses form ids in edit mode and never selected plan in create', () => {
     const rt = loadRecoveryTrackerApp();
     rt.__setTestAppData(makeData([makePlan()]));
     installTaperFormDom(rt, { editingPlanId: '' });
+    rt.selectedTaperPlanIdRef.value = 'taper-coke-1';
+
+    rt.taperFormModeRef.value = 'create';
     rt.taperFormPlanIdRef.value = null;
     rt.taperEditingPlanRef.value = true;
-    rt.selectedTaperPlanIdRef.value = 'taper-coke-1';
+    assert.equal(rt.resolveTaperFormEditingPlanId(), null);
+
+    rt.taperFormModeRef.value = 'edit';
+    rt.taperFormPlanIdRef.value = 'taper-coke-1';
+    assert.equal(rt.resolveTaperFormEditingPlanId(), 'taper-coke-1');
+
+    rt.taperFormPlanIdRef.value = null;
+    rt.document.getElementById('taper-editing-plan-id').value = 'taper-coke-1';
     assert.equal(rt.resolveTaperFormEditingPlanId(), 'taper-coke-1');
 });
 
@@ -327,12 +338,13 @@ test('Save Changes updates custom weekly plan by stable id and persists after re
 
     rt.selectedTaperPlanIdRef.value = plan.id;
     rt.taperFormPlanIdRef.value = plan.id;
+    rt.taperFormModeRef.value = 'edit';
     rt.taperEditingPlanRef.value = true;
     rt.taperFormInitializedRef.value = true;
 
     const ok = rt.handleTaperSubmit({ preventDefault() {} });
     assert.equal(ok, true);
-    assert.equal(nodes.get('taper-form-status').textContent, 'Plan saved');
+    assert.equal(nodes.get('taper-form-status').textContent, 'Taper saved');
     assert.match(nodes.get('taper-form-status').className, /is-success/);
 
     const saved = rt.__getTestAppData().taperPlansV2.find(p => p.id === plan.id);

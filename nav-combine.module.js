@@ -1,9 +1,9 @@
 // ——— Combined navigation: Tapers + Insights & Calendar ———
 
 const COMBINED_NAV_ROUTE_REDIRECTS = {
-    '/goals': { tab: 'goals-plans-tab', view: 'active' },
-    '/plan': { tab: 'goals-plans-tab', view: 'active' },
-    '/plans': { tab: 'goals-plans-tab', view: 'active' },
+    '/goals': { tab: 'goals-plans-tab', view: 'overview' },
+    '/plan': { tab: 'goals-plans-tab', view: 'overview' },
+    '/plans': { tab: 'goals-plans-tab', view: 'overview' },
     '/insights': { tab: 'insights-calendar-tab', view: 'overview' },
     '/calendar': { tab: 'insights-calendar-tab', view: 'calendar' },
     '/goals-plans': { tab: 'goals-plans-tab', view: null },
@@ -18,7 +18,6 @@ const COMBINED_NAV_ROUTE_REDIRECTS = {
 
 const GOALS_PLANS_VIEWS = [
     'overview',
-    'active',
     'history',
     'templates'
 ];
@@ -32,12 +31,12 @@ const INSIGHTS_CALENDAR_VIEWS = [
 ];
 
 const LEGACY_TAB_TO_COMBINED = {
-    'goals-tab': { tab: 'goals-plans-tab', view: 'active' },
-    goals: { tab: 'goals-plans-tab', view: 'active' },
-    'taper-tab': { tab: 'goals-plans-tab', view: 'active' },
-    taper: { tab: 'goals-plans-tab', view: 'active' },
-    plan: { tab: 'goals-plans-tab', view: 'active' },
-    'plan-tab': { tab: 'goals-plans-tab', view: 'active' },
+    'goals-tab': { tab: 'goals-plans-tab', view: 'overview' },
+    goals: { tab: 'goals-plans-tab', view: 'overview' },
+    'taper-tab': { tab: 'goals-plans-tab', view: 'overview' },
+    taper: { tab: 'goals-plans-tab', view: 'overview' },
+    plan: { tab: 'goals-plans-tab', view: 'overview' },
+    'plan-tab': { tab: 'goals-plans-tab', view: 'overview' },
     'stats-tab': { tab: 'insights-calendar-tab', view: 'overview' },
     stats: { tab: 'insights-calendar-tab', view: 'overview' },
     insights: { tab: 'insights-calendar-tab', view: 'overview' },
@@ -72,6 +71,7 @@ function ensureCombinedNavPrefs(data = appData) {
         data.settings.combinedNav = { ...defaults, goalsPlansCollapsed: { ...defaults.goalsPlansCollapsed } };
     }
     const prefs = data.settings.combinedNav;
+    if (prefs.goalsPlansView === 'active') prefs.goalsPlansView = 'overview';
     if (!GOALS_PLANS_VIEWS.includes(prefs.goalsPlansView)) prefs.goalsPlansView = defaults.goalsPlansView;
     // Migrate legacy Insights subviews into Overview / Calendar / Use / Money / More
     if (typeof normalizeCombinedView === 'function') {
@@ -122,13 +122,14 @@ function persistActiveTab(tabId, data = appData) {
 function normalizeCombinedView(view, allowed, fallback) {
     const raw = String(view || '').trim().toLowerCase();
     const aliases = {
-        goals: 'active',
-        plan: 'active',
-        plans: 'active',
-        taper: 'active',
-        tapers: 'active',
-        'active-goals': 'active',
-        'active-plans': 'active',
+        active: 'overview',
+        goals: 'overview',
+        plan: 'overview',
+        plans: 'overview',
+        taper: 'overview',
+        tapers: 'overview',
+        'active-goals': 'overview',
+        'active-plans': 'overview',
         'goal-history': 'history',
         'plan-history': 'history',
         compare: 'more',
