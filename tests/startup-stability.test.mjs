@@ -17,6 +17,7 @@ function lineOf(pattern) {
 
 test('startup-critical constants are declared before loadData()', () => {
     const loadDataLine = lineOf(/^function loadData\(\)/m);
+    const bootstrapLine = lineOf(/^function bootstrapRecoveryTrackerFromStorage\(\)/m);
     const names = [
         'BUYING_REDUCTION_RULE_KEYS',
         'PURCHASE_TAPER_MODES',
@@ -29,6 +30,8 @@ test('startup-critical constants are declared before loadData()', () => {
         const constLine = lineOf(new RegExp(`^const ${name}\\b`, 'm'));
         assert.ok(constLine < loadDataLine, `${name} must be declared before loadData()`);
     }
+    assert.ok(bootstrapLine > loadDataLine, 'bootstrapRecoveryTrackerFromStorage must run after loadData is defined');
+    assert.ok(appSource.indexOf('bootstrapRecoveryTrackerFromStorage();') > bootstrapLine);
 });
 
 test('BUYING_REDUCTION_RULE_KEYS is not duplicated in app.js', () => {

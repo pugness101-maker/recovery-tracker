@@ -26425,7 +26425,22 @@ let inventorySourcePickerMounted = false;
 let inventorySourcePickerMountWarned = false;
 
 function isInventorySourceDomElement(node) {
-    return !!node && typeof node === 'object' && !Array.isArray(node) && typeof node.insertAdjacentHTML === 'function';
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+    if (typeof node.nodeType === 'number' && node.nodeType !== 1) return false;
+    if (Object.prototype.hasOwnProperty.call(node, 'length') && typeof node.insertAdjacentHTML !== 'function') {
+        return false;
+    }
+    return typeof node.insertAdjacentHTML === 'function';
+}
+
+function buyFormSourceMountContextPresent() {
+    if (typeof document === 'undefined') return false;
+    return !!(
+        document.getElementById('buy-source-mount')
+        || document.getElementById('buy-store-group')
+        || document.getElementById('buy-payment-group')
+        || document.getElementById('buy-acquisition-type')
+    );
 }
 
 function isInventorySourceMountTarget(node) {
@@ -26478,7 +26493,7 @@ function buySourcePickerMarkupPresent() {
     return !!(mount && typeof mount.innerHTML === 'string' && mount.innerHTML.includes('buy-source-group'));
 }
 
-function ensureBuySourcePickerMounted() {
+function ensureBuySourcePickerMounted(options = {}) {
     if (typeof document === 'undefined') return false;
     if (buySourcePickerMarkupPresent()) {
         inventorySourcePickerMounted = true;
@@ -26494,7 +26509,9 @@ function ensureBuySourcePickerMounted() {
     const html = buildBuySourcePickerHtml(type);
     const mounted = mountBuySourcePickerHtml(html);
     if (!mounted) {
-        if (!inventorySourcePickerMountWarned) {
+        const quiet = options.quiet === true;
+        const shouldWarn = !quiet && options.warn !== false;
+        if (shouldWarn && !inventorySourcePickerMountWarned) {
             inventorySourcePickerMountWarned = true;
             console.warn('[inventory-source] Source picker mount skipped — buy form target elements are not ready');
         }
@@ -26644,7 +26661,7 @@ function initInventorySource() {
     patchInventorySourceAnalytics();
     patchInventorySourceHistoryColumns();
     if (typeof document !== 'undefined') {
-        ensureBuySourcePickerMounted();
+        ensureBuySourcePickerMounted({ quiet: !buyFormSourceMountContextPresent() });
         if (!inventorySourceClickListenerBound) {
             inventorySourceClickListenerBound = true;
             document.addEventListener('click', (e) => {
@@ -26655,16 +26672,6 @@ function initInventorySource() {
                 closeBuySourceMenu();
             });
         }
-    }
-}
-
-if (typeof document !== 'undefined') {
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            try { initInventorySource(); } catch (err) { console.error('[inventory-source] init failed', err); }
-        });
-    } else {
-        try { initInventorySource(); } catch (_) { /* tests / early */ }
     }
 }
 
@@ -27701,12 +27708,20 @@ function logsLookLikeSimpleDuplicate(a, b) {
     const ptA = a.nicotineProductType || a.weedProductType || '';
     const ptB = b.nicotineProductType || b.weedProductType || '';
     if (String(ptA) !== String(ptB)) return false;
+    const pidA = typeof getLogPurchaseId === 'function' ? getLogPurchaseId(a) : (a.purchaseId || '');
+    const pidB = typeof getLogPurchaseId === 'function' ? getLogPurchaseId(b) : (b.purchaseId || '');
+    if (String(pidA || '') !== String(pidB || '')) return false;
+    const modeA = a.logMode || a.nicotineLogMode || '';
+    const modeB = b.logMode || b.nicotineLogMode || '';
+    if (String(modeA) !== String(modeB)) return false;
     return true;
 }
 
 function findSimpleQuickLogDuplicate(candidate, data = appData, nowMs = Date.now()) {
     if (!candidate) return null;
+    const excludeId = candidate.id != null && candidate.id !== '' ? String(candidate.id) : null;
     return (data.logs || []).find(log => {
+        if (excludeId && String(log?.id) === excludeId) return false;
         if (!isSimpleRecentLogEligible(log)) return false;
         if (!logsLookLikeSimpleDuplicate(log, candidate)) return false;
         const ms = typeof getLogDatetimeMs === 'function'
@@ -33013,30 +33028,9 @@ function sortSubstancesMainFirst(list) {
 }
 
 let appData;
-try {
-    appData = loadData();
-} catch (error) {
-    console.error('Failed to load app data:', error);
-    const hasStoredData = !!localStorage.getItem(STORAGE_KEY) || !!localStorage.getItem(STORAGE_KEY_V1);
-    const backup = loadAutoBackupAppData();
-    if (backup) {
-        appDataLoadedFromStorage = true;
-        appData = normalizeAppDataSafe(backup);
-        console.log('Loaded saved recovery data');
-    } else if (hasStoredData) {
-        console.error('Saved data exists but could not be loaded. Defaults shown in memory only — storage was not overwritten.');
-        appData = normalizeAppDataSafe(getDefaultAppData());
-    } else {
-        appData = normalizeAppDataSafe(getDefaultAppData());
-        console.log('No saved data found, using defaults');
-    }
-}
-
-ensureAppDataSubstancesReady(appData);
-
-let currentSubstanceId = resolveStartupSubstanceId() || DASHBOARD_ALL;
-let selectedSubstanceId = resolveDefaultSelectedSubstanceId() || DASHBOARD_ALL;
-let selectedDashboardSubstance = currentSubstanceId || DASHBOARD_ALL;
+let currentSubstanceId;
+let selectedSubstanceId;
+let selectedDashboardSubstance;
 let recoveryDashboardDatasetCache = null;
 let recoveryDashboardDatasetCacheKey = null;
 let statsDateRangePreset = 'last-7';
@@ -33049,20 +33043,6 @@ let statsCompareCustomEnd = '';
 let insightsDatasetCache = null;
 let insightsDatasetCacheKey = null;
 let testReferenceDateStr = null;
-
-// Apply persisted shared Insights filters after globals exist
-if (typeof loadInsightsFiltersIntoState === 'function') {
-    loadInsightsFiltersIntoState(appData);
-}
-if (typeof initInsightsSimplify === 'function') {
-    try { initInsightsSimplify(); } catch (_) { /* DOM may be absent in tests */ }
-}
-if (typeof initExperienceMode === 'function') {
-    try { initExperienceMode(); } catch (_) { /* DOM may be absent in tests */ }
-}
-if (typeof initInventorySource === 'function') {
-    try { initInventorySource(); } catch (_) { /* DOM may be absent in tests */ }
-}
 
 const STATS_CALENDAR_STORAGE_KEY = 'recoveryTracker.statsCalendar.v1';
 let statsCalendarViewMode = 'month';
@@ -61611,6 +61591,48 @@ if (typeof window !== 'undefined') {
         applyStatsCustomRange
     });
 }
+
+/** Load persisted data after all module definitions exist (avoids startup TDZ). */
+function bootstrapRecoveryTrackerFromStorage() {
+    try {
+        appData = loadData();
+    } catch (error) {
+        console.error('Failed to load app data:', error);
+        const hasStoredData = !!localStorage.getItem(STORAGE_KEY) || !!localStorage.getItem(STORAGE_KEY_V1);
+        const backup = loadAutoBackupAppData();
+        if (backup) {
+            appDataLoadedFromStorage = true;
+            appData = normalizeAppDataSafe(backup);
+            console.log('Loaded saved recovery data');
+        } else if (hasStoredData) {
+            console.error('Saved data exists but could not be loaded. Defaults shown in memory only — storage was not overwritten.');
+            appData = normalizeAppDataSafe(getDefaultAppData());
+        } else {
+            appData = normalizeAppDataSafe(getDefaultAppData());
+            console.log('No saved data found, using defaults');
+        }
+    }
+
+    ensureAppDataSubstancesReady(appData);
+    currentSubstanceId = resolveStartupSubstanceId() || DASHBOARD_ALL;
+    selectedSubstanceId = resolveDefaultSelectedSubstanceId() || DASHBOARD_ALL;
+    selectedDashboardSubstance = currentSubstanceId || DASHBOARD_ALL;
+
+    if (typeof loadInsightsFiltersIntoState === 'function') {
+        loadInsightsFiltersIntoState(appData);
+    }
+    if (typeof initInsightsSimplify === 'function') {
+        try { initInsightsSimplify(); } catch (_) { /* DOM may be absent in tests */ }
+    }
+    if (typeof initExperienceMode === 'function') {
+        try { initExperienceMode(); } catch (_) { /* DOM may be absent in tests */ }
+    }
+    if (typeof initInventorySource === 'function') {
+        try { initInventorySource(); } catch (_) { /* DOM may be absent in tests */ }
+    }
+}
+
+bootstrapRecoveryTrackerFromStorage();
 
 function __setTestAppData(data) {
     appData = data;
