@@ -765,11 +765,6 @@
                             <label for="taper-plan-select" class="page-substance-label">Taper</label>
                             <select id="taper-plan-select" class="page-substance-select" onchange="onTaperPlanChange()"></select>
                         </div>
-                        <span id="taper-plan-count" class="taper-plan-count"></span>
-                        <label class="taper-show-archived-toggle">
-                            <input type="checkbox" id="taper-show-archived" onchange="onTaperShowArchivedChange()">
-                            Show archived
-                        </label>
                     </div>
                     <div class="taper-plan-actions-bar">
                         <button type="button" class="taper-chip-btn" onclick="showNewTaperPlan()">+ New Taper</button>
@@ -928,6 +923,32 @@
                         <div class="form-group">
                             <label for="taper-plan-name">Plan name</label>
                             <input type="text" id="taper-plan-name" required placeholder="e.g. June manual weekly plan">
+                        </div>
+                        <div id="taper-start-from-section" class="taper-start-from-section">
+                            <div class="form-row taper-start-from-row">
+                                <div class="form-group">
+                                    <label for="taper-start-from">Start from</label>
+                                    <select id="taper-start-from" onchange="onTaperStartFromChange()">
+                                        <option value="blank">Blank / New taper</option>
+                                        <option value="suggested">Suggested taper</option>
+                                        <option value="builtin-template">Built-in template</option>
+                                        <option value="my-template">My template</option>
+                                        <option value="copy-existing">Existing taper as copy</option>
+                                    </select>
+                                </div>
+                                <div class="form-group hidden" id="taper-start-builtin-group">
+                                    <label for="taper-start-builtin-template">Template</label>
+                                    <select id="taper-start-builtin-template" onchange="onTaperStartFromDetailChange()"></select>
+                                </div>
+                                <div class="form-group hidden" id="taper-start-my-template-group">
+                                    <label for="taper-start-my-template">My template</label>
+                                    <select id="taper-start-my-template" onchange="onTaperStartFromDetailChange()"></select>
+                                </div>
+                                <div class="form-group hidden" id="taper-start-copy-group">
+                                    <label for="taper-start-copy-plan">Copy from</label>
+                                    <select id="taper-start-copy-plan" onchange="onTaperStartFromDetailChange()"></select>
+                                </div>
+                            </div>
                         </div>
                         <label class="checkbox-label taper-set-primary-label">
                             <input type="checkbox" id="taper-set-primary">
@@ -3244,7 +3265,11 @@
     <div id="manage-taper-plans-modal" class="modal hidden">
         <div class="modal-content modal-wide">
             <h2>Manage Taper Plans</h2>
-            <p class="settings-hint">Plans for the selected substance. Archived plans are hidden from the default dropdown unless you enable Show archived.</p>
+            <p class="settings-hint">Plans for the selected substance. Use the filter bar to find archived or completed tapers.</p>
+            <label class="checkbox-label manage-taper-show-archived-toggle">
+                <input type="checkbox" id="manage-taper-show-archived" onchange="onTaperShowArchivedChange()">
+                Show archived in taper dropdown
+            </label>
             <div class="manage-taper-filter-bar">
                 <button type="button" class="secondary-btn manage-taper-filter-btn active" data-filter="active" onclick="setManageTaperPlansFilter('active')">Active</button>
                 <button type="button" class="secondary-btn manage-taper-filter-btn" data-filter="paused" onclick="setManageTaperPlansFilter('paused')">Paused</button>

@@ -2170,10 +2170,12 @@ input[type="range"]::-webkit-slider-thumb {
     min-width: 220px;
 }
 
-.taper-plan-count {
-    font-size: 0.8rem;
-    color: var(--text-muted);
-    padding-bottom: 8px;
+.taper-start-from-section {
+    margin-bottom: 4px;
+}
+
+.taper-start-from-row {
+    align-items: flex-end;
 }
 
 .taper-show-archived-toggle {
