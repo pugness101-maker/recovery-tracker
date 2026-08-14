@@ -366,6 +366,59 @@ app = tryReplace(app,
     }`,
     'merge simpleModePrefs on import');
 
+app = tryReplace(app,
+    `        experienceMode: 'simple',
+        simpleModePrefs: null
+    },`,
+    `        experienceMode: 'simple',
+        simpleModePrefs: null,
+        onboardingCompleted: false,
+        onboarding: null
+    },`,
+    'default onboarding settings');
+
+app = tryReplace(app,
+    `    if (typeof mergeSimpleModePrefs === 'function'
+        && (current.settings?.simpleModePrefs || imported.settings?.simpleModePrefs)) {
+        merged.settings.simpleModePrefs = mergeSimpleModePrefs(
+            current.settings?.simpleModePrefs,
+            imported.settings?.simpleModePrefs
+        );
+    }`,
+    `    if (typeof mergeSimpleModePrefs === 'function'
+        && (current.settings?.simpleModePrefs || imported.settings?.simpleModePrefs)) {
+        merged.settings.simpleModePrefs = mergeSimpleModePrefs(
+            current.settings?.simpleModePrefs,
+            imported.settings?.simpleModePrefs
+        );
+    }
+    if (typeof reconcileOnboardingAfterImport === 'function') {
+        reconcileOnboardingAfterImport(merged);
+    }`,
+    'reconcile onboarding after import');
+
+app = tryReplace(app,
+    `        formatSimpleRepeatLastLabel,
+        applyExperienceMode,`,
+    `        formatSimpleRepeatLastLabel,
+        hasMeaningfulRecoveryData,
+        shouldShowOnboarding,
+        maybeStartOnboarding,
+        startOnboarding,
+        skipOnboarding,
+        completeOnboarding,
+        restartOnboarding,
+        applyOnboardingTrackedSubstances,
+        applyOnboardingReminderPreference,
+        reconcileOnboardingAfterImport,
+        getOnboardingState,
+        getOnboardingDraft,
+        ONBOARDING_INTENTS,
+        ONBOARDING_STEP_IDS,
+        migrateOnboardingV1,
+        applyExperienceMode,`,
+    'onboarding test exports');
+
 // ——— HTML ———
 
 // Simple home shell inside dashboard
@@ -465,6 +518,48 @@ html = tryReplace(html,
     `    <div id="sm-toast" class="sm-toast hidden" role="status" aria-live="polite"></div>
     <script src="app.js" defer></script>`,
     'simple toast host');
+
+html = tryReplace(html,
+    `    <div id="sm-toast" class="sm-toast hidden" role="status" aria-live="polite"></div>`,
+    `    <div id="onboarding-overlay" class="modal onboarding-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+        <div class="modal-content onboarding-modal-content">
+            <div id="onboarding-root"></div>
+        </div>
+    </div>
+    <div id="sm-toast" class="sm-toast hidden" role="status" aria-live="polite"></div>`,
+    'onboarding overlay');
+
+html = tryReplace(html,
+    `                <div class="collapsible-section" data-section="settingsSubstances">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsSubstances')">
+                        <span>Manage Substances</span>
+                        <span class="chevron">⌄</span>
+                    </button>`,
+    `                <div class="collapsible-section" data-section="settingsOnboarding" id="onboarding-setup-section">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsOnboarding')">
+                        <span>Onboarding / Setup</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section">
+                    <p class="settings-hint">Review what you chose during setup. Restarting setup never deletes logs, purchases, inventory, or tapers.</p>
+                    <div id="onboarding-settings-summary" class="onboarding-settings-summary"></div>
+                    <div class="data-management-buttons">
+                        <button type="button" class="secondary-btn" onclick="openOnboardingReview()">Review setup</button>
+                        <button type="button" class="secondary-btn" onclick="openTrackedSubstancesFromOnboarding()">Change tracked substances</button>
+                        <button type="button" class="secondary-btn" onclick="openTrackedSubstancesFromOnboarding()">Change primary substance</button>
+                        <button type="button" class="secondary-btn" onclick="restartOnboarding()">Restart onboarding</button>
+                    </div>
+                </div>
+                    </div>
+                </div>
+
+                <div class="collapsible-section" data-section="settingsSubstances">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsSubstances')">
+                        <span>Manage Substances</span>
+                        <span class="chevron">⌄</span>
+                    </button>`,
+    'onboarding settings section');
 
 html = tryReplace(html,
     `                    <details class="use-log-advanced" id="use-advanced-section">

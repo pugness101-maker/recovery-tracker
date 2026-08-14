@@ -48,17 +48,24 @@ function normalizeExperienceMode(value) {
     return value === EXPERIENCE_MODE_ADVANCED ? EXPERIENCE_MODE_ADVANCED : EXPERIENCE_MODE_SIMPLE;
 }
 
+function hasMeaningfulRecoveryData(data = appData) {
+    if (!data || typeof data !== 'object') return false;
+    if (Array.isArray(data.logs) && data.logs.length > 0) return true;
+    if (Array.isArray(data.purchases) && data.purchases.length > 0) return true;
+    if (Array.isArray(data.taperPlansV2) && data.taperPlansV2.length > 0) return true;
+    if (data.taperPlans && typeof data.taperPlans === 'object' && Object.keys(data.taperPlans).length > 0) {
+        return true;
+    }
+    return false;
+}
+
 function migrateExperienceModeV1(data = appData) {
     if (!data || typeof data !== 'object') return;
     if (!data.migrations || typeof data.migrations !== 'object') data.migrations = {};
     if (data.migrations.experienceModeV1) return;
     if (!data.settings || typeof data.settings !== 'object') data.settings = {};
 
-    const hasExistingWork =
-        (Array.isArray(data.logs) && data.logs.length > 0)
-        || (Array.isArray(data.purchases) && data.purchases.length > 0)
-        || (Array.isArray(data.taperPlansV2) && data.taperPlansV2.length > 0)
-        || (data.taperPlans && typeof data.taperPlans === 'object' && Object.keys(data.taperPlans).length > 0);
+    const hasExistingWork = hasMeaningfulRecoveryData(data);
 
     if (data.settings.experienceMode == null) {
         // Existing users keep the full UI by default; new installs use Simple.
@@ -97,6 +104,7 @@ function ensureExperienceMode(data = appData) {
     migrateExperienceModeV1(data);
     data.settings.experienceMode = normalizeExperienceMode(data.settings.experienceMode);
     ensureSimpleModePrefs(data);
+    migrateOnboardingV1(data);
     return data.settings.experienceMode;
 }
 
@@ -303,8 +311,9 @@ function renderSimpleHome(data = appData) {
                 </article>`;
         }).join('')
         : `<div class="sm-empty">
-            <p>Nothing logged today yet.</p>
-            <p class="settings-hint">Tap Quick Log to record use in a few taps.</p>
+            <p>Nothing logged yet</p>
+            <p class="settings-hint">Start with your first entry.</p>
+            <button type="button" class="sm-action-btn sm-action-primary" onclick="openSimpleQuickLog()">Quick Log</button>
            </div>`;
 
     const lastSaved = formatSimpleLastSaved(
@@ -1393,6 +1402,9 @@ function renderSimpleProgress(data = appData) {
                 <p class="sm-section-sub">${escapeHtml(dataset.bounds.label)}</p>
             </div>
             ${renderSimpleProgressChart(dataset.series)}
+            ${dataset.hasLogs === false || (!(dataset.usedToday > 0) && !(dataset.dailyAvg > 0) && !(dataset.series || []).some(p => Number(p?.amount) > 0))
+                ? '<p class="sm-empty-hint">Your trends will appear after you start logging.</p>'
+                : ''}
         </section>
         <section class="sm-progress-section sm-cal-section">
             <div class="sm-section-head">
@@ -1522,6 +1534,19 @@ function applySimplePlanFormLayout(data = appData) {
     advancedBlocks.forEach(el => {
         el.classList.toggle('sm-hidden-in-simple', simple && intent !== 'custom');
     });
+
+    const empty = document.getElementById('taper-no-plan');
+    if (empty) {
+        const heading = empty.querySelector('h3');
+        const copy = empty.querySelector('p');
+        if (simple) {
+            if (heading) heading.textContent = 'No active taper';
+            if (copy) copy.textContent = 'Create one when you’re ready.';
+        } else {
+            if (heading) heading.textContent = 'No taper plans for this substance yet.';
+            if (copy) copy.textContent = 'Set starting and target averages, pick a reduction style, and track progress week by week.';
+        }
+    }
 }
 
 function syncExperienceModeSettingsUI(data = appData) {
@@ -1632,6 +1657,7 @@ function initExperienceMode() {
             openSimplePlanWizard();
         });
     }
+    maybeStartOnboarding(appData);
 }
 
 function onExperienceModeAfterUseLogSave() {
@@ -1660,5 +1686,668 @@ function onExperienceModeTabChange(tabId) {
         applySimplePlanFormLayout(appData);
     } else if (tabId === 'settings-tab') {
         syncExperienceModeSettingsUI(appData);
+        renderOnboardingSettingsPanel(appData);
     }
+}
+
+// ——— First-time onboarding (Simple Mode) ———
+
+const ONBOARDING_STEP_IDS = Object.freeze(['welcome', 'substances', 'intent', 'preferences', 'ready']);
+const ONBOARDING_OTHER_ID = '__other__';
+const ONBOARDING_REMINDERS = Object.freeze([
+    { id: 'morning', label: 'Morning' },
+    { id: 'evening', label: 'Evening' },
+    { id: 'both', label: 'Both' },
+    { id: 'none', label: 'No reminders' }
+]);
+const ONBOARDING_INTENTS = Object.freeze([
+    { id: 'track-use', label: 'Track my use', planIntent: 'track-only', offersTaper: false },
+    { id: 'use-less', label: 'Use less', planIntent: 'use-less', offersTaper: true },
+    { id: 'spend-less', label: 'Spend less', planIntent: 'spend-less', offersTaper: true },
+    { id: 'buy-less', label: 'Buy less often', planIntent: 'buy-less', offersTaper: true },
+    { id: 'quit-eventually', label: 'Quit eventually', planIntent: 'quit-by-date', offersTaper: true },
+    { id: 'understand', label: 'Understand my patterns', planIntent: 'track-only', offersTaper: false }
+]);
+
+let onboardingUi = {
+    open: false,
+    stepIndex: 0,
+    draft: null
+};
+
+function getDefaultOnboardingState() {
+    return {
+        skipped: false,
+        restarting: false,
+        intentId: null,
+        reminder: 'none',
+        reminderPermission: 'not-requested',
+        reminderScheduled: false,
+        taperSetupRequested: false,
+        selectedSubstanceIds: [],
+        primarySubstanceId: null,
+        experienceMode: EXPERIENCE_MODE_SIMPLE,
+        completedAt: null
+    };
+}
+
+function getDefaultOnboardingDraft(data = appData) {
+    const active = (data.substances || []).filter(s => s && s.active !== false).map(s => s.id);
+    const main = (data.substances || []).find(s => s && s.isMain && s.active !== false);
+    return {
+        selectedIds: active.slice(),
+        otherEnabled: false,
+        otherName: '',
+        primaryId: main?.id || active[0] || null,
+        intentId: null,
+        taperChoice: null,
+        experienceMode: EXPERIENCE_MODE_SIMPLE,
+        reminder: 'none',
+        skipped: false
+    };
+}
+
+function ensureOnboardingSettings(data = appData) {
+    if (!data || typeof data !== 'object') return getDefaultOnboardingState();
+    if (!data.settings || typeof data.settings !== 'object') data.settings = {};
+    const defaults = getDefaultOnboardingState();
+    if (typeof data.settings.onboardingCompleted !== 'boolean') {
+        data.settings.onboardingCompleted = false;
+    }
+    if (!data.settings.onboarding || typeof data.settings.onboarding !== 'object') {
+        data.settings.onboarding = { ...defaults };
+    }
+    const state = data.settings.onboarding;
+    Object.keys(defaults).forEach(key => {
+        if (state[key] === undefined) state[key] = defaults[key];
+    });
+    return state;
+}
+
+function migrateOnboardingV1(data = appData) {
+    if (!data || typeof data !== 'object') return;
+    if (!data.migrations || typeof data.migrations !== 'object') data.migrations = {};
+    if (!data.settings || typeof data.settings !== 'object') data.settings = {};
+
+    if (!data.migrations.onboardingV1) {
+        if (hasMeaningfulRecoveryData(data) && data.settings.onboardingCompleted !== true) {
+            data.settings.onboardingCompleted = true;
+        }
+        data.migrations.onboardingV1 = true;
+    }
+    ensureOnboardingSettings(data);
+    if (hasMeaningfulRecoveryData(data) && !data.settings.onboarding?.restarting) {
+        data.settings.onboarding.restarting = false;
+        if (data.settings.onboardingCompleted !== true && data.settings.onboardingCompleted !== false) {
+            data.settings.onboardingCompleted = true;
+        }
+    }
+}
+
+function getOnboardingState(data = appData) {
+    migrateOnboardingV1(data);
+    return ensureOnboardingSettings(data);
+}
+
+function shouldShowOnboarding(data = appData) {
+    if (!data || typeof data !== 'object') return false;
+    if (!data.settings || typeof data.settings !== 'object') data.settings = {};
+    const state = data.settings.onboarding && typeof data.settings.onboarding === 'object'
+        ? data.settings.onboarding
+        : null;
+    if (state?.restarting === true) return true;
+    if (data.settings.onboardingCompleted === true) return false;
+    if (hasMeaningfulRecoveryData(data)) return false;
+    return true;
+}
+
+function persistOnboardingState(patch = {}, data = appData) {
+    const state = ensureOnboardingSettings(data);
+    Object.assign(state, patch || {});
+    if (typeof saveData === 'function') saveData(data);
+    return state;
+}
+
+function getOnboardingCatalog(data = appData) {
+    const catalog = typeof DEFAULT_SUBSTANCE_CATALOG !== 'undefined'
+        ? DEFAULT_SUBSTANCE_CATALOG
+        : (data.substances || []);
+    return (catalog || []).map(entry => {
+        const existing = (data.substances || []).find(s => s && s.id === entry.id);
+        return existing || entry;
+    });
+}
+
+function getOnboardingSubstanceLabel(sub) {
+    if (!sub) return '';
+    if (sub.id === 'weed-thc') return 'Cannabis';
+    if (sub.id === 'coke') return 'Cocaine';
+    if (sub.id === 'xannax') return 'Xanax / benzodiazepines';
+    return getSimpleSubstanceDisplayName(sub);
+}
+
+function getOnboardingDraft() {
+    if (!onboardingUi.draft) onboardingUi.draft = getDefaultOnboardingDraft(appData);
+    return onboardingUi.draft;
+}
+
+function isOnboardingOpen() {
+    return !!onboardingUi.open;
+}
+
+function getOnboardingStepId() {
+    return ONBOARDING_STEP_IDS[onboardingUi.stepIndex] || ONBOARDING_STEP_IDS[0];
+}
+
+function applyOnboardingTrackedSubstances(selectedIds, primaryId, data = appData, options = {}) {
+    const ids = (selectedIds || []).filter(id => id && id !== ONBOARDING_OTHER_ID);
+    if (!ids.length && !options.otherName) {
+        return { changed: false, selectedIds: [], primaryId: null };
+    }
+    if (!Array.isArray(data.substances)) data.substances = [];
+
+    let otherId = null;
+    if (options.otherName && String(options.otherName).trim()) {
+        const name = String(options.otherName).trim();
+        const existing = data.substances.find(s =>
+            s && String(s.name).toLowerCase() === name.toLowerCase()
+        );
+        if (existing) {
+            otherId = existing.id;
+            existing.active = true;
+            existing.archived = false;
+        } else if (typeof createSubstance === 'function') {
+            otherId = typeof uniqueSubstanceId === 'function'
+                ? uniqueSubstanceId(name)
+                : `custom-${Date.now()}`;
+            data.substances.push(createSubstance({
+                id: otherId,
+                name,
+                trackingMode: 'standard',
+                units: ['units'],
+                defaultUnit: 'units',
+                active: true,
+                isMain: false
+            }));
+        }
+        if (otherId && !ids.includes(otherId)) ids.push(otherId);
+    }
+
+    const selected = new Set(ids);
+    data.substances.forEach(sub => {
+        if (!sub?.id) return;
+        const on = selected.has(sub.id);
+        sub.active = on;
+        if (on) sub.archived = false;
+        if (!on) sub.isMain = false;
+    });
+
+    const resolvedPrimary = (primaryId && selected.has(primaryId))
+        ? primaryId
+        : (ids[0] || otherId || null);
+    data.substances.forEach(sub => {
+        sub.isMain = !!(resolvedPrimary && sub.id === resolvedPrimary && sub.active !== false);
+    });
+    if (typeof normalizeMainSubstances === 'function') normalizeMainSubstances(data);
+    return {
+        changed: true,
+        selectedIds: ids.slice(),
+        primaryId: resolvedPrimary
+    };
+}
+
+function applyOnboardingReminderPreference(choice, options = {}) {
+    const reminder = ONBOARDING_REMINDERS.some(r => r.id === choice) ? choice : 'none';
+    const result = {
+        reminder,
+        reminderPermission: 'not-requested',
+        reminderScheduled: false
+    };
+    if (reminder === 'none') return result;
+    if (options.requestPermission === false) return result;
+    const NotificationApi = (typeof Notification !== 'undefined') ? Notification : null;
+    if (!NotificationApi || typeof NotificationApi.requestPermission !== 'function') {
+        result.reminderPermission = 'unsupported';
+        result.reminderScheduled = false;
+        return result;
+    }
+    try {
+        const permission = NotificationApi.requestPermission();
+        result.reminderPermission = permission && typeof permission.then === 'function' ? 'pending' : String(permission || 'default');
+        result.reminderScheduled = false;
+    } catch (_) {
+        result.reminderPermission = 'unsupported';
+        result.reminderScheduled = false;
+    }
+    return result;
+}
+
+function hideOnboardingOverlay() {
+    onboardingUi.open = false;
+    if (typeof document === 'undefined') return;
+    document.getElementById('onboarding-overlay')?.classList?.add('hidden');
+    document.body?.classList?.remove('onboarding-open');
+}
+
+function renderOnboarding(data = appData) {
+    if (typeof document === 'undefined') return;
+    const overlay = document.getElementById('onboarding-overlay');
+    const root = document.getElementById('onboarding-root');
+    if (!overlay || !root) return;
+    overlay.classList?.toggle('hidden', !onboardingUi.open);
+    document.body?.classList?.toggle('onboarding-open', !!onboardingUi.open);
+    if (!onboardingUi.open) {
+        root.innerHTML = '';
+        return;
+    }
+    const draft = getOnboardingDraft();
+    const stepId = getOnboardingStepId();
+    const stepNum = onboardingUi.stepIndex + 1;
+    const stepTotal = ONBOARDING_STEP_IDS.length;
+    const progress = `<p class="onboarding-progress">${stepNum} of ${stepTotal}</p>`;
+    const navStart = `
+        <div class="onboarding-nav">
+            ${onboardingUi.stepIndex > 0
+                ? '<button type="button" class="secondary-btn" onclick="onboardingBack()">Back</button>'
+                : '<span></span>'}
+            <button type="button" class="sm-text-btn" onclick="skipOnboarding()">Exit</button>
+        </div>`;
+
+    let body = '';
+    if (stepId === 'welcome') {
+        body = `
+            <h1 id="onboarding-title">Recovery Tracker</h1>
+            <p class="onboarding-lead">Track use, spending, patterns, and progress in one place.</p>
+            <div class="onboarding-actions">
+                <button type="button" class="sm-action-btn sm-action-primary" onclick="onboardingContinue()">Get Started</button>
+                <button type="button" class="sm-action-btn sm-action-secondary" onclick="skipOnboarding()">Skip Setup</button>
+            </div>`;
+    } else if (stepId === 'substances') {
+        const catalog = getOnboardingCatalog(data);
+        const chips = catalog.map(sub => {
+            const selected = draft.selectedIds.includes(sub.id);
+            return `<button type="button" class="onboarding-chip${selected ? ' selected' : ''}" aria-pressed="${selected}" onclick="toggleOnboardingSubstance('${escapeHtml(sub.id)}')">${escapeHtml(getOnboardingSubstanceLabel(sub))}</button>`;
+        }).join('');
+        const primaryNeeded = draft.selectedIds.length > 1;
+        const primary = primaryNeeded ? `
+            <h3 class="onboarding-subhead">Which one do you want to focus on most?</h3>
+            <div class="onboarding-chip-grid">
+                ${draft.selectedIds.map(id => {
+                    const sub = catalog.find(s => s.id === id) || (data.substances || []).find(s => s.id === id);
+                    const on = draft.primaryId === id;
+                    return `<button type="button" class="onboarding-chip${on ? ' selected' : ''}" onclick="setOnboardingPrimary('${escapeHtml(id)}')">${escapeHtml(getOnboardingSubstanceLabel(sub) || id)}</button>`;
+                }).join('')}
+            </div>` : '';
+        body = `
+            ${progress}
+            <h2 id="onboarding-title">What do you want to track?</h2>
+            <p class="onboarding-lead">Choose only what you want. You can add another later.</p>
+            <div class="onboarding-chip-grid">${chips}
+                <button type="button" class="onboarding-chip${draft.otherEnabled ? ' selected' : ''}" aria-pressed="${draft.otherEnabled}" onclick="toggleOnboardingSubstance('${ONBOARDING_OTHER_ID}')">Other</button>
+            </div>
+            ${draft.otherEnabled ? `
+                <label class="sm-field">Name
+                    <input type="text" id="onboarding-other-name" value="${escapeHtml(draft.otherName)}" placeholder="Custom substance" oninput="onboardingUi.draft.otherName = this.value">
+                </label>` : ''}
+            ${primary}
+            <p class="settings-hint">Add another later from Settings → Manage Substances.</p>
+            ${navStart}
+            <div class="onboarding-actions">
+                <button type="button" class="sm-action-btn sm-action-primary" onclick="onboardingContinue()">Continue</button>
+                <button type="button" class="sm-text-btn" onclick="onboardingSkipStep()">Add another later</button>
+            </div>`;
+    } else if (stepId === 'intent') {
+        const intent = ONBOARDING_INTENTS.find(i => i.id === draft.intentId);
+        body = `
+            ${progress}
+            <h2 id="onboarding-title">What are you trying to do?</h2>
+            <p class="onboarding-lead">Pick one. This is just a preference — it does not create a taper by itself.</p>
+            <div class="onboarding-choice-list">
+                ${ONBOARDING_INTENTS.map(item => `
+                    <button type="button" class="onboarding-choice${draft.intentId === item.id ? ' selected' : ''}" onclick="setOnboardingIntent('${item.id}')">
+                        ${escapeHtml(item.label)}
+                    </button>`).join('')}
+            </div>
+            ${intent?.offersTaper ? `
+                <div class="onboarding-taper-offer">
+                    <p>Want to set up a taper now?</p>
+                    <div class="onboarding-choice-row">
+                        <button type="button" class="onboarding-chip${draft.taperChoice === 'now' ? ' selected' : ''}" onclick="setOnboardingTaperChoice('now')">Set up a taper now</button>
+                        <button type="button" class="onboarding-chip${draft.taperChoice === 'later' ? ' selected' : ''}" onclick="setOnboardingTaperChoice('later')">Do this later</button>
+                    </div>
+                </div>` : ''}
+            ${navStart}
+            <div class="onboarding-actions">
+                <button type="button" class="sm-action-btn sm-action-primary" onclick="onboardingContinue()">Continue</button>
+                <button type="button" class="sm-text-btn" onclick="onboardingSkipStep()">Skip</button>
+            </div>`;
+    } else if (stepId === 'preferences') {
+        body = `
+            ${progress}
+            <h2 id="onboarding-title">How detailed do you want tracking to be?</h2>
+            <div class="onboarding-choice-list">
+                <button type="button" class="onboarding-choice${draft.experienceMode !== 'advanced' ? ' selected' : ''}" onclick="setOnboardingExperienceMode('simple')">
+                    <strong>Simple</strong>
+                    <span>Just log use quickly.</span>
+                </button>
+                <button type="button" class="onboarding-choice${draft.experienceMode === 'advanced' ? ' selected' : ''}" onclick="setOnboardingExperienceMode('advanced')">
+                    <strong>Detailed</strong>
+                    <span>Track purchases, inventory, cost, product details, and advanced analytics.</span>
+                </button>
+            </div>
+            <h3 class="onboarding-subhead">Want a reminder to check in?</h3>
+            <div class="onboarding-chip-grid">
+                ${ONBOARDING_REMINDERS.map(item => `
+                    <button type="button" class="onboarding-chip${draft.reminder === item.id ? ' selected' : ''}" onclick="setOnboardingReminder('${item.id}')">${escapeHtml(item.label)}</button>
+                `).join('')}
+            </div>
+            <p class="settings-hint">Reminders are saved as a preference. Notification permission is only requested if you choose one, and only if this browser supports it.</p>
+            ${navStart}
+            <div class="onboarding-actions">
+                <button type="button" class="sm-action-btn sm-action-primary" onclick="onboardingContinue()">Continue</button>
+                <button type="button" class="sm-text-btn" onclick="onboardingSkipStep()">Skip</button>
+            </div>`;
+    } else {
+        const selectedNames = getOnboardingSummary(draft, data);
+        body = `
+            ${progress}
+            <h2 id="onboarding-title">You're ready</h2>
+            <ul class="onboarding-summary">
+                <li><span>Tracking</span><strong>${escapeHtml(selectedNames.substances)}</strong></li>
+                <li><span>Focus</span><strong>${escapeHtml(selectedNames.primary)}</strong></li>
+                <li><span>Mode</span><strong>${escapeHtml(selectedNames.mode)}</strong></li>
+                <li><span>Taper</span><strong>${escapeHtml(selectedNames.taper)}</strong></li>
+            </ul>
+            <details class="onboarding-privacy">
+                <summary>Your data</summary>
+                <p>Recovery Tracker stores your information in this browser only, using localStorage. There is no account and no cloud sync.</p>
+                <p>Export JSON Backup downloads a file you can keep or restore later. Clear All Data permanently deletes local logs, substances, and settings after creating an automatic backup.</p>
+            </details>
+            ${navStart}
+            <div class="onboarding-actions">
+                <button type="button" class="sm-action-btn sm-action-primary" onclick="completeOnboarding({ next: 'quick-log' })">Log my first entry</button>
+                <button type="button" class="sm-action-btn sm-action-secondary" onclick="completeOnboarding({ next: 'home' })">Go to Home</button>
+            </div>`;
+    }
+    root.innerHTML = `<div class="onboarding-card-inner">${body}</div>`;
+}
+
+function getOnboardingSummary(draft, data = appData) {
+    const catalog = getOnboardingCatalog(data);
+    const names = (draft.selectedIds || []).map(id => {
+        const sub = catalog.find(s => s.id === id) || (data.substances || []).find(s => s.id === id);
+        return getOnboardingSubstanceLabel(sub) || id;
+    });
+    if (draft.otherEnabled && draft.otherName) names.push(draft.otherName.trim());
+    const primarySub = catalog.find(s => s.id === draft.primaryId)
+        || (data.substances || []).find(s => s.id === draft.primaryId);
+    const intent = ONBOARDING_INTENTS.find(i => i.id === draft.intentId);
+    let taper = 'None yet';
+    if (draft.taperChoice === 'now') taper = 'Set up next';
+    else if (draft.taperChoice === 'later') taper = 'Later';
+    else if (!intent?.offersTaper) taper = 'Not requested';
+    return {
+        substances: names.length ? names.join(', ') : 'Add later',
+        primary: getOnboardingSubstanceLabel(primarySub) || names[0] || 'Not set',
+        mode: draft.experienceMode === 'advanced' ? 'Detailed' : 'Simple',
+        taper
+    };
+}
+
+function startOnboarding(options = {}, data = appData) {
+    const restart = options.restart === true;
+    if (restart) {
+        persistOnboardingState({ restarting: true }, data);
+        data.settings.onboardingCompleted = false;
+        if (typeof saveData === 'function') saveData(data);
+    }
+    onboardingUi.open = true;
+    onboardingUi.stepIndex = Number.isInteger(options.stepIndex) ? options.stepIndex : 0;
+    onboardingUi.draft = getDefaultOnboardingDraft(data);
+    if (restart) {
+        onboardingUi.draft.experienceMode = getExperienceMode(data);
+    } else {
+        onboardingUi.draft.selectedIds = [];
+        onboardingUi.draft.primaryId = null;
+        onboardingUi.draft.experienceMode = EXPERIENCE_MODE_SIMPLE;
+    }
+    renderOnboarding(data);
+    return getOnboardingDraft();
+}
+
+function maybeStartOnboarding(data = appData) {
+    if (!shouldShowOnboarding(data)) return false;
+    startOnboarding({ restart: !!ensureOnboardingSettings(data).restarting }, data);
+    return true;
+}
+
+function onboardingBack() {
+    if (onboardingUi.stepIndex > 0) onboardingUi.stepIndex -= 1;
+    renderOnboarding();
+}
+
+function onboardingSkipStep() {
+    const stepId = getOnboardingStepId();
+    if (stepId === 'substances') {
+        getOnboardingDraft().selectedIds = getOnboardingDraft().selectedIds || [];
+    } else if (stepId === 'intent') {
+        getOnboardingDraft().intentId = getOnboardingDraft().intentId || null;
+        getOnboardingDraft().taperChoice = 'later';
+    } else if (stepId === 'preferences') {
+        getOnboardingDraft().reminder = 'none';
+    }
+    onboardingContinue();
+}
+
+function onboardingContinue() {
+    const draft = getOnboardingDraft();
+    const stepId = getOnboardingStepId();
+    if (stepId === 'substances' && draft.selectedIds.length === 1) {
+        draft.primaryId = draft.selectedIds[0];
+    }
+    if (stepId === 'substances' && draft.selectedIds.length > 1 && !draft.primaryId) {
+        draft.primaryId = draft.selectedIds[0];
+    }
+    if (onboardingUi.stepIndex < ONBOARDING_STEP_IDS.length - 1) {
+        onboardingUi.stepIndex += 1;
+        renderOnboarding();
+        return;
+    }
+    completeOnboarding({ next: 'home' });
+}
+
+function toggleOnboardingSubstance(id) {
+    const draft = getOnboardingDraft();
+    if (id === ONBOARDING_OTHER_ID) {
+        draft.otherEnabled = !draft.otherEnabled;
+        renderOnboarding();
+        return;
+    }
+    const idx = draft.selectedIds.indexOf(id);
+    if (idx >= 0) draft.selectedIds.splice(idx, 1);
+    else draft.selectedIds.push(id);
+    if (draft.primaryId && !draft.selectedIds.includes(draft.primaryId)) {
+        draft.primaryId = draft.selectedIds[0] || null;
+    }
+    if (draft.selectedIds.length === 1) draft.primaryId = draft.selectedIds[0];
+    renderOnboarding();
+}
+
+function setOnboardingPrimary(id) {
+    getOnboardingDraft().primaryId = id;
+    renderOnboarding();
+}
+
+function setOnboardingIntent(id) {
+    const draft = getOnboardingDraft();
+    draft.intentId = id;
+    const intent = ONBOARDING_INTENTS.find(i => i.id === id);
+    if (!intent?.offersTaper) draft.taperChoice = null;
+    renderOnboarding();
+}
+
+function setOnboardingTaperChoice(choice) {
+    getOnboardingDraft().taperChoice = choice === 'now' ? 'now' : 'later';
+    renderOnboarding();
+}
+
+function setOnboardingExperienceMode(mode) {
+    getOnboardingDraft().experienceMode = normalizeExperienceMode(mode);
+    renderOnboarding();
+}
+
+function setOnboardingReminder(id) {
+    const draft = getOnboardingDraft();
+    draft.reminder = id;
+    if (id && id !== 'none') applyOnboardingReminderPreference(id);
+    renderOnboarding();
+}
+
+function skipOnboarding(data = appData) {
+    const reminder = applyOnboardingReminderPreference('none', { requestPermission: false });
+    persistOnboardingState({
+        skipped: true,
+        restarting: false,
+        reminder: 'none',
+        reminderPermission: reminder.reminderPermission,
+        reminderScheduled: false,
+        taperSetupRequested: false,
+        completedAt: new Date().toISOString()
+    }, data);
+    data.settings.onboardingCompleted = true;
+    if (typeof saveData === 'function') saveData(data);
+    hideOnboardingOverlay();
+    renderOnboardingSettingsPanel(data);
+    if (typeof switchTab === 'function') {
+        try { switchTab('dashboard-tab'); } catch (_) { /* ignore */ }
+    }
+    return { ok: true, skipped: true, onboardingCompleted: true };
+}
+
+function completeOnboarding(options = {}, data = appData) {
+    const draft = options.draft || getOnboardingDraft();
+    const next = options.next || 'home';
+    const createdTaperBefore = Array.isArray(data.taperPlansV2) ? data.taperPlansV2.length : 0;
+
+    const substanceResult = applyOnboardingTrackedSubstances(
+        draft.selectedIds,
+        draft.primaryId,
+        data,
+        { otherName: draft.otherEnabled ? draft.otherName : '' }
+    );
+    const primaryId = substanceResult.primaryId
+        || (data.substances || []).find(s => s.isMain)?.id
+        || null;
+
+    const mode = persistExperienceMode(draft.experienceMode || EXPERIENCE_MODE_SIMPLE, data);
+    const intent = ONBOARDING_INTENTS.find(i => i.id === draft.intentId);
+    if (intent?.planIntent) persistSimpleModePrefs({ planIntent: intent.planIntent }, data);
+    if (primaryId) persistSimpleModePrefs({ lastQuickSubstanceId: primaryId, progressSubstanceId: primaryId }, data);
+
+    const reminder = applyOnboardingReminderPreference(draft.reminder || 'none', {
+        requestPermission: draft.reminder && draft.reminder !== 'none'
+    });
+    persistOnboardingState({
+        skipped: false,
+        restarting: false,
+        intentId: draft.intentId || null,
+        reminder: reminder.reminder,
+        reminderPermission: reminder.reminderPermission,
+        reminderScheduled: false,
+        taperSetupRequested: draft.taperChoice === 'now',
+        selectedSubstanceIds: substanceResult.selectedIds,
+        primarySubstanceId: primaryId,
+        experienceMode: mode,
+        completedAt: new Date().toISOString()
+    }, data);
+    data.settings.onboardingCompleted = true;
+    if (typeof saveData === 'function') saveData(data);
+
+    hideOnboardingOverlay();
+    if (typeof applyExperienceMode === 'function') applyExperienceMode(data);
+    renderOnboardingSettingsPanel(data);
+
+    const createdTaperAfter = Array.isArray(data.taperPlansV2) ? data.taperPlansV2.length : 0;
+    const result = {
+        ok: true,
+        skipped: false,
+        onboardingCompleted: true,
+        experienceMode: mode,
+        primarySubstanceId: primaryId,
+        selectedSubstanceIds: substanceResult.selectedIds,
+        taperCreated: createdTaperAfter > createdTaperBefore,
+        taperSetupRequested: draft.taperChoice === 'now'
+    };
+
+    if (next === 'quick-log') {
+        if (typeof openSimpleQuickLog === 'function') openSimpleQuickLog(primaryId);
+    } else if (typeof switchTab === 'function') {
+        try { switchTab('dashboard-tab'); } catch (_) { /* ignore */ }
+    }
+
+    if (draft.taperChoice === 'now' && next !== 'quick-log' && intent?.planIntent) {
+        if (typeof switchTab === 'function') {
+            try { switchTab('goals-plans-tab'); } catch (_) { /* ignore */ }
+        }
+        if (typeof applySimplePlanIntent === 'function') {
+            try { applySimplePlanIntent(intent.planIntent); } catch (_) { /* ignore */ }
+        }
+    }
+    return result;
+}
+
+function restartOnboarding(data = appData) {
+    const logs = (data.logs || []).length;
+    const purchases = (data.purchases || []).length;
+    const tapers = Array.isArray(data.taperPlansV2) ? data.taperPlansV2.length : 0;
+    startOnboarding({ restart: true }, data);
+    return {
+        ok: true,
+        logsPreserved: (data.logs || []).length === logs,
+        purchasesPreserved: (data.purchases || []).length === purchases,
+        tapersPreserved: (Array.isArray(data.taperPlansV2) ? data.taperPlansV2.length : 0) === tapers
+    };
+}
+
+function reconcileOnboardingAfterImport(merged) {
+    if (!merged || typeof merged !== 'object') return merged;
+    if (!merged.settings || typeof merged.settings !== 'object') merged.settings = {};
+    migrateOnboardingV1(merged);
+    if (hasMeaningfulRecoveryData(merged)) {
+        merged.settings.onboardingCompleted = true;
+        if (merged.settings.onboarding) merged.settings.onboarding.restarting = false;
+    }
+    return merged;
+}
+
+function renderOnboardingSettingsPanel(data = appData) {
+    if (typeof document === 'undefined') return;
+    const root = document.getElementById('onboarding-settings-summary');
+    if (!root) return;
+    const state = getOnboardingState(data);
+    const completed = data.settings?.onboardingCompleted === true;
+    const mode = getExperienceMode(data) === EXPERIENCE_MODE_ADVANCED ? 'Detailed' : 'Simple';
+    const primary = getSimpleSubstanceDisplayName(state.primarySubstanceId || (data.substances || []).find(s => s.isMain), data);
+    const tracked = (data.substances || []).filter(s => s && s.active !== false).map(s => getSimpleSubstanceDisplayName(s, data));
+    root.innerHTML = `
+        <p class="settings-hint">${completed ? 'Setup complete.' : 'Setup has not been finished yet.'}</p>
+        <ul class="onboarding-settings-facts">
+            <li>Mode: ${escapeHtml(mode)}</li>
+            <li>Primary: ${escapeHtml(primary || '—')}</li>
+            <li>Tracking: ${escapeHtml(tracked.join(', ') || '—')}</li>
+        </ul>`;
+}
+
+function openOnboardingReview() {
+    if (typeof switchTab === 'function') switchTab('settings-tab');
+    document.getElementById('onboarding-setup-section')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
+}
+
+function openTrackedSubstancesFromOnboarding() {
+    if (typeof switchTab === 'function') switchTab('settings-tab');
+    const section = document.querySelector('[data-section="settingsSubstances"]');
+    if (section?.classList.contains('collapsed') && typeof toggleSection === 'function') {
+        try { toggleSection('settingsSubstances'); } catch (_) { /* ignore */ }
+    }
+    section?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
 }
