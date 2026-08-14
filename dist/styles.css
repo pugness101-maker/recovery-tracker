@@ -9874,6 +9874,23 @@ body > .app-container {
 
 .data-health-ok { color: var(--accent, #2e7d32); }
 
+.data-health-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.data-health-review-required {
+    opacity: 0.95;
+}
+
+.data-health-review-tag {
+    font-size: 0.78rem;
+    color: var(--text-secondary);
+    font-style: normal;
+}
+
 .change-history-list {
     display: flex;
     flex-direction: column;
