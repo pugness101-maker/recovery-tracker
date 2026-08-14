@@ -3014,14 +3014,20 @@
 
                 <div class="collapsible-section" data-section="settingsBackup">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsBackup')">
-                        <span>Data Backup</span>
+                        <span>Account &amp; Data</span>
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
+                <div class="settings-section" id="settings-cloud-sync">
+                    <h3>Cloud Sync</h3>
+                    <p class="settings-hint">This device saves immediately. Cloud sync is optional and never required to use Recovery Tracker.</p>
+                    <div id="cloud-sync-root" class="cloud-sync-root" aria-live="polite"></div>
+                </div>
                 <div class="settings-section">
+                    <h3>Data &amp; Backup</h3>
                     <p id="settings-last-saved" class="last-saved-status">Last Saved: Never</p>
                     <p class="last-saved-status">Last auto-backup: <span id="settings-auto-backup-date">Never</span></p>
-                    <p class="data-storage-note">Data is stored only in this browser (localStorage). A local backup is created automatically before import, reset, migration, or bulk repair.</p>
+                    <p class="data-storage-note">Data is stored in this browser first (localStorage). Optional cloud sync never replaces JSON export. A local backup is created automatically before import, reset, migration, or bulk repair.</p>
                     <input type="file" id="import-json-input" accept=".json,application/json" class="hidden" onchange="handleImportJsonFile(event)">
                     <div class="data-management-buttons">
                         <button type="button" class="secondary-btn" onclick="exportJsonBackup()">Export JSON Backup</button>
@@ -3046,8 +3052,15 @@
                     </button>
                     <div class="section-content">
                 <div class="settings-section danger-zone-section">
-                    <p class="settings-hint">Permanently delete all logs, substances, and settings. An automatic backup is created first.</p>
-                    <button type="button" class="danger-btn" onclick="clearAllData()">Clear All Data</button>
+                    <h3>Delete Cloud Data</h3>
+                    <p class="settings-hint">Removes Recovery Tracker rows stored in your account. This does not delete your login. This device’s local logs are kept. You will be signed out so this device does not immediately re-upload.</p>
+                    <button type="button" class="danger-btn" onclick="confirmDeleteCloudData()">Delete Cloud Data</button>
+                    <h3>Delete Account</h3>
+                    <p class="settings-hint">Permanently deletes your cloud Recovery Tracker data and your login. This device’s local data is kept unless you also delete data from this device. Requires the server-side delete-account function.</p>
+                    <button type="button" class="danger-btn" onclick="confirmDeleteAccount()">Delete Account</button>
+                    <h3>Delete data from this device</h3>
+                    <p class="settings-hint">Permanently delete logs, substances, and settings on this device only. An automatic backup is created first. Cloud account data and your login are not deleted.</p>
+                    <button type="button" class="danger-btn" onclick="clearAllData()">Delete data from this device</button>
                 </div>
                     </div>
                 </div>
@@ -3318,6 +3331,7 @@
         </div>
     </div>
     <div id="sm-toast" class="sm-toast hidden" role="status" aria-live="polite"></div>
+    <script src="cloud-config.js"></script>
     <script src="app.js" defer></script>
 </body>
 </html>

@@ -12405,3 +12405,35 @@ body.experience-simple .use-log-page [data-section="bulkActions"] {
 :root[data-view-layout="phone"] .sm-progress-metrics {
     grid-template-columns: 1fr 1fr;
 }
+
+
+.cloud-sync-root {
+    margin: 8px 0 16px;
+}
+.cloud-sync-status {
+    margin: 0 0 8px;
+    font-size: 0.92rem;
+    color: var(--text-secondary);
+}
+.cloud-sync-status[data-cloud-status="syncing"] {
+    color: var(--text-primary);
+}
+.cloud-sync-status[data-cloud-status="error"] {
+    color: var(--danger, #c62828);
+}
+.cloud-auth-form,
+.cloud-backup-offer {
+    display: grid;
+    gap: 10px;
+    margin: 12px 0;
+}
+.cloud-auth-form .sm-field {
+    display: grid;
+    gap: 4px;
+}
+.cloud-auth-error {
+    color: var(--danger, #c62828);
+}
+.danger-zone-section h3 {
+    margin-top: 16px;
+}

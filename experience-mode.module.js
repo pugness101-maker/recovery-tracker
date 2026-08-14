@@ -2060,8 +2060,8 @@ function renderOnboarding(data = appData) {
             </ul>
             <details class="onboarding-privacy">
                 <summary>Your data</summary>
-                <p>Recovery Tracker stores your information in this browser only, using localStorage. There is no account and no cloud sync.</p>
-                <p>Export JSON Backup downloads a file you can keep or restore later. Clear All Data permanently deletes local logs, substances, and settings after creating an automatic backup.</p>
+                <p>Recovery Tracker stores your information in this browser first, using localStorage. An optional account can back it up to the cloud. There is no automatic cloud wipe of this device, and export still downloads a file you keep.</p>
+                <p>Export JSON Backup downloads a file you can keep or restore later. Clear All Data permanently deletes local logs, substances, and settings on this device after creating an automatic backup. Cloud account data is separate.</p>
             </details>
             ${navStart}
             <div class="onboarding-actions">

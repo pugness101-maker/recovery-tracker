@@ -31,9 +31,11 @@ if (existsSync(testsDir)) {
 
 mkdirSync(dist, { recursive: true });
 
-for (const file of ['index.html', 'app.js', 'styles.css']) {
+for (const file of ['index.html', 'app.js', 'styles.css', 'cloud-config.js']) {
     cpSync(join(root, file), join(dist, file));
 }
+
+run('node', ['scripts/write-cloud-config.mjs']);
 
 readFileSync(join(root, 'index.html'), 'utf8');
 
