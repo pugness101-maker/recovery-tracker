@@ -22,12 +22,11 @@ const RECOVERY_DASHBOARD_PRESETS = Object.freeze({
     custom: 'Custom range'
 });
 const RECOVERY_SCORE_FACTORS = Object.freeze([
-    { key: 'goalAdherence', label: 'Goal adherence', weight: 0.22 },
-    { key: 'planAdherence', label: 'Taper adherence', weight: 0.22 },
-    { key: 'sobrietyProgress', label: 'Sobriety streak progress', weight: 0.18 },
-    { key: 'reduction', label: 'Reduction vs baseline', weight: 0.14 },
-    { key: 'spending', label: 'Spending improvement', weight: 0.12 },
-    { key: 'logging', label: 'Logging consistency', weight: 0.12 }
+    { key: 'planAdherence', label: 'Taper adherence', weight: 0.28 },
+    { key: 'sobrietyProgress', label: 'Sobriety streak progress', weight: 0.22 },
+    { key: 'reduction', label: 'Reduction vs baseline', weight: 0.18 },
+    { key: 'spending', label: 'Spending improvement', weight: 0.16 },
+    { key: 'logging', label: 'Logging consistency', weight: 0.16 }
 ]);
 const CALENDAR_EVENT_TYPE_META = Object.freeze({
     personal_use: { label: 'Personal Use', className: 'cal-ev-personal-use', movable: false },
@@ -41,8 +40,8 @@ const CALENDAR_EVENT_TYPE_META = Object.freeze({
     inventory_depletion: { label: 'Inventory Depletion', className: 'cal-ev-depletion', movable: false },
     expected_depletion: { label: 'Expected Depletion', className: 'cal-ev-forecast', movable: false, forecast: true },
     plan_target: { label: 'Plan Target', className: 'cal-ev-plan', movable: true },
-    goal_deadline: { label: 'Goal Deadline', className: 'cal-ev-goal', movable: true },
-    goal_completion: { label: 'Goal Completion', className: 'cal-ev-goal-done', movable: false },
+    goal_deadline: { label: 'Plan Deadline', className: 'cal-ev-goal', movable: true },
+    goal_completion: { label: 'Plan Completion', className: 'cal-ev-goal-done', movable: false },
     recovery_milestone: { label: 'Recovery Milestone', className: 'cal-ev-milestone', movable: true },
     craving: { label: 'Craving', className: 'cal-ev-craving', movable: false },
     note: { label: 'Notes', className: 'cal-ev-note', movable: false }
@@ -1644,8 +1643,8 @@ const CCR_METRIC_GROUP_ORDER = Object.freeze([
     { id: 'vapeInventory', label: 'Vape inventory' },
     { id: 'purchases', label: 'Purchases & spending' },
     { id: 'taper', label: 'Taper' },
-    { id: 'taperGoals', label: 'Taper and goals' },
-    { id: 'goals', label: 'Goals' },
+    { id: 'taperGoals', label: 'Taper targets' },
+    { id: 'goals', label: 'Taper targets' },
     { id: 'record', label: 'Record fields' },
     { id: 'period', label: 'Previous-period comparison' }
 ]);
@@ -1865,10 +1864,10 @@ const CCR_METRICS = Object.freeze([
     ccrMetricDef({ key: 'actualPuffs', label: 'Actual puffs', group: 'taper', substances: ['nicotine'], unitType: 'count' }),
     ccrMetricDef({ key: 'puffDifference', label: 'Puff difference', group: 'taper', substances: ['nicotine'], unitType: 'count' }),
     ccrMetricDef({ key: 'puffsVsTargetRatio', label: 'Puffs vs target ratio', group: 'taper', substances: ['nicotine'], valueType: 'ratio', unitType: 'ratio' }),
-    ccrMetricDef({ key: 'vapeLifespanGoal', label: 'Vape lifespan goal', group: 'taper', substances: ['nicotine'], unitType: 'days' }),
-    ccrMetricDef({ key: 'daysBetweenPurchasesGoal', label: 'Days-between-purchases goal', group: 'taper', substances: ['nicotine'], unitType: 'days' }),
+    ccrMetricDef({ key: 'vapeLifespanGoal', label: 'Vape lifespan target', group: 'taper', substances: ['nicotine'], unitType: 'days' }),
+    ccrMetricDef({ key: 'daysBetweenPurchasesGoal', label: 'Days-between-purchases target', group: 'taper', substances: ['nicotine'], unitType: 'days' }),
     ccrMetricDef({ key: 'monthlyVapeCap', label: 'Monthly vape cap', group: 'taper', substances: ['nicotine'], unitType: 'count' }),
-    ccrMetricDef({ key: 'spendingGoal', label: 'Spending goal', group: 'taper', substances: ['nicotine'], unitType: 'currency' }),
+    ccrMetricDef({ key: 'spendingGoal', label: 'Spending target', group: 'taper', substances: ['nicotine'], unitType: 'currency' }),
 
     // ——— LSD ———
     ccrMetricDef({ key: 'tabs', label: 'Tabs', group: 'use', substances: ['lsd'], unitType: 'count' }),
@@ -9541,7 +9540,7 @@ function getTaperStatusExplanation(plan, substanceId, data = appData) {
         if (status === 'close') {
             return { status, title: 'Slightly over', detail: 'Up to 10% over the weekly puff target. Consider repeating this week instead of tightening next week.' };
         }
-        return { status, title: 'Over target', detail: 'More than 10% over the weekly puff target. Historical goals stay unchanged — use Repeat week or Recalculate remaining weeks.' };
+        return { status, title: 'Over target', detail: 'More than 10% over the weekly puff target. Historical targets stay unchanged — use Repeat week or Recalculate remaining weeks.' };
     }
     if (isNicotineVapePurchasePlan(plan)) {
         const live = plan.nicotineVapeLiveMetrics || {};
@@ -15015,7 +15014,7 @@ function mapFinancialCalendarEvents(bounds = null, data = appData) {
                         id: `fin-goal-done-${ev.goal.id}-${date}`,
                         type: 'goal_completion',
                         date,
-                        label: 'Spending goal met',
+                        label: 'Spending target met',
                         title: ev.goal.name,
                         substanceId: financialIsAllSubstances(ev.goal.substanceId) ? null : ev.goal.substanceId,
                         linkedGoalId: ev.goal.id,
@@ -15170,7 +15169,6 @@ function exportFinancialAnalyticsCsv(kind = 'summary', data = appData) {
         ];
         if (s.estimatedCostAvoided) rows.push(['Estimated cost avoided', s.bounds.rangeLabel, s.currentTotal, '', s.estimatedCostAvoided.amount, '', 'yes']);
         s.planSavings.forEach(p => rows.push([`Plan: ${p.name}`, '', p.actual, p.expected, p.saved, '', 'yes']));
-        s.goalSavings.forEach(g => rows.push([`Goal: ${g.name}`, '', g.actual, g.target, g.saved, '', 'no']));
         return financialCsvDownload('financial-savings',
             ['Measure', 'Comparison period', 'Actual', 'Expected', 'Saved', 'Change %', 'Estimate'], rows);
     }
@@ -15619,9 +15617,6 @@ function renderFinancialSavingsPanel(dataset) {
     const planRows = s.planSavings.map(p => `
         <tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(finMoney(p.expected))}</td><td>${escapeHtml(finMoney(p.actual))}</td>
         <td class="${finToneClass(p.saved > 0 ? 'good' : 'bad')}">${escapeHtml(finMoney(p.saved))}</td></tr>`).join('');
-    const goalRows = s.goalSavings.map(g => `
-        <tr><td>${escapeHtml(g.name)}</td><td>${escapeHtml(finMoney(g.target))}</td><td>${escapeHtml(finMoney(g.actual))}</td>
-        <td class="${finToneClass(g.saved >= 0 ? 'good' : 'bad')}">${escapeHtml(finMoney(g.saved))}</td></tr>`).join('');
 
     return `
         <section class="fin-panel">
@@ -15632,12 +15627,6 @@ function renderFinancialSavingsPanel(dataset) {
             <div class="fin-table-wrap"><table class="fin-table">
                 <thead><tr><th>Plan</th><th>Expected</th><th>Actual</th><th>Saved</th></tr></thead>
                 <tbody>${planRows}</tbody>
-            </table></div>` : ''}
-            ${goalRows ? `
-            <h4 class="fin-subhead">Spending goals</h4>
-            <div class="fin-table-wrap"><table class="fin-table">
-                <thead><tr><th>Goal</th><th>Target</th><th>Spent</th><th>Under by</th></tr></thead>
-                <tbody>${goalRows}</tbody>
             </table></div>` : ''}
             <p class="fin-hint">${escapeHtml(s.estimateNote)}</p>
         </section>`;
@@ -16141,7 +16130,7 @@ if (typeof window !== 'undefined') {
 }
 
 
-// ——— Combined navigation: Goals & Plans + Insights & Calendar ———
+// ——— Combined navigation: Tapers + Insights & Calendar ———
 
 const COMBINED_NAV_ROUTE_REDIRECTS = {
     '/goals': { tab: 'goals-plans-tab', view: 'active' },
@@ -17304,16 +17293,14 @@ function renderPlanAnalyticsPanel(data = appData) {
         if (typeof ensureTaperPlansV2 === 'function') ensureTaperPlansV2(data);
         const plans = (data.taperPlansV2 || []).filter(Boolean);
         if (!plans.length) {
-            panel.innerHTML = '<p class="settings-hint">No tapers yet. Create a taper from Goals &amp; Plans.</p>';
+            panel.innerHTML = '<p class="settings-hint">No tapers yet. Create a taper from the Tapers page.</p>';
             return;
         }
         const rows = plans.slice(0, 20).map(plan => {
-            const linked = goalsLinkedToPlan(plan.id, data);
             const status = plan.archived ? 'Archived' : 'Active';
             return `<tr>
                 <td>${escapeHtml(plan.name || 'Taper')}</td>
                 <td>${escapeHtml(status)}</td>
-                <td>${linked.length}</td>
                 <td><button type="button" class="btn-small" onclick="setInsightsCalendarView('calendar')">Calendar</button>
                     <button type="button" class="btn-small" onclick="switchTab('goals-plans-tab'); setGoalsPlansView('active'); openTaperPlanFromManage('${escapeHtml(plan.id)}');">Open</button></td>
             </tr>`;
@@ -17321,7 +17308,7 @@ function renderPlanAnalyticsPanel(data = appData) {
         panel.innerHTML = `
             <div class="table-scroll">
                 <table class="sheet-table">
-                    <thead><tr><th>Taper</th><th>Status</th><th>Linked goals</th><th></th></tr></thead>
+                    <thead><tr><th>Taper</th><th>Status</th><th></th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
             </div>`;
@@ -17376,7 +17363,6 @@ function setInsightsCalendarView(view, options = {}) {
         }
         if (next === 'more') {
             if (typeof renderPlanAnalyticsPanel === 'function') renderPlanAnalyticsPanel();
-            if (typeof renderGoalInsightsPanel === 'function') renderGoalInsightsPanel();
             if (typeof renderInsightsContactAnalytics === 'function') renderInsightsContactAnalytics();
             if (typeof renderChartDashboardView === 'function') renderChartDashboardView();
             const customRoot = document.getElementById('custom-metrics-root');
@@ -20007,7 +19993,7 @@ function renderContactDetailHtml(contactId, data = appData) {
             </section>` : ''}
             ${support ? `<section class="ct-panel"><h4>Recovery support</h4>
                 <p>Next appointment: <strong>${escapeHtml(support.nextAppointment || '—')}</strong></p>
-                <p class="settings-hint">Goals: ${escapeHtml((support.goalsDiscussed || []).join(', ') || '—')}</p>
+                <p class="settings-hint">Topics discussed: ${escapeHtml((support.goalsDiscussed || []).join(', ') || '—')}</p>
                 <p class="settings-hint">${escapeHtml(support.notes || '')}</p>
             </section>` : ''}
             <section class="ct-panel">
@@ -20395,13 +20381,11 @@ const CHART_METRICS = Object.freeze([
     { id: 'inventory_flow', label: 'Purchased → used → gifted → adjusted → remaining', category: 'inventory', defaultType: 'flow', unitFamily: 'auto' },
     { id: 'days_of_supply', label: 'Days of supply remaining', category: 'inventory', defaultType: 'progress', unitFamily: 'days' },
     { id: 'inventory_value', label: 'Active inventory value', category: 'inventory', defaultType: 'bar', unitFamily: 'money' },
-    // Goals / plans
-    { id: 'goal_vs_actual', label: 'Actual vs goal target', category: 'goals', defaultType: 'line', unitFamily: 'auto' },
-    { id: 'plan_vs_actual', label: 'Actual vs taper target', category: 'goals', defaultType: 'line', unitFamily: 'auto' },
-    { id: 'goal_adherence', label: 'Goal adherence over time', category: 'goals', defaultType: 'bar', unitFamily: 'percent' },
-    { id: 'plan_adherence', label: 'Plan adherence over time', category: 'goals', defaultType: 'bar', unitFamily: 'percent' },
-    { id: 'weekly_target_progress', label: 'Weekly target progress', category: 'goals', defaultType: 'progress', unitFamily: 'percent' },
-    { id: 'spend_target_progress', label: 'Spending target progress', category: 'goals', defaultType: 'progress', unitFamily: 'percent' },
+    // Tapers
+    { id: 'plan_vs_actual', label: 'Actual vs taper target', category: 'tapers', defaultType: 'line', unitFamily: 'auto' },
+    { id: 'plan_adherence', label: 'Taper adherence over time', category: 'tapers', defaultType: 'bar', unitFamily: 'percent' },
+    { id: 'weekly_target_progress', label: 'Weekly target progress', category: 'tapers', defaultType: 'progress', unitFamily: 'percent' },
+    { id: 'spend_target_progress', label: 'Spending target progress', category: 'tapers', defaultType: 'progress', unitFamily: 'percent' },
     // Recovery
     { id: 'no_use_streak', label: 'No-use streak', category: 'recovery', defaultType: 'line', unitFamily: 'days' },
     { id: 'no_purchase_streak', label: 'No-purchase streak', category: 'recovery', defaultType: 'line', unitFamily: 'days' },
@@ -20412,7 +20396,7 @@ const CHART_METRICS = Object.freeze([
 const CHART_PRESETS = Object.freeze({
     recovery_overview: {
         name: 'Recovery Overview',
-        widgets: ['no_use_streak', 'recovery_score', 'use_amount', 'spend_amount', 'goal_adherence']
+        widgets: ['no_use_streak', 'recovery_score', 'use_amount', 'spend_amount', 'plan_adherence']
     },
     use_trends: {
         name: 'Use Trends',
@@ -21337,28 +21321,8 @@ function buildChartDatasetForMetric(metricId, filters, data = appData, options =
         };
     }
 
-    if (meta.category === 'goals' || meta.category === 'recovery') {
+    if (meta.category === 'tapers' || meta.category === 'recovery') {
         const bounds = resolveChartBounds(f, data);
-        if (metricId === 'goal_adherence' || metricId === 'goal_vs_actual') {
-            const evaluations = typeof evaluateAllGoals === 'function' ? evaluateAllGoals({ data }) : [];
-            const points = evaluations.slice(0, 20).map((ev, i) => ({
-                key: ev.goal?.name || `goal-${i}`,
-                date: ev.bounds?.endDate || chToday(),
-                value: metricId === 'goal_adherence'
-                    ? chToNumber(ev.progressRatio != null ? ev.progressRatio * 100 : ev.percentComplete, 0)
-                    : chToNumber(ev.actual, 0),
-                count: 1,
-                meta: { goalId: ev.goal?.id, target: ev.target }
-            }));
-            return {
-                state: points.length ? 'ok' : 'empty',
-                metricId,
-                chartType: options.chartType || meta.defaultType,
-                bounds,
-                series: [{ id: 'goals', label: meta.label, unitFamily: metricId === 'goal_adherence' ? 'percent' : 'auto', points }],
-                overlays: points.filter(p => p.meta?.target != null).map(p => ({ type: 'target', value: p.meta.target, label: 'Target' }))
-            };
-        }
         if (metricId === 'plan_adherence' || metricId === 'plan_vs_actual' || metricId === 'weekly_target_progress') {
             const plans = (data.taperPlansV2 || []).filter(p => p && !p.archived);
             const points = [];
@@ -25279,7 +25243,7 @@ function renderCompactInsightsSummaryCards(substanceId, useStats, bounds, unit, 
             : 'Sessions';
         const secondary = isVape
             ? [
-                card('Weekly goal', weekGoal != null ? `${fmtPuffs(weekGoal)} puffs` : '—', weeklyBadge),
+                card('Weekly target', weekGoal != null ? `${fmtPuffs(weekGoal)} puffs` : '—', weeklyBadge),
                 card('Vape count', String(useStats?.vapeCount ?? 0), null),
                 card('Avg cost/vape', typeof formatCostPerVape === 'function'
                     ? formatCostPerVape(useStats?.avgCostPerVape, cur)
@@ -25288,7 +25252,7 @@ function renderCompactInsightsSummaryCards(substanceId, useStats, bounds, unit, 
                 card('Range', `${bounds?.startDate || '…'} – ${bounds?.endDate || '…'}`, null)
             ]
             : [
-                card('Weekly goal', weekGoal != null ? `${fmtAmt(weekGoal)} ${displayUnit}` : '—', weeklyBadge),
+                card('Weekly target', weekGoal != null ? `${fmtAmt(weekGoal)} ${displayUnit}` : '—', weeklyBadge),
                 card(entriesLabel, String(useStats?.sessionCount ?? 0), null),
                 card('Use day %', `${fmtAmt(useStats?.useDayPct ?? 0, 1)}%`, null),
                 card('Remaining supply', remaining != null ? `${fmtAmt(remaining)} ${displayUnit}` : '—', null),
@@ -25369,7 +25333,7 @@ function patchInsightsSimplifySetView() {
             if (typeof renderFinancialAnalyticsView === 'function') renderFinancialAnalyticsView();
             if (typeof renderPurchaseAnalyticsView === 'function') renderPurchaseAnalyticsView();
         } else if (normalized === 'more') {
-            if (typeof renderGoalInsightsPanel === 'function') renderGoalInsightsPanel();
+            if (typeof renderRunningTotalsView === 'function') renderRunningTotalsView();
             if (typeof renderPlanAnalyticsPanel === 'function') renderPlanAnalyticsPanel();
             if (typeof renderInsightsContactAnalytics === 'function') renderInsightsContactAnalytics();
             if (typeof renderChartDashboardView === 'function') renderChartDashboardView();
@@ -26301,11 +26265,11 @@ const EXPERIENCE_MODE_SIMPLE = 'simple';
 const EXPERIENCE_MODE_ADVANCED = 'advanced';
 const EXPERIENCE_PROGRESS_RANGES = Object.freeze(['7', '30', '90', 'all']);
 
-const SIMPLE_GOAL_STATUS = Object.freeze({
-    within: { key: 'within', label: 'Within goal' },
-    near: { key: 'near', label: 'Near goal' },
-    above: { key: 'above', label: 'Above goal' },
-    none: { key: 'none', label: 'No goal set' }
+const SIMPLE_TAPER_STATUS = Object.freeze({
+    within: { key: 'within', label: 'Within target', homeLabel: 'Within taper target' },
+    near: { key: 'near', label: 'Near target', homeLabel: 'Near taper target' },
+    above: { key: 'above', label: 'Above target', homeLabel: 'Above taper target' },
+    none: { key: 'none', label: 'No active taper', homeLabel: 'No active taper' }
 });
 
 const SIMPLE_PLAN_INTENTS = Object.freeze([
@@ -26432,11 +26396,24 @@ function getTrackedSubstancesForSimpleHome(data = appData) {
     });
 }
 
-function resolveSimpleGoalStatus(used, goal) {
-    if (goal == null || !(goal > 0)) return SIMPLE_GOAL_STATUS.none;
-    if (used > goal) return SIMPLE_GOAL_STATUS.above;
-    if (used >= goal * 0.85) return SIMPLE_GOAL_STATUS.near;
-    return SIMPLE_GOAL_STATUS.within;
+function resolveSimpleTaperStatus(used, target) {
+    if (typeof getTaperLimitStatus === 'function') {
+        const engine = getTaperLimitStatus(used, target);
+        if (engine.status === 'over') return SIMPLE_TAPER_STATUS.above;
+        if (engine.status === 'close') return SIMPLE_TAPER_STATUS.near;
+        if (engine.status === 'under') return SIMPLE_TAPER_STATUS.within;
+        return SIMPLE_TAPER_STATUS.none;
+    }
+    if (target == null || !(target > 0)) return SIMPLE_TAPER_STATUS.none;
+    if (used > target) return SIMPLE_TAPER_STATUS.above;
+    if (used >= target * 0.8) return SIMPLE_TAPER_STATUS.near;
+    return SIMPLE_TAPER_STATUS.within;
+}
+
+function getSimpleTaperDailyTarget(substanceId, dateStr, data = appData) {
+    if (!substanceId || typeof getDailyLimitForDate !== 'function') return null;
+    const target = getDailyLimitForDate(substanceId, dateStr, null);
+    return target != null && Number(target) > 0 ? Number(target) : null;
 }
 
 function formatSimpleUsage(substanceId, amount, data = appData) {
@@ -26493,16 +26470,14 @@ function buildSimpleTodayCard(substance, data = appData) {
     const used = typeof getCanonicalUsageOnDate === 'function'
         ? getCanonicalUsageOnDate(substanceId, today, data)
         : 0;
-    const goal = typeof getDailyLimitForDate === 'function'
-        ? getDailyLimitForDate(substanceId, today)
-        : null;
-    const remaining = goal != null ? Math.max(0, goal - used) : null;
+    const target = getSimpleTaperDailyTarget(substanceId, today, data);
+    const remaining = target != null ? Math.max(0, target - used) : null;
     const recentAvg = getRecentAverageUsage(substanceId, 7, data);
     let vsRecent = null;
     if (recentAvg > 0) {
         vsRecent = ((used - recentAvg) / recentAvg) * 100;
     }
-    const status = resolveSimpleGoalStatus(used, goal);
+    const status = resolveSimpleTaperStatus(used, target);
     const unit = typeof getSubstanceDisplayUnit === 'function'
         ? getSubstanceDisplayUnit(substanceId, data)
         : (substance.defaultUnit || '');
@@ -26512,8 +26487,8 @@ function buildSimpleTodayCard(substance, data = appData) {
         unit,
         used,
         usedLabel: formatSimpleUsage(substanceId, used, data),
-        goal,
-        goalLabel: goal != null ? formatSimpleUsage(substanceId, goal, data) : null,
+        target,
+        targetLabel: target != null ? formatSimpleUsage(substanceId, target, data) : null,
         remaining,
         remainingLabel: remaining != null ? formatSimpleUsage(substanceId, remaining, data) : null,
         vsRecent,
@@ -26555,21 +26530,21 @@ function renderSimpleHome(data = appData) {
                     <dt>vs recent</dt>
                     <dd class="${card.vsRecent <= 0 ? 'sm-vs-down' : 'sm-vs-up'}">${card.vsRecent <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(card.vsRecent))}%</dd>
                    </div>`;
-            const meta = card.goal != null
+            const meta = card.target != null
                 ? `<dl class="sm-today-meta">
-                    <div class="sm-today-row"><dt>Goal</dt><dd>≤ ${escapeHtml(card.goalLabel)}</dd></div>
+                    <div class="sm-today-row"><dt>Taper target</dt><dd>≤ ${escapeHtml(card.targetLabel)}</dd></div>
                     <div class="sm-today-row"><dt>Remaining</dt><dd>${escapeHtml(card.remainingLabel)}</dd></div>
                     ${vsRow}
                    </dl>`
                 : `<dl class="sm-today-meta">
-                    <div class="sm-today-row"><dt>Goal</dt><dd>${escapeHtml(card.status.label)}</dd></div>
+                    <div class="sm-today-row"><dt>Taper</dt><dd>${escapeHtml(card.status.homeLabel || card.status.label)}</dd></div>
                     ${vsRow}
                    </dl>`;
             return `
                 <article class="sm-today-card status-${escapeHtml(card.status.key)}" data-substance-id="${escapeHtml(card.substanceId)}">
                     <header class="sm-today-card-head">
                         <h3>${escapeHtml(card.name)}</h3>
-                        <span class="sm-status-pill">${escapeHtml(card.status.label)}</span>
+                        <span class="sm-status-pill">${escapeHtml(card.status.homeLabel || card.status.label)}</span>
                     </header>
                     <p class="sm-today-amount">${escapeHtml(card.usedLabel)} <span class="sm-today-amount-label">today</span></p>
                     ${meta}
@@ -26924,10 +26899,8 @@ function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
     const prevAvg = prevTotal / Math.max(1, bounds.days);
     const pctChange = prevAvg > 0 ? ((dailyAvg - prevAvg) / prevAvg) * 100 : null;
 
-    const goal = typeof getDailyLimitForDate === 'function'
-        ? getDailyLimitForDate(substanceId, bounds.endDate)
-        : null;
-    const status = resolveSimpleGoalStatus(usedToday, goal);
+    const target = getSimpleTaperDailyTarget(substanceId, bounds.endDate, data);
+    const status = resolveSimpleTaperStatus(usedToday, target);
     const streak = typeof computeRecoveryStreakDays === 'function'
         ? computeRecoveryStreakDays(substanceId)
         : { days: 0 };
@@ -26941,14 +26914,12 @@ function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
     let guard = 0;
     while (cursor <= bounds.endDate && guard < 400) {
         const amt = getCanonicalUsageOnDate(substanceId, cursor, data);
-        const dayGoal = typeof getDailyLimitForDate === 'function'
-            ? getDailyLimitForDate(substanceId, cursor)
-            : null;
+        const dayTarget = getSimpleTaperDailyTarget(substanceId, cursor, data);
         series.push({
             date: cursor,
             amount: amt,
-            goal: dayGoal,
-            status: resolveSimpleGoalStatus(amt, dayGoal)
+            target: dayTarget,
+            status: resolveSimpleTaperStatus(amt, dayTarget)
         });
         cursor = addDaysYYYYMMDD(cursor, 1);
         guard += 1;
@@ -26961,7 +26932,7 @@ function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
         dailyAvg,
         prevAvg,
         pctChange,
-        goal,
+        target,
         status,
         streakDays: streak?.days ?? 0,
         spend,
@@ -27018,7 +26989,7 @@ function renderSimpleProgressCalendar(dataset, monthStr) {
         const amount = point?.amount ?? (dateStr >= dataset.bounds.startDate && dateStr <= dataset.bounds.endDate
             ? getCanonicalUsageOnDate(dataset.substanceId, dateStr)
             : 0);
-        const status = point?.status || resolveSimpleGoalStatus(amount, point?.goal ?? dataset.goal);
+        const status = point?.status || resolveSimpleTaperStatus(amount, point?.target ?? dataset.target);
         const intensity = amount > 0 ? Math.min(1, amount / maxInMonth) : 0;
         cells.push(`
             <button type="button" class="sm-cal-cell status-${escapeHtml(status.key)}"
@@ -27118,7 +27089,7 @@ function renderSimpleProgress(data = appData) {
             <div class="sm-metric"><span class="sm-metric-label">Previous period</span><strong>${escapeHtml(formatSimpleUsage(substanceId, dataset.prevAvg, data))}</strong></div>
             <div class="sm-metric"><span class="sm-metric-label">Change</span><strong>${escapeHtml(pctLabel)}</strong></div>
             <div class="sm-metric"><span class="sm-metric-label">Break / streak</span><strong>${dataset.streakDays} day${dataset.streakDays === 1 ? '' : 's'}</strong></div>
-            <div class="sm-metric"><span class="sm-metric-label">Goal</span><strong>${escapeHtml(dataset.status.label)}</strong></div>
+            <div class="sm-metric"><span class="sm-metric-label">Taper</span><strong>${escapeHtml(dataset.status.label)}</strong></div>
             <div class="sm-metric"><span class="sm-metric-label">${escapeHtml(spendPeriodLabel)}</span><strong>${escapeHtml(spendLabel)}</strong></div>
         </div>
         <section class="sm-progress-section sm-trend-section">
@@ -27224,7 +27195,7 @@ function openSimplePlanWizard() {
     wizard.innerHTML = `
         <div class="sm-plan-wizard-card">
             <h3>What are you trying to do?</h3>
-            <p class="settings-hint">We’ll only show the settings that match your goal.</p>
+            <p class="settings-hint">We’ll only show the settings that match what you’re trying to do.</p>
             <div class="sm-plan-intent-grid">
                 ${SIMPLE_PLAN_INTENTS.map(intent => `
                     <button type="button" class="sm-plan-intent-btn" onclick="applySimplePlanIntent('${intent.id}')">
@@ -27703,6 +27674,8 @@ function normalizeAppData(data) {
     data.logs = data.logs || [];
     data.purchases = data.purchases || [];
     data.cravings = data.cravings || [];
+    // Legacy Goal records are kept in-memory so old localStorage/imports load,
+    // but they are never evaluated or shown. Do not convert them into tapers.
     data.goals = Array.isArray(data.goals) ? data.goals : [];
     data.budgets = Array.isArray(data.budgets) ? data.budgets : [];
     data.contacts = Array.isArray(data.contacts) ? data.contacts : [];
@@ -28608,7 +28581,7 @@ const TABLE_COLUMN_LABELS = {
         targets: 'Targets',
         buyInterval: 'Break Between Buys',
         vapeLifespans: 'Lifespan of Completed Vapes',
-        lifespanGoal: 'Lifespan Goal',
+        lifespanGoal: 'Lifespan Target',
         nicotineStrength: 'Nicotine Strength',
         estimatedNicotineUsed: 'Estimated Nicotine Used',
         nicotineFreeHours: 'Nicotine-Free Hours',
@@ -44611,9 +44584,9 @@ function computeRecoveryScore(dataset, data = appData) {
         return { enabled: false, available: false, score: null, factors: [], explanation: [] };
     }
 
-    const { statusCards, goalStatuses, activePlans, summary, bounds } = dataset;
+    const { statusCards, activePlans, summary, bounds } = dataset;
     const hasLogs = (data.logs || []).some(l => logCountsTowardPersonalUseStats(l));
-    const hasEnough = statusCards.length > 0 && (hasLogs || activePlans.length > 0 || goalStatuses.length > 0);
+    const hasEnough = statusCards.length > 0 && (hasLogs || activePlans.length > 0);
     if (!hasEnough) {
         return {
             enabled: true,
@@ -44621,38 +44594,13 @@ function computeRecoveryScore(dataset, data = appData) {
             score: null,
             factors: [],
             explanation: [
-                'Not enough data yet. Log use, set a goal, or create a taper to unlock the recovery score.',
+                'Not enough data yet. Log use or create a taper to unlock the recovery score.',
                 'This score is an optional progress indicator, not a medical assessment.'
             ]
         };
     }
 
     const factors = {};
-    // Goal adherence (Goal System first; plan-derived limits as fallback)
-    const goalPrefs = typeof getGoalSystemPrefs === 'function' ? getGoalSystemPrefs(data) : { scoreContributionEnabled: true };
-    if (goalPrefs.scoreContributionEnabled === false) {
-        factors.goalAdherence = null;
-    } else {
-        const scoredGoals = typeof evaluateAllGoals === 'function'
-            ? evaluateAllGoals({ data, persist: false })
-                .filter(ev => ev.goal.status === 'active')
-                .filter(ev => !['insufficient_data', 'upcoming', 'paused', 'cancelled', 'draft'].includes(ev.status))
-                .filter(ev => goalMatchesSubstance(ev.goal.substanceId, dataset.substanceId, data))
-            : [];
-        if (scoredGoals.length) {
-            const good = scoredGoals.filter(g => g.status === 'on_track' || g.status === 'completed').length;
-            const near = scoredGoals.filter(g => g.status === 'near_limit' || g.status === 'at_limit').length;
-            factors.goalAdherence = Math.round(((good + near * 0.4) / scoredGoals.length) * 100);
-        } else if (goalStatuses.length) {
-            const good = goalStatuses.filter(g => g.onTrack && !g.nearLimit).length;
-            const near = goalStatuses.filter(g => g.nearLimit).length;
-            factors.goalAdherence = Math.round(((good + near * 0.4) / goalStatuses.length) * 100);
-        } else {
-            factors.goalAdherence = null;
-        }
-    }
-
-    // Taper adherence
     if (activePlans.length) {
         const ok = activePlans.filter(p => {
             if (p.weeklyTarget == null || p.actualUse == null) return true;
@@ -44726,8 +44674,8 @@ function computeRecoveryScore(dataset, data = appData) {
         score: Math.max(0, Math.min(100, score)),
         factors: usable.map(f => ({ ...f, value: factors[f.key] })),
         explanation: [
-            'Score blends goal adherence (from your Goals, excluding paused/cancelled/insufficient-data), taper adherence, sobriety streak progress, reduction vs the prior period, spending improvement, and logging consistency.',
-            'Goal contribution can be disabled in Goal settings. This is an optional progress indicator — not a medical assessment or diagnosis.'
+            'Score blends taper adherence, sobriety streak progress, reduction vs the prior period, spending improvement, and logging consistency.',
+            'This is an optional progress indicator — not a medical assessment or diagnosis.'
         ]
     };
 }
@@ -44953,7 +44901,6 @@ function renderRecoverySummaryGrid(summary) {
     const tiles = [
         ['Substances tracked', summary.totalSubstances],
         ['Active tapers', summary.substancesWithPlans],
-        ['Active goals', summary.activeGoalCount ?? '—'],
         ['Current no-use streak', summary.longestNoUseLabel],
         ['Spent today', summary.spentTodayLabel || '—'],
         ['Spent this week', summary.spentWeekLabel || '—'],
@@ -44971,9 +44918,6 @@ function renderRecoverySummaryGrid(summary) {
 function renderRecoveryTodayCard(todayCard) {
     const el = document.getElementById('rd-today-card');
     if (!el) return;
-    const goals = todayCard.goalsNearLimit.length
-        ? todayCard.goalsNearLimit.map(g => `${g.name} (${g.kind})`).join(', ')
-        : 'None';
     el.innerHTML = `
         <div class="rd-today-grid">
             <div><span>Use logged today</span><strong>${todayCard.useLines.length ? escapeHtml(todayCard.useLines.join(' · ')) : 'None'}</strong></div>
@@ -44983,7 +44927,6 @@ function renderRecoveryTodayCard(todayCard) {
             <div><span>Adjustments</span><strong>${todayCard.adjustmentsToday}</strong></div>
             <div><span>Remaining planned</span><strong>${escapeHtml(todayCard.remainingPlannedLabel)}</strong></div>
             <div><span>Daily spending</span><strong>${escapeHtml(todayCard.dailySpendingLabel)}</strong></div>
-            <div><span>Goals near limit</span><strong>${escapeHtml(goals)}</strong></div>
         </div>
     `;
 }
@@ -48057,7 +48000,7 @@ function renderStatsSummaryDashboard(substanceId, useStats, bounds, unit, cur) {
         container.innerHTML = [
             renderSheetMetricCard('Today\'s use', `${formatStatsPuffs(todayUsed)} puffs`, null),
             renderSheetMetricCard('This week', `${formatStatsPuffs(weekUsed)} puffs`, weeklyBadge, { footerHtml: weekCompare }),
-            renderSheetMetricCard('Weekly goal', weekGoal != null ? `${formatStatsPuffs(weekGoal)} puffs` : '—', weeklyBadge),
+            renderSheetMetricCard('Weekly target', weekGoal != null ? `${formatStatsPuffs(weekGoal)} puffs` : '—', weeklyBadge),
             renderSheetMetricCard('Range total', `${formatStatsPuffs(useStats.totalAmount)} puffs`, null, { footerHtml: rangeCompare }),
             renderSheetMetricCard('Vape count', String(useStats.vapeCount ?? 0), null),
             renderSheetMetricCard('Avg cost/vape', formatCostPerVape(useStats.avgCostPerVape, cur), null),
@@ -48094,7 +48037,7 @@ function renderStatsSummaryDashboard(substanceId, useStats, bounds, unit, cur) {
     container.innerHTML = [
         renderSheetMetricCard('Today\'s use', `${formatAmount(todayStats.totalAmount)} ${displayUnit}`, null),
         renderSheetMetricCard('This week', `${formatAmount(weekUsed)} ${displayUnit}`, weeklyBadge, { footerHtml: weekCompare }),
-        renderSheetMetricCard('Weekly goal', weekGoal != null ? `${formatAmount(weekGoal)} ${displayUnit}` : '—', weeklyBadge),
+        renderSheetMetricCard('Weekly target', weekGoal != null ? `${formatAmount(weekGoal)} ${displayUnit}` : '—', weeklyBadge),
         renderSheetMetricCard('Range total', `${formatAmount(useStats.totalAmount)} ${displayUnit}`, null, { footerHtml: rangeCompare }),
         renderSheetMetricCard(entriesLabel, String(useStats.sessionCount), null),
         renderSheetMetricCard('Use days', String(useStats.useDays), null),
@@ -50015,41 +49958,9 @@ function setupStatsCalendarControls() {
 }
 
 function renderGoalInsightsPanel() {
-    const el = document.getElementById('goal-insights-panel');
-    if (!el || typeof buildGoalInsightsAnalytics !== 'function') return;
-    const substanceId = typeof getSelectedInsightsSubstance === 'function'
-        ? getSelectedInsightsSubstance(appData)
-        : currentSubstanceId;
-    const analytics = buildGoalInsightsAnalytics({ data: appData });
-    const filterGoal = (row) => {
-        if (!substanceId || substanceId === DASHBOARD_ALL) return true;
-        const sid = row?.substanceId || row?.goal?.substanceId;
-        if (!sid) return true;
-        return typeof logMatchesSubstance === 'function'
-            ? logMatchesSubstance({ substanceId: sid }, substanceId, appData)
-            : String(sid) === String(substanceId);
-    };
-    const streaks = (analytics.streaks || []).filter(filterGoal);
-    const worstGoals = (analytics.worstGoals || []).filter(filterGoal);
-    const totalGoals = substanceId && substanceId !== DASHBOARD_ALL
-        ? (analytics.rows || analytics.evaluations || []).filter?.(filterGoal)?.length
-            ?? streaks.length
-        : analytics.totalGoals;
-    const best = streaks[0];
-    const topCat = analytics.categories[0];
-    const hardest = worstGoals[0];
-    const label = substanceId && substanceId !== DASHBOARD_ALL
-        ? (getSubstanceDisplayName(substanceId) || substanceId)
-        : 'All Substances';
-    el.innerHTML =
-        '<p class="settings-hint">Filtered by Insights substance: <strong>' + escapeHtml(label) + '</strong></p>' +
-        '<div class="goal-insights-grid">' +
-        '<div><span>Goals tracked</span><strong>' + (totalGoals ?? analytics.totalGoals) + '</strong></div>' +
-        '<div><span>Best streak</span><strong>' + (best ? best.current + ' · ' + escapeHtml(best.name) : '—') + '</strong></div>' +
-        '<div><span>Top category</span><strong>' + (topCat ? escapeHtml(topCat.category) + (topCat.successRate != null ? ' · ' + topCat.successRate + '%' : '') : '—') + '</strong></div>' +
-        '<div><span>Hardest goal</span><strong>' + (hardest ? escapeHtml(hardest.name) : '—') + '</strong></div>' +
-        '</div>' +
-        '<p class="settings-hint">Goal analytics use the same progress engine as the Goals tab. Paused and cancelled goals are excluded from Recovery Score contribution.</p>';
+    // Goals were removed. Legacy #goal-insights-panel markup is no longer in the UI.
+    const el = typeof document !== 'undefined' ? document.getElementById('goal-insights-panel') : null;
+    if (el) el.innerHTML = '';
 }
 
 function updateStats() {
@@ -56698,7 +56609,7 @@ function renderNicotineVapePurchaseSummary(substanceId) {
         ['Gifted puffs', formatAmount(giftedPuffs)],
         ['Puff target', puffTarget != null ? formatAmount(puffTarget) : '—'],
         ['Current vape age', vapeAge != null ? `${formatAmount(vapeAge, 1)} days` : '—'],
-        ['Vape lifespan goal', lifeGoal != null ? `${formatAmount(lifeGoal, 1)} days` : '—'],
+        ['Vape lifespan target', lifeGoal != null ? `${formatAmount(lifeGoal, 1)} days` : '—'],
         ['Days since last purchase', live.daysSinceLastPurchase != null ? `${formatAmount(live.daysSinceLastPurchase, 1)} days` : '—'],
         ['Earliest planned next purchase', nextBuy ? formatDate(nextBuy) : '—'],
         ['Vapes bought this month', String(live.vapesBoughtThisMonth ?? countVapePurchasesInMonth(substanceId, monthKey))],
@@ -58746,7 +58657,8 @@ function cleanExportData(data) {
 
         taperPlans: data.taperPlans || {},
         taperPlansV2: (data.taperPlansV2 || []).map(p => ({ ...p })),
-        goals: [],
+        // Legacy `goals` records are not exported. Importers still accept a goals
+        // array if present so old backups load; runtime never creates or evaluates Goals.
         budgets: (data.budgets || []).map(b => ({ ...b })),
         contacts: (data.contacts || []).filter(c => c && !c.excludeFromExport).map(c => {
             const copy = { ...c };
@@ -61533,6 +61445,16 @@ function __getRecoveryTrackerTestExports() {
         TAPER_TEMPLATES,
         openUnifiedNewTaper,
         editUnifiedTaperRecord,
+        duplicateUnifiedTaperRecord,
+        pauseUnifiedTaperRecord,
+        completeUnifiedTaperRecord,
+        archiveUnifiedTaperRecord,
+        pauseTaperPlanById,
+        duplicateTaperPlanById,
+        completeTaperPlanById,
+        archiveTaperPlanById,
+        getDailyLimitForDate,
+        getTaperLimitStatus,
         openUnifiedTaperRecord,
         showTaperWorkspace,
         hideTaperWorkspace,
@@ -61667,7 +61589,9 @@ function __getRecoveryTrackerTestExports() {
         rememberQuickLogFromForm,
         applyExperienceMode,
         initExperienceMode,
-        resolveSimpleGoalStatus,
+        resolveSimpleTaperStatus,
+        getSimpleTaperDailyTarget,
+        SIMPLE_TAPER_STATUS,
         SIMPLE_PLAN_INTENTS,
         EXPERIENCE_PROGRESS_RANGES,
         getSimpleSubstanceDisplayName,

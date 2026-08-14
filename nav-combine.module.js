@@ -1,9 +1,9 @@
-// ——— Combined navigation: Goals & Plans + Insights & Calendar ———
+// ——— Combined navigation: Tapers + Insights & Calendar ———
 
 const COMBINED_NAV_ROUTE_REDIRECTS = {
-    '/goals': { tab: 'goals-plans-tab', view: 'active-goals' },
-    '/plan': { tab: 'goals-plans-tab', view: 'active-plans' },
-    '/plans': { tab: 'goals-plans-tab', view: 'active-plans' },
+    '/goals': { tab: 'goals-plans-tab', view: 'active' },
+    '/plan': { tab: 'goals-plans-tab', view: 'active' },
+    '/plans': { tab: 'goals-plans-tab', view: 'active' },
     '/insights': { tab: 'insights-calendar-tab', view: 'overview' },
     '/calendar': { tab: 'insights-calendar-tab', view: 'calendar' },
     '/goals-plans': { tab: 'goals-plans-tab', view: null },
@@ -18,12 +18,9 @@ const COMBINED_NAV_ROUTE_REDIRECTS = {
 
 const GOALS_PLANS_VIEWS = [
     'overview',
-    'active-goals',
-    'active-plans',
-    'goal-history',
-    'plan-history',
-    'templates',
-    'achievements'
+    'active',
+    'history',
+    'templates'
 ];
 
 const INSIGHTS_CALENDAR_VIEWS = [
@@ -35,12 +32,12 @@ const INSIGHTS_CALENDAR_VIEWS = [
 ];
 
 const LEGACY_TAB_TO_COMBINED = {
-    'goals-tab': { tab: 'goals-plans-tab', view: 'active-goals' },
-    goals: { tab: 'goals-plans-tab', view: 'active-goals' },
-    'taper-tab': { tab: 'goals-plans-tab', view: 'active-plans' },
-    taper: { tab: 'goals-plans-tab', view: 'active-plans' },
-    plan: { tab: 'goals-plans-tab', view: 'active-plans' },
-    'plan-tab': { tab: 'goals-plans-tab', view: 'active-plans' },
+    'goals-tab': { tab: 'goals-plans-tab', view: 'active' },
+    goals: { tab: 'goals-plans-tab', view: 'active' },
+    'taper-tab': { tab: 'goals-plans-tab', view: 'active' },
+    taper: { tab: 'goals-plans-tab', view: 'active' },
+    plan: { tab: 'goals-plans-tab', view: 'active' },
+    'plan-tab': { tab: 'goals-plans-tab', view: 'active' },
     'stats-tab': { tab: 'insights-calendar-tab', view: 'overview' },
     stats: { tab: 'insights-calendar-tab', view: 'overview' },
     insights: { tab: 'insights-calendar-tab', view: 'overview' },
@@ -125,8 +122,15 @@ function persistActiveTab(tabId, data = appData) {
 function normalizeCombinedView(view, allowed, fallback) {
     const raw = String(view || '').trim().toLowerCase();
     const aliases = {
-        goals: 'active-goals',
-        plans: 'active-plans',
+        goals: 'active',
+        plan: 'active',
+        plans: 'active',
+        taper: 'active',
+        tapers: 'active',
+        'active-goals': 'active',
+        'active-plans': 'active',
+        'goal-history': 'history',
+        'plan-history': 'history',
         compare: 'more',
         comparison: 'more',
         comparisons: 'more',
@@ -263,73 +267,20 @@ function syncCombinedSubnav(navId, selectId, attrName, activeView) {
     if (select && select.value !== activeView) select.value = activeView;
 }
 
-function goalsLinkedToPlan(planId, data = appData) {
-    if (!planId) return [];
-    return (data.goals || []).filter(g => g && g.linkedPlanId === planId);
+function goalsLinkedToPlan() { return []; }
+
+function createPlanFromGoal() { return null; }
+
+function createGoalsFromPlanAndOpen() {
+    if (typeof showToast === 'function') showToast('Goals have been removed. Create a taper instead.', 'info');
+    return [];
 }
 
-function createPlanFromGoal(goalId, data = appData) {
-    const goal = typeof getGoalById === 'function' ? getGoalById(goalId, data) : (data.goals || []).find(g => g?.id === goalId);
-    if (!goal) return null;
-    if (typeof showNewTaperPlan === 'function') {
-        setGoalsPlansView('active-plans', { persist: true, skipRoute: false });
-        showNewTaperPlan();
-        const nameEl = typeof document !== 'undefined' ? document.getElementById('taper-plan-name') : null;
-        if (nameEl && !nameEl.value) {
-            nameEl.value = `Plan for ${goal.name || 'goal'}`;
-        }
-        const substanceEl = typeof document !== 'undefined' ? document.getElementById('taper-substance') : null;
-        if (substanceEl && goal.substanceId && goal.substanceId !== 'all') {
-            substanceEl.value = goal.substanceId;
-            if (typeof onTaperSubstanceChange === 'function') onTaperSubstanceChange();
-        }
-    }
-    return goal;
-}
-
-function createGoalsFromPlanAndOpen(planId, data = appData) {
-    const suggestions = typeof suggestGoalsFromPlan === 'function' ? suggestGoalsFromPlan(planId, data) : [];
-    if (!suggestions.length) {
-        if (typeof showToast === 'function') showToast('No goal suggestions for this plan yet.', 'info');
-        return [];
-    }
-    ensureGoals(data);
-    suggestions.forEach(g => {
-        g.status = 'active';
-        data.goals.push(g);
-    });
-    if (typeof saveData === 'function') saveData(data);
-    if (typeof pushChangeHistory === 'function') {
-        pushChangeHistory('goals-from-plan', { planId, count: suggestions.length });
-    }
-    setGoalsPlansView('active-goals', { persist: true });
-    if (typeof renderGoalsView === 'function') renderGoalsView();
-    if (typeof showToast === 'function') showToast(`Created ${suggestions.length} goal${suggestions.length === 1 ? '' : 's'} from plan.`, 'success');
-    return suggestions;
-}
-
-function linkGoalToPlan(goalId, planId, data = appData) {
-    const goal = typeof getGoalById === 'function' ? getGoalById(goalId, data) : null;
-    if (!goal) return null;
-    goal.linkedPlanId = planId || '';
-    if (typeof pushGoalChange === 'function') pushGoalChange(goal, 'plan-linked', { planId });
-    if (typeof goalAfterMutation === 'function') goalAfterMutation(data);
-    else if (typeof saveData === 'function') saveData(data);
-    return goal;
-}
+function linkGoalToPlan() { return null; }
 
 function buildGoalsPlansOverview(data = appData) {
     ensureGoals(data);
     if (typeof ensureTaperPlansV2 === 'function') ensureTaperPlansV2(data);
-    const evaluations = typeof evaluateAllGoals === 'function' ? evaluateAllGoals({ data }) : [];
-    const activeGoals = evaluations.filter(e => e?.goal?.status === 'active' || e?.status === 'active' || e?.bucket === 'active');
-    const onTrack = evaluations.filter(e => ['on_track', 'met', 'ahead'].includes(e?.status || e?.progressStatus));
-    const nearLimit = evaluations.filter(e => ['at_risk', 'near_limit', 'behind'].includes(e?.status || e?.progressStatus));
-    const completedRecent = (data.goals || [])
-        .filter(g => g && (g.status === 'completed' || g.status === 'met'))
-        .slice()
-        .sort((a, b) => String(b.completedAt || b.endDate || b.updatedAt || '').localeCompare(String(a.completedAt || a.endDate || a.updatedAt || '')))
-        .slice(0, 5);
 
     const plans = (data.taperPlansV2 || []).filter(p => p && !p.archived && p.status !== 'archived');
     const archivedPlans = (data.taperPlansV2 || []).filter(p => p && (p.archived || p.status === 'archived'));
@@ -363,65 +314,43 @@ function buildGoalsPlansOverview(data = appData) {
         }
     });
 
-    const closestDeadline = (data.goals || [])
-        .filter(g => g && g.status === 'active' && g.endDate)
+    const closestDeadline = plans
+        .filter(p => p && p.endDate)
         .slice()
         .sort((a, b) => String(a.endDate).localeCompare(String(b.endDate)))[0];
 
     return {
-        activeGoalCount: activeGoals.length || (data.goals || []).filter(g => g?.status === 'active').length,
+        activeGoalCount: 0,
         activePlanCount: plans.length,
-        goalsOnTrack: onTrack.length,
-        goalsNearLimit: nearLimit.length,
+        activeTaperCount: plans.length,
+        goalsOnTrack: 0,
+        goalsNearLimit: 0,
         plansOnTrack,
         plansAboveTarget: plansAbove,
         closestGoalDeadline: closestDeadline ? { id: closestDeadline.id, name: closestDeadline.name, endDate: closestDeadline.endDate } : null,
         currentPlanWeek,
-        recentlyCompletedGoals: completedRecent,
+        recentlyCompletedGoals: [],
         recentlyCompletedPlans: archivedPlans.slice(0, 5),
-        evaluations,
+        evaluations: [],
         plans
     };
 }
 
 function renderGoalsPlansOverviewHtml(overview) {
     const deadline = overview.closestGoalDeadline
-        ? `${escapeHtml(overview.closestGoalDeadline.name || 'Goal')} · ${escapeHtml(overview.closestGoalDeadline.endDate)}`
+        ? `${escapeHtml(overview.closestGoalDeadline.name || 'Taper')} · ${escapeHtml(overview.closestGoalDeadline.endDate)}`
         : 'None set';
-    const recentGoals = overview.recentlyCompletedGoals.length
-        ? `<ul class="combined-mini-list">${overview.recentlyCompletedGoals.map(g => `<li>${escapeHtml(g.name || 'Goal')}</li>`).join('')}</ul>`
-        : '<p class="settings-hint">No recently completed goals.</p>';
-    const recentPlans = overview.recentlyCompletedPlans.length
-        ? `<ul class="combined-mini-list">${overview.recentlyCompletedPlans.map(p => `<li>${escapeHtml(p.name || 'Plan')}</li>`).join('')}</ul>`
-        : '<p class="settings-hint">No recently completed plans.</p>';
-
     return `
         <div class="combined-overview">
             <div class="combined-overview-grid">
-                <article class="combined-stat-card"><span class="combined-stat-label">Active goals</span><strong>${overview.activeGoalCount}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Active plans</span><strong>${overview.activePlanCount}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Goals on track</span><strong>${overview.goalsOnTrack}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Goals near limit</span><strong>${overview.goalsNearLimit}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Plans on track</span><strong>${overview.plansOnTrack}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Plans above target</span><strong>${overview.plansAboveTarget}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Closest goal deadline</span><strong class="combined-stat-text">${deadline}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Current plan week</span><strong class="combined-stat-text">${escapeHtml(String(overview.currentPlanWeek))}</strong></article>
-            </div>
-            <div class="combined-overview-columns">
-                <section class="combined-overview-block">
-                    <h3>Recently completed goals</h3>
-                    ${recentGoals}
-                    <button type="button" class="secondary-btn btn-sm" onclick="setGoalsPlansView('goal-history')">View goal history</button>
-                </section>
-                <section class="combined-overview-block">
-                    <h3>Recently completed plans</h3>
-                    ${recentPlans}
-                    <button type="button" class="secondary-btn btn-sm" onclick="setGoalsPlansView('plan-history')">View plan history</button>
-                </section>
+                <article class="combined-stat-card"><span class="combined-stat-label">Active tapers</span><strong>${overview.activeTaperCount || overview.activePlanCount || 0}</strong></article>
+                <article class="combined-stat-card"><span class="combined-stat-label">On track</span><strong>${overview.plansOnTrack || 0}</strong></article>
+                <article class="combined-stat-card"><span class="combined-stat-label">Above target</span><strong>${overview.plansAboveTarget || 0}</strong></article>
+                <article class="combined-stat-card"><span class="combined-stat-label">Closest end date</span><strong class="combined-stat-text">${deadline}</strong></article>
+                <article class="combined-stat-card"><span class="combined-stat-label">Current taper step</span><strong class="combined-stat-text">${escapeHtml(String(overview.currentPlanWeek))}</strong></article>
             </div>
             <div class="combined-overview-actions">
-                <button type="button" class="btn-primary" onclick="setGoalsPlansView('active-goals'); openGoalCreateForm();">New goal</button>
-                <button type="button" class="secondary-btn" onclick="setGoalsPlansView('active-plans'); showNewTaperPlan();">New plan</button>
+                <button type="button" class="secondary-btn" onclick="openUnifiedNewTaper();">New Taper</button>
                 <button type="button" class="secondary-btn" onclick="setGoalsPlansView('templates')">Browse templates</button>
             </div>
         </div>`;
@@ -440,7 +369,7 @@ function renderGoalsPlansCombinedView() {
         loading?.classList.add('hidden');
         error?.classList.remove('hidden');
         const msg = document.getElementById('gp-error-message');
-        if (msg) msg.textContent = err?.message || 'Could not load Goals & Plans.';
+        if (msg) msg.textContent = err?.message || 'Could not load Tapers.';
     }
 }
 
@@ -665,7 +594,6 @@ function setInsightsCalendarView(view, options = {}) {
         }
         if (next === 'more') {
             if (typeof renderPlanAnalyticsPanel === 'function') renderPlanAnalyticsPanel();
-            if (typeof renderGoalInsightsPanel === 'function') renderGoalInsightsPanel();
             if (typeof renderInsightsContactAnalytics === 'function') renderInsightsContactAnalytics();
             if (typeof renderChartDashboardView === 'function') renderChartDashboardView();
             const customRoot = document.getElementById('custom-metrics-root');

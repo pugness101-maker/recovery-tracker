@@ -195,7 +195,6 @@
                                     <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('gift-received')">Log gift received</button>
                                     <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('inventory')">Add inventory</button>
                                     <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('adjustment')">Add adjustment</button>
-                                    <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('goal')">Create goal</button>
                                     <button type="button" class="rd-action-btn" onclick="openRecoveryQuickAction('plan')">Create plan</button>
                                 </div>
                             </div>
@@ -909,7 +908,7 @@
                 <div id="taper-no-plan" class="taper-empty-dashboard hidden">
                     <div class="taper-empty-icon">📉</div>
                     <h3>No taper plans for this substance yet.</h3>
-                    <p>Set starting and goal averages, pick a reduction style, and track progress week by week.</p>
+                    <p>Set starting and target averages, pick a reduction style, and track progress week by week.</p>
                     <button type="button" class="submit-btn" onclick="showNewTaperPlan()">Create taper plan</button>
                 </div>
 
@@ -966,7 +965,7 @@
                                 <option value="fixed">Fixed daily limit</option>
                                 <option value="manual-weekly">Manual weekly plan</option>
                             </select>
-                            <p class="field-hint" id="plan-type-hint">Reduce a set amount each week until you reach your goal.</p>
+                            <p class="field-hint" id="plan-type-hint">Reduce a set amount each week until you reach your target.</p>
                         </div>
 
                         <div id="taper-type-suggestions" class="taper-type-suggestions hidden" aria-live="polite"></div>
@@ -991,7 +990,7 @@
                         </div>
                         <div id="taper-nicotine-vape-section" class="taper-nicotine-vape-section hidden">
                             <div class="form-group">
-                                <label>Taper goals</label>
+                                <label>Taper targets</label>
                                 <div class="nicotine-vape-goal-grid" id="nicotine-vape-goal-grid">
                                     <label class="checkbox-label"><input type="checkbox" class="nicotine-vape-goal-cb" value="combined" checked onchange="onNicotineVapeGoalCheckboxChange()"> Combined plan (recommended)</label>
                                     <label class="checkbox-label"><input type="checkbox" class="nicotine-vape-goal-cb" value="reduce-vapes-purchased" onchange="onNicotineVapeGoalCheckboxChange()"> Buy fewer vapes</label>
@@ -1004,7 +1003,7 @@
                                     <label class="checkbox-label"><input type="checkbox" class="nicotine-vape-goal-cb" value="quit-by-date" onchange="onNicotineVapeGoalCheckboxChange()"> Quit by a target date</label>
                                 </div>
                                 <input type="hidden" id="nicotine-vape-strategy" value="combined">
-                                <p class="field-hint">Default is a combined plan. Uncheck Combined to pick individual goals.</p>
+                                <p class="field-hint">Default is a combined plan. Uncheck Combined to pick individual targets.</p>
                             </div>
                             <div class="form-row">
                                 <div class="form-group">
@@ -1043,7 +1042,7 @@
                                     <input type="number" id="nicotine-vape-current-vpm" min="0" step="0.1">
                                 </div>
                                 <div class="form-group">
-                                    <label for="nicotine-vape-goal-vpm">Goal vapes/month</label>
+                                    <label for="nicotine-vape-goal-vpm">Target vapes/month</label>
                                     <input type="number" id="nicotine-vape-goal-vpm" min="0" step="0.1">
                                 </div>
                             </div>
@@ -1053,7 +1052,7 @@
                                     <input type="number" id="nicotine-vape-current-gap" min="0" step="0.5">
                                 </div>
                                 <div class="form-group">
-                                    <label for="nicotine-vape-goal-gap">Goal days between buys</label>
+                                    <label for="nicotine-vape-goal-gap">Target days between buys</label>
                                     <input type="number" id="nicotine-vape-goal-gap" min="0" step="0.5">
                                 </div>
                             </div>
@@ -1063,7 +1062,7 @@
                                     <input type="number" id="nicotine-vape-current-lifespan" min="0" step="0.5">
                                 </div>
                                 <div class="form-group">
-                                    <label for="nicotine-vape-goal-lifespan">Goal vape lifespan (days)</label>
+                                    <label for="nicotine-vape-goal-lifespan">Target vape lifespan (days)</label>
                                     <input type="number" id="nicotine-vape-goal-lifespan" min="0" step="0.5">
                                 </div>
                             </div>
@@ -1073,7 +1072,7 @@
                                     <input type="number" id="nicotine-vape-current-puffs" min="0" step="1">
                                 </div>
                                 <div class="form-group">
-                                    <label for="nicotine-vape-goal-puffs">Goal puffs/day</label>
+                                    <label for="nicotine-vape-goal-puffs">Target puffs/day</label>
                                     <input type="number" id="nicotine-vape-goal-puffs" min="0" step="1">
                                 </div>
                             </div>
@@ -1083,7 +1082,7 @@
                                     <input type="number" id="nicotine-vape-current-strength" min="0" step="0.1">
                                 </div>
                                 <div class="form-group">
-                                    <label for="nicotine-vape-goal-strength">Goal nicotine strength (mg/mL)</label>
+                                    <label for="nicotine-vape-goal-strength">Target nicotine strength (mg/mL)</label>
                                     <input type="number" id="nicotine-vape-goal-strength" min="0" step="0.1">
                                 </div>
                             </div>
@@ -1093,7 +1092,7 @@
                                     <input type="number" id="nicotine-vape-current-spend" min="0" step="0.01">
                                 </div>
                                 <div class="form-group">
-                                    <label for="nicotine-vape-goal-spend">Goal monthly spending</label>
+                                    <label for="nicotine-vape-goal-spend">Target monthly spending</label>
                                     <input type="number" id="nicotine-vape-goal-spend" min="0" step="0.01">
                                 </div>
                             </div>
@@ -1160,7 +1159,7 @@
                                 <p class="field-hint">Baseline from purchase gaps and supply duration when left blank on save.</p>
                             </div>
                             <div class="form-group">
-                                <label for="vape-goal-buy-days">Goal buying frequency (every X days)</label>
+                                <label for="vape-goal-buy-days">Target buying frequency (every X days)</label>
                                 <input type="number" id="vape-goal-buy-days" min="1" step="0.5" placeholder="e.g. 10">
                             </div>
                             <div class="form-group">
@@ -1174,7 +1173,7 @@
                                 <input type="number" id="vape-start-nicotine" min="0" step="0.1" placeholder="e.g. 50">
                             </div>
                             <div class="form-group">
-                                <label for="vape-goal-nicotine">Goal nicotine strength (mg/mL)</label>
+                                <label for="vape-goal-nicotine">Target nicotine strength (mg/mL)</label>
                                 <input type="number" id="vape-goal-nicotine" min="0" step="0.1" placeholder="e.g. 0">
                             </div>
                             <div class="form-group">
@@ -1214,7 +1213,7 @@
                                 <label for="manual-weekly-baseline">Baseline amount (Week 1 = 100%)</label>
                                 <input type="number" id="manual-weekly-baseline" min="0" step="0.1" oninput="updateManualWeeklyComputedPreviews()">
                             </div>
-                            <p class="manual-weekly-intro" id="manual-weekly-intro">Enter a weekly goal amount for each week.</p>
+                            <p class="manual-weekly-intro" id="manual-weekly-intro">Enter a weekly target amount for each week.</p>
                             <p class="field-hint manual-weekly-example" id="manual-weekly-example">Example: Week 1: 70 cigarettes · Week 2: 63 cigarettes · Week 3: 56 cigarettes</p>
                             <h4>Weekly Targets</h4>
                             <div id="manual-weekly-targets-list" class="manual-weekly-targets-list"></div>
@@ -1291,14 +1290,14 @@
                                         <label class="toggle-row"><input type="checkbox" id="br-monthly-spend-cap" onchange="togglePurchaseTaperFields()"> Fixed monthly spending cap</label>
                                         <label class="toggle-row"><input type="checkbox" id="br-manual-buy-plan" onchange="togglePurchaseTaperFields()"> Manual weekly buy plan</label>
                                         <label class="toggle-row"><input type="checkbox" id="br-manual-spend-plan" onchange="togglePurchaseTaperFields()"> Manual weekly spending plan</label>
-                                        <label class="toggle-row"><input type="checkbox" id="br-auto-spend-cost-per-gram" onchange="togglePurchaseTaperFields()"> Auto-calculate spending goals from average cost per gram</label>
+                                        <label class="toggle-row"><input type="checkbox" id="br-auto-spend-cost-per-gram" onchange="togglePurchaseTaperFields()"> Auto-calculate spending targets from average cost per gram</label>
                                     </div>
                                 </div>
                                 <div id="auto-spend-cost-per-gram-fields" class="hidden">
                                     <div class="form-group">
                                         <label>Average cost per gram</label>
                                         <strong id="auto-spend-cost-per-gram-value">—</strong>
-                                        <p class="field-hint">Weekly spending goal = weekly planned grams × average cost per gram</p>
+                                        <p class="field-hint">Weekly spending target = weekly planned grams × average cost per gram</p>
                                     </div>
                                     <div class="form-row">
                                         <div class="form-group">
@@ -1341,7 +1340,7 @@
                                         <input type="number" id="purchase-start-amount" min="0" step="0.1">
                                     </div>
                                     <div class="form-group hidden" id="purchase-goal-amount-group">
-                                        <label for="purchase-goal-amount" id="purchase-goal-amount-label">Goal weekly purchase amount</label>
+                                        <label for="purchase-goal-amount" id="purchase-goal-amount-label">Target weekly purchase amount</label>
                                         <input type="number" id="purchase-goal-amount" min="0" step="0.1">
                                     </div>
                                 </div>
@@ -1351,7 +1350,7 @@
                                         <input type="number" id="purchase-start-spend" min="0" step="0.01">
                                     </div>
                                     <div class="form-group hidden" id="purchase-goal-spend-group">
-                                        <label for="purchase-goal-spend" id="purchase-goal-spend-label">Goal weekly spending</label>
+                                        <label for="purchase-goal-spend" id="purchase-goal-spend-label">Target weekly spending</label>
                                         <input type="number" id="purchase-goal-spend" min="0" step="0.01">
                                     </div>
                                 </div>
@@ -1466,7 +1465,7 @@
                 <div id="calendar-tab" class="combined-subview calendar-page" data-ic-view="calendar" role="tabpanel" hidden>
                     <div class="page-header-row calendar-page-header">
                     <h2>Calendar</h2>
-                    <p class="settings-hint">Review use, inventory, plans, goals, and milestones in one place.</p>
+                    <p class="settings-hint">Review use, inventory, tapers, and milestones in one place.</p>
                 </div>
 
                 <div class="cal-toolbar">
@@ -1660,16 +1659,6 @@
                     </div>
                     <p class="stats-range-summary" id="stats-range-summary"></p>
                 </div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="statsGoalAnalytics" data-ic-panels="overview more">
-                    <button type="button" class="section-toggle" onclick="toggleSection('statsGoalAnalytics')">
-                        <span>Goal Analytics</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                        <div id="goal-insights-panel" class="goal-insights-panel"></div>
                     </div>
                 </div>
 
@@ -1883,7 +1872,7 @@
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
-                        <p class="settings-hint">Interactive charts for use, spending, purchases, inventory, goals, and recovery. Incompatible units stay separate.</p>
+                        <p class="settings-hint">Interactive charts for use, spending, purchases, inventory, tapers, and recovery. Incompatible units stay separate.</p>
                         <div id="chart-dashboard-root" class="chart-dashboard-root" aria-live="polite"></div>
                     </div>
                 </div>
@@ -2548,7 +2537,7 @@
                         <input type="checkbox" id="appearance-show-progress-bars" checked onchange="setInCellProgressBarsEnabled(this.checked)">
                         <span>Show progress bars in tables and cards</span>
                     </label>
-                    <p class="settings-hint">Optional bars under supported values (inventory remaining, taper vs plan, spending vs budget, purchase limits, streak/lifespan/nicotine-free goals). Numeric values stay visible. Bars use conditional-rule colors when a rule matches. A target marker appears on the bar when the target falls within the displayed range.</p>
+                    <p class="settings-hint">Optional bars under supported values (inventory remaining, taper vs plan, spending vs budget, purchase limits, streak/lifespan/nicotine-free targets). Numeric values stay visible. Bars use conditional-rule colors when a rule matches. A target marker appears on the bar when the target falls within the displayed range.</p>
                     <label class="settings-toggle-row" for="appearance-show-target-lines">
                         <input type="checkbox" id="appearance-show-target-lines" checked onchange="setTargetLinesEnabled(this.checked)">
                         <span>Show target lines (current, target, difference, % of target)</span>
@@ -2563,7 +2552,7 @@
                             <option value="targetMarker">Target marker only</option>
                         </select>
                     </div>
-                    <p class="settings-hint">Target lines show current vs plan/goal/cap with difference and percent of target. Favorable direction depends on the metric (lower is better for use and spending; higher for streaks and lifespan). Default green / amber / red tones apply when no matching conditional color rule exists; custom rules always override. Labels are never invented.</p>
+                    <p class="settings-hint">Target lines show current vs plan/target/cap with difference and percent of target. Favorable direction depends on the metric (lower is better for use and spending; higher for streaks and lifespan). Default green / amber / red tones apply when no matching conditional color rule exists; custom rules always override. Labels are never invented.</p>
                     <label class="settings-toggle-row" for="appearance-show-previous-period-compare">
                         <input type="checkbox" id="appearance-show-previous-period-compare" checked onchange="setPreviousPeriodCompareEnabled(this.checked)">
                         <span>Show previous-period comparisons</span>
@@ -2981,12 +2970,7 @@
                             <p class="settings-hint">Choose which Home widgets to show. Grouped substance summaries are used for All Substances (no fake mixed-unit totals).</p>
                             <div id="dashboard-layout-editor" class="dashboard-layout-editor"></div>
                             <button type="button" class="secondary-btn" onclick="saveDashboardLayoutFromEditor()">Save Dashboard Layout</button>
-                            <div class="form-group">
-                                <label for="settings-goal-near-limit">Goal near-limit threshold (0–1)</label>
-                                <input type="number" id="settings-goal-near-limit" min="0.1" max="1" step="0.05" value="0.75"
-                                    onchange="persistGoalSystemPrefs({ thresholds: { nearLimit: parseFloat(this.value) || 0.75 } });">
-                            </div>
-                            <p class="settings-hint">Home shows a concise recovery overview. Full analytics live on Insights. Goal near-limit threshold controls when goals turn amber.</p>
+                            <p class="settings-hint">Home shows a concise recovery overview. Full analytics live on Insights.</p>
                         </div>
                     </div>
                 </div>

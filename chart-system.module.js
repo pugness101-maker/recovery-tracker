@@ -1,5 +1,5 @@
 // ——— Chart System ———
-// Interactive SVG/CSS charts over normalized Log, Inventory, Goals, Plans, and Finance data.
+// Interactive SVG/CSS charts over normalized Log, Inventory, Tapers, and Finance data.
 // Local-only. Spliced into app.js ahead of `const defaultData`.
 // Never mutates source records. Never combines incompatible units.
 
@@ -74,13 +74,11 @@ const CHART_METRICS = Object.freeze([
     { id: 'inventory_flow', label: 'Purchased → used → gifted → adjusted → remaining', category: 'inventory', defaultType: 'flow', unitFamily: 'auto' },
     { id: 'days_of_supply', label: 'Days of supply remaining', category: 'inventory', defaultType: 'progress', unitFamily: 'days' },
     { id: 'inventory_value', label: 'Active inventory value', category: 'inventory', defaultType: 'bar', unitFamily: 'money' },
-    // Goals / plans
-    { id: 'goal_vs_actual', label: 'Actual vs goal target', category: 'goals', defaultType: 'line', unitFamily: 'auto' },
-    { id: 'plan_vs_actual', label: 'Actual vs taper target', category: 'goals', defaultType: 'line', unitFamily: 'auto' },
-    { id: 'goal_adherence', label: 'Goal adherence over time', category: 'goals', defaultType: 'bar', unitFamily: 'percent' },
-    { id: 'plan_adherence', label: 'Plan adherence over time', category: 'goals', defaultType: 'bar', unitFamily: 'percent' },
-    { id: 'weekly_target_progress', label: 'Weekly target progress', category: 'goals', defaultType: 'progress', unitFamily: 'percent' },
-    { id: 'spend_target_progress', label: 'Spending target progress', category: 'goals', defaultType: 'progress', unitFamily: 'percent' },
+    // Tapers
+    { id: 'plan_vs_actual', label: 'Actual vs taper target', category: 'tapers', defaultType: 'line', unitFamily: 'auto' },
+    { id: 'plan_adherence', label: 'Taper adherence over time', category: 'tapers', defaultType: 'bar', unitFamily: 'percent' },
+    { id: 'weekly_target_progress', label: 'Weekly target progress', category: 'tapers', defaultType: 'progress', unitFamily: 'percent' },
+    { id: 'spend_target_progress', label: 'Spending target progress', category: 'tapers', defaultType: 'progress', unitFamily: 'percent' },
     // Recovery
     { id: 'no_use_streak', label: 'No-use streak', category: 'recovery', defaultType: 'line', unitFamily: 'days' },
     { id: 'no_purchase_streak', label: 'No-purchase streak', category: 'recovery', defaultType: 'line', unitFamily: 'days' },
@@ -91,7 +89,7 @@ const CHART_METRICS = Object.freeze([
 const CHART_PRESETS = Object.freeze({
     recovery_overview: {
         name: 'Recovery Overview',
-        widgets: ['no_use_streak', 'recovery_score', 'use_amount', 'spend_amount', 'goal_adherence']
+        widgets: ['no_use_streak', 'recovery_score', 'use_amount', 'spend_amount', 'plan_adherence']
     },
     use_trends: {
         name: 'Use Trends',
@@ -109,9 +107,9 @@ const CHART_PRESETS = Object.freeze({
         name: 'Inventory',
         widgets: ['inventory_remaining', 'inventory_flow', 'days_of_supply', 'inventory_value']
     },
-    goals_plans: {
-        name: 'Goals & Plans',
-        widgets: ['goal_vs_actual', 'plan_vs_actual', 'goal_adherence', 'plan_adherence', 'weekly_target_progress', 'spend_target_progress']
+    tapers: {
+        name: 'Tapers',
+        widgets: ['plan_vs_actual', 'plan_adherence', 'weekly_target_progress', 'spend_target_progress']
     },
     weed: {
         name: 'Weed',
@@ -1015,28 +1013,8 @@ function buildChartDatasetForMetric(metricId, filters, data = appData, options =
         };
     }
 
-    if (meta.category === 'goals' || meta.category === 'recovery') {
+    if (meta.category === 'tapers' || meta.category === 'recovery') {
         const bounds = resolveChartBounds(f, data);
-        if (metricId === 'goal_adherence' || metricId === 'goal_vs_actual') {
-            const evaluations = typeof evaluateAllGoals === 'function' ? evaluateAllGoals({ data }) : [];
-            const points = evaluations.slice(0, 20).map((ev, i) => ({
-                key: ev.goal?.name || `goal-${i}`,
-                date: ev.bounds?.endDate || chToday(),
-                value: metricId === 'goal_adherence'
-                    ? chToNumber(ev.progressRatio != null ? ev.progressRatio * 100 : ev.percentComplete, 0)
-                    : chToNumber(ev.actual, 0),
-                count: 1,
-                meta: { goalId: ev.goal?.id, target: ev.target }
-            }));
-            return {
-                state: points.length ? 'ok' : 'empty',
-                metricId,
-                chartType: options.chartType || meta.defaultType,
-                bounds,
-                series: [{ id: 'goals', label: meta.label, unitFamily: metricId === 'goal_adherence' ? 'percent' : 'auto', points }],
-                overlays: points.filter(p => p.meta?.target != null).map(p => ({ type: 'target', value: p.meta.target, label: 'Target' }))
-            };
-        }
         if (metricId === 'plan_adherence' || metricId === 'plan_vs_actual' || metricId === 'weekly_target_progress') {
             const plans = (data.taperPlansV2 || []).filter(p => p && !p.archived);
             const points = [];

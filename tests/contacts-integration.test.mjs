@@ -107,11 +107,11 @@ test('insights contact analytics html lists supplier metrics', () => {
 
 test('goal contact field helpers stay optional', () => {
     const rt = setup();
-    const out = rt.applyGoalContactFieldsToDraft({ name: 'Test goal' });
+    const out = rt.applyGoalContactFieldsToDraft({ name: 'Test plan' });
     assert.equal(out.accountabilityPartnerContactId, '');
-    const html = rt.renderGoalPlanContactFieldsHtml('goal', null);
-    assert.match(html, /Accountability partner/);
-    assert.match(html, /goal-accountability-partner/);
+    const html = rt.renderGoalPlanContactFieldsHtml('plan', null);
+    assert.match(html, /Sponsor \(optional\)/);
+    assert.doesNotMatch(html, /Create goal|New goal|Goal Analytics/i);
 });
 
 test('main nav has no Friends tab; settings hosts contacts root', () => {

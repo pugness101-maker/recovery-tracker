@@ -143,12 +143,15 @@ test('simple home dataset uses canonical per-substance totals', () => {
     assert.equal(coke.status.key, 'none');
 });
 
-test('goal status wording is non-shaming', () => {
+test('taper status wording is non-shaming and uses taper targets', () => {
     const rt = setup();
-    assert.equal(rt.resolveSimpleGoalStatus(1, 2).label, 'Within goal');
-    assert.equal(rt.resolveSimpleGoalStatus(1.8, 2).label, 'Near goal');
-    assert.equal(rt.resolveSimpleGoalStatus(2.1, 2).label, 'Above goal');
-    assert.equal(rt.resolveSimpleGoalStatus(1, null).label, 'No goal set');
+    assert.equal(rt.resolveSimpleTaperStatus(1, 2).label, 'Within target');
+    assert.equal(rt.resolveSimpleTaperStatus(1, 2).homeLabel, 'Within taper target');
+    assert.equal(rt.resolveSimpleTaperStatus(1.8, 2).label, 'Near target');
+    assert.equal(rt.resolveSimpleTaperStatus(1.8, 2).homeLabel, 'Near taper target');
+    assert.equal(rt.resolveSimpleTaperStatus(2.1, 2).label, 'Above target');
+    assert.equal(rt.resolveSimpleTaperStatus(1, null).label, 'No active taper');
+    assert.equal(rt.SIMPLE_TAPER_STATUS.none.label, 'No active taper');
 });
 
 test('progress dataset uses same range engine and does not invent combined units', () => {

@@ -298,7 +298,7 @@ function renderCompactInsightsSummaryCards(substanceId, useStats, bounds, unit, 
             : 'Sessions';
         const secondary = isVape
             ? [
-                card('Weekly goal', weekGoal != null ? `${fmtPuffs(weekGoal)} puffs` : '—', weeklyBadge),
+                card('Weekly target', weekGoal != null ? `${fmtPuffs(weekGoal)} puffs` : '—', weeklyBadge),
                 card('Vape count', String(useStats?.vapeCount ?? 0), null),
                 card('Avg cost/vape', typeof formatCostPerVape === 'function'
                     ? formatCostPerVape(useStats?.avgCostPerVape, cur)
@@ -307,7 +307,7 @@ function renderCompactInsightsSummaryCards(substanceId, useStats, bounds, unit, 
                 card('Range', `${bounds?.startDate || '…'} – ${bounds?.endDate || '…'}`, null)
             ]
             : [
-                card('Weekly goal', weekGoal != null ? `${fmtAmt(weekGoal)} ${displayUnit}` : '—', weeklyBadge),
+                card('Weekly target', weekGoal != null ? `${fmtAmt(weekGoal)} ${displayUnit}` : '—', weeklyBadge),
                 card(entriesLabel, String(useStats?.sessionCount ?? 0), null),
                 card('Use day %', `${fmtAmt(useStats?.useDayPct ?? 0, 1)}%`, null),
                 card('Remaining supply', remaining != null ? `${fmtAmt(remaining)} ${displayUnit}` : '—', null),
@@ -388,7 +388,7 @@ function patchInsightsSimplifySetView() {
             if (typeof renderFinancialAnalyticsView === 'function') renderFinancialAnalyticsView();
             if (typeof renderPurchaseAnalyticsView === 'function') renderPurchaseAnalyticsView();
         } else if (normalized === 'more') {
-            if (typeof renderGoalInsightsPanel === 'function') renderGoalInsightsPanel();
+            if (typeof renderRunningTotalsView === 'function') renderRunningTotalsView();
             if (typeof renderPlanAnalyticsPanel === 'function') renderPlanAnalyticsPanel();
             if (typeof renderInsightsContactAnalytics === 'function') renderInsightsContactAnalytics();
             if (typeof renderChartDashboardView === 'function') renderChartDashboardView();

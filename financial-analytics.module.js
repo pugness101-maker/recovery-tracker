@@ -2119,7 +2119,7 @@ function mapFinancialCalendarEvents(bounds = null, data = appData) {
                         id: `fin-goal-done-${ev.goal.id}-${date}`,
                         type: 'goal_completion',
                         date,
-                        label: 'Spending goal met',
+                        label: 'Spending target met',
                         title: ev.goal.name,
                         substanceId: financialIsAllSubstances(ev.goal.substanceId) ? null : ev.goal.substanceId,
                         linkedGoalId: ev.goal.id,
@@ -2275,7 +2275,6 @@ function exportFinancialAnalyticsCsv(kind = 'summary', data = appData) {
         ];
         if (s.estimatedCostAvoided) rows.push(['Estimated cost avoided', s.bounds.rangeLabel, s.currentTotal, '', s.estimatedCostAvoided.amount, '', 'yes']);
         s.planSavings.forEach(p => rows.push([`Plan: ${p.name}`, '', p.actual, p.expected, p.saved, '', 'yes']));
-        s.goalSavings.forEach(g => rows.push([`Goal: ${g.name}`, '', g.actual, g.target, g.saved, '', 'no']));
         return financialCsvDownload('financial-savings',
             ['Measure', 'Comparison period', 'Actual', 'Expected', 'Saved', 'Change %', 'Estimate'], rows);
     }
@@ -2700,9 +2699,6 @@ function renderFinancialSavingsPanel(dataset) {
     const planRows = s.planSavings.map(p => `
         <tr><td>${escapeHtml(p.name)}</td><td>${escapeHtml(finMoney(p.expected))}</td><td>${escapeHtml(finMoney(p.actual))}</td>
         <td class="${finToneClass(p.saved > 0 ? 'good' : 'bad')}">${escapeHtml(finMoney(p.saved))}</td></tr>`).join('');
-    const goalRows = s.goalSavings.map(g => `
-        <tr><td>${escapeHtml(g.name)}</td><td>${escapeHtml(finMoney(g.target))}</td><td>${escapeHtml(finMoney(g.actual))}</td>
-        <td class="${finToneClass(g.saved >= 0 ? 'good' : 'bad')}">${escapeHtml(finMoney(g.saved))}</td></tr>`).join('');
 
     return `
         <section class="fin-panel">
@@ -2713,12 +2709,6 @@ function renderFinancialSavingsPanel(dataset) {
             <div class="fin-table-wrap"><table class="fin-table">
                 <thead><tr><th>Plan</th><th>Expected</th><th>Actual</th><th>Saved</th></tr></thead>
                 <tbody>${planRows}</tbody>
-            </table></div>` : ''}
-            ${goalRows ? `
-            <h4 class="fin-subhead">Spending goals</h4>
-            <div class="fin-table-wrap"><table class="fin-table">
-                <thead><tr><th>Goal</th><th>Target</th><th>Spent</th><th>Under by</th></tr></thead>
-                <tbody>${goalRows}</tbody>
             </table></div>` : ''}
             <p class="fin-hint">${escapeHtml(s.estimateNote)}</p>
         </section>`;

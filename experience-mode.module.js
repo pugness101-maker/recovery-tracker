@@ -6,11 +6,11 @@ const EXPERIENCE_MODE_SIMPLE = 'simple';
 const EXPERIENCE_MODE_ADVANCED = 'advanced';
 const EXPERIENCE_PROGRESS_RANGES = Object.freeze(['7', '30', '90', 'all']);
 
-const SIMPLE_GOAL_STATUS = Object.freeze({
-    within: { key: 'within', label: 'Within goal' },
-    near: { key: 'near', label: 'Near goal' },
-    above: { key: 'above', label: 'Above goal' },
-    none: { key: 'none', label: 'No goal set' }
+const SIMPLE_TAPER_STATUS = Object.freeze({
+    within: { key: 'within', label: 'Within target', homeLabel: 'Within taper target' },
+    near: { key: 'near', label: 'Near target', homeLabel: 'Near taper target' },
+    above: { key: 'above', label: 'Above target', homeLabel: 'Above taper target' },
+    none: { key: 'none', label: 'No active taper', homeLabel: 'No active taper' }
 });
 
 const SIMPLE_PLAN_INTENTS = Object.freeze([
@@ -137,11 +137,24 @@ function getTrackedSubstancesForSimpleHome(data = appData) {
     });
 }
 
-function resolveSimpleGoalStatus(used, goal) {
-    if (goal == null || !(goal > 0)) return SIMPLE_GOAL_STATUS.none;
-    if (used > goal) return SIMPLE_GOAL_STATUS.above;
-    if (used >= goal * 0.85) return SIMPLE_GOAL_STATUS.near;
-    return SIMPLE_GOAL_STATUS.within;
+function resolveSimpleTaperStatus(used, target) {
+    if (typeof getTaperLimitStatus === 'function') {
+        const engine = getTaperLimitStatus(used, target);
+        if (engine.status === 'over') return SIMPLE_TAPER_STATUS.above;
+        if (engine.status === 'close') return SIMPLE_TAPER_STATUS.near;
+        if (engine.status === 'under') return SIMPLE_TAPER_STATUS.within;
+        return SIMPLE_TAPER_STATUS.none;
+    }
+    if (target == null || !(target > 0)) return SIMPLE_TAPER_STATUS.none;
+    if (used > target) return SIMPLE_TAPER_STATUS.above;
+    if (used >= target * 0.8) return SIMPLE_TAPER_STATUS.near;
+    return SIMPLE_TAPER_STATUS.within;
+}
+
+function getSimpleTaperDailyTarget(substanceId, dateStr, data = appData) {
+    if (!substanceId || typeof getDailyLimitForDate !== 'function') return null;
+    const target = getDailyLimitForDate(substanceId, dateStr, null);
+    return target != null && Number(target) > 0 ? Number(target) : null;
 }
 
 function formatSimpleUsage(substanceId, amount, data = appData) {
@@ -198,16 +211,14 @@ function buildSimpleTodayCard(substance, data = appData) {
     const used = typeof getCanonicalUsageOnDate === 'function'
         ? getCanonicalUsageOnDate(substanceId, today, data)
         : 0;
-    const goal = typeof getDailyLimitForDate === 'function'
-        ? getDailyLimitForDate(substanceId, today)
-        : null;
-    const remaining = goal != null ? Math.max(0, goal - used) : null;
+    const target = getSimpleTaperDailyTarget(substanceId, today, data);
+    const remaining = target != null ? Math.max(0, target - used) : null;
     const recentAvg = getRecentAverageUsage(substanceId, 7, data);
     let vsRecent = null;
     if (recentAvg > 0) {
         vsRecent = ((used - recentAvg) / recentAvg) * 100;
     }
-    const status = resolveSimpleGoalStatus(used, goal);
+    const status = resolveSimpleTaperStatus(used, target);
     const unit = typeof getSubstanceDisplayUnit === 'function'
         ? getSubstanceDisplayUnit(substanceId, data)
         : (substance.defaultUnit || '');
@@ -217,8 +228,8 @@ function buildSimpleTodayCard(substance, data = appData) {
         unit,
         used,
         usedLabel: formatSimpleUsage(substanceId, used, data),
-        goal,
-        goalLabel: goal != null ? formatSimpleUsage(substanceId, goal, data) : null,
+        target,
+        targetLabel: target != null ? formatSimpleUsage(substanceId, target, data) : null,
         remaining,
         remainingLabel: remaining != null ? formatSimpleUsage(substanceId, remaining, data) : null,
         vsRecent,
@@ -260,21 +271,21 @@ function renderSimpleHome(data = appData) {
                     <dt>vs recent</dt>
                     <dd class="${card.vsRecent <= 0 ? 'sm-vs-down' : 'sm-vs-up'}">${card.vsRecent <= 0 ? '↓' : '↑'} ${Math.abs(Math.round(card.vsRecent))}%</dd>
                    </div>`;
-            const meta = card.goal != null
+            const meta = card.target != null
                 ? `<dl class="sm-today-meta">
-                    <div class="sm-today-row"><dt>Goal</dt><dd>≤ ${escapeHtml(card.goalLabel)}</dd></div>
+                    <div class="sm-today-row"><dt>Taper target</dt><dd>≤ ${escapeHtml(card.targetLabel)}</dd></div>
                     <div class="sm-today-row"><dt>Remaining</dt><dd>${escapeHtml(card.remainingLabel)}</dd></div>
                     ${vsRow}
                    </dl>`
                 : `<dl class="sm-today-meta">
-                    <div class="sm-today-row"><dt>Goal</dt><dd>${escapeHtml(card.status.label)}</dd></div>
+                    <div class="sm-today-row"><dt>Taper</dt><dd>${escapeHtml(card.status.homeLabel || card.status.label)}</dd></div>
                     ${vsRow}
                    </dl>`;
             return `
                 <article class="sm-today-card status-${escapeHtml(card.status.key)}" data-substance-id="${escapeHtml(card.substanceId)}">
                     <header class="sm-today-card-head">
                         <h3>${escapeHtml(card.name)}</h3>
-                        <span class="sm-status-pill">${escapeHtml(card.status.label)}</span>
+                        <span class="sm-status-pill">${escapeHtml(card.status.homeLabel || card.status.label)}</span>
                     </header>
                     <p class="sm-today-amount">${escapeHtml(card.usedLabel)} <span class="sm-today-amount-label">today</span></p>
                     ${meta}
@@ -629,10 +640,8 @@ function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
     const prevAvg = prevTotal / Math.max(1, bounds.days);
     const pctChange = prevAvg > 0 ? ((dailyAvg - prevAvg) / prevAvg) * 100 : null;
 
-    const goal = typeof getDailyLimitForDate === 'function'
-        ? getDailyLimitForDate(substanceId, bounds.endDate)
-        : null;
-    const status = resolveSimpleGoalStatus(usedToday, goal);
+    const target = getSimpleTaperDailyTarget(substanceId, bounds.endDate, data);
+    const status = resolveSimpleTaperStatus(usedToday, target);
     const streak = typeof computeRecoveryStreakDays === 'function'
         ? computeRecoveryStreakDays(substanceId)
         : { days: 0 };
@@ -646,14 +655,12 @@ function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
     let guard = 0;
     while (cursor <= bounds.endDate && guard < 400) {
         const amt = getCanonicalUsageOnDate(substanceId, cursor, data);
-        const dayGoal = typeof getDailyLimitForDate === 'function'
-            ? getDailyLimitForDate(substanceId, cursor)
-            : null;
+        const dayTarget = getSimpleTaperDailyTarget(substanceId, cursor, data);
         series.push({
             date: cursor,
             amount: amt,
-            goal: dayGoal,
-            status: resolveSimpleGoalStatus(amt, dayGoal)
+            target: dayTarget,
+            status: resolveSimpleTaperStatus(amt, dayTarget)
         });
         cursor = addDaysYYYYMMDD(cursor, 1);
         guard += 1;
@@ -666,7 +673,7 @@ function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
         dailyAvg,
         prevAvg,
         pctChange,
-        goal,
+        target,
         status,
         streakDays: streak?.days ?? 0,
         spend,
@@ -723,7 +730,7 @@ function renderSimpleProgressCalendar(dataset, monthStr) {
         const amount = point?.amount ?? (dateStr >= dataset.bounds.startDate && dateStr <= dataset.bounds.endDate
             ? getCanonicalUsageOnDate(dataset.substanceId, dateStr)
             : 0);
-        const status = point?.status || resolveSimpleGoalStatus(amount, point?.goal ?? dataset.goal);
+        const status = point?.status || resolveSimpleTaperStatus(amount, point?.target ?? dataset.target);
         const intensity = amount > 0 ? Math.min(1, amount / maxInMonth) : 0;
         cells.push(`
             <button type="button" class="sm-cal-cell status-${escapeHtml(status.key)}"
@@ -823,7 +830,7 @@ function renderSimpleProgress(data = appData) {
             <div class="sm-metric"><span class="sm-metric-label">Previous period</span><strong>${escapeHtml(formatSimpleUsage(substanceId, dataset.prevAvg, data))}</strong></div>
             <div class="sm-metric"><span class="sm-metric-label">Change</span><strong>${escapeHtml(pctLabel)}</strong></div>
             <div class="sm-metric"><span class="sm-metric-label">Break / streak</span><strong>${dataset.streakDays} day${dataset.streakDays === 1 ? '' : 's'}</strong></div>
-            <div class="sm-metric"><span class="sm-metric-label">Goal</span><strong>${escapeHtml(dataset.status.label)}</strong></div>
+            <div class="sm-metric"><span class="sm-metric-label">Taper</span><strong>${escapeHtml(dataset.status.label)}</strong></div>
             <div class="sm-metric"><span class="sm-metric-label">${escapeHtml(spendPeriodLabel)}</span><strong>${escapeHtml(spendLabel)}</strong></div>
         </div>
         <section class="sm-progress-section sm-trend-section">
@@ -929,7 +936,7 @@ function openSimplePlanWizard() {
     wizard.innerHTML = `
         <div class="sm-plan-wizard-card">
             <h3>What are you trying to do?</h3>
-            <p class="settings-hint">We’ll only show the settings that match your goal.</p>
+            <p class="settings-hint">We’ll only show the settings that match what you’re trying to do.</p>
             <div class="sm-plan-intent-grid">
                 ${SIMPLE_PLAN_INTENTS.map(intent => `
                     <button type="button" class="sm-plan-intent-btn" onclick="applySimplePlanIntent('${intent.id}')">

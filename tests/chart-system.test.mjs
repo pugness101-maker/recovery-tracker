@@ -332,7 +332,7 @@ test('applyChartPreset swaps widgets and csv export includes series rows', () =>
     assert.ok(csv.split('\n').length > 1);
 });
 
-test('goal overlay metric returns progress or empty without inventing targets', () => {
+test('taper overlay metric returns progress or empty without inventing targets', () => {
     const rt = setup();
     const ds = rt.buildChartDatasetForMetric('weekly_target_progress', {
         substanceId: COKE_ID,
