@@ -12671,6 +12671,53 @@ const TAPER_START_FROM = Object.freeze({
     COPY: 'copy-existing'
 });
 
+/** Purchase / buying-reduction config — must exist before loadData() migration runs. */
+const PURCHASE_TAPER_MODES = [
+    'none',
+    'combined',
+    'weekly_buy_amount',
+    'weekly_spend',
+    'monthly_buy_amount',
+    'monthly_spend',
+    'manual_weekly_buy_amount',
+    'manual_weekly_spend'
+];
+
+const PURCHASE_TAPER_FORM_MODE_MAP = {
+    reduce_buy_amount: 'weekly_buy_amount',
+    reduce_buy_spend: 'weekly_spend',
+    fixed_weekly_purchase_limit: 'weekly_buy_amount',
+    fixed_weekly_spending_limit: 'weekly_spend',
+    fixed_monthly_purchase_cap: 'monthly_buy_amount',
+    fixed_monthly_spending_cap: 'monthly_spend'
+};
+
+const PURCHASE_TAPER_MODE_LABELS = {
+    none: 'None',
+    combined: 'Combined rules',
+    reduce_buy_amount: 'Reduce purchase amount',
+    reduce_buy_spend: 'Reduce purchase cost',
+    weekly_buy_amount: 'Fixed weekly purchase limit',
+    weekly_spend: 'Fixed weekly spending limit',
+    monthly_buy_amount: 'Fixed monthly purchase cap',
+    monthly_spend: 'Fixed monthly spending cap',
+    manual_weekly_buy_amount: 'Manual weekly buy plan',
+    manual_weekly_spend: 'Manual weekly spending plan'
+};
+
+const BUYING_REDUCTION_RULE_KEYS = [
+    'reducePurchaseAmount',
+    'reducePurchaseCost',
+    'weeklyPurchaseLimit',
+    'weeklySpendingLimit',
+    'monthlyPurchaseCap',
+    'monthlySpendingCap',
+    'manualWeeklyBuyPlan',
+    'manualWeeklySpendingPlan'
+];
+
+const AUTO_SPEND_BASELINE_RANGES = ['last-30', 'last-60', 'last-90', 'plan-period', 'custom'];
+
 function ensureTaperMyTemplates(data = appData) {
     if (!data.settings || typeof data.settings !== 'object') data.settings = {};
     if (!Array.isArray(data.settings.taperMyTemplates)) data.settings.taperMyTemplates = [];
@@ -26170,34 +26217,94 @@ function updateBuySourceFieldLabel() {
     if (search) search.placeholder = getBuySourcePlaceholder(type);
 }
 
-function ensureBuySourcePickerMounted() {
-    if (typeof document === 'undefined') return;
-    let group = document.getElementById('buy-source-group');
-    if (group) {
-        updateBuySourceFieldLabel();
-        document.getElementById('buy-store-group')?.classList.add('hidden');
-        document.getElementById('buy-supplier-contact-picker')?.classList.add('hidden');
-        return;
+let inventorySourcePickerMounted = false;
+let inventorySourcePickerMountWarned = false;
+
+function isInventorySourceDomElement(node) {
+    return !!node && typeof node.insertAdjacentHTML === 'function';
+}
+
+function mountBuySourcePickerHtml(html) {
+    if (typeof document === 'undefined') return false;
+    const hasPickerMarkup = () => html.includes('id="buy-source-group"') || html.includes("id='buy-source-group'");
+    const mount = document.getElementById('buy-source-mount');
+    if (mount && typeof mount.innerHTML === 'string') {
+        mount.innerHTML = html;
+        return hasPickerMarkup();
     }
+    const storeGroup = document.getElementById('buy-store-group');
+    if (isInventorySourceDomElement(storeGroup)) {
+        storeGroup.insertAdjacentHTML('beforebegin', html);
+        return hasPickerMarkup();
+    }
+    const paymentGroup = document.getElementById('buy-payment-group');
+    if (isInventorySourceDomElement(paymentGroup)) {
+        paymentGroup.insertAdjacentHTML('beforebegin', html);
+        return hasPickerMarkup();
+    }
+    return false;
+}
+
+function hideLegacyBuySourceFields() {
+    const type = typeof getBuyFormAcquisitionType === 'function'
+        ? getBuyFormAcquisitionType()
+        : normalizePurchaseAcquisitionType(document.getElementById('buy-acquisition-type')?.value || 'purchased');
+    const sourcePickerActive = !!document.getElementById('buy-source-group') || inventorySourcePickerMounted;
+    if (sourcePickerActive) {
+        document.getElementById('buy-supplier-contact-picker')?.classList?.add?.('hidden');
+        // Purchased-as-gift still uses legacy store/payment fields when the unified picker is mounted.
+        document.getElementById('buy-store-group')?.classList?.toggle?.('hidden', type !== 'purchased_as_gift');
+    }
+    // Gift recipient/source visibility is owned by updateBuyAcquisitionTypeUI — do not override here.
+}
+
+function buySourcePickerMarkupPresent() {
+    if (typeof document === 'undefined') return false;
+    if (document.getElementById('buy-source-group')) return true;
+    const mount = document.getElementById('buy-source-mount');
+    return !!(mount && typeof mount.innerHTML === 'string' && mount.innerHTML.includes('buy-source-group'));
+}
+
+function ensureBuySourcePickerMounted() {
+    if (typeof document === 'undefined') return false;
+    if (buySourcePickerMarkupPresent()) {
+        inventorySourcePickerMounted = true;
+        updateBuySourceFieldLabel();
+        hideLegacyBuySourceFields();
+        return true;
+    }
+    if (inventorySourcePickerMounted) return true;
+
     const type = typeof getBuyFormAcquisitionType === 'function'
         ? getBuyFormAcquisitionType()
         : 'purchased';
     const html = buildBuySourcePickerHtml(type);
-    const mount = document.getElementById('buy-source-mount');
-    const storeGroup = document.getElementById('buy-store-group');
-    if (mount) {
-        mount.innerHTML = html;
-    } else if (storeGroup) {
-        storeGroup.insertAdjacentHTML('beforebegin', html);
-    } else {
-        document.getElementById('buy-payment-group')?.insertAdjacentHTML('beforebegin', html);
+    const mounted = mountBuySourcePickerHtml(html);
+    if (!mounted) {
+        if (!inventorySourcePickerMountWarned) {
+            inventorySourcePickerMountWarned = true;
+            console.warn('[inventory-source] Source picker mount skipped — buy form target elements are not ready');
+        }
+        return false;
     }
-    storeGroup?.classList.add('hidden');
-    // Hide separate supplier + gift source/recipient (Source replaces them)
-    document.getElementById('buy-supplier-contact-picker')?.classList.add('hidden');
-    document.getElementById('buy-gift-source-group')?.classList.add('hidden');
-    document.getElementById('buy-gift-recipient-group')?.classList.add('hidden');
+
+    inventorySourcePickerMounted = true;
+    hideLegacyBuySourceFields();
     updateBuySourceFieldLabel();
+    return true;
+}
+
+function applyBuySourceAcquisitionUiPatch() {
+    if (!buySourcePickerMarkupPresent() && !inventorySourcePickerMounted) {
+        ensureBuySourcePickerMounted();
+    }
+    updateBuySourceFieldLabel();
+    hideLegacyBuySourceFields();
+    document.getElementById('buy-source-group')?.classList?.remove?.('hidden');
+    const type = typeof getBuyFormAcquisitionType === 'function' ? getBuyFormAcquisitionType() : '';
+    if (type === 'purchased_as_gift') {
+        document.getElementById('buy-gift-date-group')?.classList?.remove?.('hidden');
+    }
 }
 
 function patchInventorySourceBuyForm() {
@@ -26206,21 +26313,12 @@ function patchInventorySourceBuyForm() {
         updateBuyAcquisitionTypeUI = function patchedBuyAcquisitionTypeUI() {
             const result = original.apply(this, arguments);
             try {
-                ensureBuySourcePickerMounted();
-                updateBuySourceFieldLabel();
-                // Always hide legacy store + supplier picker
-                document.getElementById('buy-store-group')?.classList.add('hidden');
-                document.getElementById('buy-supplier-contact-picker')?.classList.add('hidden');
-                // Gift From / Recipient groups replaced by Source (keep gift date)
-                const type = typeof getBuyFormAcquisitionType === 'function' ? getBuyFormAcquisitionType() : '';
-                document.getElementById('buy-gift-source-group')?.classList.add('hidden');
-                document.getElementById('buy-gift-recipient-group')?.classList.add('hidden');
-                document.getElementById('buy-source-group')?.classList.remove('hidden');
-                if (type === 'purchased_as_gift') {
-                    document.getElementById('buy-gift-date-group')?.classList.remove('hidden');
-                }
+                applyBuySourceAcquisitionUiPatch();
             } catch (err) {
-                console.warn('[inventory-source] acquisition UI patch failed', err);
+                if (!inventorySourcePickerMountWarned) {
+                    inventorySourcePickerMountWarned = true;
+                    console.warn('[inventory-source] acquisition UI patch failed', err);
+                }
             }
             return result;
         };
@@ -26325,6 +26423,8 @@ function patchInventorySourceHistoryColumns() {
     } catch (_) { /* optional */ }
 }
 
+let inventorySourceClickListenerBound = false;
+
 function initInventorySource() {
     ensureInventorySourcesMigrated(appData);
     patchInventorySourceBuyForm();
@@ -26332,13 +26432,16 @@ function initInventorySource() {
     patchInventorySourceHistoryColumns();
     if (typeof document !== 'undefined') {
         ensureBuySourcePickerMounted();
-        document.addEventListener('click', (e) => {
-            const menu = document.getElementById('buy-source-menu');
-            const picker = document.querySelector('[data-buy-source-picker]');
-            if (!menu || menu.classList.contains('hidden')) return;
-            if (picker && picker.contains(e.target)) return;
-            closeBuySourceMenu();
-        });
+        if (!inventorySourceClickListenerBound) {
+            inventorySourceClickListenerBound = true;
+            document.addEventListener('click', (e) => {
+                const menu = document.getElementById('buy-source-menu');
+                const picker = document.querySelector('[data-buy-source-picker]');
+                if (!menu || menu.classList.contains('hidden')) return;
+                if (picker && picker.contains(e.target)) return;
+                closeBuySourceMenu();
+            });
+        }
     }
 }
 
@@ -42137,7 +42240,7 @@ function updateBuyAcquisitionTypeUI() {
     if (acquisitionSelect) {
         acquisitionSelect.hidden = false;
         acquisitionSelect.disabled = false;
-        acquisitionSelect.style.display = '';
+        if (acquisitionSelect.style) acquisitionSelect.style.display = '';
         if (!acquisitionSelect.value) acquisitionSelect.value = 'purchased';
     }
     document.getElementById('buy-gift-source-group')?.classList.toggle('hidden', !isGiftReceived);
@@ -51948,50 +52051,6 @@ function formatTaperWeeklyAmountBought(totals, plan, substanceId, unit) {
     return formatTaperRunningAmountBought(totals, plan, substanceId, unit);
 }
 
-const PURCHASE_TAPER_MODES = [
-    'none',
-    'combined',
-    'weekly_buy_amount',
-    'weekly_spend',
-    'monthly_buy_amount',
-    'monthly_spend',
-    'manual_weekly_buy_amount',
-    'manual_weekly_spend'
-];
-
-const PURCHASE_TAPER_FORM_MODE_MAP = {
-    reduce_buy_amount: 'weekly_buy_amount',
-    reduce_buy_spend: 'weekly_spend',
-    fixed_weekly_purchase_limit: 'weekly_buy_amount',
-    fixed_weekly_spending_limit: 'weekly_spend',
-    fixed_monthly_purchase_cap: 'monthly_buy_amount',
-    fixed_monthly_spending_cap: 'monthly_spend'
-};
-
-const PURCHASE_TAPER_MODE_LABELS = {
-    none: 'None',
-    combined: 'Combined rules',
-    reduce_buy_amount: 'Reduce purchase amount',
-    reduce_buy_spend: 'Reduce purchase cost',
-    weekly_buy_amount: 'Fixed weekly purchase limit',
-    weekly_spend: 'Fixed weekly spending limit',
-    monthly_buy_amount: 'Fixed monthly purchase cap',
-    monthly_spend: 'Fixed monthly spending cap',
-    manual_weekly_buy_amount: 'Manual weekly buy plan',
-    manual_weekly_spend: 'Manual weekly spending plan'
-};
-
-const BUYING_REDUCTION_RULE_KEYS = [
-    'reducePurchaseAmount',
-    'reducePurchaseCost',
-    'weeklyPurchaseLimit',
-    'weeklySpendingLimit',
-    'monthlyPurchaseCap',
-    'monthlySpendingCap',
-    'manualWeeklyBuyPlan',
-    'manualWeeklySpendingPlan'
-];
-
 function getDefaultBuyingReductionSettings() {
     return {
         reducePurchaseAmount: {
@@ -52024,8 +52083,6 @@ function getDefaultBuyingReductionSettings() {
         }
     };
 }
-
-const AUTO_SPEND_BASELINE_RANGES = ['last-30', 'last-60', 'last-90', 'plan-period', 'custom'];
 
 function normalizeAutoSpendFromCostPerGramSettings(raw) {
     const defaults = getDefaultBuyingReductionSettings().autoSpendFromCostPerGram;
@@ -63507,6 +63564,22 @@ function __getRecoveryTrackerTestExports() {
         applyInventorySourceToPayload,
         collectInventorySourceOptions,
         initInventorySource,
+        isInventorySourceDomElement,
+        ensureBuySourcePickerMounted,
+        mountBuySourcePickerHtml,
+        applyBuySourceAcquisitionUiPatch,
+        inventorySourcePickerMountedRef: {
+            get value() { return inventorySourcePickerMounted; },
+            set value(v) { inventorySourcePickerMounted = !!v; }
+        },
+        inventorySourcePickerMountWarnedRef: {
+            get value() { return inventorySourcePickerMountWarned; },
+            set value(v) { inventorySourcePickerMountWarned = !!v; }
+        },
+        BUYING_REDUCTION_RULE_KEYS,
+        normalizeBuyingReductionSettings,
+        migrateBuyingReductionSettings,
+        repairDataConsistency,
         INVENTORY_SOURCE_KINDS,
         ensureInsightsLayoutPrefs,
         getInsightsLayoutPrefs,
