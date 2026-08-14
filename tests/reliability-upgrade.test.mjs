@@ -152,6 +152,87 @@ test('Phase 1: Data Health detects negative remaining and broken links', () => {
     assert.ok(after >= 0);
 });
 
+test('Data Health classifies duplicates and orphans as review-required', () => {
+    const data = makeData({
+        logs: [
+            {
+                id: 'dup-id',
+                substanceId: COKE_ID,
+                date: '2026-07-27',
+                amount: 0.1,
+                unit: 'g',
+                transactionType: 'use',
+                type: 'quick'
+            },
+            {
+                id: 'dup-id',
+                substanceId: COKE_ID,
+                date: '2026-07-28',
+                amount: 0.2,
+                unit: 'g',
+                transactionType: 'use',
+                type: 'quick'
+            },
+            {
+                id: 'orphan-sub',
+                substanceId: 'missing-substance',
+                date: '2026-07-26',
+                amount: 0.1,
+                unit: 'g',
+                transactionType: 'use',
+                type: 'quick'
+            }
+        ]
+    });
+    const rt = setup(data);
+    const report = rt.scanDataHealth(rt.__getTestAppData());
+    const dup = report.issues.find(i => i.fix === 'dedupe-log');
+    const orphan = report.issues.find(i => i.fix === 'clear-orphan-substance');
+    assert.ok(dup);
+    assert.ok(orphan);
+    assert.equal(rt.isDataHealthIssueSafe(dup), false);
+    assert.equal(rt.isDataHealthIssueSafe(orphan), false);
+
+    const clamp = report.issues.find(i => i.fix === 'clamp-negative-remaining');
+    assert.ok(clamp);
+    assert.equal(rt.isDataHealthIssueSafe(clamp), true);
+
+    const preview = rt.previewDataHealthRepairs(report);
+    assert.ok(preview.reviewRequiredCount >= 2);
+    assert.ok(preview.safeFixableCount >= 1);
+});
+
+test('applyAllSafeDataHealthRepairs skips review-required duplicates', () => {
+    const data = makeData({
+        logs: [
+            {
+                id: 'dup-id',
+                substanceId: COKE_ID,
+                date: '2026-07-27',
+                amount: 0.1,
+                unit: 'g',
+                transactionType: 'use',
+                type: 'quick'
+            },
+            {
+                id: 'dup-id',
+                substanceId: COKE_ID,
+                date: '2026-07-28',
+                amount: 0.2,
+                unit: 'g',
+                transactionType: 'use',
+                type: 'quick'
+            }
+        ]
+    });
+    const rt = setup(data);
+    const beforeCount = rt.__getTestAppData().logs.length;
+    const report = rt.scanDataHealth(rt.__getTestAppData());
+    const safeIds = report.issues.filter(i => rt.isDataHealthIssueSafe(i)).map(i => i.id);
+    rt.applyDataHealthRepairs(report, { fixIds: safeIds, reason: 'test-safe-only', skipBackup: true });
+    assert.equal(rt.__getTestAppData().logs.length, beforeCount, 'safe repair must not dedupe logs');
+});
+
 test('Phase 2: change history snapshot can be restored', () => {
     const rt = setup(makeData());
     const beforeCount = rt.__getTestAppData().logs.length;

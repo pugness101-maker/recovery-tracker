@@ -2977,9 +2977,11 @@
                     </button>
                     <div class="section-content">
                         <div class="settings-section">
-                            <p class="settings-hint">Scan for duplicates, orphaned logs, broken inventory links, negative remaining values, legacy records, and mismatched totals. Repairs are previewable and create an automatic backup first.</p>
+                            <p class="settings-hint">Scan for duplicates, orphaned logs, broken inventory links, negative remaining values, legacy records, and mismatched totals. All repairs run here — preview first, then apply selected fixes or repair all safe issues. An automatic backup is created before every repair.</p>
                             <div class="data-management-buttons">
                                 <button type="button" class="secondary-btn" onclick="renderDataHealthPanel()">Scan Data Health</button>
+                                <button type="button" class="secondary-btn" onclick="applyAllSafeDataHealthRepairs()">Repair all safe issues</button>
+                                <button type="button" class="secondary-btn" onclick="restoreLastAutoBackup()">Restore Last Backup</button>
                                 <button type="button" class="secondary-btn" onclick="renderChangeHistoryPanel()">Refresh Change History</button>
                             </div>
                             <div id="data-health-results" class="data-health-results"></div>
@@ -3035,7 +3037,6 @@
                         <button type="button" class="secondary-btn" onclick="triggerImportJsonBackup()">Import JSON Backup</button>
                         <button type="button" class="secondary-btn" onclick="restoreLastAutoBackup()">Restore Last Backup</button>
                         <button type="button" class="secondary-btn" onclick="exportDataCsv()">Export CSV</button>
-                        <button type="button" class="secondary-btn" onclick="repairAppData()">Repair Data</button>
                     </div>
                     <label class="settings-toggle-row" for="settings-use-custom-names-in-csv">
                         <input type="checkbox" id="settings-use-custom-names-in-csv">

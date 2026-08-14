@@ -19,9 +19,11 @@ test('Settings Account & Data keeps local backup controls and has no Cloud Sync 
     assert.match(html, /Import JSON Backup/);
     assert.match(html, /Restore Last Backup/);
     assert.match(html, /Export CSV/);
-    assert.match(html, /Repair Data/);
-    assert.match(html, /id="settings-last-saved"/);
+    assert.doesNotMatch(html, /onclick="repairAppData\(\)"/);
+    assert.match(html, /Data Health/);
+    assert.match(html, /Repair all safe issues/);
     assert.match(html, /restoreLastAutoBackup\(\)/);
+    assert.match(html, /id="settings-last-saved"/);
 
     assert.doesNotMatch(html, /Cloud Sync/);
     assert.doesNotMatch(html, /id="settings-cloud-sync"/);
