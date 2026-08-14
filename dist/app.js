@@ -13015,13 +13015,79 @@ function ensureSinglePrimaryPerSubstance(data) {
     });
 }
 
+function getTaperPlanUpdatedAt(plan) {
+    return String(plan?.updatedAt || plan?.createdAt || '');
+}
+
+function getTaperPlanImportFingerprint(plan) {
+    if (!plan) return '';
+    return [
+        plan.substanceId || '',
+        plan.startDate || '',
+        plan.endDate || '',
+        plan.reductionType || '',
+        plan.name || '',
+        plan.goalDailyAverage ?? '',
+        plan.reductionAmount ?? '',
+        plan.reductionPercent ?? '',
+        plan.startingDailyAverage ?? ''
+    ].join('|');
+}
+
+/** Promote legacy taperPlans entries into taperPlansV2 without duplicating or clobbering newer V2 rows. */
+function promoteLegacyTaperPlansToV2(data) {
+    ensureTaperPlansV2(data);
+    const legacy = data.taperPlans;
+    if (!legacy || typeof legacy !== 'object') return;
+
+    const v2ById = new Map((data.taperPlansV2 || []).map(p => [String(p.id), p]));
+    const v2Fingerprints = new Set((data.taperPlansV2 || []).map(getTaperPlanImportFingerprint));
+
+    Object.entries(legacy).forEach(([substanceId, plan]) => {
+        if (!plan || typeof plan !== 'object') return;
+        try {
+            migrateTaperPlan(plan, substanceId, data);
+        } catch (err) {
+            console.warn('[import] legacy taper migration failed for', substanceId, err);
+            return;
+        }
+
+        const legacyId = plan.id != null && plan.id !== '' ? String(plan.id) : null;
+        if (legacyId && v2ById.has(legacyId)) return;
+
+        const fingerprint = getTaperPlanImportFingerprint({ ...plan, substanceId });
+        if (v2Fingerprints.has(fingerprint)) return;
+
+        const v2ForSubstance = (data.taperPlansV2 || []).filter(p => p.substanceId === substanceId);
+        if (v2ForSubstance.length) {
+            const legacyUpdated = getTaperPlanUpdatedAt(plan);
+            const primary = getPrimaryTaperPlan(substanceId, data);
+            if (primary) {
+                if (getTaperPlanImportFingerprint(primary) === fingerprint) return;
+                if (getTaperPlanUpdatedAt(primary) > legacyUpdated) return;
+            }
+        }
+
+        const v2Plan = legacyPlanToV2(plan, substanceId, data);
+        if (!v2Plan.id || v2ById.has(String(v2Plan.id))) {
+            const taken = new Set(v2ById.keys());
+            v2Plan.id = assignStableImportId({ ...v2Plan, substanceId }, 'taper', taken);
+        }
+        data.taperPlansV2.push(v2Plan);
+        v2ById.set(String(v2Plan.id), v2Plan);
+        v2Fingerprints.add(getTaperPlanImportFingerprint(v2Plan));
+    });
+}
+
 function legacyPlanToV2(legacyPlan, substanceId, data) {
     const sub = (data.substances || []).find(s => s.id === substanceId);
     const now = new Date().toISOString();
     const copy = JSON.parse(JSON.stringify(legacyPlan));
+    const taken = new Set((data.taperPlansV2 || []).map(p => String(p.id)));
+    const draft = { ...copy, substanceId };
     return {
         ...copy,
-        id: copy.id ? String(copy.id) : `taper-${substanceId}-${Date.now()}`,
+        id: copy.id ? String(copy.id) : assignStableImportId(draft, 'taper', taken),
         substanceId,
         name: copy.name || `${sub?.name || substanceId} taper plan`,
         status: copy.isPaused ? 'paused' : (copy.status || 'active'),
@@ -13031,11 +13097,14 @@ function legacyPlanToV2(legacyPlan, substanceId, data) {
     };
 }
 
-/** Read-only legacy mirror for import/export compatibility. taperPlansV2 is the writable store. */
+/** Rebuild legacy taperPlans mirror from V2 — removes ghost substance keys. */
 function syncLegacyTaperPlansFromV2(data) {
-    if (!data.taperPlans) data.taperPlans = {};
-    const substanceIds = new Set((data.taperPlansV2 || []).map(p => p.substanceId));
-    substanceIds.forEach(substanceId => {
+    if (!data.taperPlans || typeof data.taperPlans !== 'object') data.taperPlans = {};
+    const v2SubstanceIds = new Set((data.taperPlansV2 || []).map(p => p.substanceId).filter(Boolean));
+    Object.keys(data.taperPlans).forEach(key => {
+        if (!v2SubstanceIds.has(key)) delete data.taperPlans[key];
+    });
+    v2SubstanceIds.forEach(substanceId => {
         const primary = getPrimaryTaperPlan(substanceId, data);
         if (primary) data.taperPlans[substanceId] = primary;
         else delete data.taperPlans[substanceId];
@@ -13052,15 +13121,7 @@ function migrateTaperPlansToV2IfNeeded(data) {
     const legacy = data.taperPlans || {};
     const hasLegacy = Object.keys(legacy).some(k => legacy[k]);
     if (!data.taperPlansV2.length && hasLegacy) {
-        Object.entries(legacy).forEach(([substanceId, plan]) => {
-            if (!plan || typeof plan !== 'object') return;
-            try {
-                migrateTaperPlan(plan, substanceId, data);
-                data.taperPlansV2.push(legacyPlanToV2(plan, substanceId, data));
-            } catch (err) {
-                console.warn('taperPlansV2 migration failed for', substanceId, err);
-            }
-        });
+        promoteLegacyTaperPlansToV2(data);
     }
     (data.taperPlansV2 || []).forEach(plan => {
         plan.type = 'taper';
@@ -61083,11 +61144,174 @@ function repairAppDataAfterImport(data) {
     repairDataConsistency(data);
 }
 
-function mergeArrayById(existing, incoming) {
-    const map = new Map((existing || []).map(item => [item.id, item]));
+// ——— Import identity: deterministic stable IDs for id-less records ———
+
+function stableImportHash(parts) {
+    const str = Array.isArray(parts) ? parts.join('\u001f') : String(parts ?? '');
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
+    }
+    return hash.toString(36);
+}
+
+function stableImportScalar(value) {
+    if (value == null) return '';
+    if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+    if (typeof value === 'boolean') return value ? '1' : '0';
+    return String(value).trim();
+}
+
+function buildStableImportKey(record, kind) {
+    if (!record || typeof record !== 'object') return [];
+    switch (kind) {
+        case 'log':
+            return [
+                record.substanceId || record.substance || '',
+                record.date || '',
+                record.startTime || record.time || '',
+                record.endTime || '',
+                record.type || '',
+                record.transactionType || '',
+                stableImportScalar(record.amount),
+                record.unit || '',
+                stableImportScalar(getLogPurchaseId(record) || record.inventoryId || ''),
+                stableImportScalar(record.notes)
+            ];
+        case 'purchase':
+            return [
+                record.substanceId || record.substance || '',
+                record.date || record.purchaseDate || '',
+                stableImportScalar(record.quantity ?? record.amount),
+                record.unit || '',
+                stableImportScalar(record.cost ?? record.totalCost),
+                stableImportScalar(record.store || record.source),
+                stableImportScalar(record.remainingAmount ?? record.remaining)
+            ];
+        case 'taper':
+            return [getTaperPlanImportFingerprint(record)];
+        case 'substance':
+            return [
+                stableImportScalar(record.name),
+                record.trackingMode || '',
+                record.primaryUnit || record.defaultUnit || ''
+            ];
+        case 'craving':
+            return [
+                record.substanceId || record.substance || '',
+                record.date || '',
+                stableImportScalar(record.intensity),
+                stableImportScalar(record.notes)
+            ];
+        case 'goal':
+            return [
+                record.substanceId || '',
+                stableImportScalar(record.name),
+                record.startDate || '',
+                record.endDate || ''
+            ];
+        case 'budget':
+            return [
+                stableImportScalar(record.name),
+                record.startDate || '',
+                record.endDate || '',
+                stableImportScalar(record.amount)
+            ];
+        case 'contact':
+            return [
+                stableImportScalar(record.name),
+                stableImportScalar(record.phone || record.email)
+            ];
+        default:
+            return [stableImportScalar(record.name), stableImportScalar(record.date)];
+    }
+}
+
+function assignStableImportId(record, kind, takenIds = new Set()) {
+    const base = `import-${kind}-${stableImportHash(buildStableImportKey(record, kind))}`;
+    let id = base;
+    let suffix = 0;
+    while (takenIds.has(id)) {
+        suffix += 1;
+        id = `${base}-${suffix}`;
+    }
+    takenIds.add(id);
+    return id;
+}
+
+function assignStableIdsToImportRecords(data) {
+    if (!data || typeof data !== 'object') return data;
+    const taken = {
+        log: new Set((data.logs || []).filter(l => l?.id != null && l.id !== '').map(l => String(l.id))),
+        purchase: new Set((data.purchases || []).filter(p => p?.id != null && p.id !== '').map(p => String(p.id))),
+        taper: new Set((data.taperPlansV2 || []).filter(p => p?.id != null && p.id !== '').map(p => String(p.id))),
+        substance: new Set((data.substances || []).filter(s => s?.id != null && s.id !== '').map(s => String(s.id))),
+        craving: new Set((data.cravings || []).filter(c => c?.id != null && c.id !== '').map(c => String(c.id))),
+        goal: new Set((data.goals || []).filter(g => g?.id != null && g.id !== '').map(g => String(g.id))),
+        budget: new Set((data.budgets || []).filter(b => b?.id != null && b.id !== '').map(b => String(b.id))),
+        contact: new Set((data.contacts || []).filter(c => c?.id != null && c.id !== '').map(c => String(c.id)))
+    };
+    (data.substances || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'substance', taken.substance);
+        else taken.substance.add(String(item.id));
+    });
+    (data.logs || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'log', taken.log);
+        else taken.log.add(String(item.id));
+    });
+    (data.purchases || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'purchase', taken.purchase);
+        else taken.purchase.add(String(item.id));
+    });
+    (data.taperPlansV2 || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'taper', taken.taper);
+        else taken.taper.add(String(item.id));
+    });
+    (data.cravings || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'craving', taken.craving);
+        else taken.craving.add(String(item.id));
+    });
+    (data.goals || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'goal', taken.goal);
+        else taken.goal.add(String(item.id));
+    });
+    (data.budgets || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'budget', taken.budget);
+        else taken.budget.add(String(item.id));
+    });
+    (data.contacts || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'contact', taken.contact);
+        else taken.contact.add(String(item.id));
+    });
+    return data;
+}
+
+function mergeLegacyTaperPlansForImport(existing, incoming) {
+    const merged = { ...(existing || {}) };
+    Object.entries(incoming || {}).forEach(([substanceId, plan]) => {
+        if (!plan || typeof plan !== 'object') return;
+        const prev = merged[substanceId];
+        if (!prev || typeof prev !== 'object') {
+            merged[substanceId] = plan;
+            return;
+        }
+        merged[substanceId] = getTaperPlanUpdatedAt(plan) >= getTaperPlanUpdatedAt(prev) ? plan : prev;
+    });
+    return merged;
+}
+
+function mergeArrayById(existing, incoming, kind = 'record') {
+    const map = new Map((existing || []).map(item => [String(item.id), item]));
+    const taken = new Set(map.keys());
     (incoming || []).forEach(item => {
-        if (item?.id != null) map.set(item.id, item);
-        else map.set(`import-${Date.now()}-${Math.random()}`, item);
+        if (!item || typeof item !== 'object') return;
+        let id = item.id != null && item.id !== '' ? String(item.id) : null;
+        if (!id) {
+            id = assignStableImportId(item, kind, taken);
+            item.id = id;
+        }
+        map.set(id, item);
+        taken.add(id);
     });
     return [...map.values()];
 }
@@ -61095,13 +61319,13 @@ function mergeArrayById(existing, incoming) {
 function mergeImportedData(current, imported) {
     const merged = JSON.parse(JSON.stringify(current));
     if (Array.isArray(imported.useLogs)) {
-        imported.logs = mergeArrayById(imported.logs || [], imported.useLogs);
+        imported.logs = mergeArrayById(imported.logs || [], imported.useLogs, 'log');
         delete imported.useLogs;
     }
-    merged.substances = mergeArrayById(merged.substances, imported.substances);
-    merged.logs = mergeArrayById(merged.logs, imported.logs);
-    merged.purchases = mergeArrayById(merged.purchases, imported.purchases);
-    merged.cravings = mergeArrayById(merged.cravings || [], imported.cravings || []);
+    merged.substances = mergeArrayById(merged.substances, imported.substances, 'substance');
+    merged.logs = mergeArrayById(merged.logs, imported.logs, 'log');
+    merged.purchases = mergeArrayById(merged.purchases, imported.purchases, 'purchase');
+    merged.cravings = mergeArrayById(merged.cravings || [], imported.cravings || [], 'craving');
     merged.settings = {
         ...merged.settings,
         ...imported.settings,
@@ -61120,24 +61344,26 @@ function mergeImportedData(current, imported) {
     if (typeof reconcileOnboardingAfterImport === 'function') {
         reconcileOnboardingAfterImport(merged);
     }
-    merged.taperPlans = { ...(merged.taperPlans || {}), ...(imported.taperPlans || {}) };
+    merged.taperPlans = mergeLegacyTaperPlansForImport(merged.taperPlans || {}, imported.taperPlans || {});
     if (Array.isArray(imported.taperPlansV2)) {
-        merged.taperPlansV2 = mergeArrayById(merged.taperPlansV2 || [], imported.taperPlansV2);
+        merged.taperPlansV2 = mergeArrayById(merged.taperPlansV2 || [], imported.taperPlansV2, 'taper');
     }
     if (Array.isArray(imported.goals)) {
-        merged.goals = mergeArrayById(merged.goals || [], imported.goals);
+        merged.goals = mergeArrayById(merged.goals || [], imported.goals, 'goal');
     }
     if (Array.isArray(imported.budgets)) {
-        merged.budgets = mergeArrayById(merged.budgets || [], imported.budgets);
+        merged.budgets = mergeArrayById(merged.budgets || [], imported.budgets, 'budget');
     }
     if (Array.isArray(imported.contacts)) {
-        merged.contacts = mergeArrayById(merged.contacts || [], imported.contacts);
+        merged.contacts = mergeArrayById(merged.contacts || [], imported.contacts, 'contact');
     }
     merged.recoveryStreaks = { ...(merged.recoveryStreaks || {}), ...(imported.recoveryStreaks || {}) };
     if (imported.privacy && typeof imported.privacy === 'object') {
         merged.privacy = { ...merged.privacy, ...imported.privacy };
     }
     ensureAppDataSubstancesReady(merged);
+    promoteLegacyTaperPlansToV2(merged);
+    syncLegacyTaperPlansFromV2(merged);
     return merged;
 }
 
@@ -61225,7 +61451,7 @@ function confirmImportPreview(mode) {
 
 function applyImportedBackup(imported, mode, extras = null) {
     createAutoBackup(mode === 'replace' ? 'before-import-replace' : 'before-import-merge');
-    const normalized = normalizeImportedAppData(imported);
+    const normalized = assignStableIdsToImportRecords(normalizeImportedAppData(imported));
     if (mode === 'replace') {
         appData = normalized;
     } else {
@@ -61233,6 +61459,7 @@ function applyImportedBackup(imported, mode, extras = null) {
     }
     normalizeAppData(appData);
     repairAppDataAfterImport(appData);
+    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
     if (extras) applyImportedColumnSettings(extras);
     else if (imported && (imported.columnSettings || imported.purchaseHistoryColumns)) {
@@ -62957,6 +63184,12 @@ function __getRecoveryTrackerTestExports() {
         duplicatePurchaseNow,
         cleanExportData,
         mergeImportedData,
+        normalizeImportedAppData,
+        assignStableIdsToImportRecords,
+        assignStableImportId,
+        promoteLegacyTaperPlansToV2,
+        getTaperPlanImportFingerprint,
+        mergeArrayById,
         purchaseMatchesInventorySearch,
         comparePurchaseHistoryByFlavor,
         isVapePuffPurchase,
