@@ -37,10 +37,10 @@ test('legacy tab ids resolve to combined tabs with expected views', () => {
     const rt = setup();
     const goals = rt.resolveTabNavigation('goals-tab');
     assert.equal(goals.tabId, 'goals-plans-tab');
-    assert.equal(goals.view, 'active');
+    assert.equal(goals.view, 'overview');
     const taper = rt.resolveTabNavigation('taper-tab');
     assert.equal(taper.tabId, 'goals-plans-tab');
-    assert.equal(taper.view, 'active');
+    assert.equal(taper.view, 'overview');
     const stats = rt.resolveTabNavigation('stats-tab');
     assert.equal(stats.tabId, 'insights-calendar-tab');
     assert.equal(stats.view, 'overview');
@@ -57,11 +57,11 @@ test('old routes redirect to combined routes with view params', () => {
     const rt = setup();
     const goals = rt.parseAppRouteFromLocation({ hash: '#/goals', pathname: '/', search: '' });
     assert.equal(goals.tab, 'goals-plans-tab');
-    assert.equal(goals.view, 'active');
+    assert.equal(goals.view, 'overview');
 
     const plan = rt.parseAppRouteFromLocation({ hash: '#/plan', pathname: '/', search: '' });
     assert.equal(plan.tab, 'goals-plans-tab');
-    assert.equal(plan.view, 'active');
+    assert.equal(plan.view, 'overview');
 
     const insights = rt.parseAppRouteFromLocation({ hash: '#/insights', pathname: '/', search: '' });
     assert.equal(insights.tab, 'insights-calendar-tab');
@@ -72,8 +72,8 @@ test('old routes redirect to combined routes with view params', () => {
     assert.equal(calendar.view, 'calendar');
 
     assert.equal(
-        rt.buildAppRouteHash('goals-plans-tab', 'active'),
-        '#/goals-plans?view=active'
+        rt.buildAppRouteHash('goals-plans-tab', 'overview'),
+        '#/goals-plans?view=overview'
     );
     assert.equal(
         rt.buildAppRouteHash('insights-calendar-tab', 'calendar'),
@@ -100,7 +100,7 @@ test('migrate activeTab from legacy goals/plan/insights/calendar', () => {
     data.settings.activeTab = 'goals-tab';
     rt.migrateCombinedNavActiveTab(data);
     assert.equal(data.settings.activeTab, 'goals-plans-tab');
-    assert.equal(data.settings.combinedNav.goalsPlansView, 'active');
+    assert.equal(data.settings.combinedNav.goalsPlansView, 'overview');
 
     data.settings.activeTab = 'calendar-tab';
     rt.migrateCombinedNavActiveTab(data);

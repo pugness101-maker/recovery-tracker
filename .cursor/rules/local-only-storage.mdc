@@ -1,18 +1,19 @@
 ---
-description: Recovery Tracker uses browser localStorage only — no cloud databases
+description: Recovery Tracker stores data locally in the browser
 alwaysApply: true
 ---
 
-# Local-only data storage
+# Local-first data storage
 
-Do NOT use Supabase, Firebase, or any cloud database or backend for Recovery Tracker.
+Recovery Tracker stores data in the browser. There is no cloud sync or account layer.
 
 ## Persistence
 
-- **Primary storage**: `localStorage` key `recovery-tracker-v2`
+- **Primary / offline source**: `localStorage` key `recovery-tracker-v2`
 - **Last saved timestamp**: `localStorage` key `recovery-tracker-v2-last-saved`
 - Every data mutation must call `saveData(appData)` so changes persist across refresh and browser restarts
-- No account login, no sync service, no remote API for app data
+- The app must work fully offline, with no network or account required
+- Do not introduce cloud sync, Supabase, or remote account storage unless explicitly requested
 
 ## Backups
 
@@ -23,7 +24,10 @@ Do NOT use Supabase, Firebase, or any cloud database or backend for Recovery Tra
 ## UI
 
 - Show **Last Saved: [date/time]** on Dashboard and Settings (updated whenever `saveData` runs)
-- Settings data management: Export JSON Backup, Import JSON Backup, Export CSV, Clear All Data
+- Settings → Account & Data → Data & Backup: Export JSON Backup, Import JSON Backup, Restore Last Backup, Export CSV, Repair Data
++- Settings → Data Health: Scan, preview/apply repairs, Repair all safe issues, Change History, Restore Last Backup
++- Settings → Account & Data → Data & Backup: Export JSON Backup, Import JSON Backup, Restore Last Backup, Export CSV
+- Danger Zone deletes data from this device only
 
 ## Import flow
 

@@ -67,12 +67,21 @@ test('onboarding markup exists in Simple Mode shell', () => {
     const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
     const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
     assert.match(html, /id="onboarding-overlay"/);
-    assert.match(html, /id="onboarding-setup-section"/);
-    assert.match(html, /Onboarding \/ Setup/);
-    assert.match(html, /Restart onboarding/);
-    assert.match(html, /Nothing logged yet|onboarding-root/);
+    assert.match(html, /id="onboarding-root"/);
+    assert.doesNotMatch(html, /id="onboarding-setup-section"/);
+    assert.doesNotMatch(html, /Onboarding \/ Setup/);
+    assert.doesNotMatch(html, /Review setup/);
+    assert.doesNotMatch(html, /Change tracked substances/);
+    assert.doesNotMatch(html, /Change primary substance/);
+    assert.doesNotMatch(html, /Restart onboarding/);
+    assert.doesNotMatch(html, /id="onboarding-settings-summary"/);
+    assert.match(html, /Manage Substances/);
+    assert.match(html, /openSubstanceEditor\(\)/);
+    assert.match(html, /id="experience-mode"/);
+    assert.match(html, /data-section="settingsAppearance"/);
     assert.match(css, /\.onboarding-overlay/);
     assert.match(css, /\.sm-empty-hint/);
+    assert.doesNotMatch(css, /\.onboarding-settings-facts/);
 });
 
 test('fresh install shows onboarding', () => {

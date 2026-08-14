@@ -67,7 +67,6 @@ function setup({ purchases = [], logs = [], budgets = [], settings = {} } = {}) 
             substanceSettings: {},
             financialAnalytics: {
                 thresholds: { nearLimit: 0.75, atLimit: 1 },
-                alertsEnabled: true,
                 showOnDashboard: true,
                 showOnCalendar: true,
                 filters: {

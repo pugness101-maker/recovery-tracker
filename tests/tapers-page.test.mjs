@@ -38,11 +38,13 @@ function el(id, props = {}) {
         children: [],
         appendChild(child) { this.children.push(child); return child; },
         querySelector() { return null; },
-        querySelectorAll() { return []; },
-        setAttribute() {},
-        removeAttribute(name) {
-            if (name === 'hidden') this.hidden = false;
+        querySelectorAll(sel) {
+            if (sel === '[data-sm-plan-advanced="true"]') return [];
+            if (sel === '.combined-subview') return [];
+            return [];
         },
+        setAttribute() {},
+        removeAttribute(name) { if (name === 'hidden') this.hidden = false; },
         getAttribute(name) {
             if (name === 'data-gp-view') return this.dataset.gpView || '';
             return null;
@@ -63,8 +65,8 @@ function installTapersDom(rt) {
     const overview = put('gp-overview', { className: 'combined-subview active', dataset: { gpView: 'overview' } });
     overview.getAttribute = (name) => (name === 'data-gp-view' ? 'overview' : null);
     put('gp-overview-root', { tag: 'div' });
-    const records = put('tapers-root', { className: 'combined-subview', hidden: true, dataset: { gpView: 'active history templates' } });
-    records.getAttribute = (name) => (name === 'data-gp-view' ? 'active history templates' : null);
+    const records = put('tapers-root', { className: 'combined-subview', hidden: true, dataset: { gpView: 'templates' } });
+    records.getAttribute = (name) => (name === 'data-gp-view' ? 'templates' : null);
     const workspace = put('taper-tab', { className: 'taper-page taper-workspace', hidden: true });
     put('taper-setup', { className: 'taper-editor-panel hidden', tag: 'div' });
     put('taper-dashboard', { className: 'hidden', tag: 'div' });
@@ -73,11 +75,11 @@ function installTapersDom(rt) {
     put('taper-plan-toolbar', { className: 'hidden', tag: 'div' });
     put('taper-cancel-edit-btn', { className: 'hidden', tag: 'button' });
     put('taper-setup-title', { tag: 'h3', textContent: 'Create Taper Plan' });
-    put('taper-generate-btn', { tag: 'button', textContent: 'Save Plan' });
+    put('taper-generate-btn', { tag: 'button', textContent: 'Save Taper' });
     put('taper-form-status', { tag: 'p', hidden: true });
     put('taper-editing-plan-id', { tag: 'input', value: '' });
     put('taper-plan-name', { tag: 'input', value: '' });
-    put('taper-substance', { tag: 'select', value: COKE_ID });
+    put('taper-substance', { tag: 'select', value: COKE_ID, options: [{ value: COKE_ID }] });
     put('start-date', { tag: 'input', value: '2026-08-01' });
     put('end-date', { tag: 'input', value: '2026-09-01' });
     put('reduction-type', { tag: 'select', value: 'reduce-amount' });
@@ -99,8 +101,10 @@ function installTapersDom(rt) {
     put('gp-loading', { className: 'hidden' });
     put('gp-error', { className: 'hidden' });
     put('gp-error-message', { tag: 'p' });
+    put('taper-metric-visibility-panel', { className: 'hidden' });
+    put('taper-metric-visibility-body');
 
-    const tabRoot = el('goals-plans-tab', { tag: 'section' });
+    const tabRoot = el('goals-plans-tab', { tag: 'section', className: 'sm-plan-simple' });
     tabRoot.querySelectorAll = (sel) => {
         if (sel === '.combined-subview') return [overview, records];
         return [];
@@ -113,8 +117,11 @@ function installTapersDom(rt) {
         if (sel?.startsWith?.('#')) return nodes.get(sel.slice(1)) || null;
         return null;
     };
-    rt.document.querySelectorAll = () => [];
-    return { nodes, workspace, records, overview };
+    rt.document.querySelectorAll = (sel) => {
+        if (sel === '[data-sm-plan-advanced="true"]') return [];
+        return [];
+    };
+    return { nodes, workspace, records, overview, tabRoot };
 }
 
 function setupApp(extra = {}) {
@@ -132,13 +139,19 @@ function setupApp(extra = {}) {
             active: true,
             isMain: true
         }],
-        logs: [],
-        purchases: [],
+        logs: extra.logs || [],
+        purchases: extra.purchases || [],
         cravings: [],
         goals: [],
         taperPlans: {},
         taperPlansV2: extra.taperPlansV2 || [],
-        settings: { currency: '$', substanceSettings: {}, combinedNav: { goalsPlansView: 'overview' } },
+        settings: {
+            currency: '$',
+            substanceSettings: {},
+            experienceMode: extra.experienceMode || 'advanced',
+            combinedNav: { goalsPlansView: 'overview', ...(extra.combinedNav || {}) },
+            ...(extra.settings || {})
+        },
         recoveryStreaks: {},
         privacy: { enabled: false, pinHash: '', autoLockMinutes: 5 },
         migrations: { taperPlansV2: true }
@@ -148,65 +161,8 @@ function setupApp(extra = {}) {
     return rt;
 }
 
-test('Goal UI is fully removed from Tapers markup', () => {
-    const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-    assert.match(html, /id="tapers-root"/);
-    assert.match(html, /Tapers define a gradual reduction path/);
-    assert.doesNotMatch(html, /New Goal/);
-    assert.doesNotMatch(html, /Convert Taper to Goal/i);
-    assert.doesNotMatch(html, /goals define the target/i);
-    assert.doesNotMatch(html, /id="goals-root"/);
-    assert.doesNotMatch(html, /data-rd-section="goals"/);
-});
-
-test('no references to removed goal create/convert APIs remain as live goal flows', () => {
-    const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
-    assert.doesNotMatch(app, /Convert Taper to Goal/i);
-    assert.match(app, /function createGoalsFromPlanAndOpen\(\)/);
-    assert.match(app, /Goals have been removed/);
-    assert.match(app, /function openUnifiedNewTaper\(/);
-    assert.match(app, /function showTaperWorkspace\(/);
-});
-
-test('existing taper records still load in unified Active list', () => {
-    const rt = setupApp({
-        taperPlansV2: [{
-            id: 'existing-1',
-            name: 'Existing taper',
-            substanceId: COKE_ID,
-            status: 'active',
-            startDate: '2026-07-01',
-            endDate: '2026-08-31',
-            reductionType: 'reduce-amount',
-            weeklyTargets: [{ weekStart: '2026-07-27', weekEnd: '2026-08-02', targetAmount: 1 }]
-        }]
-    });
-    const { nodes } = installTapersDom(rt);
-    rt.setGoalsPlansView('active', { persist: false, skipRoute: true });
-    const html = nodes.get('tapers-root').innerHTML;
-    assert.match(html, /Existing taper/);
-    assert.match(html, /data-record-type="taper"/);
-    assert.doesNotMatch(html, /data-record-type="goal"/);
-    assert.doesNotMatch(html, /Convert/);
-});
-
-test('New Taper button opens form from Overview, Active, and Templates', () => {
-    for (const view of ['overview', 'active', 'templates']) {
-        const rt = setupApp();
-        const { nodes, workspace } = installTapersDom(rt);
-        rt.setGoalsPlansView(view, { persist: false, skipRoute: true });
-        rt.openUnifiedNewTaper();
-        assert.equal(workspace.hidden, false, `workspace visible from ${view}`);
-        assert.ok(!nodes.get('taper-setup').classList.contains('hidden'), `setup shown from ${view}`);
-        assert.match(nodes.get('taper-setup-title').textContent, /Create Taper/i);
-    }
-});
-
-test('saving creates taper and Active list updates', () => {
-    const rt = setupApp();
-    const { nodes, workspace } = installTapersDom(rt);
-    rt.openUnifiedNewTaper();
-    nodes.get('taper-plan-name').value = 'Fresh taper';
+function fillCreateForm(nodes, name = 'Fresh taper') {
+    nodes.get('taper-plan-name').value = name;
     nodes.get('start-date').value = '2026-08-01';
     nodes.get('end-date').value = '2026-09-01';
     nodes.get('reduction-type').value = 'reduce-amount';
@@ -214,35 +170,251 @@ test('saving creates taper and Active list updates', () => {
     nodes.get('goal-avg').value = '0.5';
     nodes.get('reduction-amount').value = '0.25';
     nodes.get('taper-status').value = 'active';
+}
 
-    const data = rt.__getTestAppData();
-    data.taperPlansV2 = data.taperPlansV2 || [];
-    const before = data.taperPlansV2.length;
-    data.taperPlansV2.push({
-        id: 'fresh-1',
-        name: 'Fresh taper',
+const samplePlans = () => ([
+    {
+        id: 'active-1',
+        name: 'Active taper',
         substanceId: COKE_ID,
         status: 'active',
-        startDate: '2026-08-01',
+        isPrimary: true,
+        startDate: '2026-07-01',
+        endDate: '2026-08-31',
+        reductionType: 'reduce-amount',
+        weeklyTargets: [{ weekStart: '2026-07-27', weekEnd: '2026-08-02', targetAmount: 1 }],
+        updatedAt: '2026-08-01T12:00:00.000Z'
+    },
+    {
+        id: 'paused-1',
+        name: 'Paused taper',
+        substanceId: COKE_ID,
+        status: 'paused',
+        startDate: '2026-06-01',
         endDate: '2026-09-01',
         reductionType: 'reduce-amount',
-        startingDailyAverage: 2,
-        goalDailyAverage: 0.5,
-        reductionAmount: 0.25,
-        weeklyTargets: [{ weekStart: '2026-08-01', weekEnd: '2026-08-07', targetAmount: 10 }],
-        priority: 'normal',
-        notes: ''
-    });
-    assert.equal(data.taperPlansV2.length, before + 1);
+        weeklyTargets: [],
+        updatedAt: '2026-07-15T12:00:00.000Z'
+    },
+    {
+        id: 'completed-1',
+        name: 'Completed taper',
+        substanceId: COKE_ID,
+        status: 'completed',
+        startDate: '2026-05-01',
+        endDate: '2026-06-30',
+        reductionType: 'reduce-amount',
+        weeklyTargets: [],
+        updatedAt: '2026-06-30T12:00:00.000Z'
+    },
+    {
+        id: 'archived-1',
+        name: 'Archived taper',
+        substanceId: COKE_ID,
+        status: 'archived',
+        startDate: '2026-04-01',
+        endDate: '2026-05-31',
+        reductionType: 'reduce-amount',
+        weeklyTargets: [],
+        updatedAt: '2026-05-31T12:00:00.000Z'
+    }
+]);
 
-    if (typeof rt.hideTaperWorkspace === 'function') rt.hideTaperWorkspace();
-    rt.setGoalsPlansView('active', { persist: false, skipRoute: true });
-    assert.equal(workspace.hidden, true);
-    assert.match(nodes.get('tapers-root').innerHTML, /Fresh taper/);
-    assert.match(nodes.get('tapers-root').innerHTML, /active .*taper/i);
+test('History tab no longer exists; Overview and Templates remain', () => {
+    const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
+    assert.doesNotMatch(html, /data-gp-view="history"/);
+    assert.doesNotMatch(html, /setGoalsPlansView\('history'\)/);
+    assert.doesNotMatch(html, /<option value="history">/);
+    assert.match(html, /data-gp-view="overview"/);
+    assert.match(html, /data-gp-view="templates"/);
+    assert.match(html, /Customize metrics/);
+    assert.match(html, /New Taper/);
+    assert.doesNotMatch(html, /sm-plan-simple-actions/);
+    assert.deepEqual([...loadRecoveryTrackerApp().GOALS_PLANS_VIEWS], ['overview', 'templates']);
 });
 
-test('taper templates are available and apply opens the form', () => {
+test('Overview contains summary cards plus filtered taper list controls', () => {
+    const rt = setupApp({ taperPlansV2: samplePlans() });
+    const { nodes } = installTapersDom(rt);
+    rt.setGoalsPlansView('overview', { persist: false, skipRoute: true });
+    const html = nodes.get('gp-overview-root').innerHTML;
+    assert.match(html, /Active tapers/);
+    assert.match(html, /On track/);
+    assert.match(html, /Above target/);
+    assert.match(html, /Closest end date/);
+    assert.match(html, /Current taper step/);
+    assert.match(html, /taper-overview-filters/);
+    assert.match(html, /setGoalsPlansHistoryFilter/);
+    assert.match(html, /setGoalsPlansFilter\('listStatus'/);
+    assert.match(html, /setGoalsPlansShowArchivedInList/);
+    assert.match(html, /id="taper-list"/);
+    assert.match(html, /Active taper/);
+    assert.match(html, /Paused taper/);
+    assert.match(html, /Completed taper/);
+    assert.doesNotMatch(html, /Archived taper/);
+});
+
+test('history and status filters work on unified Overview', () => {
+    const rt = setupApp({ taperPlansV2: samplePlans() });
+    installTapersDom(rt);
+    rt.setGoalsPlansView('overview', { persist: false, skipRoute: true });
+
+    rt.setGoalsPlansHistoryFilter('completed-tapers');
+    let records = rt.buildUnifiedOverviewTaperRecords();
+    assert.deepEqual(records.map(r => r.id), ['completed-1']);
+
+    rt.setGoalsPlansHistoryFilter('all');
+    rt.setGoalsPlansFilter('listStatus', 'paused');
+    records = rt.buildUnifiedOverviewTaperRecords();
+    assert.deepEqual(records.map(r => r.id), ['paused-1']);
+
+    rt.setGoalsPlansFilter('listStatus', 'all');
+    rt.setGoalsPlansShowArchivedInList(true);
+    records = rt.buildUnifiedOverviewTaperRecords();
+    assert.ok(records.some(r => r.id === 'archived-1'));
+});
+
+test('archived, completed, and active tapers can all be shown through filters', () => {
+    const rt = setupApp({ taperPlansV2: samplePlans() });
+    installTapersDom(rt);
+    rt.setGoalsPlansShowArchivedInList(true);
+    rt.setGoalsPlansFilter('listStatus', 'all');
+    rt.setGoalsPlansHistoryFilter('all');
+    rt.refreshGoalsPlansOverview();
+    const ids = rt.buildUnifiedOverviewTaperRecords().map(r => r.id);
+    assert.deepEqual(ids.sort(), ['active-1', 'archived-1', 'completed-1', 'paused-1'].sort());
+});
+
+test('old History routes and prefs redirect to Overview', () => {
+    const rt = setupApp({ combinedNav: { goalsPlansView: 'history' } });
+    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'overview');
+    assert.equal(rt.normalizeCombinedView('history', rt.GOALS_PLANS_VIEWS, 'overview'), 'overview');
+    assert.equal(rt.normalizeCombinedView('plan-history', rt.GOALS_PLANS_VIEWS, 'overview'), 'overview');
+    assert.equal(rt.normalizeCombinedView('goal-history', rt.GOALS_PLANS_VIEWS, 'overview'), 'overview');
+});
+
+test('Simple and Advanced Tapers render the same controls on Overview', () => {
+    const plans = samplePlans();
+    const simple = setupApp({ taperPlansV2: plans, experienceMode: 'simple' });
+    const advanced = setupApp({ taperPlansV2: plans, experienceMode: 'advanced' });
+    const simpleDom = installTapersDom(simple);
+    const advancedDom = installTapersDom(advanced);
+
+    simple.applySimplePlanFormLayout();
+    advanced.applySimplePlanFormLayout();
+    assert.equal(simpleDom.tabRoot.classList.contains('sm-plan-simple'), false);
+
+    simple.setGoalsPlansView('overview', { persist: false, skipRoute: true });
+    advanced.setGoalsPlansView('overview', { persist: false, skipRoute: true });
+
+    const simpleHtml = simpleDom.nodes.get('gp-overview-root').innerHTML;
+    const advancedHtml = advancedDom.nodes.get('gp-overview-root').innerHTML;
+    for (const needle of [
+        'taper-overview-filters',
+        'setGoalsPlansHistoryFilter',
+        'setGoalsPlansShowArchivedInList',
+        'New Taper',
+        'Browse templates',
+        'Active tapers',
+        'Delete'
+    ]) {
+        assert.match(simpleHtml, new RegExp(needle));
+        assert.match(advancedHtml, new RegExp(needle));
+    }
+});
+
+test('switching Experience Mode does not alter taper data or available actions', () => {
+    const rt = setupApp({ taperPlansV2: samplePlans(), experienceMode: 'simple' });
+    installTapersDom(rt);
+    rt.setGoalsPlansView('overview', { persist: false, skipRoute: true });
+    const before = rt.__getTestAppData().taperPlansV2.length;
+    const htmlSimple = rt.document.getElementById('gp-overview-root').innerHTML;
+
+    rt.persistExperienceMode('advanced');
+    rt.applySimplePlanFormLayout();
+    rt.refreshGoalsPlansOverview();
+    const htmlAdvanced = rt.document.getElementById('gp-overview-root').innerHTML;
+
+    assert.equal(rt.__getTestAppData().taperPlansV2.length, before);
+    assert.match(htmlSimple, /Duplicate/);
+    assert.match(htmlAdvanced, /Duplicate/);
+    assert.match(htmlSimple, /Archive/);
+    assert.match(htmlAdvanced, /Archive/);
+});
+
+test('New Taper from Overview and Templates creates a new record', () => {
+    for (const view of ['overview', 'templates']) {
+        const rt = setupApp({
+            taperPlansV2: [{
+                id: 'selected-existing',
+                name: 'Already selected',
+                substanceId: COKE_ID,
+                status: 'active',
+                isPrimary: true,
+                startDate: '2026-07-01',
+                endDate: '2026-08-31',
+                reductionType: 'reduce-amount',
+                startingDailyAverage: 2,
+                goalDailyAverage: 0.5,
+                reductionAmount: 0.2,
+                weeklyTargets: [{ weekStart: '2026-07-27', weekEnd: '2026-08-02', targetAmount: 1 }]
+            }]
+        });
+        const { nodes, workspace } = installTapersDom(rt);
+        rt.selectedTaperPlanIdRef.value = 'selected-existing';
+        rt.setGoalsPlansView(view, { persist: false, skipRoute: true });
+        rt.openUnifiedNewTaper();
+        assert.equal(workspace.hidden, false, `workspace visible from ${view}`);
+        assert.equal(rt.getTaperFormMode(), 'create', `create mode from ${view}`);
+        fillCreateForm(nodes, `Created from ${view}`);
+        assert.equal(rt.handleTaperSubmit({ preventDefault() {} }), true, `save ok from ${view}`);
+        const data = rt.__getTestAppData();
+        assert.ok(data.taperPlansV2.find(p => p.name === `Created from ${view}`));
+        assert.equal(data.taperPlansV2.find(p => p.id === 'selected-existing').name, 'Already selected');
+    }
+});
+
+test('Archive and Delete still work from unified Overview cards', () => {
+    const rt = setupApp({
+        taperPlansV2: [{
+            id: 'archive-me',
+            name: 'Archive me',
+            substanceId: COKE_ID,
+            status: 'active',
+            isPrimary: true,
+            startDate: '2026-07-01',
+            endDate: '2026-08-31',
+            reductionType: 'reduce-amount',
+            weeklyTargets: []
+        }, {
+            id: 'delete-me',
+            name: 'Delete me',
+            substanceId: COKE_ID,
+            status: 'active',
+            isPrimary: false,
+            startDate: '2026-07-01',
+            endDate: '2026-08-31',
+            reductionType: 'reduce-amount',
+            weeklyTargets: []
+        }]
+    });
+    installTapersDom(rt);
+    rt.setGoalsPlansView('overview', { persist: false, skipRoute: true });
+    rt.archiveUnifiedTaperRecord('archive-me');
+    assert.equal(rt.__getTestAppData().taperPlansV2.find(p => p.id === 'archive-me').status, 'archived');
+    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'overview');
+
+    const originalConfirm = globalThis.confirm;
+    globalThis.confirm = () => true;
+    try {
+        rt.deleteUnifiedTaperRecord('delete-me');
+    } finally {
+        globalThis.confirm = originalConfirm;
+    }
+    assert.equal(rt.__getTestAppData().taperPlansV2.find(p => p.id === 'delete-me'), undefined);
+});
+
+test('taper templates remain available', () => {
     const rt = setupApp();
     const { nodes, workspace } = installTapersDom(rt);
     assert.ok(rt.TAPER_TEMPLATES.length >= 6);
@@ -250,5 +422,5 @@ test('taper templates are available and apply opens the form', () => {
     assert.match(nodes.get('tapers-root').innerHTML, /Linear reduction/);
     rt.applyTaperTemplate('manual');
     assert.equal(workspace.hidden, false);
-    assert.equal(nodes.get('taper-plan-name').value, 'Manual steps');
+    assert.equal(rt.getTaperFormMode(), 'create');
 });

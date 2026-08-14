@@ -168,6 +168,58 @@ test('progress dataset uses same range engine and does not invent combined units
     assert.equal(dataset.unit, 'g');
 });
 
+test('Simple Progress log table uses canonical logs, filters, sorts, and deduplicates', () => {
+    const duplicate = {
+        id: 'newest',
+        substanceId: 'coke',
+        date: '2026-08-13',
+        startTime: '19:30',
+        amount: 0.4,
+        unit: 'g',
+        estimatedCost: 12.5,
+        notes: 'Evening log',
+        transactionType: 'use',
+        type: 'quick'
+    };
+    const rt = setup({
+        logs: [
+            { id: 'older', substanceId: 'coke', date: '2026-08-10', startTime: '08:00', amount: 0.2, unit: 'g', transactionType: 'use', type: 'quick' },
+            duplicate,
+            { ...duplicate },
+            { id: 'outside', substanceId: 'coke', date: '2026-05-01', amount: 1, unit: 'g', transactionType: 'use', type: 'quick' },
+            { id: 'other-substance', substanceId: 'nicotine', date: '2026-08-13', amount: 5, unit: 'puffs', transactionType: 'use', type: 'quick' },
+            { id: 'child', substanceId: 'coke', date: '2026-08-12', amount: 0.1, unit: 'g', isDistributedChild: true, parentLogId: 'parent', transactionType: 'use', type: 'quick' }
+        ]
+    });
+    rt.setTestReferenceDate('2026-08-13');
+
+    const sevenDays = rt.buildSimpleProgressDataset('coke', '7', rt.__getTestAppData());
+    assert.deepEqual(sevenDays.logs.map(row => row.id), ['newest', 'older']);
+    assert.equal(sevenDays.logs[0].time, '19:30');
+    assert.equal(sevenDays.logs[0].cost, 12.5);
+    assert.equal(sevenDays.logs[0].notes, 'Evening log');
+
+    const allTime = rt.buildSimpleProgressDataset('coke', 'all', rt.__getTestAppData());
+    assert.deepEqual(allTime.logs.map(row => row.id), ['newest', 'older', 'outside']);
+
+    const nicotine = rt.buildSimpleProgressDataset('nicotine', '7', rt.__getTestAppData());
+    assert.deepEqual(nicotine.logs.map(row => row.id), ['other-substance']);
+    assert.equal(nicotine.logs[0].productType, 'Vape');
+});
+
+test('Simple Progress flow places Log Table after Calendar before Detailed Analytics', () => {
+    const source = fs.readFileSync(path.join(root, 'experience-mode.module.js'), 'utf8');
+    const calendar = source.indexOf('<h3>Calendar</h3>');
+    const logTable = source.indexOf('<h3>Log Table</h3>');
+    const details = source.indexOf('View Detailed Analytics');
+    assert.ok(calendar >= 0 && logTable > calendar && details > logTable);
+    assert.match(source, /No logs for this substance in the selected date range/);
+
+    const css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
+    assert.match(css, /\.sm-log-table-wrap/);
+    assert.match(css, /@media \(max-width: 640px\)[\s\S]*\.sm-log-table td::before/);
+});
+
 test('simple home uses polished substance display names instead of raw ids', () => {
     const rt = setup({
         substances: [{

@@ -1,9 +1,9 @@
 // ——— Combined navigation: Tapers + Insights & Calendar ———
 
 const COMBINED_NAV_ROUTE_REDIRECTS = {
-    '/goals': { tab: 'goals-plans-tab', view: 'active' },
-    '/plan': { tab: 'goals-plans-tab', view: 'active' },
-    '/plans': { tab: 'goals-plans-tab', view: 'active' },
+    '/goals': { tab: 'goals-plans-tab', view: 'overview' },
+    '/plan': { tab: 'goals-plans-tab', view: 'overview' },
+    '/plans': { tab: 'goals-plans-tab', view: 'overview' },
     '/insights': { tab: 'insights-calendar-tab', view: 'overview' },
     '/calendar': { tab: 'insights-calendar-tab', view: 'calendar' },
     '/goals-plans': { tab: 'goals-plans-tab', view: null },
@@ -18,8 +18,6 @@ const COMBINED_NAV_ROUTE_REDIRECTS = {
 
 const GOALS_PLANS_VIEWS = [
     'overview',
-    'active',
-    'history',
     'templates'
 ];
 
@@ -32,12 +30,12 @@ const INSIGHTS_CALENDAR_VIEWS = [
 ];
 
 const LEGACY_TAB_TO_COMBINED = {
-    'goals-tab': { tab: 'goals-plans-tab', view: 'active' },
-    goals: { tab: 'goals-plans-tab', view: 'active' },
-    'taper-tab': { tab: 'goals-plans-tab', view: 'active' },
-    taper: { tab: 'goals-plans-tab', view: 'active' },
-    plan: { tab: 'goals-plans-tab', view: 'active' },
-    'plan-tab': { tab: 'goals-plans-tab', view: 'active' },
+    'goals-tab': { tab: 'goals-plans-tab', view: 'overview' },
+    goals: { tab: 'goals-plans-tab', view: 'overview' },
+    'taper-tab': { tab: 'goals-plans-tab', view: 'overview' },
+    taper: { tab: 'goals-plans-tab', view: 'overview' },
+    plan: { tab: 'goals-plans-tab', view: 'overview' },
+    'plan-tab': { tab: 'goals-plans-tab', view: 'overview' },
     'stats-tab': { tab: 'insights-calendar-tab', view: 'overview' },
     stats: { tab: 'insights-calendar-tab', view: 'overview' },
     insights: { tab: 'insights-calendar-tab', view: 'overview' },
@@ -72,6 +70,7 @@ function ensureCombinedNavPrefs(data = appData) {
         data.settings.combinedNav = { ...defaults, goalsPlansCollapsed: { ...defaults.goalsPlansCollapsed } };
     }
     const prefs = data.settings.combinedNav;
+    if (prefs.goalsPlansView === 'active' || prefs.goalsPlansView === 'history') prefs.goalsPlansView = 'overview';
     if (!GOALS_PLANS_VIEWS.includes(prefs.goalsPlansView)) prefs.goalsPlansView = defaults.goalsPlansView;
     // Migrate legacy Insights subviews into Overview / Calendar / Use / Money / More
     if (typeof normalizeCombinedView === 'function') {
@@ -122,15 +121,17 @@ function persistActiveTab(tabId, data = appData) {
 function normalizeCombinedView(view, allowed, fallback) {
     const raw = String(view || '').trim().toLowerCase();
     const aliases = {
-        goals: 'active',
-        plan: 'active',
-        plans: 'active',
-        taper: 'active',
-        tapers: 'active',
-        'active-goals': 'active',
-        'active-plans': 'active',
-        'goal-history': 'history',
-        'plan-history': 'history',
+        active: 'overview',
+        goals: 'overview',
+        plan: 'overview',
+        plans: 'overview',
+        taper: 'overview',
+        tapers: 'overview',
+        'active-goals': 'overview',
+        'active-plans': 'overview',
+        history: 'overview',
+        'goal-history': 'overview',
+        'plan-history': 'overview',
         compare: 'more',
         comparison: 'more',
         comparisons: 'more',
@@ -421,7 +422,6 @@ function buildInsightsCalendarOverview(data = appData) {
     let purchaseSummary = '—';
     let goalPerf = '—';
     let planPerf = '—';
-    let warnings = [];
 
     try {
         if (typeof buildDashboardFinancialSummary === 'function') {
@@ -444,12 +444,6 @@ function buildInsightsCalendarOverview(data = appData) {
         useSummary = `${gp.activeGoalCount} goals linked to recovery focus`;
     } catch (_) { /* overview soft-fail */ }
 
-    try {
-        if (typeof buildFinancialDataQualityIssues === 'function') {
-            warnings = (buildFinancialDataQualityIssues(data) || []).slice(0, 5);
-        }
-    } catch (_) { /* overview soft-fail */ }
-
     return {
         rangeLabel,
         substanceId,
@@ -458,15 +452,11 @@ function buildInsightsCalendarOverview(data = appData) {
         purchaseSummary,
         goalPerf,
         planPerf,
-        warnings,
         importantEvents: []
     };
 }
 
 function renderInsightsCalendarOverviewHtml(overview) {
-    const warnings = overview.warnings?.length
-        ? `<ul class="combined-mini-list">${overview.warnings.map(w => `<li>${escapeHtml(w.message || w.title || 'Data warning')}</li>`).join('')}</ul>`
-        : '<p class="settings-hint">No data warnings right now.</p>';
     return `
         <div class="combined-overview">
             <p class="settings-hint">Date range: <strong>${escapeHtml(overview.rangeLabel)}</strong></p>
@@ -477,17 +467,11 @@ function renderInsightsCalendarOverviewHtml(overview) {
                 <article class="combined-stat-card"><span class="combined-stat-label">Goal performance</span><strong class="combined-stat-text">${escapeHtml(String(overview.goalPerf))}</strong></article>
                 <article class="combined-stat-card"><span class="combined-stat-label">Plan performance</span><strong class="combined-stat-text">${escapeHtml(String(overview.planPerf))}</strong></article>
             </div>
-            <div class="combined-overview-columns">
-                <section class="combined-overview-block">
-                    <h3>Calendar preview</h3>
-                    <p class="settings-hint">Open the full calendar for month, week, day, and agenda views.</p>
-                    <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Open calendar</button>
-                </section>
-                <section class="combined-overview-block">
-                    <h3>Data warnings</h3>
-                    ${warnings}
-                </section>
-            </div>
+            <section class="combined-overview-block">
+                <h3>Calendar preview</h3>
+                <p class="settings-hint">Open the full calendar for month, week, day, and agenda views.</p>
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Open calendar</button>
+            </section>
             <div class="combined-overview-actions">
                 <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('use')">Use</button>
                 <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('money')">Money</button>

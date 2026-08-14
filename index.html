@@ -2,7 +2,7 @@
 <html lang="en" data-theme="dark" data-view-mode="auto" data-view-layout="phone">
 <head>
     <meta charset="UTF-8">
-    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'; frame-ancestors 'none'">
+    <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'none'">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
     <title>Recovery Tracker</title>
     <script>
@@ -95,7 +95,7 @@
         <header>
             <h1>Recovery Tracker</h1>
             <p class="subtitle">Track your progress, one day at a time</p>
-            <p id="dashboard-last-saved" class="last-saved-status">Last Saved: Never</p>
+            <p class="last-saved-status" data-last-saved-display>Last Saved: Never</p>
         </header>
 
         <main>
@@ -115,7 +115,7 @@
                             <p class="dash-main-substance" id="dashboard-main-substance">Main: —</p>
                             <p class="dash-viewing-label" id="dashboard-viewing-label">Viewing: —</p>
                             <p class="rd-header-range" id="rd-header-range">Date range: —</p>
-                            <p class="last-saved-status dash-last-saved" id="dashboard-last-saved">Last Saved: Never</p>
+                            <p class="last-saved-status dash-last-saved" data-last-saved-display>Last Saved: Never</p>
                         </div>
                     </div>
                     <div class="form-group dash-substance-field">
@@ -715,10 +715,6 @@
             <!-- Tapers Tab -->
             <section id="goals-plans-tab" class="tab combined-page goals-plans-page">
                 <div id="simple-plan-wizard" class="simple-plan-wizard hidden" aria-live="polite"></div>
-                <div class="sm-plan-simple-actions sm-only">
-                    <button type="button" class="submit-btn" id="sm-new-plan-btn" onclick="openSimplePlanWizard()">New Plan</button>
-                    <button type="button" class="secondary-btn" onclick="document.getElementById('goals-plans-tab')?.classList.add('sm-show-advanced-plan')">Advanced Plan Settings</button>
-                </div>
                 <div class="page-header-row combined-page-header">
                     <div class="page-title-block">
                         <h2>Tapers</h2>
@@ -730,18 +726,22 @@
                     </div>
                 </div>
 
+                <div class="taper-metric-visibility-wrap">
+                    <button type="button" class="secondary-btn btn-small" onclick="toggleTaperMetricVisibilityPanel()">Customize metrics</button>
+                    <div id="taper-metric-visibility-panel" class="taper-metric-visibility-panel hidden">
+                        <h4>Visible metrics</h4>
+                        <div id="taper-metric-visibility-body"></div>
+                    </div>
+                </div>
+
                 <div class="combined-subnav-wrap">
                     <label class="combined-subnav-mobile-label" for="gp-subnav-select">View</label>
                     <select id="gp-subnav-select" class="combined-subnav-select" aria-label="Tapers view" onchange="setGoalsPlansView(this.value)">
                         <option value="overview">Overview</option>
-                        <option value="active">Active</option>
-                        <option value="history">History</option>
                         <option value="templates">Templates</option>
                     </select>
                     <nav class="combined-subnav" id="gp-subnav" aria-label="Tapers sections" role="tablist">
                         <button type="button" class="combined-subnav-btn active" data-gp-view="overview" onclick="setGoalsPlansView('overview')">Overview</button>
-                        <button type="button" class="combined-subnav-btn" data-gp-view="active" onclick="setGoalsPlansView('active')">Active</button>
-                        <button type="button" class="combined-subnav-btn" data-gp-view="history" onclick="setGoalsPlansView('history')">History</button>
                         <button type="button" class="combined-subnav-btn" data-gp-view="templates" onclick="setGoalsPlansView('templates')">Templates</button>
                     </nav>
                 </div>
@@ -750,34 +750,30 @@
                     <div id="gp-overview-root" class="combined-overview-root" aria-live="polite"></div>
                 </div>
 
-                <div id="tapers-root" class="combined-subview combined-records-root" data-gp-view="active history templates" role="tabpanel" hidden aria-live="polite"></div>
+                <div id="tapers-root" class="combined-subview combined-records-root" data-gp-view="templates" role="tabpanel" hidden aria-live="polite"></div>
 
                 <div id="taper-tab" class="taper-page taper-workspace" hidden>
                     <div class="page-header-row taper-page-header">
                         <div class="page-title-block">
-                            <h2>Plan</h2>
+                            <h2>Taper</h2>
                         </div>
                     </div>
 
-                <div id="taper-plan-toolbar" class="taper-plan-toolbar hidden" data-sm-plan-advanced="true">
+                <div id="taper-plan-toolbar" class="taper-plan-toolbar hidden">
                     <div class="taper-plan-toolbar-left">
                         <div class="page-substance-selector substance-select-card taper-plan-select-card">
-                            <label for="taper-plan-select" class="page-substance-label">Plan</label>
+                            <label for="taper-plan-select" class="page-substance-label">Taper</label>
                             <select id="taper-plan-select" class="page-substance-select" onchange="onTaperPlanChange()"></select>
                         </div>
-                        <span id="taper-plan-count" class="taper-plan-count"></span>
-                        <label class="taper-show-archived-toggle">
-                            <input type="checkbox" id="taper-show-archived" onchange="onTaperShowArchivedChange()">
-                            Show archived
-                        </label>
                     </div>
                     <div class="taper-plan-actions-bar">
-                        <button type="button" class="taper-chip-btn" onclick="showNewTaperPlan()">+ New Plan</button>
+                        <button type="button" class="taper-chip-btn" onclick="showNewTaperPlan()">+ New Taper</button>
                         <button type="button" class="taper-chip-btn" onclick="duplicateSelectedTaperPlan()">Duplicate</button>
                         <button type="button" class="taper-chip-btn" onclick="renameSelectedTaperPlan()">Rename</button>
                         <button type="button" class="taper-chip-btn" onclick="archiveSelectedTaperPlan()">Archive</button>
+                        <button type="button" class="taper-chip-btn taper-chip-danger" onclick="deleteSelectedTaperPlan()">Delete</button>
                         <button type="button" class="taper-chip-btn" onclick="setSelectedTaperPlanPrimary()">Set Primary</button>
-                        <button type="button" class="taper-chip-btn" onclick="openManageTaperPlansModal()">Manage Plans</button>
+                        <button type="button" class="taper-chip-btn" onclick="openManageTaperPlansModal()">Manage Tapers</button>
                     </div>
                 </div>
 
@@ -814,15 +810,17 @@
                                                 <span>Start</span>
                                                 <strong id="taper-plan-start-date">—</strong>
                                             </div>
-                                            <div class="taper-plan-meta-item">
+                                            <div class="taper-plan-meta-item" id="taper-plan-end-meta">
                                                 <span id="taper-plan-end-meta-label">End</span>
                                                 <strong id="taper-plan-end-date">—</strong>
                                             </div>
-                                            <div class="taper-plan-meta-item">
+                                            <div class="taper-plan-meta-item" id="taper-plan-week-meta">
                                                 <span>Current week</span>
                                                 <strong id="taper-plan-current-week">—</strong>
                                             </div>
                                         </div>
+                                        <p id="taper-plan-date-summary" class="taper-plan-date-summary">—</p>
+                                        <p id="taper-plan-time-progress" class="taper-plan-time-progress">—</p>
                                     </div>
                                 </div>
                                 <div class="taper-plan-strip-progress">
@@ -833,6 +831,24 @@
                                     <button type="button" class="taper-chip-btn" onclick="editTaperPlan()">✏️ Edit</button>
                                     <button type="button" class="taper-chip-btn" id="taper-pause-btn" onclick="pauseTaper()">⏸ Pause</button>
                                     <button type="button" class="taper-chip-btn" onclick="archiveSelectedTaperPlan()">Archive</button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="collapsible-section" data-section="taperPeriodSummary">
+                        <button type="button" class="section-toggle" onclick="toggleSection('taperPeriodSummary')">
+                            <span>Taper Summary</span>
+                            <span class="chevron">⌄</span>
+                        </button>
+                        <div class="section-content">
+                            <div id="taper-period-summary" class="taper-period-summary">
+                                <p id="taper-period-range-label" class="taper-period-range-label">—</p>
+                                <div class="taper-mini-stats">
+                                    <div class="taper-mini-stat"><span>Total used</span><strong id="taper-period-total-used">—</strong></div>
+                                    <div class="taper-mini-stat"><span>Average per day</span><strong id="taper-period-avg-day">—</strong></div>
+                                    <div class="taper-mini-stat"><span>Total cost</span><strong id="taper-period-total-cost">—</strong></div>
+                                    <div class="taper-mini-stat"><span>Average cost per day</span><strong id="taper-period-avg-cost-day">—</strong></div>
                                 </div>
                             </div>
                         </div>
@@ -853,8 +869,8 @@
                                     <div class="taper-mini-stat"><span>Used this week</span><strong id="taper-weekly-used">—</strong></div>
                                     <div class="taper-mini-stat"><span>Remaining this week</span><strong id="taper-weekly-remaining">—</strong></div>
                                     <div class="taper-mini-stat"><span>Difference from target</span><strong id="taper-weekly-over-under">—</strong></div>
-                                    <div class="taper-mini-stat"><span>Status</span><strong id="taper-weekly-status-text">—</strong></div>
-                                    <div class="taper-mini-stat"><span>Average per day</span><strong id="taper-weekly-avg-day">—</strong></div>
+                                    <div class="taper-mini-stat" id="taper-weekly-status-stat"><span>Status</span><strong id="taper-weekly-status-text">—</strong></div>
+                                    <div class="taper-mini-stat" id="taper-weekly-avg-day-stat"><span>Average per day</span><strong id="taper-weekly-avg-day">—</strong></div>
                                     <div class="taper-mini-stat"><span>Change from last week</span><strong id="taper-weekly-change-last">—</strong></div>
                                     <div class="taper-mini-stat taper-spending-stat hidden" id="taper-weekly-spent-month-wrap"><span>Spent this month</span><strong id="taper-weekly-spent-month">—</strong></div>
                                 </div>
@@ -913,7 +929,7 @@
                     <div class="taper-empty-icon">📉</div>
                     <h3>No taper plans for this substance yet.</h3>
                     <p>Set starting and target averages, pick a reduction style, and track progress week by week.</p>
-                    <button type="button" class="submit-btn" onclick="showNewTaperPlan()">Create taper plan</button>
+                    <button type="button" class="submit-btn" onclick="showNewTaperPlan()">Create Taper Plan</button>
                 </div>
 
                 <div id="taper-setup" class="taper-editor-panel hidden">
@@ -927,6 +943,32 @@
                         <div class="form-group">
                             <label for="taper-plan-name">Plan name</label>
                             <input type="text" id="taper-plan-name" required placeholder="e.g. June manual weekly plan">
+                        </div>
+                        <div id="taper-start-from-section" class="taper-start-from-section">
+                            <div class="form-row taper-start-from-row">
+                                <div class="form-group">
+                                    <label for="taper-start-from">Start from</label>
+                                    <select id="taper-start-from" onchange="onTaperStartFromChange()">
+                                        <option value="blank">Blank / New taper</option>
+                                        <option value="suggested">Suggested taper</option>
+                                        <option value="builtin-template">Built-in template</option>
+                                        <option value="my-template">My template</option>
+                                        <option value="copy-existing">Existing taper as copy</option>
+                                    </select>
+                                </div>
+                                <div class="form-group hidden" id="taper-start-builtin-group">
+                                    <label for="taper-start-builtin-template">Template</label>
+                                    <select id="taper-start-builtin-template" onchange="onTaperStartFromDetailChange()"></select>
+                                </div>
+                                <div class="form-group hidden" id="taper-start-my-template-group">
+                                    <label for="taper-start-my-template">My template</label>
+                                    <select id="taper-start-my-template" onchange="onTaperStartFromDetailChange()"></select>
+                                </div>
+                                <div class="form-group hidden" id="taper-start-copy-group">
+                                    <label for="taper-start-copy-plan">Copy from</label>
+                                    <select id="taper-start-copy-plan" onchange="onTaperStartFromDetailChange()"></select>
+                                </div>
+                            </div>
                         </div>
                         <label class="checkbox-label taper-set-primary-label">
                             <input type="checkbox" id="taper-set-primary">
@@ -942,9 +984,10 @@
                                 <input type="date" id="end-date" required>
                             </div>
                         </div>
+                        <p id="taper-form-date-summary" class="taper-form-date-summary" aria-live="polite"></p>
                         <div class="form-row" id="taper-start-goal-row">
                             <div class="form-group" id="taper-start-avg-group">
-                                <label for="current-avg">Starting Daily Average (optional)</label>
+                                <label for="current-avg">Starting daily average (optional)</label>
                                 <input type="number" id="current-avg" min="0" step="0.1">
                             </div>
                             <div class="form-group" id="goal-avg-group">
@@ -961,7 +1004,7 @@
                             <div id="taper-current-metrics-body" class="taper-current-metrics-body"></div>
                         </div>
 
-                        <div class="form-group">
+                        <div class="form-group" id="taper-reduction-type-group">
                             <label for="reduction-type">Reduction Target</label>
                             <select id="reduction-type" onchange="toggleTaperPlanTypeFields()">
                                 <option value="reduce-amount">Reduce by amount</option>
@@ -1418,7 +1461,7 @@
                         </div>
                         <div class="taper-form-actions">
                             <button type="button" class="secondary-btn hidden" id="taper-cancel-edit-btn" onclick="cancelTaperEdit()">Cancel Edit</button>
-                            <button type="button" class="submit-btn" id="taper-generate-btn" onclick="handleTaperSubmitClick()">Save Plan</button>
+                            <button type="button" class="submit-btn" id="taper-generate-btn">Save Taper</button>
                         </div>
                         <p id="taper-form-status" class="taper-form-status" role="status" aria-live="polite" hidden></p>
                     </form>
@@ -2439,6 +2482,33 @@
             <section id="settings-tab" class="tab">
                 <h2>Settings</h2>
 
+                <div class="collapsible-section" data-section="settingsBackup">
+                    <button type="button" class="section-toggle" onclick="toggleSection('settingsBackup')">
+                        <span>Account &amp; Data</span>
+                        <span class="chevron">⌄</span>
+                    </button>
+                    <div class="section-content">
+                <div class="settings-section">
+                    <h3>Data &amp; Backup</h3>
+                    <p id="settings-last-saved" class="last-saved-status">Last Saved: Never</p>
+                    <p class="last-saved-status">Last auto-backup: <span id="settings-auto-backup-date">Never</span></p>
+                    <p class="data-storage-note">Data is stored only in this browser (localStorage). A local backup is created automatically before import, reset, migration, or bulk repair.</p>
+                    <input type="file" id="import-json-input" accept=".json,application/json" class="hidden" onchange="handleImportJsonFile(event)">
+                    <div class="data-management-buttons">
+                        <button type="button" class="secondary-btn" onclick="exportJsonBackup()">Export JSON Backup</button>
+                        <button type="button" class="secondary-btn" onclick="triggerImportJsonBackup()">Import JSON Backup</button>
+                        <button type="button" class="secondary-btn" onclick="restoreLastAutoBackup()">Restore Last Backup</button>
+                        <button type="button" class="secondary-btn" onclick="exportDataCsv()">Export CSV</button>
+                    </div>
+                    <label class="settings-toggle-row" for="settings-use-custom-names-in-csv">
+                        <input type="checkbox" id="settings-use-custom-names-in-csv">
+                        <span>Use custom names in CSV export</span>
+                    </label>
+                    <p class="settings-hint">Off by default so CSV headers stay stable. Turn on to use your Display names in table CSV exports.</p>
+                </div>
+                    </div>
+                </div>
+
                 <div class="collapsible-section" data-section="settingsAppearance">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsAppearance')">
                         <span>Appearance</span>
@@ -2931,25 +3001,6 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="settingsOnboarding" id="onboarding-setup-section">
-                    <button type="button" class="section-toggle" onclick="toggleSection('settingsOnboarding')">
-                        <span>Onboarding / Setup</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                <div class="settings-section">
-                    <p class="settings-hint">Review what you chose during setup. Restarting setup never deletes logs, purchases, inventory, or tapers.</p>
-                    <div id="onboarding-settings-summary" class="onboarding-settings-summary"></div>
-                    <div class="data-management-buttons">
-                        <button type="button" class="secondary-btn" onclick="openOnboardingReview()">Review setup</button>
-                        <button type="button" class="secondary-btn" onclick="openTrackedSubstancesFromOnboarding()">Change tracked substances</button>
-                        <button type="button" class="secondary-btn" onclick="openTrackedSubstancesFromOnboarding()">Change primary substance</button>
-                        <button type="button" class="secondary-btn" onclick="restartOnboarding()">Restart onboarding</button>
-                    </div>
-                </div>
-                    </div>
-                </div>
-
                 <div class="collapsible-section" data-section="settingsSubstances">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsSubstances')">
                         <span>Manage Substances</span>
@@ -2971,9 +3022,11 @@
                     </button>
                     <div class="section-content">
                         <div class="settings-section">
-                            <p class="settings-hint">Scan for duplicates, orphaned logs, broken inventory links, negative remaining values, legacy records, and mismatched totals. Repairs are previewable and create an automatic backup first.</p>
+                            <p class="settings-hint">Scan for duplicates, orphaned logs, broken inventory links, negative remaining values, legacy records, and mismatched totals. All repairs run here — preview first, then apply selected fixes or repair all safe issues. An automatic backup is created before every repair.</p>
                             <div class="data-management-buttons">
                                 <button type="button" class="secondary-btn" onclick="renderDataHealthPanel()">Scan Data Health</button>
+                                <button type="button" class="secondary-btn" onclick="applyAllSafeDataHealthRepairs()">Repair all safe issues</button>
+                                <button type="button" class="secondary-btn" onclick="restoreLastAutoBackup()">Restore Last Backup</button>
                                 <button type="button" class="secondary-btn" onclick="renderChangeHistoryPanel()">Refresh Change History</button>
                             </div>
                             <div id="data-health-results" class="data-health-results"></div>
@@ -3012,33 +3065,6 @@
                     </div>
                 </div>
 
-                <div class="collapsible-section" data-section="settingsBackup">
-                    <button type="button" class="section-toggle" onclick="toggleSection('settingsBackup')">
-                        <span>Data Backup</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                <div class="settings-section">
-                    <p id="settings-last-saved" class="last-saved-status">Last Saved: Never</p>
-                    <p class="last-saved-status">Last auto-backup: <span id="settings-auto-backup-date">Never</span></p>
-                    <p class="data-storage-note">Data is stored only in this browser (localStorage). A local backup is created automatically before import, reset, migration, or bulk repair.</p>
-                    <input type="file" id="import-json-input" accept=".json,application/json" class="hidden" onchange="handleImportJsonFile(event)">
-                    <div class="data-management-buttons">
-                        <button type="button" class="secondary-btn" onclick="exportJsonBackup()">Export JSON Backup</button>
-                        <button type="button" class="secondary-btn" onclick="triggerImportJsonBackup()">Import JSON Backup</button>
-                        <button type="button" class="secondary-btn" onclick="restoreLastAutoBackup()">Restore Last Backup</button>
-                        <button type="button" class="secondary-btn" onclick="exportDataCsv()">Export CSV</button>
-                        <button type="button" class="secondary-btn" onclick="repairAppData()">Repair Data</button>
-                    </div>
-                    <label class="settings-toggle-row" for="settings-use-custom-names-in-csv">
-                        <input type="checkbox" id="settings-use-custom-names-in-csv">
-                        <span>Use custom names in CSV export</span>
-                    </label>
-                    <p class="settings-hint">Off by default so CSV headers stay stable. Turn on to use your Display names in table CSV exports.</p>
-                </div>
-                    </div>
-                </div>
-
                 <div class="collapsible-section" data-section="settingsDangerZone">
                     <button type="button" class="section-toggle" onclick="toggleSection('settingsDangerZone')">
                         <span>Danger Zone</span>
@@ -3047,7 +3073,7 @@
                     <div class="section-content">
                 <div class="settings-section danger-zone-section">
                     <p class="settings-hint">Permanently delete all logs, substances, and settings. An automatic backup is created first.</p>
-                    <button type="button" class="danger-btn" onclick="clearAllData()">Clear All Data</button>
+                    <button type="button" class="danger-btn" onclick="clearAllData()">Delete data from this device</button>
                 </div>
                     </div>
                 </div>
@@ -3261,7 +3287,11 @@
     <div id="manage-taper-plans-modal" class="modal hidden">
         <div class="modal-content modal-wide">
             <h2>Manage Taper Plans</h2>
-            <p class="settings-hint">Plans for the selected substance. Archived plans are hidden from the default dropdown unless you enable Show archived.</p>
+            <p class="settings-hint">Plans for the selected substance. Use the filter bar to find archived or completed tapers.</p>
+            <label class="checkbox-label manage-taper-show-archived-toggle">
+                <input type="checkbox" id="manage-taper-show-archived" onchange="onTaperShowArchivedChange()">
+                Show archived in taper dropdown
+            </label>
             <div class="manage-taper-filter-bar">
                 <button type="button" class="secondary-btn manage-taper-filter-btn active" data-filter="active" onclick="setManageTaperPlansFilter('active')">Active</button>
                 <button type="button" class="secondary-btn manage-taper-filter-btn" data-filter="paused" onclick="setManageTaperPlansFilter('paused')">Paused</button>

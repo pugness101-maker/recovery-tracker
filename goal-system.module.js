@@ -52,7 +52,7 @@ function openGoalCreateForm() { if (typeof openUnifiedNewTaper === 'function') o
 function openGoalDetail() {}
 function openGoalEditForm() {}
 function renderGoalsView() {
-    if (typeof renderGoalsPlansRecordsView === 'function') renderGoalsPlansRecordsView('active');
+    if (typeof setGoalsPlansView === 'function') setGoalsPlansView('overview');
 }
 function renderGoalInsightsPanel() {
     const el = typeof document !== 'undefined' ? document.getElementById('goal-insights-panel') : null;

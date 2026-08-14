@@ -87,3 +87,22 @@ test('Running Totals stays under Use and advanced by default', () => {
     assert.equal(rt.DEFAULT_COLLAPSED_SECTIONS?.statsRunningTotals
         ?? true, true);
 });
+
+test('Progress and Insights no longer render or calculate alerts', () => {
+    const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
+    const simplified = fs.readFileSync(path.join(root, 'insights-simplify.module.js'), 'utf8');
+    const financial = fs.readFileSync(path.join(root, 'financial-analytics.module.js'), 'utf8');
+    const purchases = fs.readFileSync(path.join(root, 'purchase-analytics.module.js'), 'utf8');
+
+    [app, simplified, financial, purchases].forEach(source => {
+        assert.doesNotMatch(source, /No alerts right now/);
+        assert.doesNotMatch(source, /<h3>Alerts<\/h3>/);
+        assert.doesNotMatch(source, /Smart Warnings/);
+        assert.doesNotMatch(source, /buildFinancialAlerts/);
+        assert.doesNotMatch(source, /buildPurchaseAnalyticsWarnings/);
+    });
+
+    const rt = setup();
+    assert.equal(Object.hasOwn(rt.ensureFinancialAnalyticsPrefs(), 'alertsEnabled'), false);
+    assert.equal(Object.hasOwn(rt.ensurePurchaseAnalyticsPrefs(), 'alertsEnabled'), false);
+});

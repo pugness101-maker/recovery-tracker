@@ -149,7 +149,6 @@ if (!app.includes('buildPurchaseAnalyticsDataset,')) {
         buildPurchasePatternMetrics,
         buildInventoryTurnoverMetrics,
         buildProductAnalytics,
-        buildPurchaseAnalyticsWarnings,
         buildPurchaseAnalyticsDataset,
         buildPurchaseAnalyticsCsvRows,
         exportPurchaseAnalyticsCsv,
@@ -216,10 +215,6 @@ if (!css.includes('.purchase-analytics-root')) {
 .pa-bar-fill { display: block; height: 100%; background: var(--accent); border-radius: inherit; min-width: 2px; }
 .pa-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .pa-table th, .pa-table td { border-bottom: 1px solid var(--border); padding: 6px 4px; text-align: left; }
-.pa-warnings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.pa-alert { border-left: 3px solid var(--accent); padding: 8px 10px; background: rgba(127,127,127,0.08); border-radius: 0 8px 8px 0; }
-.pa-alert-warn { border-left-color: #ef6c00; }
-.pa-alert-info { border-left-color: #546e7a; }
 .pa-empty, .pa-loading, .pa-error { color: var(--text-secondary); font-size: 0.9rem; }
 @media (max-width: 640px) {
     .pa-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

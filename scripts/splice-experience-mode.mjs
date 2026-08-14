@@ -513,11 +513,15 @@ html = tryReplace(html,
                         </div>`,
     'locked substance chip');
 
-html = tryReplace(html,
-    `    <script src="app.js" defer></script>`,
-    `    <div id="sm-toast" class="sm-toast hidden" role="status" aria-live="polite"></div>
+if (!html.includes('id="sm-toast"')) {
+    html = tryReplace(html,
+        `    <script src="app.js" defer></script>`,
+        `    <div id="sm-toast" class="sm-toast hidden" role="status" aria-live="polite"></div>
     <script src="app.js" defer></script>`,
-    'simple toast host');
+        'simple toast host');
+} else {
+    console.warn('Already inserted: simple toast host');
+}
 
 html = tryReplace(html,
     `    <div id="sm-toast" class="sm-toast hidden" role="status" aria-live="polite"></div>`,
@@ -528,38 +532,6 @@ html = tryReplace(html,
     </div>
     <div id="sm-toast" class="sm-toast hidden" role="status" aria-live="polite"></div>`,
     'onboarding overlay');
-
-html = tryReplace(html,
-    `                <div class="collapsible-section" data-section="settingsSubstances">
-                    <button type="button" class="section-toggle" onclick="toggleSection('settingsSubstances')">
-                        <span>Manage Substances</span>
-                        <span class="chevron">⌄</span>
-                    </button>`,
-    `                <div class="collapsible-section" data-section="settingsOnboarding" id="onboarding-setup-section">
-                    <button type="button" class="section-toggle" onclick="toggleSection('settingsOnboarding')">
-                        <span>Onboarding / Setup</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                <div class="settings-section">
-                    <p class="settings-hint">Review what you chose during setup. Restarting setup never deletes logs, purchases, inventory, or tapers.</p>
-                    <div id="onboarding-settings-summary" class="onboarding-settings-summary"></div>
-                    <div class="data-management-buttons">
-                        <button type="button" class="secondary-btn" onclick="openOnboardingReview()">Review setup</button>
-                        <button type="button" class="secondary-btn" onclick="openTrackedSubstancesFromOnboarding()">Change tracked substances</button>
-                        <button type="button" class="secondary-btn" onclick="openTrackedSubstancesFromOnboarding()">Change primary substance</button>
-                        <button type="button" class="secondary-btn" onclick="restartOnboarding()">Restart onboarding</button>
-                    </div>
-                </div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="settingsSubstances">
-                    <button type="button" class="section-toggle" onclick="toggleSection('settingsSubstances')">
-                        <span>Manage Substances</span>
-                        <span class="chevron">⌄</span>
-                    </button>`,
-    'onboarding settings section');
 
 html = tryReplace(html,
     `                    <details class="use-log-advanced" id="use-advanced-section">
@@ -627,7 +599,7 @@ html = tryReplace(html,
     `            <section id="goals-plans-tab" class="tab combined-page goals-plans-page">
                 <div id="simple-plan-wizard" class="simple-plan-wizard hidden" aria-live="polite"></div>
                 <div class="sm-plan-simple-actions sm-only">
-                    <button type="button" class="submit-btn" id="sm-new-plan-btn" onclick="openSimplePlanWizard()">New Plan</button>
+                    <button type="button" class="submit-btn" id="sm-new-plan-btn" onclick="openSimplePlanWizard()">New Taper</button>
                     <button type="button" class="secondary-btn" onclick="document.getElementById('goals-plans-tab')?.classList.add('sm-show-advanced-plan')">Advanced Plan Settings</button>
                 </div>
                 <div class="page-header-row combined-page-header">

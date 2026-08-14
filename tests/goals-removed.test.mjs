@@ -239,10 +239,11 @@ test('existing tapers keep working and lifecycle actions still mutate plans', ()
     assert.ok(rt.TAPER_TEMPLATES.length >= 6);
 
     rt.duplicateTaperPlanById('taper-coke-1');
-    assert.equal(data.taperPlansV2.length, 2);
-    const copy = data.taperPlansV2.find(p => p.id !== 'taper-coke-1');
-    assert.ok(copy);
-    assert.match(copy.name, /copy/i);
+    assert.equal(rt.getTaperUiState().mode, 'duplicate');
+    assert.equal(data.taperPlansV2.length, 1);
+
+    const copy = { ...activeCokeTaper(), id: 'taper-coke-copy', name: 'Coke taper copy', isPrimary: false };
+    data.taperPlansV2.push(copy);
 
     rt.pauseTaperPlanById('taper-coke-1');
     assert.equal(rt.getTaperPlanById('taper-coke-1').status, 'paused');

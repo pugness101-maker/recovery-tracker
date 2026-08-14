@@ -6,7 +6,14 @@ import { fileURLToPath } from 'node:url';
 const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 const appPath = path.join(root, 'app.js');
 
-export function loadRecoveryTrackerApp() {
+export function loadRecoveryTrackerApp(options = {}) {
+    const seededStore = {};
+    if (options.localStorage && typeof options.localStorage === 'object') {
+        for (const [key, value] of Object.entries(options.localStorage)) {
+            if (value == null) continue;
+            seededStore[key] = String(value);
+        }
+    }
     const sandbox = {
         console,
         setTimeout,
@@ -37,6 +44,11 @@ export function loadRecoveryTrackerApp() {
         encodeURIComponent,
         decodeURIComponent,
         structuredClone: globalThis.structuredClone ?? ((value) => JSON.parse(JSON.stringify(value))),
+        Promise,
+        queueMicrotask,
+        process,
+        fetch: () => Promise.reject(new Error('offline')),
+        navigator: { onLine: true },
         alert: () => {},
         confirm: () => true,
         prompt: () => null,
@@ -48,7 +60,7 @@ export function loadRecoveryTrackerApp() {
         addEventListener: () => {},
         removeEventListener: () => {},
         localStorage: {
-            store: {},
+            store: seededStore,
             getItem(key) {
                 return this.store[key] ?? null;
             },

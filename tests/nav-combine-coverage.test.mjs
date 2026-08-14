@@ -50,7 +50,7 @@ test('legacy active tabs migrate onto the combined tabs and remember the subview
     rt.migrateCombinedNavActiveTab();
     const data = rt.__getTestAppData();
     assert.equal(data.settings.activeTab, 'goals-plans-tab');
-    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active');
+    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'overview');
 
     data.settings.activeTab = 'calendar';
     rt.migrateCombinedNavActiveTab();
@@ -88,18 +88,20 @@ test('route hashes are built per tab and only carry a view for the combined tabs
     assert.equal(rt.buildAppRouteHash('buy-tracker-tab'), '#/inventory');
     assert.equal(rt.buildAppRouteHash('settings-tab', 'money'), '#/settings');
     assert.equal(rt.buildAppRouteHash('unknown-tab'), '#/home');
-    assert.equal(rt.buildAppRouteHash('goals-plans-tab', 'active'), '#/goals-plans?view=active');
+    assert.equal(rt.buildAppRouteHash('goals-plans-tab', 'overview'), '#/goals-plans?view=overview');
     assert.equal(rt.buildAppRouteHash('insights-calendar-tab', 'use'), '#/insights-calendar?view=use');
 });
 
 test('subview aliases normalize onto the canonical combined views', () => {
     const rt = setup();
     rt.setGoalsPlansView('plans', { skipRoute: true });
-    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active');
+    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'overview');
     rt.setGoalsPlansView('goals', { skipRoute: true });
-    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active');
+    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'overview');
+    rt.setGoalsPlansView('active', { skipRoute: true });
+    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'overview');
     rt.setGoalsPlansView('not-a-view', { skipRoute: true });
-    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'active');
+    assert.equal(rt.ensureCombinedNavPrefs().goalsPlansView, 'overview');
 
     rt.setInsightsCalendarView('finances', { skipRoute: true });
     assert.equal(rt.ensureCombinedNavPrefs().insightsCalendarView, 'money');

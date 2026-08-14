@@ -173,12 +173,15 @@ test('editing a taper plan updates in place and keeps the same active plan id', 
     const primary = makePlan();
     const rt = loadRecoveryTrackerApp();
     rt.__setTestAppData(makeData([primary, secondary]));
-    rt.selectedTaperPlanIdRef.value = primary.id;
-    rt.taperFormPlanIdRef.value = null; // simulate lost in-memory edit id
-    rt.taperEditingPlanRef.value = true;
+    rt.setTaperUiState({
+        mode: 'edit',
+        selectedTaperId: primary.id,
+        editingTaperId: primary.id,
+        sourceTaperId: null
+    });
 
     const nodes = installTaperFormDom(rt, {
-        editingPlanId: primary.id, // durable form field still has the id
+        editingPlanId: primary.id,
         name: 'Coke taper renamed',
         notes: 'updated note',
         setPrimary: true
@@ -196,7 +199,7 @@ test('editing a taper plan updates in place and keeps the same active plan id', 
     assert.equal(updated.notes, 'updated note');
     assert.equal(updated.id, primary.id);
     assert.equal(updated.createdAt, primary.createdAt);
-    assert.equal(rt.selectedTaperPlanIdRef.value, primary.id);
+    assert.equal(rt.getTaperUiState().selectedTaperId, primary.id);
     assert.ok(Array.isArray(updated.weeklyTargets) && updated.weeklyTargets.length > 0);
     assert.equal(nodes.get('taper-editing-plan-id').value, '');
     assert.equal(rt.taperEditingPlanRef.value, false);
@@ -207,14 +210,19 @@ test('editing a taper plan updates in place and keeps the same active plan id', 
     assert.equal(other.id, 'taper-coke-2');
 });
 
-test('resolveTaperFormEditingPlanId falls back to selected plan while editing', () => {
+test('resolveTaperFormEditingPlanId reads taperUiState only — hidden input is not authoritative', () => {
     const rt = loadRecoveryTrackerApp();
     rt.__setTestAppData(makeData([makePlan()]));
-    installTaperFormDom(rt, { editingPlanId: '' });
-    rt.taperFormPlanIdRef.value = null;
-    rt.taperEditingPlanRef.value = true;
-    rt.selectedTaperPlanIdRef.value = 'taper-coke-1';
+    installTaperFormDom(rt, { editingPlanId: 'taper-coke-1' });
+    rt.setTaperUiState({ mode: 'create', selectedTaperId: 'taper-coke-1', editingTaperId: null });
+    assert.equal(rt.resolveTaperFormEditingPlanId(), null);
+
+    rt.setTaperUiState({ mode: 'edit', editingTaperId: 'taper-coke-1' });
     assert.equal(rt.resolveTaperFormEditingPlanId(), 'taper-coke-1');
+
+    rt.setTaperUiState({ mode: 'edit', editingTaperId: null });
+    rt.document.getElementById('taper-editing-plan-id').value = 'taper-coke-1';
+    assert.equal(rt.resolveTaperFormEditingPlanId(), null);
 });
 
 test('Save Changes updates custom weekly plan by stable id and persists after reload', () => {
@@ -327,12 +335,13 @@ test('Save Changes updates custom weekly plan by stable id and persists after re
 
     rt.selectedTaperPlanIdRef.value = plan.id;
     rt.taperFormPlanIdRef.value = plan.id;
+    rt.taperFormModeRef.value = 'edit';
     rt.taperEditingPlanRef.value = true;
     rt.taperFormInitializedRef.value = true;
 
     const ok = rt.handleTaperSubmit({ preventDefault() {} });
     assert.equal(ok, true);
-    assert.equal(nodes.get('taper-form-status').textContent, 'Plan saved');
+    assert.equal(nodes.get('taper-form-status').textContent, 'Taper saved');
     assert.match(nodes.get('taper-form-status').className, /is-success/);
 
     const saved = rt.__getTestAppData().taperPlansV2.find(p => p.id === plan.id);

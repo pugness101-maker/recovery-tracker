@@ -53,12 +53,7 @@ const FINANCIAL_BUDGET_STATE_META = Object.freeze({
     ended: { label: 'Ended', tone: 'neutral' }
 });
 
-const FINANCIAL_ALERT_TYPES = Object.freeze([
-    'nearBudget', 'overBudget', 'largePurchase', 'spendingSpike', 'purchaseFrequency',
-    'costPerUnitIncrease', 'duplicatePurchase', 'missingCost', 'missingQuantity', 'invalidCostPerUnit'
-]);
-
-const FINANCIAL_ALERT_LABELS = Object.freeze({
+const FINANCIAL_ISSUE_LABELS = Object.freeze({
     nearBudget: 'Near budget',
     overBudget: 'Over budget',
     largePurchase: 'Unusually large purchase',
@@ -287,8 +282,6 @@ function getDefaultFinancialAnalyticsFilters() {
 function getDefaultFinancialAnalyticsPrefs() {
     return {
         thresholds: { nearLimit: 0.75, atLimit: 1 },
-        alertsEnabled: true,
-        alertTypes: FINANCIAL_ALERT_TYPES.reduce((acc, id) => { acc[id] = true; return acc; }, {}),
         showOnDashboard: true,
         showOnCalendar: true,
         chartGroupBy: 'spend',
@@ -299,7 +292,6 @@ function getDefaultFinancialAnalyticsPrefs() {
         // Financial analytics deliberately stays out of the Recovery Score: money spent is
         // not a recovery-quality signal, so this stays off and is never read by the score.
         scoreContributionEnabled: false,
-        largePurchaseMultiplier: 2,
         baselineLookbackDays: 90,
         filters: getDefaultFinancialAnalyticsFilters()
     };
@@ -314,14 +306,13 @@ function ensureFinancialAnalyticsPrefs(data = appData) {
         data.settings.financialAnalytics = {
             ...defaults,
             thresholds: { ...defaults.thresholds },
-            alertTypes: { ...defaults.alertTypes },
             filters: { ...defaults.filters }
         };
     }
     const prefs = data.settings.financialAnalytics;
     Object.keys(defaults).forEach(key => {
         if (prefs[key] === undefined) {
-            prefs[key] = (key === 'thresholds' || key === 'alertTypes' || key === 'filters')
+            prefs[key] = (key === 'thresholds' || key === 'filters')
                 ? { ...defaults[key] }
                 : defaults[key];
         }
@@ -333,11 +324,6 @@ function ensureFinancialAnalyticsPrefs(data = appData) {
     prefs.thresholds.nearLimit = Number.isFinite(near) && near > 0 && near <= 1 ? near : defaults.thresholds.nearLimit;
     prefs.thresholds.atLimit = Number.isFinite(at) && at > 0 ? at : defaults.thresholds.atLimit;
     if (prefs.thresholds.nearLimit > prefs.thresholds.atLimit) prefs.thresholds.nearLimit = defaults.thresholds.nearLimit;
-
-    if (!prefs.alertTypes || typeof prefs.alertTypes !== 'object') prefs.alertTypes = { ...defaults.alertTypes };
-    FINANCIAL_ALERT_TYPES.forEach(id => {
-        if (prefs.alertTypes[id] === undefined) prefs.alertTypes[id] = true;
-    });
 
     if (!prefs.filters || typeof prefs.filters !== 'object' || Array.isArray(prefs.filters)) {
         prefs.filters = { ...defaults.filters };
@@ -351,7 +337,6 @@ function ensureFinancialAnalyticsPrefs(data = appData) {
     if (!FINANCIAL_CHART_GROUP_BYS.some(g => g.id === prefs.chartGroupBy)) prefs.chartGroupBy = defaults.chartGroupBy;
     if (!FINANCIAL_CHART_GRAINS.includes(prefs.chartGrain)) prefs.chartGrain = defaults.chartGrain;
     if (!FINANCIAL_COMPARE_PRESETS.some(c => c.id === prefs.comparePreset)) prefs.comparePreset = defaults.comparePreset;
-    prefs.largePurchaseMultiplier = Math.max(1.1, finToNumber(prefs.largePurchaseMultiplier, defaults.largePurchaseMultiplier));
     prefs.baselineLookbackDays = Math.max(7, Math.round(finToNumber(prefs.baselineLookbackDays, defaults.baselineLookbackDays)));
     prefs.scoreContributionEnabled = false;
     return prefs;
@@ -363,10 +348,9 @@ function getFinancialAnalyticsPrefs(data = appData) {
 
 function persistFinancialAnalyticsPrefs(patch = {}, data = appData) {
     const prefs = ensureFinancialAnalyticsPrefs(data);
-    const { thresholds, alertTypes, filters, ...rest } = patch || {};
+    const { thresholds, filters, ...rest } = patch || {};
     Object.assign(prefs, rest);
     if (thresholds) prefs.thresholds = { ...prefs.thresholds, ...thresholds };
-    if (alertTypes) prefs.alertTypes = { ...prefs.alertTypes, ...alertTypes };
     if (filters) prefs.filters = { ...prefs.filters, ...filters };
     ensureFinancialAnalyticsPrefs(data);
     invalidateFinancialAnalyticsCache();
@@ -1771,121 +1755,7 @@ function buildPaymentMethodAnalytics(purchases = []) {
     };
 }
 
-// ——— Financial Analytics: alerts & data quality ———
-
-function financialAlert(type, severity, message, extra = {}) {
-    return {
-        type,
-        typeLabel: FINANCIAL_ALERT_LABELS[type] || type,
-        severity,
-        message,
-        ...extra
-    };
-}
-
-function buildFinancialAlerts(purchases = [], budgets = [], prefs = null, data = appData) {
-    const settings = prefs || getFinancialAnalyticsPrefs(data);
-    if (!settings.alertsEnabled) return [];
-    const enabled = type => settings.alertTypes?.[type] !== false;
-    const alerts = [];
-    const list = (purchases || []).slice().sort((a, b) => (getPurchaseDateStr(a) < getPurchaseDateStr(b) ? -1 : 1));
-
-    (budgets || []).forEach(ev => {
-        if (ev.status === 'over_budget' && enabled('overBudget')) {
-            alerts.push(financialAlert('overBudget', 'high',
-                `${ev.budget.name} is over budget: ${finMoney(ev.spent)} spent against ${finMoney(ev.amount)}.`,
-                { budgetId: ev.budget.id }));
-        } else if ((ev.status === 'near_limit' || ev.status === 'at_limit') && enabled('nearBudget')) {
-            alerts.push(financialAlert('nearBudget', 'medium',
-                `${ev.budget.name} is at ${finPctLabel(ev.pct)} of ${finMoney(ev.amount)} with ${ev.daysRemaining} day${ev.daysRemaining === 1 ? '' : 's'} left.`,
-                { budgetId: ev.budget.id }));
-        }
-    });
-
-    const costs = list.map(p => getPurchaseSpendAmount(p)).filter(c => c > 0);
-    if (costs.length >= 3 && enabled('largePurchase')) {
-        const median = finMedian(costs);
-        const threshold = Math.max(median * finToNumber(settings.largePurchaseMultiplier, 2), median + 2 * finStdDev(costs));
-        list.filter(p => getPurchaseSpendAmount(p) > threshold && threshold > 0).forEach(p => {
-            alerts.push(financialAlert('largePurchase', 'medium',
-                `${finMoney(getPurchaseSpendAmount(p))} on ${finDateLabel(getPurchaseDateStr(p))} is well above your typical ${finMoney(median)} purchase.`,
-                { purchaseId: p.id, date: getPurchaseDateStr(p) }));
-        });
-    }
-
-    const today = finToday();
-    const recentStart = finAddDays(today, -6);
-    const priorStart = finAddDays(today, -27);
-    const priorEnd = finAddDays(today, -7);
-    const recent = list.filter(p => getPurchaseDateStr(p) >= recentStart && getPurchaseDateStr(p) <= today);
-    const prior = list.filter(p => getPurchaseDateStr(p) >= priorStart && getPurchaseDateStr(p) <= priorEnd);
-    const recentSpend = sumFinancialSpend(recent);
-    const priorWeeklyAvg = prior.length ? sumFinancialSpend(prior) / 3 : 0;
-
-    if (enabled('spendingSpike') && prior.length >= 2 && priorWeeklyAvg > 0 && recentSpend > priorWeeklyAvg * 1.5) {
-        alerts.push(financialAlert('spendingSpike', 'medium',
-            `Last 7 days: ${finMoney(recentSpend)} versus a ${finMoney(priorWeeklyAvg)} weekly average over the prior three weeks.`));
-    }
-    if (enabled('purchaseFrequency') && prior.length >= 3) {
-        const priorWeeklyCount = prior.length / 3;
-        if (recent.length > priorWeeklyCount * 1.5 && recent.length >= 2) {
-            alerts.push(financialAlert('purchaseFrequency', 'low',
-                `${recent.length} purchases in the last 7 days versus about ${formatAmount(priorWeeklyCount, 1)} per week before that.`));
-        }
-    }
-
-    if (enabled('costPerUnitIncrease')) {
-        const bySubstanceUnit = new Map();
-        list.forEach(p => {
-            const cpu = financialPurchaseCostPerUnit(p);
-            if (cpu == null || !(cpu > 0)) return;
-            const key = `${getPurchaseSubstanceId(p)}|${finKey(financialPurchaseUnit(p, data))}`;
-            if (!bySubstanceUnit.has(key)) bySubstanceUnit.set(key, []);
-            bySubstanceUnit.get(key).push({ cpu, purchase: p });
-        });
-        bySubstanceUnit.forEach((entries, key) => {
-            if (entries.length < 4) return;
-            const recentEntries = entries.slice(-3);
-            const olderEntries = entries.slice(0, -3);
-            const recentAvg = finSum(recentEntries.map(e => e.cpu)) / recentEntries.length;
-            const olderAvg = finSum(olderEntries.map(e => e.cpu)) / olderEntries.length;
-            if (olderAvg > 0 && recentAvg > olderAvg * 1.2) {
-                const substanceId = key.split('|')[0];
-                alerts.push(financialAlert('costPerUnitIncrease', 'medium',
-                    `${financialSubstanceLabel(substanceId, data)} unit price is up ${finSignedPctLabel((recentAvg - olderAvg) / olderAvg)} (${finMoney(olderAvg, 4)} → ${finMoney(recentAvg, 4)}).`,
-                    { substanceId }));
-            }
-        });
-    }
-
-    if (enabled('duplicatePurchase')) {
-        const seen = new Map();
-        list.forEach(p => {
-            const key = [
-                getPurchaseDateStr(p),
-                getPurchaseSubstanceId(p),
-                finRound(getPurchaseSpendAmount(p), 2),
-                finRound(financialPurchaseQuantity(p), 3)
-            ].join('|');
-            if (seen.has(key)) {
-                alerts.push(financialAlert('duplicatePurchase', 'low',
-                    `Two identical ${finMoney(getPurchaseSpendAmount(p))} entries on ${finDateLabel(getPurchaseDateStr(p))} — check for a double entry.`,
-                    { purchaseId: p.id, duplicateOfId: seen.get(key) }));
-            } else {
-                seen.set(key, p.id);
-            }
-        });
-    }
-
-    const qualityIssues = scanFinancialDataQuality(data, { purchases: list });
-    qualityIssues.issues.forEach(issue => {
-        if (!enabled(issue.code)) return;
-        alerts.push(financialAlert(issue.code, issue.severity, issue.message, { purchaseId: issue.purchaseId, date: issue.date }));
-    });
-
-    const severityRank = { high: 0, medium: 1, low: 2 };
-    return alerts.sort((a, b) => (severityRank[a.severity] ?? 3) - (severityRank[b.severity] ?? 3));
-}
+// ——— Financial Analytics: data quality ———
 
 function scanFinancialDataQuality(data = appData, { purchases = null, mutate = false } = {}) {
     const list = purchases || (data?.purchases || []).filter(p => financialCountsTowardSpend(p));
@@ -1992,8 +1862,6 @@ function financialDatasetCacheKey(data, filters, prefs) {
             chartGroupBy: prefs.chartGroupBy,
             chartGrain: prefs.chartGrain,
             thresholds: prefs.thresholds,
-            alertsEnabled: prefs.alertsEnabled,
-            alertTypes: prefs.alertTypes,
             baselineLookbackDays: prefs.baselineLookbackDays
         }
     });
@@ -2038,7 +1906,6 @@ function buildFinancialDataset(data = appData, options = {}) {
         storeSupplier: buildStoreSupplierAnalytics(purchases, data),
         payments: buildPaymentMethodAnalytics(purchases),
         dataQuality: scanFinancialDataQuality(data, { purchases }),
-        alerts: buildFinancialAlerts(purchases, budgetEvaluations, prefs, data),
         isEmpty: purchases.length === 0
     };
 
@@ -2839,35 +2706,12 @@ function renderFinancialPaymentPanel(dataset) {
         </section>`;
 }
 
-function renderFinancialAlertsPanel(dataset) {
-    const alerts = dataset.alerts;
-    const items = alerts.map(a => `
-        <li class="fin-alert ${finToneClass(a.severity === 'high' ? 'bad' : a.severity === 'medium' ? 'warn' : 'neutral')}">
-            <span class="fin-alert-type">${escapeHtml(a.typeLabel)}</span>
-            <span class="fin-alert-message">${escapeHtml(a.message)}</span>
-        </li>`).join('');
-
-    return `
-        <section class="fin-panel">
-            <header class="fin-panel-head">
-                <h3>Alerts</h3>
-                <label class="fin-inline-field fin-inline-check">
-                    <input type="checkbox" id="fin-alerts-enabled" ${dataset.prefs.alertsEnabled ? 'checked' : ''} onchange="toggleFinancialAlerts(this.checked)">
-                    <span>Enabled</span>
-                </label>
-            </header>
-            ${dataset.prefs.alertsEnabled
-                ? (alerts.length ? `<ul class="fin-alert-list">${items}</ul>` : '<p class="fin-empty-inline">Nothing needs attention right now.</p>')
-                : '<p class="fin-empty-inline">Alerts are turned off.</p>'}
-        </section>`;
-}
-
 function renderFinancialDataQualityPanel(dataset) {
     const q = dataset.dataQuality;
     const rows = q.issues.slice(0, 25).map(i => `
         <tr>
             <td>${escapeHtml(i.date ? finDateLabel(i.date) : '—')}</td>
-            <td>${escapeHtml(FINANCIAL_ALERT_LABELS[i.code] || i.code)}</td>
+            <td>${escapeHtml(FINANCIAL_ISSUE_LABELS[i.code] || i.code)}</td>
             <td>${escapeHtml(i.message)}</td>
         </tr>`).join('');
 
@@ -2988,7 +2832,6 @@ function renderFinancialAnalyticsView() {
                 ${renderFinancialStorePanel(dataset)}
                 ${renderFinancialPaymentPanel(dataset)}
             `}
-            ${renderFinancialAlertsPanel(dataset)}
             ${renderFinancialDataQualityPanel(dataset)}
             ${renderFinancialExportPanel()}
         </div>`;
@@ -3060,11 +2903,6 @@ function setFinancialComparePreset(preset) {
 function setFinancialBreakdown(dimension) {
     if (!FINANCIAL_BREAKDOWN_DIMENSIONS.some(d => d.id === dimension)) return;
     financialAnalyticsUiState.activeBreakdown = dimension;
-    renderFinancialAnalyticsView();
-}
-
-function toggleFinancialAlerts(enabled) {
-    persistFinancialAnalyticsPrefs({ alertsEnabled: !!enabled }, appData);
     renderFinancialAnalyticsView();
 }
 
@@ -3189,7 +3027,6 @@ if (typeof window !== 'undefined') {
         setFinancialChartGrain,
         setFinancialComparePreset,
         setFinancialBreakdown,
-        toggleFinancialAlerts,
         markFinancialIssuesForReview,
         openBudgetForm,
         closeBudgetForm,

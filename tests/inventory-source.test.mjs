@@ -196,3 +196,158 @@ test('purchase history labels Source and keeps supplier hidden by default', () =
     assert.match(app, /store: 'Source'/);
     assert.match(app, /hidden: \[[^\]]*supplier/);
 });
+
+function makeBuyFormDom(nodes) {
+    const put = (id, props = {}) => {
+        const classes = new Set();
+        const node = {
+            id,
+            value: props.value ?? '',
+            innerHTML: props.innerHTML ?? '',
+            hidden: !!props.hidden,
+            classList: {
+                add(...n) { n.forEach(x => classes.add(x)); },
+                remove(...n) { n.forEach(x => classes.delete(x)); },
+                toggle(n, f) {
+                    if (f === true) classes.add(n);
+                    else if (f === false) classes.delete(n);
+                    else if (classes.has(n)) classes.delete(n);
+                    else classes.add(n);
+                },
+                contains(n) { return classes.has(n); }
+            },
+            style: props.style || { display: '' },
+            insertAdjacentHTML(position, html) {
+                if (position === 'beforebegin') this._before = html;
+            },
+            setAttribute() {},
+            removeAttribute() {}
+        };
+        nodes.set(id, node);
+        return node;
+    };
+    put('buy-source-mount');
+    put('buy-store-group', { hidden: true });
+    put('buy-payment-group');
+    put('buy-supplier-contact-picker');
+    put('buy-gift-source-group');
+    put('buy-gift-recipient-group');
+    put('buy-acquisition-type', { value: 'purchased', style: { display: '' } });
+    return nodes;
+}
+
+test('inventory source patch receives a real Element with insertAdjacentHTML', () => {
+    const rt = setup();
+    const nodes = new Map();
+    rt.document.getElementById = (id) => nodes.get(id) || null;
+    const put = (id, props = {}) => {
+        const classes = new Set();
+        const node = {
+            id,
+            value: props.value ?? '',
+            innerHTML: props.innerHTML ?? '',
+            hidden: !!props.hidden,
+            classList: {
+                add(...n) { n.forEach(x => classes.add(x)); },
+                remove(...n) { n.forEach(x => classes.delete(x)); },
+                toggle(n, f) {
+                    if (f === true) classes.add(n);
+                    else if (f === false) classes.delete(n);
+                    else if (classes.has(n)) classes.delete(n);
+                    else classes.add(n);
+                },
+                contains(n) { return classes.has(n); }
+            },
+            style: props.style || { display: '' },
+            insertAdjacentHTML(position, html) {
+                if (position === 'beforebegin') this._before = html;
+            },
+            setAttribute() {},
+            removeAttribute() {}
+        };
+        nodes.set(id, node);
+        return node;
+    };
+    put('buy-acquisition-type', { value: 'purchased' });
+    const store = put('buy-store-group', { hidden: true });
+    put('buy-payment-group');
+    put('buy-supplier-contact-picker');
+    rt.inventorySourcePickerMountedRef.value = false;
+    rt.inventorySourcePickerMountWarnedRef.value = false;
+
+    assert.equal(rt.isInventorySourceDomElement(store), true);
+    assert.equal(rt.ensureBuySourcePickerMounted(), true);
+    assert.ok(store._before?.includes('id="buy-source-group"'));
+});
+
+test('inventory source prefers buy-source-mount innerHTML over legacy store group', () => {
+    const rt = setup();
+    const nodes = new Map();
+    rt.document.getElementById = (id) => nodes.get(id) || null;
+    const mount = makeBuyFormDom(nodes).get('buy-source-mount');
+    rt.inventorySourcePickerMountedRef.value = false;
+
+    assert.equal(rt.ensureBuySourcePickerMounted(), true);
+    assert.match(mount.innerHTML, /buy-source-group/);
+    assert.equal(nodes.has('buy-source-group'), false);
+});
+
+test('missing target element fails gracefully without repeated console errors', () => {
+    const rt = setup();
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(' '));
+    try {
+        rt.document.getElementById = () => null;
+        rt.inventorySourcePickerMountedRef.value = false;
+        rt.inventorySourcePickerMountWarnedRef.value = false;
+
+        assert.equal(rt.ensureBuySourcePickerMounted(), false);
+        assert.equal(rt.ensureBuySourcePickerMounted(), false);
+        assert.equal(rt.ensureBuySourcePickerMounted(), false);
+        const mountWarnings = warnings.filter(w => w.includes('[inventory-source]'));
+        assert.equal(mountWarnings.length, 1, 'should warn once, not on every retry');
+    } finally {
+        console.warn = originalWarn;
+    }
+});
+
+test('rerender does not duplicate source patch listeners', () => {
+    const rt = setup();
+    const nodes = new Map();
+    rt.document.getElementById = (id) => nodes.get(id) || null;
+    makeBuyFormDom(nodes);
+    rt.inventorySourcePickerMountedRef.value = false;
+
+    rt.initInventorySource();
+    const first = nodes.get('buy-source-mount')?.innerHTML || nodes.get('buy-store-group')?._before || '';
+    rt.initInventorySource();
+    rt.initInventorySource();
+    const second = nodes.get('buy-source-mount')?.innerHTML || nodes.get('buy-store-group')?._before || '';
+    assert.equal(first, second);
+    const countIds = (html) => (html.match(/id="buy-source-group"/g) || []).length;
+    assert.ok(countIds(first) <= 1);
+    assert.ok(countIds(second) <= 1);
+});
+
+test('updateBuyAcquisitionTypeUI patch runs once per render without error spam', () => {
+    const rt = setup();
+    const nodes = new Map();
+    rt.document.getElementById = (id) => nodes.get(id) || null;
+    makeBuyFormDom(nodes);
+    rt.inventorySourcePickerMountedRef.value = false;
+
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => warnings.push(args.join(' '));
+
+    rt.initInventorySource();
+    if (typeof rt.updateBuyAcquisitionTypeUI === 'function') {
+        for (let i = 0; i < 5; i += 1) rt.updateBuyAcquisitionTypeUI();
+    }
+
+    console.warn = originalWarn;
+    const patchFails = warnings.filter(w => w.includes('acquisition UI patch failed'));
+    assert.equal(patchFails.length, 0);
+    assert.equal(rt.inventorySourcePickerMountedRef.value, true);
+});

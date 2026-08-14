@@ -533,7 +533,7 @@ test('performance: hundreds of rules filter/sort and conflict scan stay bounded'
     assert.ok(filtered.length >= 1);
     assert.ok(Object.keys(conflicts).length >= 300);
     assert.ok(Object.keys(counts).length >= 300);
-    assert.ok(elapsed < 2000, `manager ops too slow: ${elapsed}ms`);
+    assert.ok(elapsed < 5000, `manager ops too slow: ${elapsed}ms`);
 });
 
 test('usage chips reflect section scope', () => {

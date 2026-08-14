@@ -11,6 +11,56 @@ const THEME_PREFERENCE_KEY = 'recoveryTracker.themePreference';
 const APPEARANCE_VIEW_MODES = Object.freeze(['auto', 'phone', 'laptop']);
 const APPEARANCE_VIEW_MODE_LAPTOP_MQ = '(min-width: 768px)';
 const COLUMN_PRESET_IDS = Object.freeze(['basic', 'cost', 'inventory', 'detailed']);
+const USE_BREAK_FIELDS = Object.freeze(['breakMinutes', 'breakHours', 'breakText']);
+const BUY_BREAK_FIELDS = Object.freeze(['buyBreakMinutes', 'buyBreakHours', 'buyBreakText']);
+
+/** Startup / migration constants — must initialize before loadData() runs at module load. */
+const PURCHASE_TAPER_MODES = Object.freeze([
+    'none',
+    'combined',
+    'weekly_buy_amount',
+    'weekly_spend',
+    'monthly_buy_amount',
+    'monthly_spend',
+    'manual_weekly_buy_amount',
+    'manual_weekly_spend'
+]);
+
+const PURCHASE_TAPER_FORM_MODE_MAP = Object.freeze({
+    reduce_buy_amount: 'weekly_buy_amount',
+    reduce_buy_spend: 'weekly_spend',
+    fixed_weekly_purchase_limit: 'weekly_buy_amount',
+    fixed_weekly_spending_limit: 'weekly_spend',
+    fixed_monthly_purchase_cap: 'monthly_buy_amount',
+    fixed_monthly_spending_cap: 'monthly_spend'
+});
+
+const PURCHASE_TAPER_MODE_LABELS = Object.freeze({
+    none: 'None',
+    combined: 'Combined rules',
+    reduce_buy_amount: 'Reduce purchase amount',
+    reduce_buy_spend: 'Reduce purchase cost',
+    weekly_buy_amount: 'Fixed weekly purchase limit',
+    weekly_spend: 'Fixed weekly spending limit',
+    monthly_buy_amount: 'Fixed monthly purchase cap',
+    monthly_spend: 'Fixed monthly spending cap',
+    manual_weekly_buy_amount: 'Manual weekly buy plan',
+    manual_weekly_spend: 'Manual weekly spending plan'
+});
+
+const BUYING_REDUCTION_RULE_KEYS = Object.freeze([
+    'reducePurchaseAmount',
+    'reducePurchaseCost',
+    'weeklyPurchaseLimit',
+    'weeklySpendingLimit',
+    'monthlyPurchaseCap',
+    'monthlySpendingCap',
+    'manualWeeklyBuyPlan',
+    'manualWeeklySpendingPlan'
+]);
+
+const AUTO_SPEND_BASELINE_RANGES = Object.freeze(['last-30', 'last-60', 'last-90', 'plan-period', 'custom']);
+
 const DEFAULT_DASHBOARD_WIDGETS = Object.freeze([
     'todayUsed', 'weekUsed', 'monthUsed', 'spentMonth', 'monthCap', 'streak', 'quickActions'
 ]);
@@ -1160,6 +1210,9 @@ function refreshPreviousPeriodCompareDisplays() {
         if (typeof updateDashboard === 'function') updateDashboard();
         if (typeof renderStats === 'function') renderStats();
         else if (typeof refreshInsightsView === 'function') refreshInsightsView();
+        if (typeof renderTaperPeriodSummary === 'function' && typeof currentSubstanceId !== 'undefined') {
+            renderTaperPeriodSummary(currentSubstanceId);
+        }
         if (typeof renderTaperCurrentWeekSummary === 'function' && typeof currentSubstanceId !== 'undefined') {
             renderTaperCurrentWeekSummary(currentSubstanceId);
         }
@@ -8974,6 +9027,38 @@ function getNormalizedUsageLabel(metricsOrEngine, data = appData) {
 
 // ——— Data Health (Phase 1) ———
 
+/** Deterministic fixes Data Health may apply without manual review. */
+const DATA_HEALTH_SAFE_FIXES = new Set([
+    'clamp-negative-remaining',
+    'recalc-purchase',
+    'normalize-legacy-log',
+    'clear-broken-link'
+]);
+
+/** Fixes that need explicit user review before applying (duplicates, uncertain ownership). */
+const DATA_HEALTH_REVIEW_REQUIRED_FIXES = new Set([
+    'dedupe-log',
+    'dedupe-purchase',
+    'clear-orphan-substance'
+]);
+
+function isDataHealthIssueSafe(issue) {
+    if (!issue?.fix || issue.fix === 'noop') return false;
+    if (issue.requiresReview || DATA_HEALTH_REVIEW_REQUIRED_FIXES.has(issue.fix)) return false;
+    return DATA_HEALTH_SAFE_FIXES.has(issue.fix);
+}
+
+/** Isolated copy for read-only inventory mismatch checks — never mutates live appData. */
+function buildDataHealthRecalcSandbox(data, purchaseId) {
+    return {
+        ...data,
+        logs: JSON.parse(JSON.stringify(data.logs || [])),
+        purchases: (data.purchases || []).map(p => (
+            String(p.id) === String(purchaseId) ? JSON.parse(JSON.stringify(p)) : p
+        ))
+    };
+}
+
 function scanDataHealth(data = appData) {
     const issues = [];
     const seenLogIds = new Map();
@@ -8991,6 +9076,7 @@ function scanDataHealth(data = appData) {
                 severity: 'warn',
                 label: `Duplicate use log id “${id}”`,
                 fix: 'dedupe-log',
+                requiresReview: true,
                 payload: { logId: log.id, index }
             });
         } else {
@@ -9004,6 +9090,7 @@ function scanDataHealth(data = appData) {
                 severity: 'warn',
                 label: `Log ${id} references missing substance “${sid}”`,
                 fix: 'clear-orphan-substance',
+                requiresReview: true,
                 payload: { logId: log.id, substanceId: sid }
             });
         }
@@ -9040,6 +9127,7 @@ function scanDataHealth(data = appData) {
                 severity: 'warn',
                 label: `Duplicate purchase id “${id}”`,
                 fix: 'dedupe-purchase',
+                requiresReview: true,
                 payload: { purchaseId: purchase.id, index }
             });
         } else {
@@ -9067,21 +9155,17 @@ function scanDataHealth(data = appData) {
                 severity: 'warn',
                 label: `Purchase ${id} references missing substance “${sid}”`,
                 fix: 'noop',
+                requiresReview: true,
                 payload: { purchaseId: purchase.id }
             });
         }
     });
 
-    // Mismatched inventory totals: remaining vs recalculated
+    // Mismatched inventory totals: remaining vs recalculated (sandbox — live logs/purchases untouched)
     (data.purchases || []).forEach(purchase => {
         if (!purchase?.id) return;
         const before = getPurchaseRemainingAmount(purchase);
-        const clone = JSON.parse(JSON.stringify(purchase));
-        const tempData = {
-            ...data,
-            purchases: (data.purchases || []).map(p => (String(p.id) === String(purchase.id) ? clone : p)),
-            logs: data.logs
-        };
+        const tempData = buildDataHealthRecalcSandbox(data, purchase.id);
         try {
             recalculatePurchaseRemaining(purchase.id, tempData);
             const after = getPurchaseRemainingAmount(
@@ -9115,24 +9199,39 @@ function scanDataHealth(data = appData) {
 
 function previewDataHealthRepairs(report = scanDataHealth()) {
     const fixable = (report.issues || []).filter(i => i.fix && i.fix !== 'noop');
+    const safeFixable = fixable.filter(isDataHealthIssueSafe);
+    const reviewRequired = fixable.filter(i => !isDataHealthIssueSafe(i));
     return {
         report,
         fixableCount: fixable.length,
-        preview: fixable.map(i => ({ id: i.id, type: i.type, label: i.label, fix: i.fix }))
+        safeFixableCount: safeFixable.length,
+        reviewRequiredCount: reviewRequired.length,
+        preview: fixable.map(i => ({
+            id: i.id,
+            type: i.type,
+            label: i.label,
+            fix: i.fix,
+            safe: isDataHealthIssueSafe(i)
+        })),
+        safePreview: safeFixable.map(i => ({ id: i.id, type: i.type, label: i.label, fix: i.fix }))
     };
 }
 
 function applyDataHealthRepairs(report = null, options = {}) {
-    createAutoBackup(options.reason || 'before-data-health-repair');
+    if (!options.skipBackup) {
+        createAutoBackup(options.reason || 'before-data-health-repair');
+    }
     const scan = report || scanDataHealth(appData);
     const preview = previewDataHealthRepairs(scan);
     const selected = options.fixIds
         ? new Set(options.fixIds)
-        : new Set(preview.preview.map(p => p.id));
+        : new Set(preview.preview.filter(p => p.safe).map(p => p.id));
     let applied = 0;
+    let skippedUnhandled = 0;
 
     scan.issues.forEach(issue => {
         if (!selected.has(issue.id)) return;
+        if (options.safeOnly && !isDataHealthIssueSafe(issue)) return;
         const log = (appData.logs || []).find(l => String(l.id) === String(issue.payload?.logId));
         const purchase = (appData.purchases || []).find(p => String(p.id) === String(issue.payload?.purchaseId));
         switch (issue.fix) {
@@ -9197,15 +9296,72 @@ function applyDataHealthRepairs(report = null, options = {}) {
                 }
                 break;
             }
+            case 'clear-orphan-substance':
+                if (log) {
+                    const orphanId = issue.payload?.substanceId ?? getUseSubstanceId(log);
+                    const resolved = orphanId ? normalizeSubstanceRef(orphanId, appData) : null;
+                    const stillMissing = orphanId
+                        && !getSubstance(orphanId, appData)
+                        && !(resolved && getSubstance(resolved, appData));
+                    if (stillMissing) {
+                        log.dataHealthOrphanSubstanceId = String(orphanId);
+                        delete log.substanceId;
+                        delete log.substance;
+                        log.needsReview = true;
+                        log.inventoryAffects = false;
+                        log.supplyUnlinked = true;
+                        applied++;
+                    }
+                }
+                break;
             default:
+                if (issue.fix && issue.fix !== 'noop') skippedUnhandled++;
                 break;
         }
     });
 
-    repairDataConsistency(appData);
-    saveData(appData);
-    refreshAppAfterDataChange();
-    return { applied, totalFixable: preview.fixableCount, scan };
+    let consistencyStats = null;
+    if (options.runMaintenance !== false) {
+        repairVapeInventoryLinks(appData);
+        consistencyStats = repairDataConsistency(appData);
+    }
+    if (!options.skipSave) {
+        saveData(appData);
+        refreshAppAfterDataChange();
+    }
+    return {
+        applied,
+        skippedUnhandled,
+        totalFixable: preview.fixableCount,
+        safeFixable: preview.safeFixableCount,
+        scan,
+        consistencyStats
+    };
+}
+
+function applyAllSafeDataHealthRepairs() {
+    if (!confirm(
+        'Repair all safe data health issues?\n\n'
+        + 'Duplicate removal, orphaned records, and uncertain ownership are excluded unless you select them manually.\n\n'
+        + 'An automatic backup will be created first.'
+    )) return;
+    pushChangeHistory('before-repair', { summary: 'Before safe data health repair' });
+    const report = scanDataHealth(appData);
+    const safeIds = report.issues.filter(isDataHealthIssueSafe).map(i => i.id);
+    const result = applyDataHealthRepairs(report, {
+        fixIds: safeIds,
+        reason: 'before-safe-repair-all',
+        skipBackup: false,
+        runMaintenance: true
+    });
+    const summary = formatRepairSummary(result.consistencyStats || {});
+    alert(
+        `Safe repair complete.\n\n`
+        + `Applied ${result.applied} scanned fix(es) from ${result.safeFixable} safe issue(s).\n\n`
+        + summary
+    );
+    renderDataHealthPanel();
+    renderChangeHistoryPanel();
 }
 
 function renderDataHealthPanel() {
@@ -9214,7 +9370,11 @@ function renderDataHealthPanel() {
     const report = scanDataHealth(appData);
     const preview = previewDataHealthRepairs(report);
     if (!report.total) {
-        container.innerHTML = '<p class="data-health-ok">No data health issues found.</p>';
+        container.innerHTML = `
+            <p class="data-health-ok">No data health issues found.</p>
+            <div class="data-health-actions">
+                <button type="button" class="secondary-btn" onclick="applyAllSafeDataHealthRepairs()">Repair all safe issues</button>
+            </div>`;
         return;
     }
     const countBits = Object.entries(report.counts)
@@ -9224,19 +9384,27 @@ function renderDataHealthPanel() {
     container.innerHTML = `
         <div class="data-health-summary">${countBits}</div>
         <ul class="data-health-issue-list">
-            ${report.issues.slice(0, 40).map(issue => `
-                <li class="data-health-issue data-health-${escapeAttr(issue.severity)}">
+            ${report.issues.slice(0, 40).map(issue => {
+                const safe = isDataHealthIssueSafe(issue);
+                const fixable = issue.fix && issue.fix !== 'noop';
+                const review = issue.requiresReview || DATA_HEALTH_REVIEW_REQUIRED_FIXES.has(issue.fix);
+                const checked = fixable && safe && !review;
+                const disabled = !fixable;
+                return `
+                <li class="data-health-issue data-health-${escapeAttr(issue.severity)}${review ? ' data-health-review-required' : ''}">
                     <label>
                         <input type="checkbox" class="data-health-fix-cb" data-issue-id="${escapeAttr(issue.id)}"
-                            ${issue.fix && issue.fix !== 'noop' ? 'checked' : 'disabled'}>
-                        <span>${escapeHtml(issue.label)}</span>
+                            ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+                        <span>${escapeHtml(issue.label)}${review ? ' <em class="data-health-review-tag">(review required)</em>' : ''}</span>
                     </label>
-                </li>`).join('')}
+                </li>`;
+            }).join('')}
         </ul>
-        <p class="field-hint">${preview.fixableCount} fixable issue(s). Preview repairs before applying.</p>
+        <p class="field-hint">${preview.safeFixableCount} safe fix(es), ${preview.reviewRequiredCount} review-required. Preview before applying. An automatic backup is created before any repair.</p>
         <div class="data-health-actions">
             <button type="button" class="secondary-btn" onclick="previewDataHealthRepairsUI()">Preview repairs</button>
             <button type="button" class="secondary-btn" onclick="applySelectedDataHealthRepairs()">Apply selected repairs</button>
+            <button type="button" class="secondary-btn" onclick="applyAllSafeDataHealthRepairs()">Repair all safe issues</button>
         </div>`;
 }
 
@@ -9246,8 +9414,13 @@ function previewDataHealthRepairsUI() {
         alert('No automatic repairs available.');
         return;
     }
-    const lines = preview.preview.slice(0, 20).map(p => `• ${p.label}`).join('\n');
-    alert(`Repair preview (${preview.fixableCount}):\n\n${lines}${preview.fixableCount > 20 ? '\n…' : ''}`);
+    const safeLines = preview.safePreview.slice(0, 15).map(p => `• ${p.label}`).join('\n');
+    const reviewLines = preview.preview.filter(p => !p.safe).slice(0, 10).map(p => `• ${p.label} (review required)`).join('\n');
+    let body = `Safe repairs (${preview.safeFixableCount}):\n\n${safeLines || '—'}`;
+    if (preview.reviewRequiredCount) {
+        body += `\n\nReview required (${preview.reviewRequiredCount}):\n\n${reviewLines}${preview.reviewRequiredCount > 10 ? '\n…' : ''}`;
+    }
+    alert(body);
 }
 
 function applySelectedDataHealthRepairs() {
@@ -9258,9 +9431,27 @@ function applySelectedDataHealthRepairs() {
         alert('Select at least one repair.');
         return;
     }
+    const report = scanDataHealth(appData);
+    const selectedIssues = report.issues.filter(i => checked.includes(i.id));
+    const reviewSelected = selectedIssues.filter(i => !isDataHealthIssueSafe(i));
+    if (reviewSelected.length) {
+        const names = reviewSelected.slice(0, 5).map(i => i.label).join('\n• ');
+        const extra = reviewSelected.length > 5 ? '\n…' : '';
+        if (!confirm(
+            `You selected ${reviewSelected.length} review-required repair(s):\n\n• ${names}${extra}\n\n`
+            + 'These may delete duplicates or change records with uncertain ownership. Continue?'
+        )) return;
+    }
     if (!confirm(`Apply ${checked.length} repair(s)? An automatic backup will be created first.`)) return;
-    const result = applyDataHealthRepairs(null, { fixIds: checked });
-    alert(`Applied ${result.applied} repair(s).`);
+    pushChangeHistory('before-repair', { summary: 'Before selected data health repair' });
+    const result = applyDataHealthRepairs(report, { fixIds: checked });
+    let msg = `Applied ${result.applied} repair(s).`;
+    if (result.skippedUnhandled) {
+        msg += `\n\n${result.skippedUnhandled} selected repair(s) had no handler and were not applied.`;
+    } else if (result.applied < checked.length) {
+        msg += `\n\n${checked.length - result.applied} selected repair(s) could not be applied (record missing or already fixed).`;
+    }
+    alert(msg);
     renderDataHealthPanel();
     renderChangeHistoryPanel();
 }
@@ -9313,8 +9504,8 @@ function restoreChangeHistoryEntry(entryId, { confirmRestore = true } = {}) {
     }
     createAutoBackup('before-history-restore');
     pushChangeHistory('before-restore', { restoredId: entryId });
-    appData = normalizeAppDataSafe(entry.snapshot);
-    normalizeAppData(appData);
+    const snapshotClone = JSON.parse(JSON.stringify(entry.snapshot));
+    appData = normalizeAppDataSafe(snapshotClone);
     saveData(appData);
     refreshAppAfterDataChange();
     renderChangeHistoryPanel();
@@ -11335,18 +11526,26 @@ function populatePageSubstanceSelect(selectId, { includeAll = false, substances 
 
 function syncPageSubstanceSelectors(skipId = null) {
     const resolvedSelected = resolveSelectedSubstanceId(selectedSubstanceId);
+    const optionList = (el) => {
+        if (!el?.options) return [];
+        try {
+            return [...el.options];
+        } catch (_) {
+            return Array.isArray(el.options) ? el.options : [];
+        }
+    };
     if (skipId !== 'use-log-substance') {
         const el = document.getElementById('use-log-substance');
-        if (el && [...el.options].some(o => o.value === resolvedSelected)) el.value = resolvedSelected;
+        if (el && optionList(el).some(o => o.value === resolvedSelected)) el.value = resolvedSelected;
     }
     if (skipId !== 'inventory-substance') {
         const el = document.getElementById('inventory-substance');
-        if (el && [...el.options].some(o => o.value === resolvedSelected)) el.value = resolvedSelected;
+        if (el && optionList(el).some(o => o.value === resolvedSelected)) el.value = resolvedSelected;
     }
     if (skipId !== 'taper-substance') {
         const taperEl = document.getElementById('taper-substance');
         const taperSelected = getTaperSubstanceId();
-        if (taperEl && [...taperEl.options].some(o => o.value === taperSelected)) {
+        if (taperEl && optionList(taperEl).some(o => o.value === taperSelected)) {
             taperEl.value = taperSelected;
         }
     }
@@ -12558,14 +12757,175 @@ function migrateTaperPlansSafely(data) {
 }
 
 const TAPER_PLAN_STATUSES = ['active', 'paused', 'completed', 'archived'];
+const TAPER_UI_MODES = Object.freeze(['view', 'create', 'edit', 'duplicate']);
 
+/** Authoritative taper UI state — single source of truth for mode and IDs. */
+const taperUiState = {
+    mode: 'view',
+    selectedTaperId: null,
+    editingTaperId: null,
+    sourceTaperId: null,
+    isSaving: false
+};
+
+/** Blocks duplicate save handlers on the same click event (inline onclick + listener). */
+let lastTaperSubmitClickEvent = null;
+
+/** @deprecated synced from taperUiState — prefer getTaperUiState() */
 let selectedTaperPlanId = null;
+/** @deprecated synced from taperUiState */
 let taperFormPlanId = null;
+/** @deprecated synced from taperUiState */
+let taperFormMode = 'create';
 let showArchivedTaperPlans = false;
 let taperManagePlansFilter = 'active';
 
+function syncTaperLegacyRefsFromUiState() {
+    selectedTaperPlanId = taperUiState.selectedTaperId;
+    taperFormPlanId = taperUiState.mode === 'edit' ? taperUiState.editingTaperId : null;
+    taperFormMode = taperUiState.mode === 'edit' ? 'edit' : 'create';
+    taperEditingPlan = taperUiState.mode === 'create'
+        || taperUiState.mode === 'edit'
+        || taperUiState.mode === 'duplicate';
+}
+
+/** Authoritative selected taper id (view mode). */
+function getSelectedTaperId() {
+    return taperUiState.selectedTaperId || null;
+}
+
+function isTaperEditFormActive() {
+    return taperUiState.mode === 'edit' && !!taperUiState.editingTaperId;
+}
+
+/** Sync DOM transport fields from taperUiState — never read these inputs as authority. */
+function syncTaperFormTransportFromUiState() {
+    if (typeof document === 'undefined') return;
+    const editTransport = taperUiState.mode === 'edit' ? (taperUiState.editingTaperId || '') : '';
+    setInputValue('taper-editing-plan-id', editTransport);
+    const select = document.getElementById('taper-plan-select');
+    if (select && taperUiState.mode === 'view' && taperUiState.selectedTaperId) {
+        const options = select.options ? [...select.options] : [];
+        if (options.some(o => o.value === taperUiState.selectedTaperId)) {
+            select.value = taperUiState.selectedTaperId;
+        }
+    }
+    const form = document.getElementById('taper-form');
+    if (form?.dataset) {
+        form.dataset.taperUiMode = taperUiState.mode;
+        form.dataset.taperFormMode = getTaperFormMode();
+    }
+}
+
+function getTaperUiState() {
+    return { ...taperUiState };
+}
+
+function setTaperUiState(patch = {}) {
+    if (patch.mode && TAPER_UI_MODES.includes(patch.mode)) taperUiState.mode = patch.mode;
+    if ('selectedTaperId' in patch) taperUiState.selectedTaperId = patch.selectedTaperId || null;
+    if ('editingTaperId' in patch) taperUiState.editingTaperId = patch.editingTaperId || null;
+    if ('sourceTaperId' in patch) taperUiState.sourceTaperId = patch.sourceTaperId || null;
+    if ('isSaving' in patch) taperUiState.isSaving = !!patch.isSaving;
+    syncTaperLegacyRefsFromUiState();
+    syncTaperFormTransportFromUiState();
+    return getTaperUiState();
+}
+
+function isTaperFormModeActive() {
+    return taperUiState.mode === 'create' || taperUiState.mode === 'edit' || taperUiState.mode === 'duplicate';
+}
+
+/**
+ * Single source of truth for create vs edit. Edit requires explicit edit mode
+ * and a plan id, so a lost/absent id can never turn a create into an in-place update.
+ */
+function getTaperFormMode() {
+    if (taperUiState.mode === 'edit' && taperUiState.editingTaperId) return 'edit';
+    return 'create';
+}
+
+function setTaperFormMode(mode) {
+    if (mode === 'edit') {
+        if (!taperUiState.editingTaperId) return 'create';
+        setTaperUiState({ mode: 'edit', editingTaperId: taperUiState.editingTaperId });
+    } else if (mode === 'create') {
+        const patch = { editingTaperId: null };
+        if (taperUiState.mode !== 'duplicate' && taperUiState.mode !== 'view') {
+            patch.mode = 'create';
+        }
+        setTaperUiState(patch);
+    }
+    return getTaperFormMode();
+}
+
+const TAPER_START_FROM = Object.freeze({
+    BLANK: 'blank',
+    SUGGESTED: 'suggested',
+    BUILTIN: 'builtin-template',
+    MY: 'my-template',
+    COPY: 'copy-existing'
+});
+
+function ensureTaperMyTemplates(data = appData) {
+    if (!data.settings || typeof data.settings !== 'object') data.settings = {};
+    if (!Array.isArray(data.settings.taperMyTemplates)) data.settings.taperMyTemplates = [];
+    return data.settings.taperMyTemplates;
+}
+
+function getTaperMyTemplates(data = appData) {
+    return ensureTaperMyTemplates(data);
+}
+
+function isTaperCreateFormActive() {
+    return taperUiState.mode === 'create' || taperUiState.mode === 'duplicate';
+}
+
+function setTaperStartFromSectionVisible(visible) {
+    const section = document.getElementById('taper-start-from-section');
+    if (section) section.classList.toggle('hidden', !visible);
+}
+
+function exitTaperFormToView(planId = taperUiState.selectedTaperId) {
+    setTaperUiState({
+        mode: 'view',
+        selectedTaperId: planId || null,
+        editingTaperId: null,
+        sourceTaperId: null,
+        isSaving: false
+    });
+    resetTaperFormLifecycleState();
+    document.getElementById('taper-setup')?.classList.add('hidden');
+    document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
+}
+
+/** Open an existing taper for viewing (never enters create/edit form). */
+function openTaperPlan(planId, options = {}) {
+    if (!planId) return false;
+    const plan = getTaperPlanById(planId);
+    if (!plan) return false;
+    if (isTaperFormModeActive() && taperFormDirty && !confirmDiscardTaperFormChanges()) return false;
+
+    exitTaperFormToView(planId);
+    if (typeof showTaperWorkspace === 'function') showTaperWorkspace();
+
+    populateTaperPlanDropdown();
+
+    refreshTaperDashboard();
+    if (options.closeManageModal !== false) closeManageTaperPlansModal();
+    return true;
+}
+
 function ensureTaperPlansV2(data) {
     if (!Array.isArray(data.taperPlansV2)) data.taperPlansV2 = [];
+}
+
+/** Mint a taper id that cannot collide with an existing record. */
+function generateUnusedTaperPlanId(data = appData) {
+    const taken = new Set((data?.taperPlansV2 || []).map(p => String(p?.id)));
+    let id = generateUniqueId('taper');
+    while (taken.has(String(id))) id = generateUniqueId('taper');
+    return id;
 }
 
 function isTaperPlanPaused(plan) {
@@ -12634,8 +12994,9 @@ function getPrimaryTaperPlan(substanceId, data = appData) {
 
 function getSelectedTaperPlan(data = appData) {
     ensureTaperPlansV2(data);
-    if (selectedTaperPlanId) {
-        const plan = getTaperPlanById(selectedTaperPlanId, data);
+    const selectedId = getSelectedTaperId();
+    if (selectedId) {
+        const plan = getTaperPlanById(selectedId, data);
         if (plan) return plan;
     }
     const substanceId = getTaperSubstanceId();
@@ -12660,13 +13021,79 @@ function ensureSinglePrimaryPerSubstance(data) {
     });
 }
 
+function getTaperPlanUpdatedAt(plan) {
+    return String(plan?.updatedAt || plan?.createdAt || '');
+}
+
+function getTaperPlanImportFingerprint(plan) {
+    if (!plan) return '';
+    return [
+        plan.substanceId || '',
+        plan.startDate || '',
+        plan.endDate || '',
+        plan.reductionType || '',
+        plan.name || '',
+        plan.goalDailyAverage ?? '',
+        plan.reductionAmount ?? '',
+        plan.reductionPercent ?? '',
+        plan.startingDailyAverage ?? ''
+    ].join('|');
+}
+
+/** Promote legacy taperPlans entries into taperPlansV2 without duplicating or clobbering newer V2 rows. */
+function promoteLegacyTaperPlansToV2(data) {
+    ensureTaperPlansV2(data);
+    const legacy = data.taperPlans;
+    if (!legacy || typeof legacy !== 'object') return;
+
+    const v2ById = new Map((data.taperPlansV2 || []).map(p => [String(p.id), p]));
+    const v2Fingerprints = new Set((data.taperPlansV2 || []).map(getTaperPlanImportFingerprint));
+
+    Object.entries(legacy).forEach(([substanceId, plan]) => {
+        if (!plan || typeof plan !== 'object') return;
+        try {
+            migrateTaperPlan(plan, substanceId, data);
+        } catch (err) {
+            console.warn('[import] legacy taper migration failed for', substanceId, err);
+            return;
+        }
+
+        const legacyId = plan.id != null && plan.id !== '' ? String(plan.id) : null;
+        if (legacyId && v2ById.has(legacyId)) return;
+
+        const fingerprint = getTaperPlanImportFingerprint({ ...plan, substanceId });
+        if (v2Fingerprints.has(fingerprint)) return;
+
+        const v2ForSubstance = (data.taperPlansV2 || []).filter(p => p.substanceId === substanceId);
+        if (v2ForSubstance.length) {
+            const legacyUpdated = getTaperPlanUpdatedAt(plan);
+            const primary = getPrimaryTaperPlan(substanceId, data);
+            if (primary) {
+                if (getTaperPlanImportFingerprint(primary) === fingerprint) return;
+                if (getTaperPlanUpdatedAt(primary) > legacyUpdated) return;
+            }
+        }
+
+        const v2Plan = legacyPlanToV2(plan, substanceId, data);
+        if (!v2Plan.id || v2ById.has(String(v2Plan.id))) {
+            const taken = new Set(v2ById.keys());
+            v2Plan.id = assignStableImportId({ ...v2Plan, substanceId }, 'taper', taken);
+        }
+        data.taperPlansV2.push(v2Plan);
+        v2ById.set(String(v2Plan.id), v2Plan);
+        v2Fingerprints.add(getTaperPlanImportFingerprint(v2Plan));
+    });
+}
+
 function legacyPlanToV2(legacyPlan, substanceId, data) {
     const sub = (data.substances || []).find(s => s.id === substanceId);
     const now = new Date().toISOString();
     const copy = JSON.parse(JSON.stringify(legacyPlan));
+    const taken = new Set((data.taperPlansV2 || []).map(p => String(p.id)));
+    const draft = { ...copy, substanceId };
     return {
         ...copy,
-        id: copy.id ? String(copy.id) : `taper-${substanceId}-${Date.now()}`,
+        id: copy.id ? String(copy.id) : assignStableImportId(draft, 'taper', taken),
         substanceId,
         name: copy.name || `${sub?.name || substanceId} taper plan`,
         status: copy.isPaused ? 'paused' : (copy.status || 'active'),
@@ -12676,14 +13103,22 @@ function legacyPlanToV2(legacyPlan, substanceId, data) {
     };
 }
 
+/** Rebuild legacy taperPlans mirror from V2 — removes ghost substance keys. */
 function syncLegacyTaperPlansFromV2(data) {
-    if (!data.taperPlans) data.taperPlans = {};
-    const substanceIds = new Set((data.taperPlansV2 || []).map(p => p.substanceId));
-    substanceIds.forEach(substanceId => {
+    if (!data.taperPlans || typeof data.taperPlans !== 'object') data.taperPlans = {};
+    const v2SubstanceIds = new Set((data.taperPlansV2 || []).map(p => p.substanceId).filter(Boolean));
+    Object.keys(data.taperPlans).forEach(key => {
+        if (!v2SubstanceIds.has(key)) delete data.taperPlans[key];
+    });
+    v2SubstanceIds.forEach(substanceId => {
         const primary = getPrimaryTaperPlan(substanceId, data);
         if (primary) data.taperPlans[substanceId] = primary;
         else delete data.taperPlans[substanceId];
     });
+}
+
+function prepareTaperDataForPersistence(data = appData) {
+    syncLegacyTaperPlansFromV2(data);
 }
 
 function migrateTaperPlansToV2IfNeeded(data) {
@@ -12692,15 +13127,7 @@ function migrateTaperPlansToV2IfNeeded(data) {
     const legacy = data.taperPlans || {};
     const hasLegacy = Object.keys(legacy).some(k => legacy[k]);
     if (!data.taperPlansV2.length && hasLegacy) {
-        Object.entries(legacy).forEach(([substanceId, plan]) => {
-            if (!plan || typeof plan !== 'object') return;
-            try {
-                migrateTaperPlan(plan, substanceId, data);
-                data.taperPlansV2.push(legacyPlanToV2(plan, substanceId, data));
-            } catch (err) {
-                console.warn('taperPlansV2 migration failed for', substanceId, err);
-            }
-        });
+        promoteLegacyTaperPlansToV2(data);
     }
     (data.taperPlansV2 || []).forEach(plan => {
         plan.type = 'taper';
@@ -12728,7 +13155,6 @@ function setTaperPlanPrimary(planId, substanceId = null) {
     });
     plan.isPrimary = true;
     plan.updatedAt = new Date().toISOString();
-    syncLegacyTaperPlansFromV2(appData);
 }
 
 function formatTaperPlanOptionLabel(plan) {
@@ -12743,8 +13169,167 @@ function formatTaperPlanOptionLabel(plan) {
 
 function formatTaperPlanDateRange(plan) {
     if (!plan?.startDate && !plan?.endDate) return '—';
-    if (plan.startDate && plan.endDate) return `${formatDate(plan.startDate)} – ${formatDate(plan.endDate)}`;
-    return formatDate(plan.startDate || plan.endDate);
+    return formatCompactTaperDateRange(plan.startDate, plan.endDate);
+}
+
+function computeTaperCalendarDayMetrics(startDate, endDate, today = getLocalDateString()) {
+    if (!startDate || !endDate) {
+        return {
+            valid: false,
+            error: 'missing-dates',
+            totalDays: null,
+            totalWeeks: null,
+            elapsedDays: null,
+            remainingDays: null,
+            timeElapsedPct: null,
+            sameDay: false
+        };
+    }
+    if (String(startDate) > String(endDate)) {
+        return {
+            valid: false,
+            error: 'end-before-start',
+            totalDays: null,
+            totalWeeks: null,
+            elapsedDays: null,
+            remainingDays: null,
+            timeElapsedPct: null,
+            sameDay: false
+        };
+    }
+    const totalDays = countDaysInRange(startDate, endDate);
+    const totalWeeks = Math.floor(totalDays / 7);
+    const sameDay = String(startDate) === String(endDate);
+    const todayStr = String(today || getLocalDateString());
+    let elapsedDays = 0;
+    if (todayStr >= startDate) {
+        elapsedDays = todayStr > endDate
+            ? totalDays
+            : countDaysInRange(startDate, todayStr);
+    }
+    const remainingDays = Math.max(0, totalDays - elapsedDays);
+    const timeElapsedPct = totalDays > 0 ? Math.min(100, Math.max(0, Math.round((elapsedDays / totalDays) * 100))) : 0;
+    return {
+        valid: true,
+        error: null,
+        totalDays,
+        totalWeeks,
+        elapsedDays,
+        remainingDays,
+        timeElapsedPct,
+        sameDay
+    };
+}
+
+function formatTaperDurationLabel(totalDays) {
+    if (totalDays == null || !Number.isFinite(totalDays)) return '—';
+    const n = Math.max(1, Math.round(totalDays));
+    if (n >= 7 && n % 7 === 0) {
+        const weeks = n / 7;
+        return weeks === 1 ? '1 week' : `${weeks} weeks`;
+    }
+    return n === 1 ? '1 day' : `${n} days`;
+}
+
+function formatCompactTaperDateRange(startDate, endDate) {
+    const start = parseLocalDate(startDate);
+    const end = parseLocalDate(endDate);
+    if (!start && !end) return 'Dates not set';
+    if (!start || !end) return formatLocalDate(startDate || endDate);
+    if (String(startDate) === String(endDate)) {
+        return start.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    }
+    const sameYear = start.getFullYear() === end.getFullYear();
+    const sameMonth = sameYear && start.getMonth() === end.getMonth();
+    const startFmt = start.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const endFmt = sameMonth
+        ? end.toLocaleDateString('en-US', { day: 'numeric', year: 'numeric' })
+        : end.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    return `${startFmt} – ${endFmt}`;
+}
+
+function formatTaperDateSummary(startDate, endDate, options = {}) {
+    const metrics = computeTaperCalendarDayMetrics(startDate, endDate, options.today);
+    if (!metrics.valid) {
+        if (metrics.error === 'missing-dates') return 'Dates not set';
+        if (metrics.error === 'end-before-start') return 'Invalid date range';
+        return '—';
+    }
+    return `${formatCompactTaperDateRange(startDate, endDate)} · ${formatTaperDurationLabel(metrics.totalDays)}`;
+}
+
+function formatTaperTimeProgressSummary(startDate, endDate, options = {}) {
+    const today = options.today || getLocalDateString();
+    const status = options.status || 'active';
+    const metrics = computeTaperCalendarDayMetrics(startDate, endDate, today);
+    if (!metrics.valid) return '';
+    const totalLabel = `${metrics.totalDays} day${metrics.totalDays === 1 ? '' : 's'} total`;
+    if (status === 'completed' || status === 'archived' || today > endDate) return totalLabel;
+    if (today < startDate) return `${totalLabel} · starts ${formatLocalDate(startDate)}`;
+    return `${totalLabel} · ${metrics.elapsedDays} day${metrics.elapsedDays === 1 ? '' : 's'} elapsed · ${metrics.remainingDays} day${metrics.remainingDays === 1 ? '' : 's'} remaining`;
+}
+
+function validateTaperPlanDates(startDate, endDate) {
+    if (!startDate) return { ok: false, message: 'Start date is required.' };
+    if (!endDate) return { ok: false, message: 'End date is required.' };
+    if (String(endDate) < String(startDate)) {
+        return { ok: false, message: 'End date cannot be before start date.' };
+    }
+    return { ok: true, metrics: computeTaperCalendarDayMetrics(startDate, endDate) };
+}
+
+function renderTaperFormDateSummary() {
+    const el = document.getElementById('taper-form-date-summary');
+    if (!el) return;
+    const startDate = document.getElementById('start-date')?.value;
+    const endDate = document.getElementById('end-date')?.value;
+    const validation = validateTaperPlanDates(startDate, endDate);
+    if (!validation.ok) {
+        el.textContent = validation.message || 'Enter start and end dates';
+        el.classList.add('is-invalid');
+        return;
+    }
+    el.classList.remove('is-invalid');
+    el.textContent = formatTaperDateSummary(startDate, endDate);
+}
+
+function detectSuspiciousDuplicateTapers(data = appData) {
+    ensureTaperPlansV2(data);
+    const groups = new Map();
+    (data.taperPlansV2 || []).forEach(plan => {
+        const key = [
+            plan.substanceId,
+            plan.startDate || '',
+            plan.endDate || '',
+            plan.reductionType || '',
+            plan.goalDailyAverage ?? '',
+            plan.reductionAmount ?? '',
+            plan.reductionPercent ?? ''
+        ].join('|');
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(plan);
+    });
+    const suspicious = [];
+    groups.forEach((plans, key) => {
+        if (plans.length < 2) return;
+        suspicious.push({
+            key,
+            count: plans.length,
+            plans: plans.map(p => ({ id: p.id, name: p.name, substanceId: p.substanceId }))
+        });
+    });
+    return suspicious;
+}
+
+function reportSuspiciousDuplicateTapers(data = appData) {
+    const dupes = detectSuspiciousDuplicateTapers(data);
+    if (!dupes.length) return dupes;
+    console.group('[taper-diagnostics] Suspicious duplicate taper records');
+    dupes.forEach(group => {
+        console.warn(`${group.count} similar tapers`, group.plans);
+    });
+    console.groupEnd();
+    return dupes;
 }
 
 const RECOVERY_TAPER_LABELS = {
@@ -12951,12 +13536,7 @@ const FINANCIAL_BUDGET_STATE_META = Object.freeze({
     ended: { label: 'Ended', tone: 'neutral' }
 });
 
-const FINANCIAL_ALERT_TYPES = Object.freeze([
-    'nearBudget', 'overBudget', 'largePurchase', 'spendingSpike', 'purchaseFrequency',
-    'costPerUnitIncrease', 'duplicatePurchase', 'missingCost', 'missingQuantity', 'invalidCostPerUnit'
-]);
-
-const FINANCIAL_ALERT_LABELS = Object.freeze({
+const FINANCIAL_ISSUE_LABELS = Object.freeze({
     nearBudget: 'Near budget',
     overBudget: 'Over budget',
     largePurchase: 'Unusually large purchase',
@@ -13174,8 +13754,6 @@ function getDefaultFinancialAnalyticsFilters() {
 function getDefaultFinancialAnalyticsPrefs() {
     return {
         thresholds: { nearLimit: 0.75, atLimit: 1 },
-        alertsEnabled: true,
-        alertTypes: FINANCIAL_ALERT_TYPES.reduce((acc, id) => { acc[id] = true; return acc; }, {}),
         showOnDashboard: true,
         showOnCalendar: true,
         chartGroupBy: 'spend',
@@ -13186,7 +13764,6 @@ function getDefaultFinancialAnalyticsPrefs() {
         // Financial analytics deliberately stays out of the Recovery Score: money spent is
         // not a recovery-quality signal, so this stays off and is never read by the score.
         scoreContributionEnabled: false,
-        largePurchaseMultiplier: 2,
         baselineLookbackDays: 90,
         filters: getDefaultFinancialAnalyticsFilters()
     };
@@ -13201,14 +13778,13 @@ function ensureFinancialAnalyticsPrefs(data = appData) {
         data.settings.financialAnalytics = {
             ...defaults,
             thresholds: { ...defaults.thresholds },
-            alertTypes: { ...defaults.alertTypes },
             filters: { ...defaults.filters }
         };
     }
     const prefs = data.settings.financialAnalytics;
     Object.keys(defaults).forEach(key => {
         if (prefs[key] === undefined) {
-            prefs[key] = (key === 'thresholds' || key === 'alertTypes' || key === 'filters')
+            prefs[key] = (key === 'thresholds' || key === 'filters')
                 ? { ...defaults[key] }
                 : defaults[key];
         }
@@ -13220,11 +13796,6 @@ function ensureFinancialAnalyticsPrefs(data = appData) {
     prefs.thresholds.nearLimit = Number.isFinite(near) && near > 0 && near <= 1 ? near : defaults.thresholds.nearLimit;
     prefs.thresholds.atLimit = Number.isFinite(at) && at > 0 ? at : defaults.thresholds.atLimit;
     if (prefs.thresholds.nearLimit > prefs.thresholds.atLimit) prefs.thresholds.nearLimit = defaults.thresholds.nearLimit;
-
-    if (!prefs.alertTypes || typeof prefs.alertTypes !== 'object') prefs.alertTypes = { ...defaults.alertTypes };
-    FINANCIAL_ALERT_TYPES.forEach(id => {
-        if (prefs.alertTypes[id] === undefined) prefs.alertTypes[id] = true;
-    });
 
     if (!prefs.filters || typeof prefs.filters !== 'object' || Array.isArray(prefs.filters)) {
         prefs.filters = { ...defaults.filters };
@@ -13238,7 +13809,6 @@ function ensureFinancialAnalyticsPrefs(data = appData) {
     if (!FINANCIAL_CHART_GROUP_BYS.some(g => g.id === prefs.chartGroupBy)) prefs.chartGroupBy = defaults.chartGroupBy;
     if (!FINANCIAL_CHART_GRAINS.includes(prefs.chartGrain)) prefs.chartGrain = defaults.chartGrain;
     if (!FINANCIAL_COMPARE_PRESETS.some(c => c.id === prefs.comparePreset)) prefs.comparePreset = defaults.comparePreset;
-    prefs.largePurchaseMultiplier = Math.max(1.1, finToNumber(prefs.largePurchaseMultiplier, defaults.largePurchaseMultiplier));
     prefs.baselineLookbackDays = Math.max(7, Math.round(finToNumber(prefs.baselineLookbackDays, defaults.baselineLookbackDays)));
     prefs.scoreContributionEnabled = false;
     return prefs;
@@ -13250,10 +13820,9 @@ function getFinancialAnalyticsPrefs(data = appData) {
 
 function persistFinancialAnalyticsPrefs(patch = {}, data = appData) {
     const prefs = ensureFinancialAnalyticsPrefs(data);
-    const { thresholds, alertTypes, filters, ...rest } = patch || {};
+    const { thresholds, filters, ...rest } = patch || {};
     Object.assign(prefs, rest);
     if (thresholds) prefs.thresholds = { ...prefs.thresholds, ...thresholds };
-    if (alertTypes) prefs.alertTypes = { ...prefs.alertTypes, ...alertTypes };
     if (filters) prefs.filters = { ...prefs.filters, ...filters };
     ensureFinancialAnalyticsPrefs(data);
     invalidateFinancialAnalyticsCache();
@@ -14666,121 +15235,7 @@ function buildPaymentMethodAnalytics(purchases = []) {
     };
 }
 
-// ——— Financial Analytics: alerts & data quality ———
-
-function financialAlert(type, severity, message, extra = {}) {
-    return {
-        type,
-        typeLabel: FINANCIAL_ALERT_LABELS[type] || type,
-        severity,
-        message,
-        ...extra
-    };
-}
-
-function buildFinancialAlerts(purchases = [], budgets = [], prefs = null, data = appData) {
-    const settings = prefs || getFinancialAnalyticsPrefs(data);
-    if (!settings.alertsEnabled) return [];
-    const enabled = type => settings.alertTypes?.[type] !== false;
-    const alerts = [];
-    const list = (purchases || []).slice().sort((a, b) => (getPurchaseDateStr(a) < getPurchaseDateStr(b) ? -1 : 1));
-
-    (budgets || []).forEach(ev => {
-        if (ev.status === 'over_budget' && enabled('overBudget')) {
-            alerts.push(financialAlert('overBudget', 'high',
-                `${ev.budget.name} is over budget: ${finMoney(ev.spent)} spent against ${finMoney(ev.amount)}.`,
-                { budgetId: ev.budget.id }));
-        } else if ((ev.status === 'near_limit' || ev.status === 'at_limit') && enabled('nearBudget')) {
-            alerts.push(financialAlert('nearBudget', 'medium',
-                `${ev.budget.name} is at ${finPctLabel(ev.pct)} of ${finMoney(ev.amount)} with ${ev.daysRemaining} day${ev.daysRemaining === 1 ? '' : 's'} left.`,
-                { budgetId: ev.budget.id }));
-        }
-    });
-
-    const costs = list.map(p => getPurchaseSpendAmount(p)).filter(c => c > 0);
-    if (costs.length >= 3 && enabled('largePurchase')) {
-        const median = finMedian(costs);
-        const threshold = Math.max(median * finToNumber(settings.largePurchaseMultiplier, 2), median + 2 * finStdDev(costs));
-        list.filter(p => getPurchaseSpendAmount(p) > threshold && threshold > 0).forEach(p => {
-            alerts.push(financialAlert('largePurchase', 'medium',
-                `${finMoney(getPurchaseSpendAmount(p))} on ${finDateLabel(getPurchaseDateStr(p))} is well above your typical ${finMoney(median)} purchase.`,
-                { purchaseId: p.id, date: getPurchaseDateStr(p) }));
-        });
-    }
-
-    const today = finToday();
-    const recentStart = finAddDays(today, -6);
-    const priorStart = finAddDays(today, -27);
-    const priorEnd = finAddDays(today, -7);
-    const recent = list.filter(p => getPurchaseDateStr(p) >= recentStart && getPurchaseDateStr(p) <= today);
-    const prior = list.filter(p => getPurchaseDateStr(p) >= priorStart && getPurchaseDateStr(p) <= priorEnd);
-    const recentSpend = sumFinancialSpend(recent);
-    const priorWeeklyAvg = prior.length ? sumFinancialSpend(prior) / 3 : 0;
-
-    if (enabled('spendingSpike') && prior.length >= 2 && priorWeeklyAvg > 0 && recentSpend > priorWeeklyAvg * 1.5) {
-        alerts.push(financialAlert('spendingSpike', 'medium',
-            `Last 7 days: ${finMoney(recentSpend)} versus a ${finMoney(priorWeeklyAvg)} weekly average over the prior three weeks.`));
-    }
-    if (enabled('purchaseFrequency') && prior.length >= 3) {
-        const priorWeeklyCount = prior.length / 3;
-        if (recent.length > priorWeeklyCount * 1.5 && recent.length >= 2) {
-            alerts.push(financialAlert('purchaseFrequency', 'low',
-                `${recent.length} purchases in the last 7 days versus about ${formatAmount(priorWeeklyCount, 1)} per week before that.`));
-        }
-    }
-
-    if (enabled('costPerUnitIncrease')) {
-        const bySubstanceUnit = new Map();
-        list.forEach(p => {
-            const cpu = financialPurchaseCostPerUnit(p);
-            if (cpu == null || !(cpu > 0)) return;
-            const key = `${getPurchaseSubstanceId(p)}|${finKey(financialPurchaseUnit(p, data))}`;
-            if (!bySubstanceUnit.has(key)) bySubstanceUnit.set(key, []);
-            bySubstanceUnit.get(key).push({ cpu, purchase: p });
-        });
-        bySubstanceUnit.forEach((entries, key) => {
-            if (entries.length < 4) return;
-            const recentEntries = entries.slice(-3);
-            const olderEntries = entries.slice(0, -3);
-            const recentAvg = finSum(recentEntries.map(e => e.cpu)) / recentEntries.length;
-            const olderAvg = finSum(olderEntries.map(e => e.cpu)) / olderEntries.length;
-            if (olderAvg > 0 && recentAvg > olderAvg * 1.2) {
-                const substanceId = key.split('|')[0];
-                alerts.push(financialAlert('costPerUnitIncrease', 'medium',
-                    `${financialSubstanceLabel(substanceId, data)} unit price is up ${finSignedPctLabel((recentAvg - olderAvg) / olderAvg)} (${finMoney(olderAvg, 4)} → ${finMoney(recentAvg, 4)}).`,
-                    { substanceId }));
-            }
-        });
-    }
-
-    if (enabled('duplicatePurchase')) {
-        const seen = new Map();
-        list.forEach(p => {
-            const key = [
-                getPurchaseDateStr(p),
-                getPurchaseSubstanceId(p),
-                finRound(getPurchaseSpendAmount(p), 2),
-                finRound(financialPurchaseQuantity(p), 3)
-            ].join('|');
-            if (seen.has(key)) {
-                alerts.push(financialAlert('duplicatePurchase', 'low',
-                    `Two identical ${finMoney(getPurchaseSpendAmount(p))} entries on ${finDateLabel(getPurchaseDateStr(p))} — check for a double entry.`,
-                    { purchaseId: p.id, duplicateOfId: seen.get(key) }));
-            } else {
-                seen.set(key, p.id);
-            }
-        });
-    }
-
-    const qualityIssues = scanFinancialDataQuality(data, { purchases: list });
-    qualityIssues.issues.forEach(issue => {
-        if (!enabled(issue.code)) return;
-        alerts.push(financialAlert(issue.code, issue.severity, issue.message, { purchaseId: issue.purchaseId, date: issue.date }));
-    });
-
-    const severityRank = { high: 0, medium: 1, low: 2 };
-    return alerts.sort((a, b) => (severityRank[a.severity] ?? 3) - (severityRank[b.severity] ?? 3));
-}
+// ——— Financial Analytics: data quality ———
 
 function scanFinancialDataQuality(data = appData, { purchases = null, mutate = false } = {}) {
     const list = purchases || (data?.purchases || []).filter(p => financialCountsTowardSpend(p));
@@ -14887,8 +15342,6 @@ function financialDatasetCacheKey(data, filters, prefs) {
             chartGroupBy: prefs.chartGroupBy,
             chartGrain: prefs.chartGrain,
             thresholds: prefs.thresholds,
-            alertsEnabled: prefs.alertsEnabled,
-            alertTypes: prefs.alertTypes,
             baselineLookbackDays: prefs.baselineLookbackDays
         }
     });
@@ -14933,7 +15386,6 @@ function buildFinancialDataset(data = appData, options = {}) {
         storeSupplier: buildStoreSupplierAnalytics(purchases, data),
         payments: buildPaymentMethodAnalytics(purchases),
         dataQuality: scanFinancialDataQuality(data, { purchases }),
-        alerts: buildFinancialAlerts(purchases, budgetEvaluations, prefs, data),
         isEmpty: purchases.length === 0
     };
 
@@ -15757,35 +16209,12 @@ function renderFinancialPaymentPanel(dataset) {
         </section>`;
 }
 
-function renderFinancialAlertsPanel(dataset) {
-    const alerts = dataset.alerts;
-    const items = alerts.map(a => `
-        <li class="fin-alert ${finToneClass(a.severity === 'high' ? 'bad' : a.severity === 'medium' ? 'warn' : 'neutral')}">
-            <span class="fin-alert-type">${escapeHtml(a.typeLabel)}</span>
-            <span class="fin-alert-message">${escapeHtml(a.message)}</span>
-        </li>`).join('');
-
-    return `
-        <section class="fin-panel">
-            <header class="fin-panel-head">
-                <h3>Alerts</h3>
-                <label class="fin-inline-field fin-inline-check">
-                    <input type="checkbox" id="fin-alerts-enabled" ${dataset.prefs.alertsEnabled ? 'checked' : ''} onchange="toggleFinancialAlerts(this.checked)">
-                    <span>Enabled</span>
-                </label>
-            </header>
-            ${dataset.prefs.alertsEnabled
-                ? (alerts.length ? `<ul class="fin-alert-list">${items}</ul>` : '<p class="fin-empty-inline">Nothing needs attention right now.</p>')
-                : '<p class="fin-empty-inline">Alerts are turned off.</p>'}
-        </section>`;
-}
-
 function renderFinancialDataQualityPanel(dataset) {
     const q = dataset.dataQuality;
     const rows = q.issues.slice(0, 25).map(i => `
         <tr>
             <td>${escapeHtml(i.date ? finDateLabel(i.date) : '—')}</td>
-            <td>${escapeHtml(FINANCIAL_ALERT_LABELS[i.code] || i.code)}</td>
+            <td>${escapeHtml(FINANCIAL_ISSUE_LABELS[i.code] || i.code)}</td>
             <td>${escapeHtml(i.message)}</td>
         </tr>`).join('');
 
@@ -15906,7 +16335,6 @@ function renderFinancialAnalyticsView() {
                 ${renderFinancialStorePanel(dataset)}
                 ${renderFinancialPaymentPanel(dataset)}
             `}
-            ${renderFinancialAlertsPanel(dataset)}
             ${renderFinancialDataQualityPanel(dataset)}
             ${renderFinancialExportPanel()}
         </div>`;
@@ -15978,11 +16406,6 @@ function setFinancialComparePreset(preset) {
 function setFinancialBreakdown(dimension) {
     if (!FINANCIAL_BREAKDOWN_DIMENSIONS.some(d => d.id === dimension)) return;
     financialAnalyticsUiState.activeBreakdown = dimension;
-    renderFinancialAnalyticsView();
-}
-
-function toggleFinancialAlerts(enabled) {
-    persistFinancialAnalyticsPrefs({ alertsEnabled: !!enabled }, appData);
     renderFinancialAnalyticsView();
 }
 
@@ -16107,7 +16530,6 @@ if (typeof window !== 'undefined') {
         setFinancialChartGrain,
         setFinancialComparePreset,
         setFinancialBreakdown,
-        toggleFinancialAlerts,
         markFinancialIssuesForReview,
         openBudgetForm,
         closeBudgetForm,
@@ -16133,9 +16555,9 @@ if (typeof window !== 'undefined') {
 // ——— Combined navigation: Tapers + Insights & Calendar ———
 
 const COMBINED_NAV_ROUTE_REDIRECTS = {
-    '/goals': { tab: 'goals-plans-tab', view: 'active' },
-    '/plan': { tab: 'goals-plans-tab', view: 'active' },
-    '/plans': { tab: 'goals-plans-tab', view: 'active' },
+    '/goals': { tab: 'goals-plans-tab', view: 'overview' },
+    '/plan': { tab: 'goals-plans-tab', view: 'overview' },
+    '/plans': { tab: 'goals-plans-tab', view: 'overview' },
     '/insights': { tab: 'insights-calendar-tab', view: 'overview' },
     '/calendar': { tab: 'insights-calendar-tab', view: 'calendar' },
     '/goals-plans': { tab: 'goals-plans-tab', view: null },
@@ -16150,8 +16572,6 @@ const COMBINED_NAV_ROUTE_REDIRECTS = {
 
 const GOALS_PLANS_VIEWS = [
     'overview',
-    'active',
-    'history',
     'templates'
 ];
 
@@ -16164,12 +16584,12 @@ const INSIGHTS_CALENDAR_VIEWS = [
 ];
 
 const LEGACY_TAB_TO_COMBINED = {
-    'goals-tab': { tab: 'goals-plans-tab', view: 'active' },
-    goals: { tab: 'goals-plans-tab', view: 'active' },
-    'taper-tab': { tab: 'goals-plans-tab', view: 'active' },
-    taper: { tab: 'goals-plans-tab', view: 'active' },
-    plan: { tab: 'goals-plans-tab', view: 'active' },
-    'plan-tab': { tab: 'goals-plans-tab', view: 'active' },
+    'goals-tab': { tab: 'goals-plans-tab', view: 'overview' },
+    goals: { tab: 'goals-plans-tab', view: 'overview' },
+    'taper-tab': { tab: 'goals-plans-tab', view: 'overview' },
+    taper: { tab: 'goals-plans-tab', view: 'overview' },
+    plan: { tab: 'goals-plans-tab', view: 'overview' },
+    'plan-tab': { tab: 'goals-plans-tab', view: 'overview' },
     'stats-tab': { tab: 'insights-calendar-tab', view: 'overview' },
     stats: { tab: 'insights-calendar-tab', view: 'overview' },
     insights: { tab: 'insights-calendar-tab', view: 'overview' },
@@ -16204,6 +16624,7 @@ function ensureCombinedNavPrefs(data = appData) {
         data.settings.combinedNav = { ...defaults, goalsPlansCollapsed: { ...defaults.goalsPlansCollapsed } };
     }
     const prefs = data.settings.combinedNav;
+    if (prefs.goalsPlansView === 'active' || prefs.goalsPlansView === 'history') prefs.goalsPlansView = 'overview';
     if (!GOALS_PLANS_VIEWS.includes(prefs.goalsPlansView)) prefs.goalsPlansView = defaults.goalsPlansView;
     // Migrate legacy Insights subviews into Overview / Calendar / Use / Money / More
     if (typeof normalizeCombinedView === 'function') {
@@ -16254,15 +16675,17 @@ function persistActiveTab(tabId, data = appData) {
 function normalizeCombinedView(view, allowed, fallback) {
     const raw = String(view || '').trim().toLowerCase();
     const aliases = {
-        goals: 'active',
-        plan: 'active',
-        plans: 'active',
-        taper: 'active',
-        tapers: 'active',
-        'active-goals': 'active',
-        'active-plans': 'active',
-        'goal-history': 'history',
-        'plan-history': 'history',
+        active: 'overview',
+        goals: 'overview',
+        plan: 'overview',
+        plans: 'overview',
+        taper: 'overview',
+        tapers: 'overview',
+        'active-goals': 'overview',
+        'active-plans': 'overview',
+        history: 'overview',
+        'goal-history': 'overview',
+        'plan-history': 'overview',
         compare: 'more',
         comparison: 'more',
         comparisons: 'more',
@@ -16462,7 +16885,7 @@ function openGoalCreateForm() { if (typeof openUnifiedNewTaper === 'function') o
 function openGoalDetail() {}
 function openGoalEditForm() {}
 function renderGoalsView() {
-    if (typeof renderGoalsPlansRecordsView === 'function') renderGoalsPlansRecordsView('active');
+    if (typeof setGoalsPlansView === 'function') setGoalsPlansView('overview');
 }
 function goalIsAllSubstances(id) {
     return !id || id === 'all' || id === DASHBOARD_ALL;
@@ -16526,6 +16949,7 @@ function ensureTaperSetupVisible() {
     showTaperWorkspace();
     const setup = document.getElementById('taper-setup');
     setup?.classList.remove('hidden');
+    if (typeof applyTaperMetricVisibilityToForm === 'function') applyTaperMetricVisibilityToForm();
     document.getElementById('taper-dashboard')?.classList.add('hidden');
     document.getElementById('taper-no-plan')?.classList.add('hidden');
     document.getElementById('taper-disabled-msg')?.classList.add('hidden');
@@ -16548,9 +16972,11 @@ function unlinkGoalFromPlan() { return null; }
 let goalsPlansUiState = {
     activeSubstanceId: 'all',
     activeStatus: 'all',
+    listStatus: 'all',
     historyFilter: 'all',
     historySubstanceId: 'all',
-    historyStatus: 'all'
+    historyStatus: 'all',
+    showArchivedInList: false
 };
 
 /** Match a taper plan to the Tapers page substance selector (incl. nicotine aliases). */
@@ -16617,6 +17043,7 @@ function syncGoalsPlansSubstanceFilters(substanceId) {
 function getTapersEmptyMessage(view, substanceId, data = appData) {
     const name = goalSubstanceLabel(substanceId, data) || 'selected';
     if (view === 'history') return `No completed or archived ${name} tapers.`;
+    if (view === 'overview-list') return `No ${name} tapers match the current filters.`;
     return `No active ${name} tapers.`;
 }
 
@@ -16640,15 +17067,20 @@ function getCompatibleTaperTemplates(substanceId, data = appData) {
     return TAPER_TEMPLATES.filter(t => allowed.has(t.reductionType));
 }
 
+function refreshGoalsPlansOverview(data = appData) {
+    if (typeof document === 'undefined') return;
+    const root = document.getElementById('gp-overview-root');
+    if (root) root.innerHTML = renderGoalsPlansOverviewHtml(buildGoalsPlansOverview(data), data);
+}
+
 function refreshTapersCombinedViews() {
     if (typeof document === 'undefined') return;
     const prefs = typeof ensureCombinedNavPrefs === 'function' ? ensureCombinedNavPrefs() : {};
     const view = prefs.goalsPlansView || 'overview';
     if (view === 'overview') {
-        const root = document.getElementById('gp-overview-root');
-        if (root) root.innerHTML = renderGoalsPlansOverviewHtml(buildGoalsPlansOverview());
-    } else if (typeof renderGoalsPlansRecordsView === 'function') {
-        renderGoalsPlansRecordsView(view);
+        refreshGoalsPlansOverview();
+    } else if (view === 'templates' && typeof renderGoalsPlansRecordsView === 'function') {
+        renderGoalsPlansRecordsView('templates');
     }
 }
 
@@ -16728,8 +17160,78 @@ function unifiedGoalPlanIsHistory(record) {
     return ['completed', 'archived', 'missed', 'cancelled', 'met'].includes(record.status);
 }
 
+function sortUnifiedTaperRecords(records) {
+    const rank = {
+        active: 0,
+        paused: 1,
+        draft: 2,
+        upcoming: 3,
+        completed: 4,
+        archived: 5,
+        missed: 6,
+        cancelled: 7,
+        met: 8
+    };
+    return (records || []).slice().sort((a, b) => {
+        const ra = rank[a.status] ?? 9;
+        const rb = rank[b.status] ?? 9;
+        if (ra !== rb) return ra - rb;
+        const ta = a.source?.updatedAt || a.endDate || a.startDate || '';
+        const tb = b.source?.updatedAt || b.endDate || b.startDate || '';
+        const cmp = String(tb).localeCompare(String(ta));
+        if (cmp !== 0) return cmp;
+        return String(b.id || '').localeCompare(String(a.id || ''));
+    });
+}
+
+/** Unified Overview taper list — active, paused, completed, archived per filters. */
+function filterUnifiedOverviewTaperRecords(records, data = appData) {
+    const historyFilter = goalsPlansUiState.historyFilter || 'all';
+    const statusFilter = goalsPlansUiState.listStatus
+        ?? goalsPlansUiState.activeStatus
+        ?? goalsPlansUiState.historyStatus
+        ?? 'all';
+    const showArchived = !!goalsPlansUiState.showArchivedInList;
+
+    return (records || []).filter(record => {
+        if (record.type !== 'taper') return false;
+        const st = record.status;
+
+        if (!showArchived && st === 'archived') return false;
+
+        if (historyFilter === 'completed-tapers' && st !== 'completed') return false;
+        if (historyFilter === 'archived' && st !== 'archived') return false;
+        if (historyFilter === 'missed' && st !== 'missed') return false;
+
+        if (statusFilter !== 'all' && st !== statusFilter) return false;
+
+        return true;
+    });
+}
+
+function buildUnifiedOverviewTaperRecords(data = appData, substanceId = null) {
+    const sid = substanceId ?? getTapersPageSubstanceId(data);
+    const allRecords = getFilteredTapers({
+        substance: sid,
+        includeArchived: true,
+        data
+    })
+        .map(plan => normalizeUnifiedGoalPlanRecord(plan, { kind: 'taper', data }))
+        .filter(Boolean);
+    return sortUnifiedTaperRecords(filterUnifiedOverviewTaperRecords(allRecords, data));
+}
+
 function filterUnifiedGoalsPlansRecords(records, view, data = appData) {
     const pageSubstanceId = getTapersPageSubstanceId(data);
+    if (view === 'overview') {
+        return filterUnifiedOverviewTaperRecords(
+            (records || []).filter(record =>
+                record.type === 'taper'
+                && taperPlanMatchesSubstance({ substanceId: record.substanceId }, pageSubstanceId, data)
+            ),
+            data
+        );
+    }
     if (view === 'history') {
         const filter = goalsPlansUiState.historyFilter || 'all';
         const status = goalsPlansUiState.historyStatus || 'all';
@@ -16764,10 +17266,20 @@ function getTaperPlanProgressLabelSafe(status) {
 }
 
 function renderUnifiedGoalPlanCard(record, data = appData) {
+    const showStatus = isTaperMetricVisible('status', data);
+    const showEndDate = isTaperMetricVisible('endDate', data);
+    const showCurrentStep = isTaperMetricVisible('currentStep', data);
     const title = escapeHtml(record.name || 'Taper');
     const status = escapeHtml(getTaperPlanProgressLabelSafe(record.status));
-    const dateRange = [record.startDate, record.endDate].filter(Boolean).join(' - ') || 'No dates set';
-    const primaryMetric = `Current step: ${escapeHtml(String(record.currentStep))} · ${escapeHtml(String(record.stepStatus))}`;
+    const dateRange = formatTaperDateSummary(record.startDate, record.endDate);
+    const timeProgress = formatTaperTimeProgressSummary(record.startDate, record.endDate, {
+        status: record.status
+    });
+    const stepParts = [
+        showCurrentStep ? `Current step: ${escapeHtml(String(record.currentStep))}` : '',
+        showStatus ? escapeHtml(String(record.stepStatus)) : ''
+    ].filter(Boolean);
+    const primaryMetric = stepParts.join(' · ');
     const progress = record.progressPct != null
         ? `<span>Progress: <strong>${escapeHtml(String(Math.round(Number(record.progressPct))))}%</strong></span>`
         : '';
@@ -16778,6 +17290,7 @@ function renderUnifiedGoalPlanCard(record, data = appData) {
     const pauseAction = `pauseUnifiedTaperRecord('${escapeHtml(record.id)}')`;
     const completeAction = `completeUnifiedTaperRecord('${escapeHtml(record.id)}')`;
     const archiveAction = `archiveUnifiedTaperRecord('${escapeHtml(record.id)}')`;
+    const deleteAction = `deleteUnifiedTaperRecord('${escapeHtml(record.id)}')`;
     return `
         <article class="goal-card unified-goal-plan-card" data-record-type="taper" data-record-id="${escapeAttr(record.id)}">
             <header class="goal-card-head">
@@ -16785,13 +17298,14 @@ function renderUnifiedGoalPlanCard(record, data = appData) {
                     <div class="goal-chip-row"><span class="goal-chip">Taper</span></div>
                     <h3 class="goal-card-title">${title}</h3>
                     <p class="goal-card-period">${escapeHtml(record.substanceLabel)} · ${escapeHtml(dateRange)}</p>
+                    ${timeProgress ? `<p class="goal-card-period goal-card-time-progress">${escapeHtml(timeProgress)}</p>` : ''}
                 </div>
-                <span class="goal-status-pill goal-tone-neutral">${status}</span>
+                ${showStatus ? `<span class="goal-status-pill goal-tone-neutral">${status}</span>` : ''}
             </header>
             ${record.description ? `<p class="goal-card-desc">${escapeHtml(record.description)}</p>` : ''}
             <div class="goal-card-foot">
                 <span>${secondary}</span>
-                <span>${primaryMetric}</span>
+                ${primaryMetric ? `<span>${primaryMetric}</span>` : ''}
                 ${progress}
                 <span>Priority: <strong>${escapeHtml(record.priority || 'normal')}</strong></span>
             </div>
@@ -16802,11 +17316,37 @@ function renderUnifiedGoalPlanCard(record, data = appData) {
                 ${record.status === 'paused' ? '' : `<button type="button" class="btn-small" onclick="${pauseAction}">Pause</button>`}
                 ${record.status === 'completed' ? '' : `<button type="button" class="btn-small" onclick="${completeAction}">Complete</button>`}
                 ${record.status === 'archived' ? '' : `<button type="button" class="btn-small" onclick="${archiveAction}">Archive</button>`}
+                <button type="button" class="btn-small btn-danger" onclick="${deleteAction}">Delete</button>
             </div>
         </article>`;
 }
 
+function renderUnifiedOverviewTaperFilters(data = appData) {
+    const historyFilter = goalsPlansUiState.historyFilter || 'all';
+    const statusValue = goalsPlansUiState.listStatus
+        ?? goalsPlansUiState.activeStatus
+        ?? goalsPlansUiState.historyStatus
+        ?? 'all';
+    const showArchived = !!goalsPlansUiState.showArchivedInList;
+    const statusOptions = ['all', 'active', 'paused', 'draft', 'completed', 'archived']
+        .map(s => `<option value="${s}"${statusValue === s ? ' selected' : ''}>${escapeHtml(s === 'all' ? 'All statuses' : s.replace(/_/g, ' '))}</option>`)
+        .join('');
+
+    return `
+        <section class="goal-filters taper-overview-filters">
+            <label class="goal-filter"><span>History</span><select onchange="setGoalsPlansHistoryFilter(this.value)">
+                ${['all', 'completed-tapers', 'archived'].map(v => `<option value="${v}"${historyFilter === v ? ' selected' : ''}>${escapeHtml(v === 'all' ? 'All' : v.replace(/-/g, ' '))}</option>`).join('')}
+            </select></label>
+            <label class="goal-filter"><span>Status</span><select onchange="setGoalsPlansFilter('listStatus', this.value)">${statusOptions}</select></label>
+            <label class="goal-filter checkbox-label taper-show-archived-list">
+                <input type="checkbox"${showArchived ? ' checked' : ''} onchange="setGoalsPlansShowArchivedInList(this.checked)">
+                Show archived
+            </label>
+        </section>`;
+}
+
 function renderUnifiedGoalsPlansFilters(view, data = appData) {
+    if (view === 'overview') return renderUnifiedOverviewTaperFilters(data);
     const statusStateKey = view === 'history' ? 'historyStatus' : 'activeStatus';
     const statusValue = goalsPlansUiState[statusStateKey] || 'all';
     const statusOptions = ['all', 'active', 'paused', 'draft', 'completed', 'archived']
@@ -16872,74 +17412,42 @@ function applyTaperTemplate(templateId) {
     const compatible = getCompatibleTaperTemplates(substanceId);
     const template = compatible.find(t => t.id === templateId)
         || TAPER_TEMPLATES.find(t => t.id === templateId);
-    openUnifiedNewTaper();
-    if (!template) return;
-    if (!compatible.some(t => t.id === template.id)) return;
-    const nameEl = typeof document !== 'undefined' ? document.getElementById('taper-plan-name') : null;
-    if (nameEl) nameEl.value = template.name;
-    const typeEl = typeof document !== 'undefined' ? document.getElementById('reduction-type') : null;
-    if (typeEl && template.reductionType) {
-        if (typeof populateTaperReductionTypeSelect === 'function') {
-            populateTaperReductionTypeSelect(substanceId, template.reductionType);
-        }
-        typeEl.value = template.reductionType;
-        if (typeof toggleTaperPlanTypeFields === 'function') {
-            toggleTaperPlanTypeFields({ selectedType: template.reductionType, skipPrefill: false });
-        }
-    }
+    if (!template || !compatible.some(t => t.id === template.id)) return;
+    if (openUnifiedNewTaper() === false) return;
+    setTaperStartFrom(TAPER_START_FROM.BUILTIN, { templateId: template.id });
+    applyTaperBuiltinTemplateToCreateForm(template.id, substanceId);
 }
 
 function renderGoalsPlansRecordsView(view = null) {
     const root = tapersRootEl();
     if (!root) return;
-    const activeView = view || ensureCombinedNavPrefs().goalsPlansView || 'active';
+    const activeView = view || ensureCombinedNavPrefs().goalsPlansView || 'templates';
     if (activeView === 'templates') {
         renderTaperTemplatesView();
         return;
     }
-    const data = appData;
-    if (typeof ensureTaperPlansV2 === 'function') ensureTaperPlansV2(data);
-    const substanceId = getTapersPageSubstanceId(data);
-    syncGoalsPlansSubstanceFilters(substanceId);
-
-    const filteredPlans = getFilteredTapers({
-        substance: substanceId,
-        includeArchived: true,
-        data
-    });
-    const allRecords = filteredPlans
-        .map(plan => normalizeUnifiedGoalPlanRecord(plan, { kind: 'taper', data }))
-        .filter(Boolean);
-    const records = filterUnifiedGoalsPlansRecords(allRecords, activeView, data);
-    const activeTapers = allRecords.filter(r => unifiedGoalPlanIsActive(r)).length;
-    const emptyCopy = getTapersEmptyMessage(activeView, substanceId, data);
-    const substanceLabel = goalSubstanceLabel(substanceId, data);
-    root.innerHTML = `
-        <div class="goal-view unified-goals-plans-view">
-            <header class="goal-view-head">
-                <div>
-                    <h2 class="goal-view-title">${activeView === 'history' ? 'History' : 'Active'}</h2>
-                    <p class="goal-view-sub">${activeTapers} active ${escapeHtml(substanceLabel)} taper${activeTapers === 1 ? '' : 's'}</p>
-                </div>
-                <div class="goal-view-actions">
-                    <button type="button" class="btn-primary" onclick="openUnifiedNewTaper()">New Taper</button>
-                </div>
-            </header>
-            ${renderUnifiedGoalsPlansFilters(activeView, data)}
-            <section class="goal-list" id="taper-list">
-                ${records.length ? records.map(record => renderUnifiedGoalPlanCard(record, data)).join('') : `<div class="goal-empty"><p>${escapeHtml(emptyCopy)}</p></div>`}
-            </section>
-        </div>`;
+    if (activeView === 'overview' || activeView === 'active' || activeView === 'history') {
+        refreshGoalsPlansOverview();
+    }
 }
 
-function setGoalsPlansFilter(key, value, view = 'active') {
+function setGoalsPlansFilter(key, value, view = 'overview') {
     if (Object.prototype.hasOwnProperty.call(goalsPlansUiState, key)) goalsPlansUiState[key] = value;
+    if (view === 'overview' || view === 'active' || view === 'history') {
+        refreshGoalsPlansOverview();
+        return;
+    }
     renderGoalsPlansRecordsView(view);
 }
 
 function setGoalsPlansHistoryFilter(value) {
     goalsPlansUiState.historyFilter = value || 'all';
-    renderGoalsPlansRecordsView('history');
+    refreshGoalsPlansOverview();
+}
+
+function setGoalsPlansShowArchivedInList(checked) {
+    goalsPlansUiState.showArchivedInList = !!checked;
+    refreshGoalsPlansOverview();
 }
 
 function attachUnifiedTaperSurface(..._ids) {
@@ -16949,11 +17457,37 @@ function attachUnifiedTaperSurface(..._ids) {
 function openUnifiedNewTaper() {
     const prefs = ensureCombinedNavPrefs();
     const current = prefs.goalsPlansView || 'overview';
-    const stay = current === 'overview' || current === 'active' || current === 'templates' ? current : 'active';
+    const stay = (current === 'overview' || current === 'templates')
+        ? current
+        : 'overview';
     // Keep the editor mount alive while syncing the subnav — hideTaperWorkspace would blank the page.
     setGoalsPlansView(stay, { persist: true, skipRoute: false, keepTaperEditor: true });
     showTaperWorkspace();
     const opened = typeof showNewTaperPlan === 'function' ? showNewTaperPlan() : false;
+    if (opened === false) {
+        hideTaperWorkspace();
+        setGoalsPlansView(stay, { persist: true, skipRoute: true });
+        return false;
+    }
+    ensureTaperSetupVisible();
+    return true;
+}
+
+function openUnifiedTaperRecord(planId) {
+    setGoalsPlansView('overview', { persist: true, keepTaperEditor: true });
+    showTaperWorkspace();
+    if (typeof openTaperPlan === 'function') openTaperPlan(planId);
+}
+
+function editUnifiedTaperRecord(planId) {
+    const prefs = ensureCombinedNavPrefs();
+    const current = prefs.goalsPlansView || 'overview';
+    const stay = (current === 'overview' || current === 'templates')
+        ? current
+        : 'overview';
+    setGoalsPlansView(stay, { persist: true, keepTaperEditor: true });
+    showTaperWorkspace();
+    const opened = typeof editTaperPlanById === 'function' ? editTaperPlanById(planId) : false;
     if (opened === false) {
         hideTaperWorkspace();
         setGoalsPlansView(stay, { persist: true, skipRoute: true });
@@ -16962,46 +17496,40 @@ function openUnifiedNewTaper() {
     ensureTaperSetupVisible();
 }
 
-function openUnifiedTaperRecord(planId) {
-    setGoalsPlansView('active', { persist: true, keepTaperEditor: true });
+function duplicateUnifiedTaperRecord(planId) {
+    const prefs = ensureCombinedNavPrefs();
+    const current = prefs.goalsPlansView || 'overview';
+    const stay = (current === 'overview' || current === 'templates') ? current : 'overview';
+    setGoalsPlansView(stay, { persist: true, keepTaperEditor: true });
     showTaperWorkspace();
-    if (typeof openTaperPlanFromManage === 'function') openTaperPlanFromManage(planId);
-}
-
-function editUnifiedTaperRecord(planId) {
-    setGoalsPlansView('active', { persist: true, keepTaperEditor: true });
-    showTaperWorkspace();
-    const opened = typeof editTaperPlanById === 'function' ? editTaperPlanById(planId) : false;
+    const opened = typeof duplicateTaperPlanById === 'function' ? duplicateTaperPlanById(planId) : false;
     if (opened === false) {
         hideTaperWorkspace();
-        setGoalsPlansView('active', { persist: true, skipRoute: true });
+        setGoalsPlansView(stay, { persist: true, skipRoute: true });
         return;
     }
     ensureTaperSetupVisible();
 }
 
-function duplicateUnifiedTaperRecord(planId) {
-    if (typeof duplicateTaperPlanById === 'function') duplicateTaperPlanById(planId);
-    hideTaperWorkspace();
-    setGoalsPlansView('active', { persist: true });
-    renderGoalsPlansRecordsView('active');
-}
-
 function pauseUnifiedTaperRecord(planId) {
     if (typeof pauseTaperPlanById === 'function') pauseTaperPlanById(planId);
-    renderGoalsPlansRecordsView('active');
+    if (typeof refreshTapersCombinedViews === 'function') refreshTapersCombinedViews();
 }
 
 function completeUnifiedTaperRecord(planId) {
     if (typeof completeTaperPlanById === 'function') completeTaperPlanById(planId);
-    setGoalsPlansView('history', { persist: true });
-    renderGoalsPlansRecordsView('history');
+    setGoalsPlansView('overview', { persist: true });
+    refreshGoalsPlansOverview();
 }
 
 function archiveUnifiedTaperRecord(planId) {
     if (typeof archiveTaperPlanById === 'function') archiveTaperPlanById(planId);
-    setGoalsPlansView('history', { persist: true });
-    renderGoalsPlansRecordsView('history');
+    setGoalsPlansView('overview', { persist: true });
+    refreshGoalsPlansOverview();
+}
+
+function deleteUnifiedTaperRecord(planId) {
+    if (typeof deleteTaperPlanById === 'function') deleteTaperPlanById(planId);
 }
 
 function buildGoalsPlansOverview(data = appData, options = {}) {
@@ -17119,15 +17647,16 @@ function buildGoalsPlansOverview(data = appData, options = {}) {
     };
 }
 
-function renderGoalsPlansOverviewHtml(overview) {
+function renderGoalsPlansOverviewHtml(overview, data = appData) {
     const substanceLabel = overview.substanceLabel || 'selected';
     const deadline = overview.closestGoalDeadline
         ? `${escapeHtml(overview.closestGoalDeadline.name || 'Taper')} · ${escapeHtml(overview.closestGoalDeadline.endDate)}`
         : 'None set';
-    const emptyActive = getTapersEmptyMessage('active', overview.substanceId, appData);
-    const activeList = overview.activeRecords?.length
-        ? `<div class="goal-list combined-overview-list">${overview.activeRecords.map(record => renderUnifiedGoalPlanCard(record)).join('')}</div>`
-        : `<p class="settings-hint">${escapeHtml(emptyActive)}</p>`;
+    const listRecords = buildUnifiedOverviewTaperRecords(data, overview.substanceId);
+    const emptyCopy = getTapersEmptyMessage('overview-list', overview.substanceId, data);
+    const listHtml = listRecords.length
+        ? `<div class="goal-list combined-overview-list" id="taper-list">${listRecords.map(record => renderUnifiedGoalPlanCard(record, data)).join('')}</div>`
+        : `<div class="goal-empty"><p>${escapeHtml(emptyCopy)}</p></div>`;
 
     return `
         <div class="combined-overview">
@@ -17138,9 +17667,10 @@ function renderGoalsPlansOverviewHtml(overview) {
                 <article class="combined-stat-card"><span class="combined-stat-label">Closest end date</span><strong class="combined-stat-text">${deadline}</strong></article>
                 <article class="combined-stat-card"><span class="combined-stat-label">Current taper step</span><strong class="combined-stat-text">${escapeHtml(String(overview.currentPlanWeek))}</strong></article>
             </div>
-            <section class="combined-overview-block">
-                <h3>Active ${escapeHtml(substanceLabel)} tapers</h3>
-                ${activeList}
+            <section class="combined-overview-block taper-overview-list-block">
+                <h3>${escapeHtml(substanceLabel)} tapers</h3>
+                ${renderUnifiedOverviewTaperFilters(data)}
+                ${listHtml}
             </section>
             <div class="combined-overview-actions">
                 <button type="button" class="secondary-btn" onclick="openUnifiedNewTaper();">New Taper</button>
@@ -17178,12 +17708,13 @@ function setGoalsPlansView(view, options = {}) {
     if (!options.keepTaperEditor) hideTaperWorkspace();
 
     if (next === 'overview') {
-        const root = document.getElementById('gp-overview-root');
-        if (root) root.innerHTML = renderGoalsPlansOverviewHtml(buildGoalsPlansOverview());
-    } else if (next === 'active' || next === 'history' || next === 'templates') {
-        if (typeof renderGoalsPlansRecordsView === 'function') renderGoalsPlansRecordsView(next);
+        refreshGoalsPlansOverview();
+    } else if (next === 'templates') {
+        if (typeof renderGoalsPlansRecordsView === 'function') renderGoalsPlansRecordsView('templates');
     }
 
+    if (typeof renderTaperMetricVisibilityPanel === 'function') renderTaperMetricVisibilityPanel();
+    if (typeof applyTaperMetricVisibilityToDashboard === 'function') applyTaperMetricVisibilityToDashboard();
     if (!options.skipRoute) syncLocationToCombinedRoute('goals-plans-tab', next);
     if (typeof applyCollapsedSections === 'function') applyCollapsedSections();
 }
@@ -17199,7 +17730,6 @@ function buildInsightsCalendarOverview(data = appData) {
     let purchaseSummary = '—';
     let goalPerf = '—';
     let planPerf = '—';
-    let warnings = [];
 
     try {
         if (typeof buildDashboardFinancialSummary === 'function') {
@@ -17216,12 +17746,6 @@ function buildInsightsCalendarOverview(data = appData) {
         goalPerf = '—';
     } catch (_) { /* overview soft-fail */ }
 
-    try {
-        if (typeof buildFinancialDataQualityIssues === 'function') {
-            warnings = (buildFinancialDataQualityIssues(data) || []).slice(0, 5);
-        }
-    } catch (_) { /* overview soft-fail */ }
-
     return {
         rangeLabel,
         substanceId,
@@ -17230,15 +17754,11 @@ function buildInsightsCalendarOverview(data = appData) {
         purchaseSummary,
         goalPerf,
         planPerf,
-        warnings,
         importantEvents: []
     };
 }
 
 function renderInsightsCalendarOverviewHtml(overview) {
-    const warnings = overview.warnings?.length
-        ? `<ul class="combined-mini-list">${overview.warnings.map(w => `<li>${escapeHtml(w.message || w.title || 'Data warning')}</li>`).join('')}</ul>`
-        : '<p class="settings-hint">No data warnings right now.</p>';
     return `
         <div class="combined-overview">
             <p class="settings-hint">Date range: <strong>${escapeHtml(overview.rangeLabel)}</strong></p>
@@ -17248,17 +17768,11 @@ function renderInsightsCalendarOverviewHtml(overview) {
                 <article class="combined-stat-card"><span class="combined-stat-label">Purchase summary</span><strong class="combined-stat-text">${escapeHtml(String(overview.purchaseSummary))}</strong></article>
                 <article class="combined-stat-card"><span class="combined-stat-label">Taper performance</span><strong class="combined-stat-text">${escapeHtml(String(overview.planPerf))}</strong></article>
             </div>
-            <div class="combined-overview-columns">
-                <section class="combined-overview-block">
-                    <h3>Calendar preview</h3>
-                    <p class="settings-hint">Open the full calendar for month, week, day, and agenda views.</p>
-                    <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Open calendar</button>
-                </section>
-                <section class="combined-overview-block">
-                    <h3>Data warnings</h3>
-                    ${warnings}
-                </section>
-            </div>
+            <section class="combined-overview-block">
+                <h3>Calendar preview</h3>
+                <p class="settings-hint">Open the full calendar for month, week, day, and agenda views.</p>
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Open calendar</button>
+            </section>
             <div class="combined-overview-actions">
                 <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('use')">Use</button>
                 <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('money')">Money</button>
@@ -17302,7 +17816,7 @@ function renderPlanAnalyticsPanel(data = appData) {
                 <td>${escapeHtml(plan.name || 'Taper')}</td>
                 <td>${escapeHtml(status)}</td>
                 <td><button type="button" class="btn-small" onclick="setInsightsCalendarView('calendar')">Calendar</button>
-                    <button type="button" class="btn-small" onclick="switchTab('goals-plans-tab'); setGoalsPlansView('active'); openTaperPlanFromManage('${escapeHtml(plan.id)}');">Open</button></td>
+                    <button type="button" class="btn-small" onclick="switchTab('goals-plans-tab'); setGoalsPlansView('overview'); openTaperPlanFromManage('${escapeHtml(plan.id)}');">Open</button></td>
             </tr>`;
         }).join('');
         panel.innerHTML = `
@@ -17421,30 +17935,6 @@ const PURCHASE_ANALYTICS_WEEKDAYS = Object.freeze([
     'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
 ]);
 
-const PURCHASE_ANALYTICS_ALERT_TYPES = Object.freeze([
-    'aboveAveragePrice',
-    'duplicatePurchase',
-    'shortInterval',
-    'missingSupplier',
-    'missingStore',
-    'missingCost',
-    'missingQuantity',
-    'inventoryExpiring',
-    'overstocked'
-]);
-
-const PURCHASE_ANALYTICS_ALERT_LABELS = Object.freeze({
-    aboveAveragePrice: 'Paid above average',
-    duplicatePurchase: 'Possible duplicate purchase',
-    shortInterval: 'Very short purchase interval',
-    missingSupplier: 'Missing supplier',
-    missingStore: 'Missing store',
-    missingCost: 'Missing cost',
-    missingQuantity: 'Missing quantity',
-    inventoryExpiring: 'Inventory may be expiring',
-    overstocked: 'Overstocked inventory'
-});
-
 let purchaseAnalyticsCache = null;
 let purchaseAnalyticsCacheKey = '';
 
@@ -17522,13 +18012,8 @@ function getDefaultPurchaseAnalyticsFilters() {
 
 function getDefaultPurchaseAnalyticsPrefs() {
     return {
-        alertsEnabled: true,
-        alertTypes: PURCHASE_ANALYTICS_ALERT_TYPES.reduce((acc, id) => { acc[id] = true; return acc; }, {}),
         chartGrain: 'monthly',
         filtersCollapsed: false,
-        aboveAverageMultiplier: 1.35,
-        shortIntervalDays: 2,
-        overstockDaysSupply: 60,
         favoriteStores: [],
         storeDistances: {},
         filters: getDefaultPurchaseAnalyticsFilters()
@@ -17542,7 +18027,6 @@ function ensurePurchaseAnalyticsPrefs(data = appData) {
     if (!data.settings.purchaseAnalytics || typeof data.settings.purchaseAnalytics !== 'object') {
         data.settings.purchaseAnalytics = {
             ...defaults,
-            alertTypes: { ...defaults.alertTypes },
             filters: { ...defaults.filters },
             favoriteStores: [],
             storeDistances: {}
@@ -17551,14 +18035,10 @@ function ensurePurchaseAnalyticsPrefs(data = appData) {
     const prefs = data.settings.purchaseAnalytics;
     Object.keys(defaults).forEach(key => {
         if (prefs[key] === undefined) {
-            prefs[key] = (key === 'alertTypes' || key === 'filters' || key === 'storeDistances')
+            prefs[key] = (key === 'filters' || key === 'storeDistances')
                 ? { ...defaults[key] }
                 : Array.isArray(defaults[key]) ? [...defaults[key]] : defaults[key];
         }
-    });
-    if (!prefs.alertTypes || typeof prefs.alertTypes !== 'object') prefs.alertTypes = { ...defaults.alertTypes };
-    PURCHASE_ANALYTICS_ALERT_TYPES.forEach(id => {
-        if (prefs.alertTypes[id] === undefined) prefs.alertTypes[id] = true;
     });
     if (!prefs.filters || typeof prefs.filters !== 'object') prefs.filters = { ...defaults.filters };
     Object.keys(defaults.filters).forEach(key => {
@@ -17566,9 +18046,6 @@ function ensurePurchaseAnalyticsPrefs(data = appData) {
     });
     if (!Array.isArray(prefs.favoriteStores)) prefs.favoriteStores = [];
     if (!prefs.storeDistances || typeof prefs.storeDistances !== 'object') prefs.storeDistances = {};
-    prefs.aboveAverageMultiplier = Math.max(1.05, paToNumber(prefs.aboveAverageMultiplier, defaults.aboveAverageMultiplier));
-    prefs.shortIntervalDays = Math.max(1, Math.round(paToNumber(prefs.shortIntervalDays, defaults.shortIntervalDays)));
-    prefs.overstockDaysSupply = Math.max(7, Math.round(paToNumber(prefs.overstockDaysSupply, defaults.overstockDaysSupply)));
     return prefs;
 }
 
@@ -17578,9 +18055,8 @@ function getPurchaseAnalyticsPrefs(data = appData) {
 
 function persistPurchaseAnalyticsPrefs(patch = {}, data = appData) {
     const prefs = ensurePurchaseAnalyticsPrefs(data);
-    const { alertTypes, filters, favoriteStores, storeDistances, ...rest } = patch || {};
+    const { filters, favoriteStores, storeDistances, ...rest } = patch || {};
     Object.assign(prefs, rest);
-    if (alertTypes) prefs.alertTypes = { ...prefs.alertTypes, ...alertTypes };
     if (filters) prefs.filters = { ...prefs.filters, ...filters };
     if (favoriteStores) prefs.favoriteStores = [...favoriteStores];
     if (storeDistances) prefs.storeDistances = { ...prefs.storeDistances, ...storeDistances };
@@ -18245,106 +18721,6 @@ function buildProductAnalytics(purchases = [], data = appData) {
     }).sort((a, b) => b.spending - a.spending);
 }
 
-function buildPurchaseAnalyticsWarnings(purchases = [], data = appData, prefs = null) {
-    const p = prefs || ensurePurchaseAnalyticsPrefs(data);
-    const enabled = type => p.alertsEnabled !== false && p.alertTypes?.[type] !== false;
-    const alerts = [];
-    const spendPurchases = purchases.filter(purchaseAnalyticsCountsTowardSpend);
-    const avgSpend = paMean(spendPurchases.map(purchaseAnalyticsSpendAmount)) || 0;
-    const avgCpu = (() => {
-        let spend = 0;
-        let qty = 0;
-        spendPurchases.forEach(x => {
-            const q = purchaseAnalyticsQuantity(x);
-            if (q > 0) {
-                spend += purchaseAnalyticsSpendAmount(x);
-                qty += q;
-            }
-        });
-        return qty > 0 ? spend / qty : null;
-    })();
-
-    const sorted = spendPurchases.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    sorted.forEach((purchase, idx) => {
-        if (enabled('aboveAveragePrice') && avgCpu != null) {
-            const cpu = purchaseAnalyticsCostPerUnit(purchase);
-            if (cpu != null && cpu > avgCpu * p.aboveAverageMultiplier) {
-                alerts.push({
-                    type: 'aboveAveragePrice',
-                    severity: 'warn',
-                    purchaseId: purchase.id,
-                    message: `Purchase on ${purchase.date} is above average unit price.`
-                });
-            }
-        }
-        if (enabled('missingSupplier') && !purchaseAnalyticsSupplier(purchase)) {
-            alerts.push({ type: 'missingSupplier', severity: 'info', purchaseId: purchase.id, message: `Missing supplier on ${purchase.date}.` });
-        }
-        if (enabled('missingStore') && !purchaseAnalyticsStore(purchase)) {
-            alerts.push({ type: 'missingStore', severity: 'info', purchaseId: purchase.id, message: `Missing store on ${purchase.date}.` });
-        }
-        if (enabled('missingCost') && !(purchaseAnalyticsSpendAmount(purchase) > 0) && purchaseAnalyticsCountsTowardSpend(purchase)) {
-            const rawCost = paToNumber(purchase.totalCost ?? purchase.cost, NaN);
-            if (!Number.isFinite(rawCost) || rawCost <= 0) {
-                alerts.push({ type: 'missingCost', severity: 'warn', purchaseId: purchase.id, message: `Missing cost on ${purchase.date}.` });
-            }
-        }
-        if (enabled('missingQuantity') && !(purchaseAnalyticsQuantity(purchase) > 0)) {
-            alerts.push({ type: 'missingQuantity', severity: 'warn', purchaseId: purchase.id, message: `Missing quantity on ${purchase.date}.` });
-        }
-        if (enabled('shortInterval') && idx > 0) {
-            const gap = paDaysBetween(sorted[idx - 1].date, purchase.date);
-            if (gap != null && gap <= p.shortIntervalDays) {
-                alerts.push({
-                    type: 'shortInterval',
-                    severity: 'warn',
-                    purchaseId: purchase.id,
-                    message: `Only ${gap} day(s) between purchases (${sorted[idx - 1].date} → ${purchase.date}).`
-                });
-            }
-        }
-    });
-
-    if (enabled('duplicatePurchase')) {
-        const seen = new Map();
-        spendPurchases.forEach(purchase => {
-            const key = [
-                purchase.date,
-                purchase.substanceId,
-                paRound(purchaseAnalyticsSpendAmount(purchase), 2),
-                paRound(purchaseAnalyticsQuantity(purchase), 3),
-                paKey(purchaseAnalyticsStore(purchase))
-            ].join('|');
-            if (seen.has(key)) {
-                alerts.push({
-                    type: 'duplicatePurchase',
-                    severity: 'warn',
-                    purchaseId: purchase.id,
-                    message: `Possible duplicate purchase on ${purchase.date}.`
-                });
-            } else seen.set(key, purchase.id);
-        });
-    }
-
-    const turnover = buildInventoryTurnoverMetrics(purchases, data);
-    if (enabled('overstocked') && turnover.daysInventoryLasts != null && turnover.daysInventoryLasts > p.overstockDaysSupply) {
-        alerts.push({
-            type: 'overstocked',
-            severity: 'info',
-            message: `Inventory may last ~${turnover.daysInventoryLasts} days (overstock threshold ${p.overstockDaysSupply}).`
-        });
-    }
-    if (enabled('inventoryExpiring') && turnover.daysInventoryLasts != null && turnover.daysInventoryLasts < 3 && turnover.inventoryRemaining > 0) {
-        alerts.push({
-            type: 'inventoryExpiring',
-            severity: 'warn',
-            message: 'Remaining inventory may run out within a few days based on recent depletion.'
-        });
-    }
-
-    return alerts.slice(0, 50);
-}
-
 function buildPurchaseAnalyticsCharts(purchases = [], suppliers = [], stores = [], products = [], price = null, frequency = null) {
     const supplierSpend = suppliers.slice(0, 8).map(s => ({ label: s.name, value: s.totalSpent }));
     const storeSpend = stores.slice(0, 8).map(s => ({ label: s.name, value: s.totalSpent }));
@@ -18394,7 +18770,6 @@ function buildPurchaseAnalyticsDataset(data = appData, options = {}) {
     const patterns = buildPurchasePatternMetrics(purchases);
     const turnover = buildInventoryTurnoverMetrics(purchases, data, bounds);
     const products = buildProductAnalytics(purchases, data);
-    const warnings = buildPurchaseAnalyticsWarnings(purchases, data, prefs);
     const charts = buildPurchaseAnalyticsCharts(purchases, suppliers, stores, products, price, frequency);
 
     const dataset = {
@@ -18411,7 +18786,6 @@ function buildPurchaseAnalyticsDataset(data = appData, options = {}) {
         patterns,
         turnover,
         products,
-        warnings,
         charts
     };
     purchaseAnalyticsCache = dataset;
@@ -18438,7 +18812,6 @@ function buildPurchaseAnalyticsCsvRows(dataset) {
     });
     const t = dataset.turnover || {};
     Object.entries(t).forEach(([k, v]) => rows.push(['Turnover', k, v == null ? '' : v]));
-    (dataset.warnings || []).forEach(w => rows.push(['Warning', w.type, w.message]));
     return rows;
 }
 
@@ -18677,12 +19050,6 @@ function renderPurchaseAnalyticsView() {
                     <h4>Average purchase size</h4>${paBarChartHtml(dataset.charts.averagePurchaseSize)}
                 </section>
 
-                <section class="pa-panel">
-                    <h3>Smart Warnings</h3>
-                    ${(dataset.warnings || []).length
-                        ? `<ul class="pa-warnings">${dataset.warnings.map(w => `<li class="pa-alert pa-alert-${escapeHtml(w.severity)}"><strong>${escapeHtml(PURCHASE_ANALYTICS_ALERT_LABELS[w.type] || w.type)}</strong> ${escapeHtml(w.message)}</li>`).join('')}</ul>`
-                        : '<p class="pa-empty">No warnings for the current filters.</p>'}
-                </section>
             </div>
         `;
     } catch (err) {
@@ -25146,7 +25513,7 @@ function renderInsightsSectionToolbarHtml() {
                     <button type="button" class="secondary-btn btn-sm" onclick="resetInsightsLayout()">Reset layout</button>
                 </div>
             </div>
-            <p class="settings-hint ic-layout-hint">Simple mode shows summary cards, key charts, and alerts. Advanced unlocks Running Totals, detailed tables, custom metrics, and exports.</p>
+            <p class="settings-hint ic-layout-hint">Simple mode shows summary cards and key charts. Advanced unlocks Running Totals, detailed tables, custom metrics, and exports.</p>
         </div>`;
 }
 
@@ -25357,29 +25724,15 @@ function renderSimplifiedInsightsOverviewHtml() {
             ? buildInsightsCalendarOverview()
             : null;
     } catch (_) { overview = null; }
-    const warnings = overview?.warnings?.length
-        ? `<ul class="combined-mini-list">${overview.warnings.map(w =>
-            `<li>${typeof escapeHtml === 'function' ? escapeHtml(w.message || w.title || 'Data warning') : (w.message || 'Data warning')}</li>`
-        ).join('')}</ul>`
-        : '<p class="settings-hint">No alerts right now.</p>';
     const range = overview?.rangeLabel || 'Selected range';
     return `
         <div class="combined-overview ic-simplified-overview">
             <p class="settings-hint">Showing Overview for <strong>${typeof escapeHtml === 'function' ? escapeHtml(range) : range}</strong>. Use the shared filters below for substance, product type, and dates.</p>
-            <div class="combined-overview-columns">
-                <section class="combined-overview-block">
-                    <h3>Alerts</h3>
-                    ${warnings}
-                </section>
-                <section class="combined-overview-block">
-                    <h3>Quick links</h3>
-                    <div class="combined-overview-actions">
-                        <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('use')">Use</button>
-                        <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('money')">Money</button>
-                        <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Calendar</button>
-                        <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('more')">More</button>
-                    </div>
-                </section>
+            <div class="combined-overview-actions">
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('use')">Use</button>
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('money')">Money</button>
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Calendar</button>
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('more')">More</button>
             </div>
             <p class="settings-hint">Summary cards, trend charts, and calendar preview appear in the Insights sections below.</p>
         </div>`;
@@ -26074,34 +26427,120 @@ function updateBuySourceFieldLabel() {
     if (search) search.placeholder = getBuySourcePlaceholder(type);
 }
 
-function ensureBuySourcePickerMounted() {
-    if (typeof document === 'undefined') return;
-    let group = document.getElementById('buy-source-group');
-    if (group) {
-        updateBuySourceFieldLabel();
-        document.getElementById('buy-store-group')?.classList.add('hidden');
-        document.getElementById('buy-supplier-contact-picker')?.classList.add('hidden');
-        return;
+let inventorySourcePickerMounted = false;
+let inventorySourcePickerMountWarned = false;
+
+function isInventorySourceDomElement(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+    if (typeof node.nodeType === 'number' && node.nodeType !== 1) return false;
+    if (Object.prototype.hasOwnProperty.call(node, 'length') && typeof node.insertAdjacentHTML !== 'function') {
+        return false;
     }
+    return typeof node.insertAdjacentHTML === 'function';
+}
+
+function buyFormSourceMountContextPresent() {
+    if (typeof document === 'undefined') return false;
+    return !!(
+        document.getElementById('buy-source-mount')
+        || document.getElementById('buy-store-group')
+        || document.getElementById('buy-payment-group')
+        || document.getElementById('buy-acquisition-type')
+    );
+}
+
+function isInventorySourceMountTarget(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return false;
+    if (typeof node.insertAdjacentHTML === 'function') return true;
+    if (typeof Node !== 'undefined' && node instanceof Node && node.nodeType === 1) return true;
+    const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(node) || node, 'innerHTML')
+        || Object.getOwnPropertyDescriptor(node, 'innerHTML');
+    return !!(desc && typeof desc.set === 'function');
+}
+
+function mountBuySourcePickerHtml(html) {
+    if (typeof document === 'undefined') return false;
+    const hasPickerMarkup = () => html.includes('id="buy-source-group"') || html.includes("id='buy-source-group'");
+    const mount = document.getElementById('buy-source-mount');
+    if (isInventorySourceMountTarget(mount)) {
+        mount.innerHTML = html;
+        return hasPickerMarkup();
+    }
+    const storeGroup = document.getElementById('buy-store-group');
+    if (isInventorySourceDomElement(storeGroup)) {
+        storeGroup.insertAdjacentHTML('beforebegin', html);
+        return hasPickerMarkup();
+    }
+    const paymentGroup = document.getElementById('buy-payment-group');
+    if (isInventorySourceDomElement(paymentGroup)) {
+        paymentGroup.insertAdjacentHTML('beforebegin', html);
+        return hasPickerMarkup();
+    }
+    return false;
+}
+
+function hideLegacyBuySourceFields() {
+    const type = typeof getBuyFormAcquisitionType === 'function'
+        ? getBuyFormAcquisitionType()
+        : normalizePurchaseAcquisitionType(document.getElementById('buy-acquisition-type')?.value || 'purchased');
+    const sourcePickerActive = !!document.getElementById('buy-source-group') || inventorySourcePickerMounted;
+    if (sourcePickerActive) {
+        document.getElementById('buy-supplier-contact-picker')?.classList?.add?.('hidden');
+        // Purchased-as-gift still uses legacy store/payment fields when the unified picker is mounted.
+        document.getElementById('buy-store-group')?.classList?.toggle?.('hidden', type !== 'purchased_as_gift');
+    }
+    // Gift recipient/source visibility is owned by updateBuyAcquisitionTypeUI — do not override here.
+}
+
+function buySourcePickerMarkupPresent() {
+    if (typeof document === 'undefined') return false;
+    if (document.getElementById('buy-source-group')) return true;
+    const mount = document.getElementById('buy-source-mount');
+    return !!(mount && typeof mount.innerHTML === 'string' && mount.innerHTML.includes('buy-source-group'));
+}
+
+function ensureBuySourcePickerMounted(options = {}) {
+    if (typeof document === 'undefined') return false;
+    if (buySourcePickerMarkupPresent()) {
+        inventorySourcePickerMounted = true;
+        updateBuySourceFieldLabel();
+        hideLegacyBuySourceFields();
+        return true;
+    }
+    if (inventorySourcePickerMounted) return true;
+
     const type = typeof getBuyFormAcquisitionType === 'function'
         ? getBuyFormAcquisitionType()
         : 'purchased';
     const html = buildBuySourcePickerHtml(type);
-    const mount = document.getElementById('buy-source-mount');
-    const storeGroup = document.getElementById('buy-store-group');
-    if (mount) {
-        mount.innerHTML = html;
-    } else if (storeGroup) {
-        storeGroup.insertAdjacentHTML('beforebegin', html);
-    } else {
-        document.getElementById('buy-payment-group')?.insertAdjacentHTML('beforebegin', html);
+    const mounted = mountBuySourcePickerHtml(html);
+    if (!mounted) {
+        const quiet = options.quiet === true;
+        const shouldWarn = !quiet && options.warn !== false;
+        if (shouldWarn && !inventorySourcePickerMountWarned) {
+            inventorySourcePickerMountWarned = true;
+            console.warn('[inventory-source] Source picker mount skipped — buy form target elements are not ready');
+        }
+        return false;
     }
-    storeGroup?.classList.add('hidden');
-    // Hide separate supplier + gift source/recipient (Source replaces them)
-    document.getElementById('buy-supplier-contact-picker')?.classList.add('hidden');
-    document.getElementById('buy-gift-source-group')?.classList.add('hidden');
-    document.getElementById('buy-gift-recipient-group')?.classList.add('hidden');
+
+    inventorySourcePickerMounted = true;
+    hideLegacyBuySourceFields();
     updateBuySourceFieldLabel();
+    return true;
+}
+
+function applyBuySourceAcquisitionUiPatch() {
+    if (!buySourcePickerMarkupPresent() && !inventorySourcePickerMounted) {
+        ensureBuySourcePickerMounted();
+    }
+    updateBuySourceFieldLabel();
+    hideLegacyBuySourceFields();
+    document.getElementById('buy-source-group')?.classList?.remove?.('hidden');
+    const type = typeof getBuyFormAcquisitionType === 'function' ? getBuyFormAcquisitionType() : '';
+    if (type === 'purchased_as_gift') {
+        document.getElementById('buy-gift-date-group')?.classList?.remove?.('hidden');
+    }
 }
 
 function patchInventorySourceBuyForm() {
@@ -26110,21 +26549,12 @@ function patchInventorySourceBuyForm() {
         updateBuyAcquisitionTypeUI = function patchedBuyAcquisitionTypeUI() {
             const result = original.apply(this, arguments);
             try {
-                ensureBuySourcePickerMounted();
-                updateBuySourceFieldLabel();
-                // Always hide legacy store + supplier picker
-                document.getElementById('buy-store-group')?.classList.add('hidden');
-                document.getElementById('buy-supplier-contact-picker')?.classList.add('hidden');
-                // Gift From / Recipient groups replaced by Source (keep gift date)
-                const type = typeof getBuyFormAcquisitionType === 'function' ? getBuyFormAcquisitionType() : '';
-                document.getElementById('buy-gift-source-group')?.classList.add('hidden');
-                document.getElementById('buy-gift-recipient-group')?.classList.add('hidden');
-                document.getElementById('buy-source-group')?.classList.remove('hidden');
-                if (type === 'purchased_as_gift') {
-                    document.getElementById('buy-gift-date-group')?.classList.remove('hidden');
-                }
+                applyBuySourceAcquisitionUiPatch();
             } catch (err) {
-                console.warn('[inventory-source] acquisition UI patch failed', err);
+                if (!inventorySourcePickerMountWarned) {
+                    inventorySourcePickerMountWarned = true;
+                    console.warn('[inventory-source] acquisition UI patch failed', err);
+                }
             }
             return result;
         };
@@ -26229,33 +26659,29 @@ function patchInventorySourceHistoryColumns() {
     } catch (_) { /* optional */ }
 }
 
+let inventorySourceClickListenerBound = false;
+
 function initInventorySource() {
     ensureInventorySourcesMigrated(appData);
     patchInventorySourceBuyForm();
     patchInventorySourceAnalytics();
     patchInventorySourceHistoryColumns();
     if (typeof document !== 'undefined') {
-        ensureBuySourcePickerMounted();
-        document.addEventListener('click', (e) => {
-            const menu = document.getElementById('buy-source-menu');
-            const picker = document.querySelector('[data-buy-source-picker]');
-            if (!menu || menu.classList.contains('hidden')) return;
-            if (picker && picker.contains(e.target)) return;
-            closeBuySourceMenu();
-        });
+        ensureBuySourcePickerMounted({ quiet: !buyFormSourceMountContextPresent() });
+        if (!inventorySourceClickListenerBound) {
+            inventorySourceClickListenerBound = true;
+            document.addEventListener('click', (e) => {
+                const menu = document.getElementById('buy-source-menu');
+                const picker = document.querySelector('[data-buy-source-picker]');
+                if (!menu || menu.classList.contains('hidden')) return;
+                if (picker && picker.contains(e.target)) return;
+                closeBuySourceMenu();
+            });
+        }
     }
 }
 
-if (typeof document !== 'undefined') {
-    if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', () => {
-            try { initInventorySource(); } catch (err) { console.error('[inventory-source] init failed', err); }
-        });
-    } else {
-        try { initInventorySource(); } catch (_) { /* tests / early */ }
-    }
-}
-
+// ——— END Inventory Source (splice boundary — do not remove) ———
 
 // ——— App-wide Experience Mode (Simple / Advanced) ———
 // Presentation layer only — reuses canonical calc engine, logs, inventory, tapers.
@@ -26576,7 +27002,7 @@ function renderSimpleHome(data = appData) {
            </div>`;
 
     const lastSaved = formatSimpleLastSaved(
-        document.getElementById('dashboard-last-saved')?.textContent
+        document.querySelector('[data-last-saved-display]')?.textContent
         || document.getElementById('settings-last-saved')?.textContent
         || 'Last Saved: —'
     );
@@ -27288,12 +27714,20 @@ function logsLookLikeSimpleDuplicate(a, b) {
     const ptA = a.nicotineProductType || a.weedProductType || '';
     const ptB = b.nicotineProductType || b.weedProductType || '';
     if (String(ptA) !== String(ptB)) return false;
+    const pidA = typeof getLogPurchaseId === 'function' ? getLogPurchaseId(a) : (a.purchaseId || '');
+    const pidB = typeof getLogPurchaseId === 'function' ? getLogPurchaseId(b) : (b.purchaseId || '');
+    if (String(pidA || '') !== String(pidB || '')) return false;
+    const modeA = a.logMode || a.nicotineLogMode || '';
+    const modeB = b.logMode || b.nicotineLogMode || '';
+    if (String(modeA) !== String(modeB)) return false;
     return true;
 }
 
 function findSimpleQuickLogDuplicate(candidate, data = appData, nowMs = Date.now()) {
     if (!candidate) return null;
+    const excludeId = candidate.id != null && candidate.id !== '' ? String(candidate.id) : null;
     return (data.logs || []).find(log => {
+        if (excludeId && String(log?.id) === excludeId) return false;
         if (!isSimpleRecentLogEligible(log)) return false;
         if (!logsLookLikeSimpleDuplicate(log, candidate)) return false;
         const ms = typeof getLogDatetimeMs === 'function'
@@ -27450,6 +27884,78 @@ function getProgressRangeBounds(rangeKey, data = appData) {
     return { key, label: `Last ${days} Days`, startDate, endDate: today, days };
 }
 
+function getSimpleProgressLogProductType(log, data = appData) {
+    const nicotineType = log?.nicotineProductType || '';
+    if (nicotineType) {
+        return typeof getNicotineProductTypeLabel === 'function'
+            ? getNicotineProductTypeLabel(nicotineType)
+            : nicotineType;
+    }
+    const substanceId = typeof getUseSubstanceId === 'function'
+        ? getUseSubstanceId(log)
+        : (log?.substanceId || log?.substance);
+    if (typeof isNicotineTrackingMode === 'function' && isNicotineTrackingMode(substanceId, data)
+        && typeof getNicotineProductType === 'function') {
+        const inferredType = getNicotineProductType(log, data);
+        return typeof getNicotineProductTypeLabel === 'function'
+            ? getNicotineProductTypeLabel(inferredType)
+            : inferredType;
+    }
+    const weedType = log?.weedProductType || '';
+    if (weedType) {
+        return typeof getWeedProductTypeLabel === 'function'
+            ? getWeedProductTypeLabel(weedType)
+            : weedType;
+    }
+    if (typeof getWeedLogProductTypeLabel === 'function') {
+        const label = getWeedLogProductTypeLabel(log, data);
+        if (label && label !== '—') return label;
+    }
+    return '';
+}
+
+function buildSimpleProgressLogRows(substanceId, bounds, data = appData) {
+    const seenIds = new Set();
+    const seenObjects = new Set();
+    return (typeof getUseEntries === 'function' ? getUseEntries(data) : (data.logs || []))
+        .filter(log => {
+            if (!isSimpleRecentLogEligible(log)) return false;
+            if (typeof logMatchesSubstance === 'function'
+                ? !logMatchesSubstance(log, substanceId, data)
+                : String(getUseSubstanceId(log)) !== String(substanceId)) return false;
+            if (!log.date || log.date < bounds.startDate || log.date > bounds.endDate) return false;
+            const id = log.id == null || log.id === '' ? '' : String(log.id);
+            if (id) {
+                if (seenIds.has(id)) return false;
+                seenIds.add(id);
+            } else {
+                if (seenObjects.has(log)) return false;
+                seenObjects.add(log);
+            }
+            return true;
+        })
+        .slice()
+        .sort((a, b) => {
+            const msA = typeof getLogDatetimeMs === 'function' ? getLogDatetimeMs(a) : Date.parse(a.timestamp || '');
+            const msB = typeof getLogDatetimeMs === 'function' ? getLogDatetimeMs(b) : Date.parse(b.timestamp || '');
+            return (msB || 0) - (msA || 0);
+        })
+        .map(log => ({
+            id: log.id ?? null,
+            date: log.date || '',
+            time: log.startTime || log.time || '',
+            amount: log.amount ?? log.personalAmount ?? '',
+            unit: log.unit || '',
+            productType: getSimpleProgressLogProductType(log, data),
+            cost: log.estimatedCost != null && log.estimatedCost !== ''
+                && Number.isFinite(Number(log.estimatedCost))
+                ? Number(log.estimatedCost)
+                : null,
+            notes: String(log.notes || '').trim(),
+            log
+        }));
+}
+
 function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
     const bounds = getProgressRangeBounds(rangeKey, data);
     const usedToday = getCanonicalUsageOnDate(substanceId, bounds.endDate, data);
@@ -27502,6 +28008,7 @@ function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
         spendPeriodLabel: formatSimpleSpendPeriodLabel(bounds),
         displayName: getSimpleSubstanceDisplayName(substanceId, data),
         series,
+        logs: buildSimpleProgressLogRows(substanceId, bounds, data),
         unit: typeof getSubstanceDisplayUnit === 'function'
             ? getSubstanceDisplayUnit(substanceId, data)
             : ''
@@ -27576,6 +28083,48 @@ function renderSimpleProgressCalendar(dataset, monthStr) {
             </div>
             <div class="sm-cal-dow">${['S','M','T','W','T','F','S'].map(d => `<span>${d}</span>`).join('')}</div>
             <div class="sm-cal-grid">${cells.join('')}</div>
+        </div>`;
+}
+
+function renderSimpleProgressLogTable(dataset) {
+    const rows = Array.isArray(dataset?.logs) ? dataset.logs : [];
+    if (!rows.length) {
+        return '<p class="sm-empty-hint">No logs for this substance in the selected date range.</p>';
+    }
+    const showProductType = rows.some(row => row.productType);
+    const showCost = rows.some(row => row.cost != null);
+    const money = value => {
+        if (value == null) return '—';
+        if (typeof fmtSheetMoney === 'function') return fmtSheetMoney(value, getCurrencySymbol());
+        return `${typeof getCurrencySymbol === 'function' ? getCurrencySymbol() : '$'}${Number(value).toFixed(2)}`;
+    };
+    return `
+        <div class="sm-log-table-wrap">
+            <table class="sm-log-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Amount</th>
+                        <th>Unit</th>
+                        ${showProductType ? '<th>Product Type</th>' : ''}
+                        ${showCost ? '<th>Cost</th>' : ''}
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.map(row => `
+                        <tr>
+                            <td data-label="Date">${escapeHtml(row.date || '—')}</td>
+                            <td data-label="Time">${escapeHtml(row.time || '—')}</td>
+                            <td data-label="Amount">${escapeHtml(row.amount === '' ? '—' : (typeof formatAmount === 'function' ? formatAmount(row.amount) : String(row.amount)))}</td>
+                            <td data-label="Unit">${escapeHtml(row.unit || '—')}</td>
+                            ${showProductType ? `<td data-label="Product Type">${escapeHtml(row.productType || '—')}</td>` : ''}
+                            ${showCost ? `<td data-label="Cost">${escapeHtml(money(row.cost))}</td>` : ''}
+                            <td data-label="Notes" class="sm-log-notes">${escapeHtml(row.notes || '—')}</td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
         </div>`;
 }
 
@@ -27671,6 +28220,13 @@ function renderSimpleProgress(data = appData) {
             </div>
             <div id="sm-progress-calendar">${renderSimpleProgressCalendar(dataset, month)}</div>
         </section>
+        <section class="sm-progress-section sm-log-section">
+            <div class="sm-section-head">
+                <h3>Log Table</h3>
+                <p class="sm-section-sub">${escapeHtml(dataset.bounds.label)}</p>
+            </div>
+            ${renderSimpleProgressLogTable(dataset)}
+        </section>
         <div class="sm-progress-footer">
             <button type="button" class="sm-text-btn" onclick="openDetailedAnalyticsFromSimple()">View Detailed Analytics</button>
         </div>`;
@@ -27709,11 +28265,15 @@ function applySimplePlanIntent(intentId) {
     const wizard = document.getElementById('simple-plan-wizard');
     if (wizard) wizard.classList.add('hidden');
     if (typeof globalThis !== 'undefined') globalThis.__smPlanWizardBypass = true;
+    let opened = false;
     try {
-        if (typeof showNewTaperPlan === 'function') showNewTaperPlan();
+        opened = typeof showNewTaperPlan === 'function' ? showNewTaperPlan() !== false : false;
     } finally {
         if (typeof globalThis !== 'undefined') globalThis.__smPlanWizardBypass = false;
     }
+    // Never prefill a form that is still bound to an existing taper — that would
+    // turn "New Taper" into an edit of whatever was open before.
+    if (!opened) return;
 
     // Prefill relevant fields based on intent
     if (intent.reductionType && typeof populateTaperReductionTypeSelect === 'function') {
@@ -27782,30 +28342,13 @@ function applySimplePlanFormLayout(data = appData) {
     if (typeof document === 'undefined') return;
     const page = document.getElementById('goals-plans-tab');
     if (!page) return;
-    const simple = isSimpleExperienceMode(data);
-    page.classList.toggle('sm-plan-simple', simple);
-    const prefs = ensureSimpleModePrefs(data);
-    const intent = prefs.planIntent;
-    page.dataset.planIntent = intent || '';
-
-    // Hide purchase-heavy / advanced blocks unless Custom or Advanced Mode
-    const advancedBlocks = page.querySelectorAll('[data-sm-plan-advanced="true"]');
-    advancedBlocks.forEach(el => {
-        el.classList.toggle('sm-hidden-in-simple', simple && intent !== 'custom');
+    // Tapers use the same layout in Simple and Advanced — do not hide controls by mode.
+    page.classList.remove('sm-plan-simple');
+    page.classList.remove('sm-show-advanced-plan');
+    delete page.dataset.planIntent;
+    page.querySelectorAll('[data-sm-plan-advanced="true"]').forEach(el => {
+        el.classList.remove('sm-hidden-in-simple');
     });
-
-    const empty = document.getElementById('taper-no-plan');
-    if (empty) {
-        const heading = empty.querySelector('h3');
-        const copy = empty.querySelector('p');
-        if (simple) {
-            if (heading) heading.textContent = 'No active taper';
-            if (copy) copy.textContent = 'Create one when you’re ready.';
-        } else {
-            if (heading) heading.textContent = 'No taper plans for this substance yet.';
-            if (copy) copy.textContent = 'Set starting and target averages, pick a reduction style, and track progress week by week.';
-        }
-    }
 }
 
 function syncExperienceModeSettingsUI(data = appData) {
@@ -27908,14 +28451,6 @@ function applyExperienceMode(data = appData) {
 function initExperienceMode() {
     ensureExperienceMode(appData);
     applyExperienceMode(appData);
-
-    // Hook new-plan buttons in simple mode toward wizard
-    if (typeof document !== 'undefined') {
-        document.getElementById('sm-new-plan-btn')?.addEventListener('click', (e) => {
-            e.preventDefault();
-            openSimplePlanWizard();
-        });
-    }
     maybeStartOnboarding(appData);
 }
 
@@ -27945,7 +28480,6 @@ function onExperienceModeTabChange(tabId) {
         applySimplePlanFormLayout(appData);
     } else if (tabId === 'settings-tab') {
         syncExperienceModeSettingsUI(appData);
-        renderOnboardingSettingsPanel(appData);
     }
 }
 
@@ -28319,8 +28853,8 @@ function renderOnboarding(data = appData) {
             </ul>
             <details class="onboarding-privacy">
                 <summary>Your data</summary>
-                <p>Recovery Tracker stores your information in this browser only, using localStorage. There is no account and no cloud sync.</p>
-                <p>Export JSON Backup downloads a file you can keep or restore later. Clear All Data permanently deletes local logs, substances, and settings after creating an automatic backup.</p>
+                <p>Recovery Tracker stores your information in this browser using localStorage. The app works fully offline. Export still downloads a file you keep.</p>
+                <p>Export JSON Backup downloads a file you can keep or restore later. Clear All Data permanently deletes local logs, substances, and settings on this device after creating an automatic backup.</p>
             </details>
             ${navStart}
             <div class="onboarding-actions">
@@ -28476,7 +29010,6 @@ function skipOnboarding(data = appData) {
     data.settings.onboardingCompleted = true;
     if (typeof saveData === 'function') saveData(data);
     hideOnboardingOverlay();
-    renderOnboardingSettingsPanel(data);
     if (typeof switchTab === 'function') {
         try { switchTab('dashboard-tab'); } catch (_) { /* ignore */ }
     }
@@ -28524,7 +29057,6 @@ function completeOnboarding(options = {}, data = appData) {
 
     hideOnboardingOverlay();
     if (typeof applyExperienceMode === 'function') applyExperienceMode(data);
-    renderOnboardingSettingsPanel(data);
 
     const createdTaperAfter = Array.isArray(data.taperPlansV2) ? data.taperPlansV2.length : 0;
     const result = {
@@ -28548,7 +29080,9 @@ function completeOnboarding(options = {}, data = appData) {
         if (typeof switchTab === 'function') {
             try { switchTab('goals-plans-tab'); } catch (_) { /* ignore */ }
         }
-        if (typeof applySimplePlanIntent === 'function') {
+        if (typeof openUnifiedNewTaper === 'function') {
+            try { openUnifiedNewTaper(); } catch (_) { /* ignore */ }
+        } else if (typeof applySimplePlanIntent === 'function') {
             try { applySimplePlanIntent(intent.planIntent); } catch (_) { /* ignore */ }
         }
     }
@@ -28578,39 +29112,6 @@ function reconcileOnboardingAfterImport(merged) {
     }
     return merged;
 }
-
-function renderOnboardingSettingsPanel(data = appData) {
-    if (typeof document === 'undefined') return;
-    const root = document.getElementById('onboarding-settings-summary');
-    if (!root) return;
-    const state = getOnboardingState(data);
-    const completed = data.settings?.onboardingCompleted === true;
-    const mode = getExperienceMode(data) === EXPERIENCE_MODE_ADVANCED ? 'Detailed' : 'Simple';
-    const primary = getSimpleSubstanceDisplayName(state.primarySubstanceId || (data.substances || []).find(s => s.isMain), data);
-    const tracked = (data.substances || []).filter(s => s && s.active !== false).map(s => getSimpleSubstanceDisplayName(s, data));
-    root.innerHTML = `
-        <p class="settings-hint">${completed ? 'Setup complete.' : 'Setup has not been finished yet.'}</p>
-        <ul class="onboarding-settings-facts">
-            <li>Mode: ${escapeHtml(mode)}</li>
-            <li>Primary: ${escapeHtml(primary || '—')}</li>
-            <li>Tracking: ${escapeHtml(tracked.join(', ') || '—')}</li>
-        </ul>`;
-}
-
-function openOnboardingReview() {
-    if (typeof switchTab === 'function') switchTab('settings-tab');
-    document.getElementById('onboarding-setup-section')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-}
-
-function openTrackedSubstancesFromOnboarding() {
-    if (typeof switchTab === 'function') switchTab('settings-tab');
-    const section = document.querySelector('[data-section="settingsSubstances"]');
-    if (section?.classList.contains('collapsed') && typeof toggleSection === 'function') {
-        try { toggleSection('settingsSubstances'); } catch (_) { /* ignore */ }
-    }
-    section?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-}
-
 
 const defaultData = {
     substances: getDefaultSubstances(),
@@ -28796,6 +29297,39 @@ function migrateFromV1(v1) {
 }
 
 let appDataLoadedFromStorage = false;
+/** Set during loadData when normalization/migration changed persistable data. */
+let appDataPersistAfterLoad = false;
+/** Test-only: counts normalizeAppData invocations within the current VM session. */
+let normalizeAppDataInvocationCount = 0;
+
+const PERSIST_COMPARE_VOLATILE_KEYS = new Set(['updatedAt', 'scannedAt']);
+
+function stripPersistVolatileFields(value) {
+    if (value == null || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map(stripPersistVolatileFields);
+    const out = {};
+    Object.keys(value).forEach(key => {
+        if (PERSIST_COMPARE_VOLATILE_KEYS.has(key)) return;
+        out[key] = stripPersistVolatileFields(value[key]);
+    });
+    return out;
+}
+
+function persistComparableSnapshot(data) {
+    return JSON.stringify(stripPersistVolatileFields(data));
+}
+
+function migrationsPersistStateChanged(before, after) {
+    const b = before?.migrations && typeof before.migrations === 'object' ? before.migrations : {};
+    const a = after?.migrations && typeof after.migrations === 'object' ? after.migrations : {};
+    return JSON.stringify(b) !== JSON.stringify(a);
+}
+
+function detectPersistNeededAfterNormalize(rawBeforeNormalize, normalized) {
+    if (!rawBeforeNormalize || !normalized) return true;
+    if (migrationsPersistStateChanged(rawBeforeNormalize, normalized)) return true;
+    return persistComparableSnapshot(rawBeforeNormalize) !== persistComparableSnapshot(normalized);
+}
 
 function getDefaultAppData() {
     return typeof structuredClone === 'function'
@@ -28847,6 +29381,7 @@ function ensureLoadedDataDefaults(data) {
 }
 
 function loadData() {
+    appDataPersistAfterLoad = false;
     const raw = localStorage.getItem(STORAGE_KEY);
     let data = null;
 
@@ -28862,7 +29397,10 @@ function loadData() {
         appDataLoadedFromStorage = true;
         console.log('Loaded saved recovery data');
         ensureLoadedDataDefaults(data);
-        return normalizeAppDataSafe(data);
+        const rawSnapshot = JSON.parse(JSON.stringify(data));
+        const normalized = normalizeAppDataSafe(data);
+        appDataPersistAfterLoad = detectPersistNeededAfterNormalize(rawSnapshot, normalized);
+        return normalized;
     }
 
     const v1 = localStorage.getItem(STORAGE_KEY_V1);
@@ -28875,10 +29413,14 @@ function loadData() {
         appDataLoadedFromStorage = true;
         console.log('Loaded saved recovery data');
         ensureLoadedDataDefaults(data);
-        return normalizeAppDataSafe(data);
+        const rawSnapshot = JSON.parse(JSON.stringify(data));
+        const normalized = normalizeAppDataSafe(data);
+        appDataPersistAfterLoad = detectPersistNeededAfterNormalize(rawSnapshot, normalized);
+        return normalized;
     }
 
     console.log('No saved data found, using defaults');
+    appDataLoadedFromStorage = false;
     return normalizeAppDataSafe(getDefaultAppData());
 }
 
@@ -28914,6 +29456,7 @@ function migrateUseLogsToLogs(data) {
 }
 
 function normalizeAppData(data) {
+    normalizeAppDataInvocationCount += 1;
     normalizeLegacyRefs(data);
     migrateUseLogsToLogs(data);
     data.logs = data.logs || [];
@@ -29235,6 +29778,7 @@ const DEFAULT_COLLAPSED_SECTIONS = {
     chartBuilder: true,
     statsMoreMetrics: true,
     taperPlanHeader: false,
+    taperPeriodSummary: false,
     taperCurrentWeekSummary: false,
     taperWeeklyTable: false,
     taperSpendingPurchases: true,
@@ -32287,6 +32831,7 @@ function normalizeMainSubstances(data) {
 
 function saveData(data) {
     try {
+        prepareTaperDataForPersistence(data);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
         const savedAt = new Date().toISOString();
         localStorage.setItem(LAST_SAVED_KEY, savedAt);
@@ -32301,8 +32846,9 @@ function saveData(data) {
 }
 
 function persistLoadedAppDataIfNeeded() {
-    if (appDataLoadedFromStorage) {
+    if (appDataLoadedFromStorage && appDataPersistAfterLoad) {
         saveData(appData);
+        appDataPersistAfterLoad = false;
     }
 }
 
@@ -32318,10 +32864,13 @@ function formatLastSaved(iso) {
 
 function updateLastSavedDisplay(iso) {
     const label = `Last Saved: ${formatLastSaved(iso || getLastSavedTimestamp())}`;
-    ['dashboard-last-saved', 'settings-last-saved'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.textContent = label;
-    });
+    if (typeof document !== 'undefined') {
+        document.querySelectorAll('[data-last-saved-display]').forEach(el => {
+            el.textContent = label;
+        });
+    }
+    const settingsEl = typeof document !== 'undefined' ? document.getElementById('settings-last-saved') : null;
+    if (settingsEl) settingsEl.textContent = label;
     updateAutoBackupDisplay();
 }
 
@@ -32404,15 +32953,7 @@ function restoreLastAutoBackup() {
 }
 
 function repairAppData() {
-    if (!confirm('Repair data consistency issues?\n\nAn automatic backup will be saved first.')) return;
-    pushChangeHistory('before-repair', { summary: 'Before data repair' });
-    createAutoBackup('before-repair');
-    repairVapeInventoryLinks(appData);
-    const stats = repairDataConsistency(appData);
-    saveData(appData);
-    refreshAppAfterDataChange();
-    alert(`Data repair complete.\n\n${formatRepairSummary(stats)}`);
-    renderDataHealthPanel();
+    applyAllSafeDataHealthRepairs();
 }
 
 function setText(id, text) {
@@ -32494,30 +33035,9 @@ function sortSubstancesMainFirst(list) {
 }
 
 let appData;
-try {
-    appData = loadData();
-} catch (error) {
-    console.error('Failed to load app data:', error);
-    const hasStoredData = !!localStorage.getItem(STORAGE_KEY) || !!localStorage.getItem(STORAGE_KEY_V1);
-    const backup = loadAutoBackupAppData();
-    if (backup) {
-        appDataLoadedFromStorage = true;
-        appData = normalizeAppDataSafe(backup);
-        console.log('Loaded saved recovery data');
-    } else if (hasStoredData) {
-        console.error('Saved data exists but could not be loaded. Defaults shown in memory only — storage was not overwritten.');
-        appData = normalizeAppDataSafe(getDefaultAppData());
-    } else {
-        appData = normalizeAppDataSafe(getDefaultAppData());
-        console.log('No saved data found, using defaults');
-    }
-}
-
-ensureAppDataSubstancesReady(appData);
-
-let currentSubstanceId = resolveStartupSubstanceId() || DASHBOARD_ALL;
-let selectedSubstanceId = resolveDefaultSelectedSubstanceId() || DASHBOARD_ALL;
-let selectedDashboardSubstance = currentSubstanceId || DASHBOARD_ALL;
+let currentSubstanceId;
+let selectedSubstanceId;
+let selectedDashboardSubstance;
 let recoveryDashboardDatasetCache = null;
 let recoveryDashboardDatasetCacheKey = null;
 let statsDateRangePreset = 'last-7';
@@ -32530,20 +33050,6 @@ let statsCompareCustomEnd = '';
 let insightsDatasetCache = null;
 let insightsDatasetCacheKey = null;
 let testReferenceDateStr = null;
-
-// Apply persisted shared Insights filters after globals exist
-if (typeof loadInsightsFiltersIntoState === 'function') {
-    loadInsightsFiltersIntoState(appData);
-}
-if (typeof initInsightsSimplify === 'function') {
-    try { initInsightsSimplify(); } catch (_) { /* DOM may be absent in tests */ }
-}
-if (typeof initExperienceMode === 'function') {
-    try { initExperienceMode(); } catch (_) { /* DOM may be absent in tests */ }
-}
-if (typeof initInventorySource === 'function') {
-    try { initInventorySource(); } catch (_) { /* DOM may be absent in tests */ }
-}
 
 const STATS_CALENDAR_STORAGE_KEY = 'recoveryTracker.statsCalendar.v1';
 let statsCalendarViewMode = 'month';
@@ -33374,8 +33880,8 @@ function deleteSubstance(id) {
     if (Array.isArray(appData.taperPlansV2)) {
         appData.taperPlansV2 = appData.taperPlansV2.filter(p => p.substanceId !== id);
     }
-    if (selectedTaperPlanId && getTaperPlanById(selectedTaperPlanId)?.substanceId === id) {
-        selectedTaperPlanId = null;
+    if (getSelectedTaperId() && getTaperPlanById(getSelectedTaperId())?.substanceId === id) {
+        setTaperUiState({ selectedTaperId: null });
     }
     delete appData.recoveryStreaks[id];
     normalizeMainSubstances(appData);
@@ -33789,9 +34295,6 @@ function formatBreakText(minutes) {
     }
     return `${mins}m`;
 }
-
-const USE_BREAK_FIELDS = Object.freeze(['breakMinutes', 'breakHours', 'breakText']);
-const BUY_BREAK_FIELDS = Object.freeze(['buyBreakMinutes', 'buyBreakHours', 'buyBreakText']);
 
 function clearUseBreakFields(log) {
     USE_BREAK_FIELDS.forEach(field => delete log[field]);
@@ -41977,7 +42480,7 @@ function updateBuyAcquisitionTypeUI() {
     if (acquisitionSelect) {
         acquisitionSelect.hidden = false;
         acquisitionSelect.disabled = false;
-        acquisitionSelect.style.display = '';
+        if (acquisitionSelect.style) acquisitionSelect.style.display = '';
         if (!acquisitionSelect.value) acquisitionSelect.value = 'purchased';
     }
     document.getElementById('buy-gift-source-group')?.classList.toggle('hidden', !isGiftReceived);
@@ -44045,6 +44548,39 @@ function getDashboardBuyInfo(substanceId) {
     };
 }
 
+function bindTaperFormSubmitHandlers() {
+    const form = document.getElementById('taper-form');
+    const btn = document.getElementById('taper-generate-btn');
+    if (form && form.dataset?.submitBound !== '1' && typeof form.addEventListener === 'function') {
+        if (!form.dataset) form.dataset = {};
+        form.dataset.submitBound = '1';
+        form.addEventListener('submit', handleTaperSubmit);
+    }
+    if (btn && btn.dataset?.clickBound !== '1' && typeof btn.addEventListener === 'function') {
+        if (!btn.dataset) btn.dataset = {};
+        btn.dataset.clickBound = '1';
+        btn.removeAttribute?.('onclick');
+        btn.onclick = null;
+        btn.addEventListener('click', handleTaperSubmitClick);
+    }
+}
+
+function bindTaperFormDateSummaryTracking() {
+    const form = document.getElementById('taper-form');
+    if (!form || form.dataset?.dateSummaryBound === '1') return;
+    if (typeof form.addEventListener !== 'function') return;
+    if (!form.dataset) form.dataset = {};
+    form.dataset.dateSummaryBound = '1';
+    const onDateChange = () => renderTaperFormDateSummary();
+    ['start-date', 'end-date'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.addEventListener('change', onDateChange);
+            el.addEventListener('input', onDateChange);
+        }
+    });
+}
+
 // ——— Event listeners ———
 function setupEventListeners() {
     setupPurchaseHistoryActions();
@@ -44054,8 +44590,8 @@ function setupEventListeners() {
     setupStatsCalendarControls();
     setupDashboardInsightControls();
     migrateLegacyUseStatsLayoutIfNeeded();
-    document.getElementById('taper-form')?.addEventListener('submit', handleTaperSubmit);
-    document.getElementById('taper-generate-btn')?.addEventListener('click', handleTaperSubmitClick);
+    bindTaperFormSubmitHandlers();
+    bindTaperFormDateSummaryTracking();
     setupSubstanceForm();
     document.getElementById('save-substance-btn')?.addEventListener('click', () => {
         console.log('[substance] save button clicked');
@@ -51757,50 +52293,6 @@ function formatTaperWeeklyAmountBought(totals, plan, substanceId, unit) {
     return formatTaperRunningAmountBought(totals, plan, substanceId, unit);
 }
 
-const PURCHASE_TAPER_MODES = [
-    'none',
-    'combined',
-    'weekly_buy_amount',
-    'weekly_spend',
-    'monthly_buy_amount',
-    'monthly_spend',
-    'manual_weekly_buy_amount',
-    'manual_weekly_spend'
-];
-
-const PURCHASE_TAPER_FORM_MODE_MAP = {
-    reduce_buy_amount: 'weekly_buy_amount',
-    reduce_buy_spend: 'weekly_spend',
-    fixed_weekly_purchase_limit: 'weekly_buy_amount',
-    fixed_weekly_spending_limit: 'weekly_spend',
-    fixed_monthly_purchase_cap: 'monthly_buy_amount',
-    fixed_monthly_spending_cap: 'monthly_spend'
-};
-
-const PURCHASE_TAPER_MODE_LABELS = {
-    none: 'None',
-    combined: 'Combined rules',
-    reduce_buy_amount: 'Reduce purchase amount',
-    reduce_buy_spend: 'Reduce purchase cost',
-    weekly_buy_amount: 'Fixed weekly purchase limit',
-    weekly_spend: 'Fixed weekly spending limit',
-    monthly_buy_amount: 'Fixed monthly purchase cap',
-    monthly_spend: 'Fixed monthly spending cap',
-    manual_weekly_buy_amount: 'Manual weekly buy plan',
-    manual_weekly_spend: 'Manual weekly spending plan'
-};
-
-const BUYING_REDUCTION_RULE_KEYS = [
-    'reducePurchaseAmount',
-    'reducePurchaseCost',
-    'weeklyPurchaseLimit',
-    'weeklySpendingLimit',
-    'monthlyPurchaseCap',
-    'monthlySpendingCap',
-    'manualWeeklyBuyPlan',
-    'manualWeeklySpendingPlan'
-];
-
 function getDefaultBuyingReductionSettings() {
     return {
         reducePurchaseAmount: {
@@ -51833,8 +52325,6 @@ function getDefaultBuyingReductionSettings() {
         }
     };
 }
-
-const AUTO_SPEND_BASELINE_RANGES = ['last-30', 'last-60', 'last-90', 'plan-period', 'custom'];
 
 function normalizeAutoSpendFromCostPerGramSettings(raw) {
     const defaults = getDefaultBuyingReductionSettings().autoSpendFromCostPerGram;
@@ -55483,7 +55973,7 @@ function syncTaperPlanDataForPlan(plan, data = appData) {
 }
 
 function syncTaperPlanData(substanceId, data = appData) {
-    const plan = getPrimaryTaperPlan(substanceId, data) || data?.taperPlans?.[substanceId];
+    const plan = getPrimaryTaperPlan(substanceId, data);
     syncTaperPlanDataForPlan(plan, data);
 }
 
@@ -56034,9 +56524,9 @@ function syncTaperSubstanceToSelected() {
 }
 
 function onTaperSubstanceChange() {
-    if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) {
-        // Revert select to the plan/substance being edited.
-        const editing = taperFormPlanId ? getTaperPlanById(taperFormPlanId) : null;
+    const ui = getTaperUiState();
+    if (isTaperFormModeActive() && taperFormDirty && !confirmDiscardTaperFormChanges()) {
+        const editing = ui.editingTaperId ? getTaperPlanById(ui.editingTaperId) : null;
         const substanceEl = document.getElementById('taper-substance');
         if (substanceEl && editing?.substanceId) substanceEl.value = editing.substanceId;
         return;
@@ -56045,30 +56535,35 @@ function onTaperSubstanceChange() {
     if (id) setSelectedSubstanceId(id, { source: 'taper', refresh: false });
     persistTaperSubstanceId(id);
     syncGoalsPlansSubstanceFilters(id);
-    // Changing substance abandons an in-progress edit for a different substance.
-    if (taperFormPlanId) {
-        const editing = getTaperPlanById(taperFormPlanId);
-        if (!editing || editing.substanceId !== id) {
-            taperEditingPlan = false;
-            taperFormPlanId = null;
-            setInputValue('taper-editing-plan-id', '');
+    const defaultPlan = resolveDefaultTaperPlanForSubstance(id);
+    if (isTaperFormModeActive()) {
+        if (ui.mode === 'edit' && ui.editingTaperId) {
+            const editing = getTaperPlanById(ui.editingTaperId);
+            if (!editing || editing.substanceId !== id) {
+                setTaperUiState({
+                    mode: 'create',
+                    editingTaperId: null,
+                    sourceTaperId: null,
+                    selectedTaperId: defaultPlan?.id || null
+                });
+                resetTaperFormLifecycleState();
+            }
+        } else {
+            setTaperUiState({
+                editingTaperId: null,
+                selectedTaperId: defaultPlan?.id || null
+            });
             resetTaperFormLifecycleState();
         }
     } else {
-        taperEditingPlan = false;
-        setInputValue('taper-editing-plan-id', '');
-        resetTaperFormLifecycleState();
-    }
-    const defaultPlan = resolveDefaultTaperPlanForSubstance(id);
-    if (!taperEditingPlan) {
-        selectedTaperPlanId = defaultPlan?.id || null;
+        setTaperUiState({ selectedTaperId: defaultPlan?.id || null });
     }
     populateTaperReductionTypeSelect(getTaperSubstanceId());
     toggleTaperPlanTypeFields();
     prefillVapeTaperDefaults(getTaperSubstanceId());
     if (typeof refreshTaperSuggestions === 'function') {
         refreshTaperSuggestions({
-            autoFill: isTaperAutoSuggestEnabled() && !taperFormPlanId,
+            autoFill: isTaperAutoSuggestEnabled() && !isTaperEditFormActive(),
             forceRender: true
         });
     }
@@ -56084,9 +56579,14 @@ function onTaperSubstanceChange() {
 
 function onTaperPlanChange() {
     const select = document.getElementById('taper-plan-select');
-    selectedTaperPlanId = select?.value || null;
-    taperEditingPlan = false;
-    refreshTaperDashboard();
+    const planId = select?.value || null;
+    if (!planId) return;
+    if (openTaperPlan(planId, { closeManageModal: false }) === false) {
+        populateTaperPlanDropdown();
+        const restore = document.getElementById('taper-plan-select');
+        if (restore && getSelectedTaperId()) restore.value = getSelectedTaperId();
+        return;
+    }
     if (columnSettingsTableKey === 'taperByWeek') {
         openColumnSettingsModal(
             'taperByWeek',
@@ -56096,7 +56596,9 @@ function onTaperPlanChange() {
 }
 
 function onTaperShowArchivedChange() {
-    showArchivedTaperPlans = !!document.getElementById('taper-show-archived')?.checked;
+    const el = document.getElementById('manage-taper-show-archived')
+        || document.getElementById('taper-show-archived');
+    showArchivedTaperPlans = !!el?.checked;
     populateTaperPlanDropdown();
     refreshTaperDashboard();
 }
@@ -56107,15 +56609,19 @@ function populateTaperPlanDropdown() {
     if (!select) return;
     const substanceId = getTaperSubstanceId();
     const plans = getTaperPlansForSubstance(substanceId, appData, { includeArchived: showArchivedTaperPlans });
-    const allCount = getTaperPlansForSubstance(substanceId, appData, { includeArchived: true }).length;
-    const countEl = document.getElementById('taper-plan-count');
-    if (countEl) countEl.textContent = allCount ? `${allCount} plan${allCount === 1 ? '' : 's'}` : '';
+    const inCreateForm = isTaperCreateFormActive();
 
     select.innerHTML = '';
     if (!plans.length) {
-        select.innerHTML = '<option value="">No plans</option>';
+        select.innerHTML = '<option value="">No tapers</option>';
         if (toolbar) toolbar.classList.toggle('hidden', false);
         return;
+    }
+    if (inCreateForm) {
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = 'Select taper to open…';
+        select.appendChild(placeholder);
     }
     plans.forEach(plan => {
         const opt = document.createElement('option');
@@ -56123,14 +56629,20 @@ function populateTaperPlanDropdown() {
         opt.textContent = formatTaperPlanOptionLabel(plan);
         select.appendChild(opt);
     });
-    const valid = plans.some(p => p.id === selectedTaperPlanId);
-    if (!valid) {
-        const defaultPlan = resolveDefaultTaperPlanForSubstance(substanceId);
-        selectedTaperPlanId = defaultPlan?.id && plans.some(p => p.id === defaultPlan.id)
-            ? defaultPlan.id
-            : plans[0].id;
+    if (inCreateForm) {
+        select.value = '';
+    } else {
+        let selectedId = getSelectedTaperId();
+        const valid = plans.some(p => p.id === selectedId);
+        if (!valid) {
+            const defaultPlan = resolveDefaultTaperPlanForSubstance(substanceId);
+            selectedId = defaultPlan?.id && plans.some(p => p.id === defaultPlan.id)
+                ? defaultPlan.id
+                : plans[0].id;
+            setTaperUiState({ selectedTaperId: selectedId });
+        }
+        select.value = selectedId || '';
     }
-    select.value = selectedTaperPlanId || '';
     if (toolbar) toolbar.classList.remove('hidden');
 }
 
@@ -56202,7 +56714,7 @@ function setTaperAutoSuggestEnabled(enabled, data = appData) {
     if (typeof saveData === 'function') saveData(data);
     syncTaperSuggestSettingsUI(data);
     if (typeof refreshTaperSuggestions === 'function') {
-        refreshTaperSuggestions({ autoFill: !!enabled && !taperFormPlanId });
+        refreshTaperSuggestions({ autoFill: !!enabled && !isTaperEditFormActive() });
     }
     return prefs.autoSuggestEnabled;
 }
@@ -56217,9 +56729,178 @@ function setTaperSuggestLookbackDays(value, data = appData) {
     if (typeof saveData === 'function') saveData(data);
     syncTaperSuggestSettingsUI(data);
     if (typeof refreshTaperSuggestions === 'function') {
-        refreshTaperSuggestions({ autoFill: isTaperAutoSuggestEnabled(data) && !taperFormPlanId });
+        refreshTaperSuggestions({ autoFill: isTaperAutoSuggestEnabled(data) && !isTaperEditFormActive() });
     }
     return prefs.lookbackDays;
+}
+
+/**
+ * Taper metric visibility.
+ *
+ * Visibility is presentation-only: metrics stay calculated and stored so taper
+ * math, weekly targets, and saved plans are unaffected by hiding a card.
+ * Preference is shared across tapers and lives in settings so it survives refresh.
+ */
+const TAPER_METRIC_DEFINITIONS = [
+    { key: 'startingDailyAverage', label: 'Starting daily average', group: 'plan' },
+    { key: 'dailyAverageAllowed', label: 'Daily average allowed', group: 'plan' },
+    { key: 'currentAveragePerDay', label: 'Current average/day', group: 'usage' },
+    { key: 'averagePerWeek', label: 'Average/week', group: 'usage' },
+    { key: 'averagePerMonth', label: 'Average/month', group: 'usage' },
+    { key: 'averageSession', label: 'Average session', group: 'usage' },
+    { key: 'sessionsPerDay', label: 'Sessions/day', group: 'usage' },
+    { key: 'averageDuration', label: 'Average duration', group: 'usage' },
+    { key: 'spendingPerWeek', label: 'Average spending/week', group: 'spending' },
+    { key: 'spendingPerMonth', label: 'Average spending/month', group: 'spending' },
+    { key: 'currentInventory', label: 'Current inventory', group: 'supply' },
+    { key: 'estimatedSupply', label: 'Estimated supply', group: 'supply' },
+    { key: 'reductionTarget', label: 'Reduction target', group: 'plan' },
+    { key: 'currentStep', label: 'Current step', group: 'progress' },
+    { key: 'status', label: 'Status / on-track state', group: 'progress' },
+    { key: 'endDate', label: 'End date / estimated completion', group: 'progress' }
+];
+
+const TAPER_METRIC_KEYS = TAPER_METRIC_DEFINITIONS.map(m => m.key);
+
+function getDefaultTaperMetricVisibility() {
+    const defaults = {};
+    TAPER_METRIC_KEYS.forEach(key => { defaults[key] = true; });
+    return defaults;
+}
+
+function ensureTaperMetricVisibilityPrefs(data = appData) {
+    if (!data.settings || typeof data.settings !== 'object') data.settings = {};
+    const defaults = getDefaultTaperMetricVisibility();
+    const current = data.settings.taperMetricVisibility;
+    if (!current || typeof current !== 'object') {
+        data.settings.taperMetricVisibility = defaults;
+        return data.settings.taperMetricVisibility;
+    }
+    TAPER_METRIC_KEYS.forEach(key => {
+        current[key] = current[key] === undefined ? defaults[key] : current[key] !== false;
+    });
+    // Drop keys that no longer exist so stale prefs cannot hide unknown metrics.
+    Object.keys(current).forEach(key => {
+        if (!TAPER_METRIC_KEYS.includes(key)) delete current[key];
+    });
+    return current;
+}
+
+function isTaperMetricVisible(key, data = appData) {
+    if (!TAPER_METRIC_KEYS.includes(key)) return true;
+    return ensureTaperMetricVisibilityPrefs(data)[key] !== false;
+}
+
+function getHiddenTaperMetricKeys(data = appData) {
+    const prefs = ensureTaperMetricVisibilityPrefs(data);
+    return TAPER_METRIC_KEYS.filter(key => prefs[key] === false);
+}
+
+function setTaperMetricVisibility(key, visible, data = appData) {
+    if (!TAPER_METRIC_KEYS.includes(key)) return false;
+    const prefs = ensureTaperMetricVisibilityPrefs(data);
+    prefs[key] = visible !== false;
+    if (typeof saveData === 'function') saveData(data);
+    refreshTaperMetricVisibilityUi(data);
+    return prefs[key];
+}
+
+function onTaperMetricVisibilityToggle(key, el) {
+    setTaperMetricVisibility(key, el ? el.checked !== false : true);
+}
+
+function resetTaperMetricVisibility(data = appData) {
+    if (!data.settings || typeof data.settings !== 'object') data.settings = {};
+    data.settings.taperMetricVisibility = getDefaultTaperMetricVisibility();
+    if (typeof saveData === 'function') saveData(data);
+    refreshTaperMetricVisibilityUi(data);
+    return data.settings.taperMetricVisibility;
+}
+
+function refreshTaperMetricVisibilityUi(data = appData) {
+    renderTaperMetricVisibilityPanel(data);
+    applyTaperMetricVisibilityToForm(data);
+    applyTaperMetricVisibilityToDashboard(data);
+    if (typeof refreshTaperDashboard === 'function') {
+        try { refreshTaperDashboard(); } catch (_) { /* soft */ }
+    }
+    if (typeof refreshTapersCombinedViews === 'function') {
+        try { refreshTapersCombinedViews(); } catch (_) { /* soft */ }
+    }
+}
+
+function toggleTaperMetricVisibilityPanel(force) {
+    if (typeof document === 'undefined') return false;
+    const panel = document.getElementById('taper-metric-visibility-panel');
+    if (!panel) return false;
+    const shouldShow = force === undefined ? panel.classList.contains('hidden') : !!force;
+    renderTaperMetricVisibilityPanel();
+    panel.classList.toggle('hidden', !shouldShow);
+    return shouldShow;
+}
+
+function renderTaperMetricVisibilityPanel(data = appData) {
+    if (typeof document === 'undefined') return;
+    const body = document.getElementById('taper-metric-visibility-body');
+    if (!body) return;
+    const prefs = ensureTaperMetricVisibilityPrefs(data);
+    const rows = TAPER_METRIC_DEFINITIONS.map(metric => `
+        <label class="checkbox-label taper-metric-visibility-row">
+            <input type="checkbox" data-taper-metric="${escapeAttr(metric.key)}"${prefs[metric.key] === false ? '' : ' checked'}
+                onchange="onTaperMetricVisibilityToggle('${escapeAttr(metric.key)}', this)">
+            ${escapeHtml(metric.label)}
+        </label>`).join('');
+    body.innerHTML = `
+        <p class="settings-hint">Hidden metrics disappear from taper cards and summaries. Your data keeps recording and taper targets keep calculating.</p>
+        <div class="taper-metric-visibility-grid">${rows}</div>
+        <div class="taper-metric-visibility-actions">
+            <button type="button" class="secondary-btn btn-small" onclick="resetTaperMetricVisibility()">Reset to defaults</button>
+        </div>`;
+}
+
+/** Hide plan inputs for metrics the user turned off (values stay saved on the plan). */
+function applyTaperMetricVisibilityToForm(data = appData) {
+    if (typeof document === 'undefined') return;
+    const prefs = ensureTaperMetricVisibilityPrefs(data);
+    const groups = [
+        ['startingDailyAverage', 'taper-start-avg-group'],
+        ['dailyAverageAllowed', 'goal-avg-group'],
+        ['reductionTarget', 'taper-reduction-type-group']
+    ];
+    groups.forEach(([key, groupId]) => {
+        const group = document.getElementById(groupId);
+        if (!group) return;
+        const hidden = prefs[key] === false;
+        group.classList.toggle('taper-metric-hidden', hidden);
+        // Keep validation satisfiable while a field is out of view.
+        const input = typeof group.querySelector === 'function'
+            ? group.querySelector('input, select')
+            : null;
+        if (input && hidden && input.required) {
+            input.required = false;
+            if (input.dataset) input.dataset.taperMetricRequired = '1';
+        } else if (input && !hidden && input.dataset?.taperMetricRequired === '1') {
+            input.required = true;
+            delete input.dataset.taperMetricRequired;
+        }
+    });
+}
+
+function applyTaperMetricVisibilityToDashboard(data = appData) {
+    if (typeof document === 'undefined') return;
+    const prefs = ensureTaperMetricVisibilityPrefs(data);
+    const toggles = [
+        ['endDate', 'taper-plan-end-meta'],
+        ['currentStep', 'taper-plan-week-meta'],
+        ['status', 'taper-plan-badges'],
+        ['status', 'taper-weekly-status-stat'],
+        ['currentAveragePerDay', 'taper-weekly-avg-day-stat']
+    ];
+    toggles.forEach(([key, id]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.toggle('taper-metric-hidden', prefs[key] === false);
+    });
 }
 
 function syncTaperSuggestSettingsUI(data = appData) {
@@ -56644,18 +57325,25 @@ function renderTaperCurrentMetricsCard(metrics) {
     }
     const unit = escapeHtml(metrics.unit || '');
     const amount = (v) => (v == null ? '—' : `${escapeHtml(formatAmount(v))} ${unit}`.trim());
+    const items = [
+        ['currentAveragePerDay', 'Average/day', amount(metrics.avgPerDay)],
+        ['averagePerWeek', 'Average/week', amount(metrics.avgPerWeek)],
+        ['averagePerMonth', 'Average/month', amount(metrics.avgPerMonth)],
+        ['averageSession', 'Average session', amount(metrics.avgSession)],
+        ['sessionsPerDay', 'Sessions/day', metrics.sessionsPerDay == null ? '—' : escapeHtml(formatAmount(metrics.sessionsPerDay))],
+        ['averageDuration', 'Average duration', escapeHtml(formatTaperSuggestDurationMinutes(metrics.avgDurationMinutes))],
+        ['spendingPerWeek', 'Average spending/week', escapeHtml(formatTaperSuggestMoney(metrics.spendPerWeek))],
+        ['spendingPerMonth', 'Average spending/month', escapeHtml(formatTaperSuggestMoney(metrics.spendPerMonth))],
+        ['currentInventory', 'Current inventory', amount(metrics.inventory)],
+        ['estimatedSupply', 'Estimated supply', metrics.estimatedSupplyDays == null ? '—' : `${escapeHtml(String(metrics.estimatedSupplyDays))} days`]
+    ].filter(([key]) => isTaperMetricVisible(key));
+    if (!items.length) {
+        body.innerHTML = '<p class="taper-suggest-empty">All usage metrics are hidden. Use Customize metrics to show them again.</p>';
+        return;
+    }
     body.innerHTML = `
         <div class="taper-current-metrics-grid">
-            <div class="taper-metric-item"><span>Average/day</span><strong>${amount(metrics.avgPerDay)}</strong></div>
-            <div class="taper-metric-item"><span>Average/week</span><strong>${amount(metrics.avgPerWeek)}</strong></div>
-            <div class="taper-metric-item"><span>Average/month</span><strong>${amount(metrics.avgPerMonth)}</strong></div>
-            <div class="taper-metric-item"><span>Average session</span><strong>${amount(metrics.avgSession)}</strong></div>
-            <div class="taper-metric-item"><span>Sessions/day</span><strong>${metrics.sessionsPerDay == null ? '—' : escapeHtml(formatAmount(metrics.sessionsPerDay))}</strong></div>
-            <div class="taper-metric-item"><span>Average duration</span><strong>${escapeHtml(formatTaperSuggestDurationMinutes(metrics.avgDurationMinutes))}</strong></div>
-            <div class="taper-metric-item"><span>Average spending/week</span><strong>${escapeHtml(formatTaperSuggestMoney(metrics.spendPerWeek))}</strong></div>
-            <div class="taper-metric-item"><span>Average spending/month</span><strong>${escapeHtml(formatTaperSuggestMoney(metrics.spendPerMonth))}</strong></div>
-            <div class="taper-metric-item"><span>Current inventory</span><strong>${amount(metrics.inventory)}</strong></div>
-            <div class="taper-metric-item"><span>Estimated supply</span><strong>${metrics.estimatedSupplyDays == null ? '—' : `${escapeHtml(String(metrics.estimatedSupplyDays))} days`}</strong></div>
+            ${items.map(([, label, value]) => `<div class="taper-metric-item"><span>${escapeHtml(label)}</span><strong>${value}</strong></div>`).join('')}
         </div>`;
 }
 
@@ -56817,51 +57505,39 @@ function refreshTaperSuggestions(options = {}) {
 }
 
 function showNewTaperPlan() {
-    if (typeof isSimpleExperienceMode === 'function' && isSimpleExperienceMode()
-        && typeof openSimplePlanWizard === 'function'
-        && !(typeof globalThis !== 'undefined' && globalThis.__smPlanWizardBypass)
-        && typeof document !== 'undefined'
-        && document.getElementById('simple-plan-wizard')) {
-        openSimplePlanWizard();
-        return false;
-    }
-    if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return false;
-    taperFormPlanId = null;
-    taperEditingPlan = true;
+    if (isTaperFormModeActive() && taperFormDirty && !confirmDiscardTaperFormChanges()) return false;
+    setTaperUiState({
+        mode: 'create',
+        selectedTaperId: null,
+        editingTaperId: null,
+        sourceTaperId: null,
+        isSaving: false
+    });
     resetTaperFormLifecycleState();
-    setInputValue('taper-editing-plan-id', '');
     setText('taper-setup-title', 'Create Taper Plan');
-    setText('taper-generate-btn', 'Save Plan');
+    setText('taper-generate-btn', 'Save Taper');
+    setTaperStartFromSectionVisible(true);
     ensureTaperSetupVisible();
     try {
         const substanceId = getTaperSubstanceId();
-        populateTaperReductionTypeSelect(substanceId);
-        setInputValue('taper-plan-name', getDefaultTaperPlanName(substanceId));
-        const setPrimaryEl = document.getElementById('taper-set-primary');
-        if (setPrimaryEl) {
-            setPrimaryEl.checked = !getTaperPlansForSubstance(substanceId).some(p => p.isPrimary && p.status === 'active');
-        }
-        setDefaultTaperEndDate();
-        resetTaperSuggestTouchState();
-        toggleTaperPlanTypeFields({ skipPrefill: false });
-        prefillVapeTaperDefaults(substanceId);
+        populateTaperStartFromCopySelect(substanceId);
+        populateTaperStartFromBuiltinSelect(substanceId);
+        populateTaperStartFromMyTemplateSelect();
+        setTaperStartFrom(TAPER_START_FROM.BLANK);
+        resetTaperCreateFormBasics(substanceId);
         bindTaperFormDirtyTracking();
         bindTaperSuggestTracking();
-        const purchaseEnabledEl = document.getElementById('purchase-taper-enabled');
-        if (purchaseEnabledEl) purchaseEnabledEl.checked = false;
-        setInputValue('purchase-reduction-mode', 'weekly_spend');
-        setInputValue('taper-priority', 'normal');
-        setInputValue('taper-status', 'active');
-        togglePurchaseTaperFields();
+        renderTaperFormDateSummary();
         try {
             if (typeof refreshTaperSuggestions === 'function') {
-                refreshTaperSuggestions({ autoFill: true, forceRender: true });
+                refreshTaperSuggestions({ autoFill: isTaperAutoSuggestEnabled(), forceRender: true });
             }
         } catch (err) {
             console.warn('[taper-suggest] refresh failed during create', err);
         }
     } finally {
         markTaperFormClean();
+        populateTaperPlanDropdown();
         ensureTaperSetupVisible();
     }
     return true;
@@ -56875,22 +57551,31 @@ function duplicateSelectedTaperPlan() {
 
 function duplicateTaperPlanById(planId) {
     const plan = getTaperPlanById(planId);
-    if (!plan) return;
-    const copy = JSON.parse(JSON.stringify(plan));
-    copy.id = generateUniqueId('taper');
-    copy.name = `${plan.name} copy`;
-    copy.status = 'active';
-    copy.isPrimary = false;
-    copy.isPaused = false;
-    const now = new Date().toISOString();
-    copy.createdAt = now;
-    copy.updatedAt = now;
-    ensureTaperPlansV2(appData);
-    appData.taperPlansV2.push(copy);
-    syncLegacyTaperPlansFromV2(appData);
-    saveData(appData);
-    selectedTaperPlanId = copy.id;
-    refreshTaperDashboard();
+    if (!plan) return false;
+    if (isTaperFormModeActive() && taperFormDirty && !confirmDiscardTaperFormChanges()) return false;
+    setTaperUiState({
+        mode: 'duplicate',
+        selectedTaperId: null,
+        editingTaperId: null,
+        sourceTaperId: planId,
+        isSaving: false
+    });
+    resetTaperFormLifecycleState();
+    setText('taper-setup-title', 'Duplicate Taper Plan');
+    setText('taper-generate-btn', 'Save Taper');
+    setTaperStartFromSectionVisible(false);
+    ensureTaperSetupVisible();
+    try {
+        prefillCreateFormFromPlanSource(plan, { nameSuffix: ' copy' });
+        bindTaperFormDirtyTracking();
+        bindTaperSuggestTracking();
+        renderTaperFormDateSummary();
+    } finally {
+        markTaperFormClean();
+        populateTaperPlanDropdown();
+        ensureTaperSetupVisible();
+    }
+    return true;
 }
 
 function renameSelectedTaperPlan() {
@@ -56915,9 +57600,10 @@ function archiveSelectedTaperPlan() {
         const next = getTaperPlansForSubstance(plan.substanceId).find(p => p.id !== plan.id && p.status === 'active');
         if (next) setTaperPlanPrimary(next.id, plan.substanceId);
     }
-    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
-    selectedTaperPlanId = resolveDefaultTaperPlanForSubstance(plan.substanceId)?.id || null;
+    setTaperUiState({
+        selectedTaperId: resolveDefaultTaperPlanForSubstance(plan.substanceId)?.id || null
+    });
     refreshTaperDashboard();
 }
 
@@ -56988,7 +57674,8 @@ function renderManageTaperPlansList() {
                 <div class="manage-taper-plan-badges">${badges}</div>
             </header>
             <div class="manage-taper-plan-metrics">
-                <div><span>Date range</span><strong>${formatTaperPlanDateRange(plan)}</strong></div>
+                <div><span>Date range</span><strong>${escapeHtml(formatTaperDateSummary(plan.startDate, plan.endDate, { today }))}</strong></div>
+                <div><span>Time</span><strong>${escapeHtml(formatTaperTimeProgressSummary(plan.startDate, plan.endDate, { today, status }))}</strong></div>
                 <div><span>Current week</span><strong>Week ${weekNum}</strong></div>
                 <div><span>Used this week</span><strong>${formatTaperAmount(usedWeek, unit)}</strong></div>
                 <div><span>Remaining this week</span><strong>${remainingWeek != null ? formatTaperAmount(remainingWeek, unit) : '—'}</strong></div>
@@ -57013,37 +57700,193 @@ function renderManageTaperPlansList() {
 }
 
 function openTaperPlanFromManage(planId) {
-    selectedTaperPlanId = planId;
-    closeManageTaperPlansModal();
+    openTaperPlan(planId);
+}
+
+function resetTaperCreateFormBasics(substanceId) {
+    populateTaperReductionTypeSelect(substanceId);
+    setInputValue('taper-plan-name', getDefaultTaperPlanName(substanceId));
+    const setPrimaryEl = document.getElementById('taper-set-primary');
+    if (setPrimaryEl) {
+        setPrimaryEl.checked = !getTaperPlansForSubstance(substanceId).some(p => p.isPrimary && p.status === 'active');
+    }
+    setDefaultTaperEndDate();
+    resetTaperSuggestTouchState();
+    toggleTaperPlanTypeFields({ skipPrefill: false });
+    prefillVapeTaperDefaults(substanceId);
+    const purchaseEnabledEl = document.getElementById('purchase-taper-enabled');
+    if (purchaseEnabledEl) purchaseEnabledEl.checked = false;
+    setInputValue('purchase-reduction-mode', 'weekly_spend');
+    setInputValue('taper-priority', 'normal');
+    setInputValue('taper-status', 'active');
+    togglePurchaseTaperFields();
+}
+
+function populateTaperStartFromCopySelect(substanceId) {
+    const select = document.getElementById('taper-start-copy-plan');
+    if (!select) return;
+    const plans = getTaperPlansForSubstance(substanceId, appData, { includeArchived: true });
+    select.innerHTML = plans.length
+        ? plans.map(p => `<option value="${escapeAttr(p.id)}">${escapeHtml(p.name)}</option>`).join('')
+        : '<option value="">No tapers to copy</option>';
+}
+
+function populateTaperStartFromBuiltinSelect(substanceId) {
+    const select = document.getElementById('taper-start-builtin-template');
+    if (!select) return;
+    const templates = getCompatibleTaperTemplates(substanceId);
+    select.innerHTML = templates.length
+        ? templates.map(t => `<option value="${escapeAttr(t.id)}">${escapeHtml(t.name)}</option>`).join('')
+        : '<option value="">No templates</option>';
+}
+
+function populateTaperStartFromMyTemplateSelect(data = appData) {
+    const select = document.getElementById('taper-start-my-template');
+    if (!select) return;
+    const templates = getTaperMyTemplates(data);
+    select.innerHTML = templates.length
+        ? templates.map(t => `<option value="${escapeAttr(t.id)}">${escapeHtml(t.name)}</option>`).join('')
+        : '<option value="">No saved templates</option>';
+}
+
+function updateTaperStartFromDetailVisibility(startFrom) {
+    const mode = startFrom || document.getElementById('taper-start-from')?.value || TAPER_START_FROM.BLANK;
+    document.getElementById('taper-start-builtin-group')?.classList.toggle('hidden', mode !== TAPER_START_FROM.BUILTIN);
+    document.getElementById('taper-start-my-template-group')?.classList.toggle('hidden', mode !== TAPER_START_FROM.MY);
+    document.getElementById('taper-start-copy-group')?.classList.toggle('hidden', mode !== TAPER_START_FROM.COPY);
+}
+
+function setTaperStartFrom(mode, options = {}) {
+    const startEl = document.getElementById('taper-start-from');
+    if (startEl) startEl.value = mode || TAPER_START_FROM.BLANK;
+    updateTaperStartFromDetailVisibility(mode);
+    if (options.templateId) {
+        const builtinEl = document.getElementById('taper-start-builtin-template');
+        if (builtinEl) builtinEl.value = options.templateId;
+    }
+    if (options.myTemplateId) {
+        const myEl = document.getElementById('taper-start-my-template');
+        if (myEl) myEl.value = options.myTemplateId;
+    }
+    if (options.copyPlanId) {
+        const copyEl = document.getElementById('taper-start-copy-plan');
+        if (copyEl) copyEl.value = options.copyPlanId;
+    }
+}
+
+function prefillCreateFormFromPlanSource(plan, options = {}) {
+    if (!plan) return;
+    fillTaperFormFromPlan(plan);
+    const substanceId = plan.substanceId || getTaperSubstanceId();
+    const suffix = options.nameSuffix != null ? options.nameSuffix : ' copy';
+    const name = options.name ?? `${plan.name || getDefaultTaperPlanName(substanceId)}${suffix}`;
+    setInputValue('taper-plan-name', name);
+    setTaperFormMode('create');
+    markTaperFormClean();
+}
+
+function applyTaperBuiltinTemplateToCreateForm(templateId, substanceId) {
+    const template = getCompatibleTaperTemplates(substanceId).find(t => t.id === templateId)
+        || TAPER_TEMPLATES.find(t => t.id === templateId);
+    if (!template) return;
+    if (template.name) setInputValue('taper-plan-name', template.name);
+    if (template.reductionType) {
+        populateTaperReductionTypeSelect(substanceId, template.reductionType);
+        setInputValue('reduction-type', template.reductionType);
+        toggleTaperPlanTypeFields({ selectedType: template.reductionType, skipPrefill: false });
+    }
+}
+
+function applyTaperMyTemplateToCreateForm(templateId, data = appData) {
+    const template = getTaperMyTemplates(data).find(t => t.id === templateId);
+    if (!template?.planData) return;
+    prefillCreateFormFromPlanSource(
+        { ...template.planData, name: template.name || template.planData.name },
+        { nameSuffix: '', name: template.name || template.planData.name }
+    );
+}
+
+function applyTaperStartFromSelection() {
+    const substanceId = getTaperSubstanceId();
+    const mode = document.getElementById('taper-start-from')?.value || TAPER_START_FROM.BLANK;
+    updateTaperStartFromDetailVisibility(mode);
+    setTaperFormMode('create');
+
+    if (mode === TAPER_START_FROM.BLANK) {
+        resetTaperCreateFormBasics(substanceId);
+        return;
+    }
+    if (mode === TAPER_START_FROM.SUGGESTED) {
+        resetTaperCreateFormBasics(substanceId);
+        try {
+            refreshTaperSuggestions({ autoFill: true, forceRender: true });
+        } catch (err) {
+            console.warn('[taper-suggest] refresh failed during start-from suggested', err);
+        }
+        return;
+    }
+    if (mode === TAPER_START_FROM.BUILTIN) {
+        resetTaperCreateFormBasics(substanceId);
+        applyTaperBuiltinTemplateToCreateForm(
+            document.getElementById('taper-start-builtin-template')?.value,
+            substanceId
+        );
+        return;
+    }
+    if (mode === TAPER_START_FROM.MY) {
+        resetTaperCreateFormBasics(substanceId);
+        applyTaperMyTemplateToCreateForm(document.getElementById('taper-start-my-template')?.value);
+        return;
+    }
+    if (mode === TAPER_START_FROM.COPY) {
+        const copyId = document.getElementById('taper-start-copy-plan')?.value;
+        const source = copyId ? getTaperPlanById(copyId) : null;
+        if (source) prefillCreateFormFromPlanSource(source);
+        else resetTaperCreateFormBasics(substanceId);
+    }
+}
+
+function onTaperStartFromChange() {
+    applyTaperStartFromSelection();
     populateTaperPlanDropdown();
-    refreshTaperDashboard();
+}
+
+function onTaperStartFromDetailChange() {
+    applyTaperStartFromSelection();
 }
 
 function editTaperPlanById(planId) {
     const plan = getTaperPlanById(planId);
     if (!plan) return false;
-    if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return false;
-    selectedTaperPlanId = planId;
-    taperFormPlanId = planId;
-    taperEditingPlan = true;
+    if (isTaperFormModeActive() && taperFormDirty && !confirmDiscardTaperFormChanges()) return false;
+    setTaperUiState({
+        mode: 'edit',
+        selectedTaperId: planId,
+        editingTaperId: planId,
+        sourceTaperId: null,
+        isSaving: false
+    });
     resetTaperFormLifecycleState();
-    // Backup before normalizing/migrating plan data for edit.
     try { createAutoBackup('before-taper-plan-edit'); } catch (_) { /* soft */ }
     migrateTaperPlan(plan, plan.substanceId, appData);
-    // Keep substance selector aligned with the plan without firing change handlers
-    // that would clear taperFormPlanId / selectedTaperPlanId.
     const substanceEl = document.getElementById('taper-substance');
-    if (substanceEl && plan.substanceId && [...substanceEl.options].some(o => o.value === plan.substanceId)) {
-        substanceEl.value = plan.substanceId;
+    if (substanceEl && plan.substanceId) {
+        const options = substanceEl.options ? [...substanceEl.options] : [];
+        if (!options.length || options.some(o => o.value === plan.substanceId)) {
+            substanceEl.value = plan.substanceId;
+        }
     }
     if (plan.substanceId) {
-        setSelectedSubstanceId(plan.substanceId, { source: 'taper', refresh: false });
+        try {
+            setSelectedSubstanceId(plan.substanceId, { source: 'taper', refresh: false });
+        } catch (_) { /* soft — test DOM may omit full substance selects */ }
     }
-    setInputValue('taper-editing-plan-id', planId);
     try {
         fillTaperFormFromPlan(plan);
         setText('taper-setup-title', 'Edit Taper Plan');
         setText('taper-generate-btn', 'Save Changes');
+        setTaperStartFromSectionVisible(false);
+        renderTaperFormDateSummary();
         closeManageTaperPlansModal();
     } finally {
         markTaperFormClean();
@@ -57056,7 +57899,6 @@ function pauseTaperPlanById(planId) {
     const plan = getTaperPlanById(planId);
     if (!plan) return;
     setTaperPlanStatus(plan, 'paused');
-    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
     renderManageTaperPlansList();
     refreshTaperDashboard();
@@ -57066,7 +57908,6 @@ function resumeTaperPlanById(planId) {
     const plan = getTaperPlanById(planId);
     if (!plan) return;
     setTaperPlanStatus(plan, 'active');
-    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
     renderManageTaperPlansList();
     refreshTaperDashboard();
@@ -57081,7 +57922,6 @@ function completeTaperPlanById(planId) {
         const next = getTaperPlansForSubstance(plan.substanceId).find(p => p.id !== plan.id && p.status === 'active');
         if (next) setTaperPlanPrimary(next.id, plan.substanceId);
     }
-    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
     renderManageTaperPlansList();
     refreshTaperDashboard();
@@ -57097,10 +57937,11 @@ function archiveTaperPlanById(planId) {
         const next = getTaperPlansForSubstance(plan.substanceId).find(p => p.id !== plan.id && p.status === 'active');
         if (next) setTaperPlanPrimary(next.id, plan.substanceId);
     }
-    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
-    if (selectedTaperPlanId === planId) {
-        selectedTaperPlanId = resolveDefaultTaperPlanForSubstance(plan.substanceId)?.id || null;
+    if (getSelectedTaperId() === planId) {
+        setTaperUiState({
+            selectedTaperId: resolveDefaultTaperPlanForSubstance(plan.substanceId)?.id || null
+        });
     }
     renderManageTaperPlansList();
     refreshTaperDashboard();
@@ -57108,27 +57949,54 @@ function archiveTaperPlanById(planId) {
 
 function deleteTaperPlanById(planId, options = {}) {
     const plan = getTaperPlanById(planId);
-    if (!plan) return;
-    if (!options.skipConfirm && !confirm('Delete this taper plan? This cannot be undone.')) return;
+    if (!plan) return false;
+    if (!options.skipConfirm && !confirm(`Delete "${plan.name || 'this taper'}"? This cannot be undone.`)) return false;
     const substanceId = plan.substanceId;
-    const wasPrimary = plan.isPrimary;
+    const wasPrimary = !!plan.isPrimary;
+    const logsBefore = (appData.logs || []).length;
+    const purchasesBefore = (appData.purchases || []).length;
+    const substancesBefore = (appData.substances || []).length;
     appData.taperPlansV2 = (appData.taperPlansV2 || []).filter(p => p.id !== planId);
+    let nextPrimaryId = null;
     if (wasPrimary) {
         const next = getTaperPlansForSubstance(substanceId).find(p => p.status === 'active')
-            || getTaperPlansForSubstance(substanceId, appData, { includeArchived: true })[0];
-        if (next) setTaperPlanPrimary(next.id, substanceId);
+            || getTaperPlansForSubstance(substanceId, appData, { includeArchived: true })[0]
+            || null;
+        if (next) {
+            setTaperPlanPrimary(next.id, substanceId);
+            nextPrimaryId = next.id;
+        }
     }
-    if (selectedTaperPlanId === planId) {
-        selectedTaperPlanId = resolveDefaultTaperPlanForSubstance(substanceId)?.id || null;
+    if (taperUiState.selectedTaperId === planId) {
+        setTaperUiState({
+            selectedTaperId: nextPrimaryId || resolveDefaultTaperPlanForSubstance(substanceId)?.id || null
+        });
     }
-    if (taperFormPlanId === planId) {
-        taperFormPlanId = null;
-        taperEditingPlan = false;
+    if (taperUiState.editingTaperId === planId || taperUiState.sourceTaperId === planId) {
+        exitTaperFormToView(taperUiState.selectedTaperId);
     }
-    syncLegacyTaperPlansFromV2(appData);
+    // Guard: never leave a dangling primary pointing at the deleted id.
+    (appData.taperPlansV2 || []).forEach(p => {
+        if (String(p.id) === String(planId)) p.isPrimary = false;
+    });
     saveData(appData);
-    renderManageTaperPlansList();
-    refreshTaperDashboard();
+    // Deleting a taper must not touch logs, purchases, inventory, or substances.
+    if ((appData.logs || []).length !== logsBefore
+        || (appData.purchases || []).length !== purchasesBefore
+        || (appData.substances || []).length !== substancesBefore) {
+        console.error('[tapers] delete unexpectedly mutated non-taper data');
+    }
+    if (typeof hideTaperWorkspace === 'function') hideTaperWorkspace();
+    if (typeof renderManageTaperPlansList === 'function') renderManageTaperPlansList();
+    if (typeof refreshTaperDashboard === 'function') refreshTaperDashboard();
+    if (typeof refreshTapersCombinedViews === 'function') refreshTapersCombinedViews();
+    return true;
+}
+
+function deleteSelectedTaperPlan() {
+    const plan = getSelectedTaperPlan();
+    if (!plan) return false;
+    return deleteTaperPlanById(plan.id);
 }
 
 function toggleTaperPlanTypeFields(options = {}) {
@@ -57187,7 +58055,7 @@ function toggleTaperPlanTypeFields(options = {}) {
     document.getElementById('purchase-taper-section')?.classList.toggle('hidden', isNicotineVape);
 
     if (startAvgLabel) {
-        startAvgLabel.textContent = isPuffs ? 'Baseline average puffs/day' : 'Starting Daily Average (optional)';
+        startAvgLabel.textContent = isPuffs ? 'Baseline average puffs/day' : 'Starting daily average (optional)';
     }
     if (goalAvgLabel) {
         if (isManual) goalAvgLabel.textContent = 'Goal Daily Average (optional)';
@@ -57272,7 +58140,7 @@ function toggleTaperPlanTypeFields(options = {}) {
     }
 
     // Never invent baseline defaults while loading an existing plan into Edit.
-    const skipPrefill = options.skipPrefill === true || !!taperFormPlanId;
+    const skipPrefill = options.skipPrefill === true || isTaperEditFormActive();
     if (!skipPrefill && isVape && (isNicotineVape || isPuffs || isBuying || isNicotine)) {
         prefillVapeTaperDefaults(substanceId);
     }
@@ -57281,7 +58149,7 @@ function toggleTaperPlanTypeFields(options = {}) {
     try {
         if (typeof refreshTaperSuggestions === 'function') {
             refreshTaperSuggestions({
-                autoFill: !options.skipPrefill && !taperFormPlanId && isTaperAutoSuggestEnabled(),
+                autoFill: !options.skipPrefill && !isTaperEditFormActive() && isTaperAutoSuggestEnabled(),
                 forceRender: true
             });
         }
@@ -57570,7 +58438,7 @@ function bindTaperFormDirtyTracking() {
     if (!taperFormBeforeUnloadBound && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
         taperFormBeforeUnloadBound = true;
         window.addEventListener('beforeunload', (e) => {
-            if (!taperEditingPlan || !taperFormDirty) return;
+            if (!isTaperFormModeActive() || !taperFormDirty) return;
             e.preventDefault();
             e.returnValue = '';
         });
@@ -57951,6 +58819,116 @@ function renderPurchasePacingTimeline(substanceId) {
     container.innerHTML = html;
 }
 
+function getTaperPeriodUsageBounds(plan, today = getLocalDateString()) {
+    const startDate = plan?.startDate;
+    const endDate = plan?.endDate;
+    if (!startDate || !endDate) {
+        return { ok: false, reason: 'missing-dates' };
+    }
+    if (String(endDate) < String(startDate)) {
+        return { ok: false, reason: 'invalid-range' };
+    }
+    const todayStr = String(today || getLocalDateString());
+    const totalDays = countDaysInRange(startDate, endDate);
+    if (todayStr < startDate) {
+        return {
+            ok: true,
+            startDate,
+            endDate,
+            usageStart: startDate,
+            usageEnd: startDate,
+            elapsedDays: 0,
+            totalDays,
+            notStarted: true,
+            complete: false
+        };
+    }
+    const usageEnd = todayStr > endDate ? endDate : todayStr;
+    const elapsedDays = countDaysInRange(startDate, usageEnd);
+    return {
+        ok: true,
+        startDate,
+        endDate,
+        usageStart: startDate,
+        usageEnd,
+        elapsedDays,
+        totalDays,
+        notStarted: false,
+        complete: todayStr > endDate
+    };
+}
+
+function getTaperPeriodSummary(plan, substanceId, data = appData, today = getLocalDateString()) {
+    if (!plan || !substanceId || plan.substanceId !== substanceId) return null;
+    const bounds = getTaperPeriodUsageBounds(plan, today);
+    if (!bounds.ok) return { ...bounds, substanceId };
+
+    const unit = getTaperTrackingUnit(plan, substanceId);
+    const displayUnit = isVapeNicotineSubstanceId(substanceId, data) ? 'puffs' : unit;
+    let totalUsed = 0;
+    let totalCost = 0;
+    if (!bounds.notStarted && bounds.elapsedDays > 0) {
+        totalUsed = getCanonicalUsageInRange(substanceId, bounds.usageStart, bounds.usageEnd, data);
+        totalCost = getCanonicalCostInRange(substanceId, bounds.usageStart, bounds.usageEnd, data);
+    }
+    const elapsedDays = bounds.elapsedDays || 0;
+    return {
+        ...bounds,
+        substanceId,
+        unit: displayUnit,
+        totalUsed,
+        totalCost,
+        avgPerDay: elapsedDays > 0 ? totalUsed / elapsedDays : 0,
+        avgCostPerDay: elapsedDays > 0 ? totalCost / elapsedDays : 0
+    };
+}
+
+function renderTaperPeriodSummary(substanceId) {
+    const plan = getSelectedTaperPlan();
+    const sub = getSubstance(substanceId);
+    if (!plan || !sub || plan.substanceId !== substanceId) return;
+
+    const summary = getTaperPeriodSummary(plan, substanceId);
+    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
+
+    if (!summary?.ok) {
+        set(
+            'taper-period-range-label',
+            summary?.reason === 'missing-dates' ? 'Set start and end dates to see taper totals.' : '—'
+        );
+        set('taper-period-total-used', '—');
+        set('taper-period-avg-day', '—');
+        set('taper-period-total-cost', '—');
+        set('taper-period-avg-cost-day', '—');
+        return;
+    }
+
+    const rangeLabel = summary.notStarted
+        ? `${formatCompactTaperDateRange(summary.startDate, summary.endDate)} · not started yet`
+        : summary.complete
+            ? `${formatCompactTaperDateRange(summary.startDate, summary.endDate)} · complete`
+            : `${formatCompactTaperDateRange(summary.startDate, summary.endDate)} · ${summary.elapsedDays} of ${summary.totalDays} days elapsed`;
+    set('taper-period-range-label', rangeLabel);
+
+    const usePuffFormat = isReducePuffsPlan(plan) || isVapeNicotineSubstanceId(substanceId);
+    const formatUsage = (value) => (usePuffFormat
+        ? formatTaperActualAmount(value, summary.unit)
+        : formatTaperAmount(value, summary.unit));
+
+    if (summary.notStarted) {
+        set('taper-period-total-used', formatUsage(0));
+        set('taper-period-avg-day', formatUsage(0));
+        set('taper-period-total-cost', formatTaperMoney(0));
+        set('taper-period-avg-cost-day', formatTaperMoney(0));
+        return;
+    }
+
+    set('taper-period-total-used', formatUsage(summary.totalUsed));
+    set('taper-period-avg-day', formatUsage(summary.avgPerDay));
+    set('taper-period-total-cost', formatTaperMoney(summary.totalCost));
+    set('taper-period-avg-cost-day', formatTaperMoney(summary.avgCostPerDay));
+}
+
 function renderTaperCurrentWeekSummary(substanceId) {
     const plan = getSelectedTaperPlan();
     const sub = getSubstance(substanceId);
@@ -57976,8 +58954,8 @@ function renderTaperCurrentWeekSummary(substanceId) {
                 <div class="taper-mini-stat"><span>Used this week</span><strong id="taper-weekly-used">—</strong></div>
                 <div class="taper-mini-stat"><span>Remaining this week</span><strong id="taper-weekly-remaining">—</strong></div>
                 <div class="taper-mini-stat"><span>Difference from target</span><strong id="taper-weekly-over-under">—</strong></div>
-                <div class="taper-mini-stat"><span>Status</span><strong id="taper-weekly-status-text">—</strong></div>
-                <div class="taper-mini-stat"><span>Average per day</span><strong id="taper-weekly-avg-day">—</strong></div>
+                <div class="taper-mini-stat" id="taper-weekly-status-stat"><span>Status</span><strong id="taper-weekly-status-text">—</strong></div>
+                <div class="taper-mini-stat" id="taper-weekly-avg-day-stat"><span>Average per day</span><strong id="taper-weekly-avg-day">—</strong></div>
                 <div class="taper-mini-stat"><span>Change from last week</span><strong id="taper-weekly-change-last">—</strong></div>
                 <div class="taper-mini-stat taper-spending-stat hidden" id="taper-weekly-spent-month-wrap"><span>Spent this month</span><strong id="taper-weekly-spent-month">—</strong></div>
             </div>
@@ -58563,6 +59541,11 @@ function renderTaperPlanSummary(substanceId) {
 
     set('taper-plan-start-date', plan.startDate ? formatDate(plan.startDate) : '—');
     set('taper-plan-end-date', plan.endDate ? formatDate(plan.endDate) : '—');
+    set('taper-plan-date-summary', formatTaperDateSummary(plan.startDate, plan.endDate, { today }));
+    set('taper-plan-time-progress', formatTaperTimeProgressSummary(plan.startDate, plan.endDate, {
+        today,
+        status: getTaperPlanStatus(plan)
+    }));
     const endMetaLabel = document.getElementById('taper-plan-end-meta-label');
     if (endMetaLabel) endMetaLabel.textContent = isReducePuffsPlan(plan) ? 'Quit' : 'End';
     set('taper-plan-substance-name', sub.name || '—');
@@ -58580,13 +59563,10 @@ function renderTaperPlanSummary(substanceId) {
     const fill = document.getElementById('taper-plan-pct-fill');
     const pctLabel = document.getElementById('taper-plan-pct-label');
     if (fill && plan.startDate && plan.endDate) {
-        const start = parseLocalDate(plan.startDate);
-        const end = parseLocalDate(plan.endDate);
-        if (start && end) {
-            const pct = Math.min(100, Math.max(0, ((Date.now() - start) / (end - start)) * 100));
-            const rounded = Math.round(pct);
-            fill.style.width = `${rounded}%`;
-            if (pctLabel) pctLabel.textContent = `Taper progress · ${rounded}%`;
+        const metrics = computeTaperCalendarDayMetrics(plan.startDate, plan.endDate, today);
+        if (metrics.valid) {
+            fill.style.width = `${metrics.timeElapsedPct}%`;
+            if (pctLabel) pctLabel.textContent = `Time elapsed · ${metrics.timeElapsedPct}%`;
         }
     }
 }
@@ -58626,23 +59606,35 @@ function mergeWeeklyTargetsPreservingProgress(previousWeeks, nextWeeks) {
 }
 
 function resolveTaperFormEditingPlanId() {
-    const fromState = taperFormPlanId ? String(taperFormPlanId) : '';
-    const fromInput = document.getElementById('taper-editing-plan-id')?.value?.trim() || '';
-    const fromSelection = (taperEditingPlan && selectedTaperPlanId) ? String(selectedTaperPlanId) : '';
-    return fromState || fromInput || fromSelection || null;
+    if (getTaperFormMode() !== 'edit') return null;
+    return taperUiState.editingTaperId || null;
 }
 
 function handleTaperSubmitClick(e) {
     if (e?.preventDefault) e.preventDefault();
-    return handleTaperSubmit(e || { preventDefault() {} });
+    if (taperUiState.isSaving) return false;
+    if (e && lastTaperSubmitClickEvent === e) return false;
+    if (e) lastTaperSubmitClickEvent = e;
+    try {
+        return handleTaperSubmit(e || { preventDefault() {} });
+    } finally {
+        if (e) {
+            queueMicrotask(() => {
+                if (lastTaperSubmitClickEvent === e) lastTaperSubmitClickEvent = null;
+            });
+        }
+    }
 }
 
 function handleTaperSubmit(e) {
     if (e?.preventDefault) e.preventDefault();
+    if (taperUiState.isSaving) return false;
+
     const btn = document.getElementById('taper-generate-btn');
-    const previousBtnLabel = btn?.textContent || 'Save Plan';
+    const previousBtnLabel = btn?.textContent || 'Save Taper';
 
     const fail = (message) => {
+        setTaperUiState({ isSaving: false });
         setTaperFormStatus(message, 'error');
         if (btn) {
             btn.disabled = false;
@@ -58651,6 +59643,7 @@ function handleTaperSubmit(e) {
         return false;
     };
 
+    setTaperUiState({ isSaving: true });
     try {
         if (btn) {
             btn.disabled = true;
@@ -58658,22 +59651,29 @@ function handleTaperSubmit(e) {
         }
         setTaperFormStatus('Saving…', 'saving');
 
-        // If the form was still mid-load, try to finish from the selected/editing plan once.
+        const uiMode = taperUiState.mode;
+        const formMode = getTaperFormMode();
+
         if (!taperFormInitialized) {
-            const pendingId = resolveTaperFormEditingPlanId();
-            const pendingPlan = pendingId ? getTaperPlanById(pendingId) : null;
-            if (pendingPlan) {
-                fillTaperFormFromPlan(pendingPlan);
+            if (formMode === 'create') {
+                markTaperFormClean();
+            } else {
+                const pendingId = resolveTaperFormEditingPlanId();
+                const pendingPlan = pendingId ? getTaperPlanById(pendingId) : null;
+                if (pendingPlan) fillTaperFormFromPlan(pendingPlan);
             }
         }
         if (!taperFormInitialized) {
             return fail('Plan form is still loading. Please wait a moment and try again.');
         }
 
-        const editingPlanId = resolveTaperFormEditingPlanId();
+        const editingPlanId = formMode === 'edit' ? resolveTaperFormEditingPlanId() : null;
         const existingPlan = editingPlanId ? getTaperPlanById(editingPlanId) : null;
-        if (editingPlanId && !existingPlan) {
+        if (formMode === 'edit' && editingPlanId && !existingPlan) {
             return fail('Could not find the selected plan to update. Reload and try again.');
+        }
+        if (formMode === 'create' && taperUiState.editingTaperId) {
+            setTaperUiState({ editingTaperId: null });
         }
 
         const substanceId = existingPlan?.substanceId
@@ -58685,7 +59685,6 @@ function handleTaperSubmit(e) {
         const planName = document.getElementById('taper-plan-name')?.value?.trim();
         if (!planName) return fail('Plan name is required.');
 
-        // Keep required flags aligned with the visible plan type (avoid stale HTML5 state).
         toggleTaperPlanTypeFields({
             selectedType: document.getElementById('reduction-type')?.value,
             plan: existingPlan || undefined,
@@ -58701,6 +59700,13 @@ function handleTaperSubmit(e) {
             || getLocalDateString();
 
         if (!startDate) return fail('Start date is required.');
+
+        const endDateField = document.getElementById('end-date')?.value;
+        const needsEndDate = reductionType !== 'manual-weekly';
+        if (needsEndDate) {
+            const dateCheck = validateTaperPlanDates(startDate, endDateField || existingPlan?.endDate);
+            if (!dateCheck.ok) return fail(dateCheck.message);
+        }
 
         if (reductionType === 'manual-weekly') {
             const mode = getManualWeeklyModeFromForm();
@@ -58725,20 +59731,11 @@ function handleTaperSubmit(e) {
                 const hasAmount = targets.some(t => (parseFloat(t.targetAmount) || 0) > 0);
                 if (!hasAmount) return fail('Enter at least one weekly target amount.');
             }
-        } else if (reductionType === 'nicotine-vape-purchase') {
-            const endDate = document.getElementById('end-date')?.value;
-            if (!endDate || new Date(endDate) <= new Date(startDate)) {
-                return fail('End date must be after the start date.');
-            }
         } else if (reductionType === 'reduce-buying') {
             const currentDays = parseOptionalTaperNumber(document.getElementById('vape-current-buy-days'));
             const goalDays = parseOptionalTaperNumber(document.getElementById('vape-goal-buy-days'));
             if (currentDays == null || currentDays <= 0) return fail('Enter your current buying frequency (days).');
             if (goalDays == null || goalDays <= 0) return fail('Enter your goal buying frequency (days).');
-            const endDate = document.getElementById('end-date')?.value;
-            if (!endDate || new Date(endDate) <= new Date(startDate)) {
-                return fail('End date must be after the start date.');
-            }
         } else if (reductionType === 'reduce-nicotine') {
             const startNic = parseOptionalTaperNumber(document.getElementById('vape-start-nicotine'));
             const goalNic = parseOptionalTaperNumber(document.getElementById('vape-goal-nicotine'));
@@ -58749,15 +59746,6 @@ function handleTaperSubmit(e) {
         } else if (reductionType === 'reduce-puffs') {
             const goal = parseOptionalTaperNumber(document.getElementById('goal-avg'));
             if (goal == null || goal < 0) return fail('Enter a goal puffs/day target.');
-            const endDate = document.getElementById('end-date')?.value;
-            if (!endDate || new Date(endDate) <= new Date(startDate)) {
-                return fail('End date must be after the start date.');
-            }
-        } else {
-            const endDate = document.getElementById('end-date')?.value;
-            if (!endDate || new Date(endDate) <= new Date(startDate)) {
-                return fail('End date must be after the start date.');
-            }
         }
 
         if (document.getElementById('purchase-taper-enabled')?.checked && supportsPurchaseTaper(substanceId)) {
@@ -58838,6 +59826,7 @@ function handleTaperSubmit(e) {
         }
         const setPrimary = !!document.getElementById('taper-set-primary')?.checked;
         const wasEdit = !!existingPlan;
+        const countBefore = (appData.taperPlansV2 || []).length;
 
         if (existingPlan) {
             const previousPrimary = !!existingPlan.isPrimary;
@@ -58846,10 +59835,9 @@ function handleTaperSubmit(e) {
             existingPlan.name = planName;
             existingPlan.isPrimary = previousPrimary;
             if (setPrimary) setTaperPlanPrimary(existingPlan.id, substanceId);
-            selectedTaperPlanId = preservedId;
+            setTaperUiState({ selectedTaperId: preservedId });
         } else {
-            built.id = generateUniqueId('taper');
-            // New tapers are Active by default; honor explicit draft/paused from the form.
+            built.id = generateUnusedTaperPlanId();
             const formStatus = document.getElementById('taper-status')?.value;
             built.status = (formStatus === 'draft' || formStatus === 'paused') ? formStatus : 'active';
             built.isPaused = built.status === 'paused';
@@ -58857,7 +59845,15 @@ function handleTaperSubmit(e) {
             built.isPrimary = setPrimary || !hasPrimary;
             appData.taperPlansV2.push(built);
             if (built.isPrimary) setTaperPlanPrimary(built.id, substanceId);
-            selectedTaperPlanId = built.id;
+            setTaperUiState({ selectedTaperId: built.id });
+        }
+
+        const countAfter = (appData.taperPlansV2 || []).length;
+        if (wasEdit && countAfter !== countBefore) {
+            return fail('Save failed: edit created an unexpected new record.');
+        }
+        if (!wasEdit && countAfter !== countBefore + 1) {
+            return fail('Save failed: expected exactly one new taper record.');
         }
 
         // Confirm the edited plan still exists under the stable id.
@@ -58868,36 +59864,35 @@ function handleTaperSubmit(e) {
             }
         }
 
-        syncLegacyTaperPlansFromV2(appData);
         const persisted = saveData(appData);
         if (!persisted) {
             return fail('Could not write plan to local storage. Check browser storage and try again.');
         }
 
-        // Leave edit mode and show the saved taper on the Active list.
-        taperEditingPlan = false;
-        taperFormPlanId = null;
-        setInputValue('taper-editing-plan-id', '');
-        resetTaperFormLifecycleState();
-        document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
-        setText('taper-generate-btn', 'Save Plan');
+        // Return to view mode with the saved taper selected.
+        exitTaperFormToView(taperUiState.selectedTaperId);
+        setText('taper-generate-btn', 'Save Taper');
         setText('taper-setup-title', 'Create Taper Plan');
         refreshTaperDashboard();
         if (typeof hideTaperWorkspace === 'function') hideTaperWorkspace();
         if (typeof setGoalsPlansView === 'function') {
-            setGoalsPlansView('active', { persist: true });
-        } else if (typeof renderGoalsPlansRecordsView === 'function') {
-            renderGoalsPlansRecordsView('active');
+            setGoalsPlansView('overview', { persist: true });
+        } else if (typeof refreshTapersCombinedViews === 'function') {
+            refreshTapersCombinedViews();
+        }
+        if (typeof reportSuspiciousDuplicateTapers === 'function') {
+            try { reportSuspiciousDuplicateTapers(appData); } catch (_) { /* dev only */ }
         }
         if (typeof window !== 'undefined' && Number.isFinite(scrollY)) {
             requestAnimationFrame(() => {
                 try { window.scrollTo(0, scrollY); } catch { /* ignore */ }
             });
         }
-        setTaperFormStatus('Plan saved', 'success');
+        setTaperFormStatus('Taper saved', 'success');
+        setTaperUiState({ isSaving: false });
         if (btn) {
             btn.disabled = false;
-            btn.textContent = 'Save Plan';
+            btn.textContent = 'Save Taper';
         }
         return true;
     } catch (err) {
@@ -58956,7 +59951,7 @@ function renderTaperPlan() {
     }
     noTaper?.classList.add('hidden');
 
-    if (!plans.length && !taperEditingPlan) {
+    if (!plans.length && !isTaperFormModeActive()) {
         dashboard?.classList.add('hidden');
         setup?.classList.add('hidden');
         noPlan?.classList.remove('hidden');
@@ -58967,7 +59962,7 @@ function renderTaperPlan() {
     noPlan?.classList.add('hidden');
     document.getElementById('taper-plan-toolbar')?.classList.remove('hidden');
 
-    if (taperEditingPlan) {
+    if (isTaperFormModeActive()) {
         dashboard?.classList.add('hidden');
         setup?.classList.remove('hidden');
         return;
@@ -58983,8 +59978,10 @@ function renderTaperPlan() {
     setup?.classList.add('hidden');
     dashboard?.classList.remove('hidden');
     migrateTaperPlan(plan, substanceId);
+    applyTaperMetricVisibilityToDashboard();
     renderTaperPlanSummary(substanceId);
     renderLegacyPuffConvertBanner(substanceId);
+    renderTaperPeriodSummary(substanceId);
     renderTaperCurrentWeekSummary(substanceId);
     renderTaperWeeklyTable(substanceId);
     renderTaperSpendingPurchases(substanceId);
@@ -59482,9 +60479,29 @@ function renderTaperInsights(substanceId) {
             ['Status', getTaperPlanStatusLabel(getTaperPlanStatus(plan))]
         ];
     }
-    container.innerHTML = items.map(([label, val]) =>
+    container.innerHTML = filterTaperInsightItemsByVisibility(items).map(([label, val]) =>
         `<div class="taper-insight-item"><span>${label}</span><strong>${val}</strong></div>`
     ).join('');
+}
+
+const TAPER_INSIGHT_METRIC_KEYS = {
+    'Start average': 'startingDailyAverage',
+    'Starting strength': 'startingDailyAverage',
+    'Current buy frequency': 'startingDailyAverage',
+    'Goal average': 'dailyAverageAllowed',
+    'Goal strength': 'dailyAverageAllowed',
+    'Goal buy frequency': 'dailyAverageAllowed',
+    Reduction: 'reductionTarget',
+    'Step-down': 'reductionTarget',
+    'Target end': 'endDate',
+    Status: 'status'
+};
+
+function filterTaperInsightItemsByVisibility(items, data = appData) {
+    return (items || []).filter(([label]) => {
+        const key = TAPER_INSIGHT_METRIC_KEYS[label];
+        return !key || isTaperMetricVisible(key, data);
+    });
 }
 
 function editTaperPlan() {
@@ -59495,18 +60512,14 @@ function editTaperPlan() {
 
 function cancelTaperEdit() {
     if (taperFormDirty && !confirmDiscardTaperFormChanges()) return;
-    taperEditingPlan = false;
-    taperFormPlanId = null;
-    setInputValue('taper-editing-plan-id', '');
-    resetTaperFormLifecycleState();
-    document.getElementById('taper-setup')?.classList.add('hidden');
-    document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
-    setText('taper-generate-btn', 'Save Plan');
+    const restoreId = taperUiState.selectedTaperId || resolveDefaultTaperPlanForSubstance(getTaperSubstanceId())?.id || null;
+    exitTaperFormToView(restoreId);
+    setText('taper-generate-btn', 'Save Taper');
     setText('taper-setup-title', 'Create Taper Plan');
     refreshTaperDashboard();
     if (typeof hideTaperWorkspace === 'function') hideTaperWorkspace();
     if (typeof setGoalsPlansView === 'function') {
-        setGoalsPlansView(ensureCombinedNavPrefs().goalsPlansView || 'active', { persist: true });
+        setGoalsPlansView(ensureCombinedNavPrefs().goalsPlansView || 'overview', { persist: true });
     }
 }
 
@@ -59716,6 +60729,7 @@ function downloadBlob(blob, filename) {
 }
 
 function cleanExportData(data) {
+    prepareTaperDataForPersistence(data);
     return {
         substances: (data.substances || []).map(s => ({
             id: s.id,
@@ -60243,11 +61257,174 @@ function repairAppDataAfterImport(data) {
     repairDataConsistency(data);
 }
 
-function mergeArrayById(existing, incoming) {
-    const map = new Map((existing || []).map(item => [item.id, item]));
+// ——— Import identity: deterministic stable IDs for id-less records ———
+
+function stableImportHash(parts) {
+    const str = Array.isArray(parts) ? parts.join('\u001f') : String(parts ?? '');
+    let hash = 5381;
+    for (let i = 0; i < str.length; i++) {
+        hash = ((hash << 5) + hash + str.charCodeAt(i)) >>> 0;
+    }
+    return hash.toString(36);
+}
+
+function stableImportScalar(value) {
+    if (value == null) return '';
+    if (typeof value === 'number') return Number.isFinite(value) ? String(value) : '';
+    if (typeof value === 'boolean') return value ? '1' : '0';
+    return String(value).trim();
+}
+
+function buildStableImportKey(record, kind) {
+    if (!record || typeof record !== 'object') return [];
+    switch (kind) {
+        case 'log':
+            return [
+                record.substanceId || record.substance || '',
+                record.date || '',
+                record.startTime || record.time || '',
+                record.endTime || '',
+                record.type || '',
+                record.transactionType || '',
+                stableImportScalar(record.amount),
+                record.unit || '',
+                stableImportScalar(getLogPurchaseId(record) || record.inventoryId || ''),
+                stableImportScalar(record.notes)
+            ];
+        case 'purchase':
+            return [
+                record.substanceId || record.substance || '',
+                record.date || record.purchaseDate || '',
+                stableImportScalar(record.quantity ?? record.amount),
+                record.unit || '',
+                stableImportScalar(record.cost ?? record.totalCost),
+                stableImportScalar(record.store || record.source),
+                stableImportScalar(record.remainingAmount ?? record.remaining)
+            ];
+        case 'taper':
+            return [getTaperPlanImportFingerprint(record)];
+        case 'substance':
+            return [
+                stableImportScalar(record.name),
+                record.trackingMode || '',
+                record.primaryUnit || record.defaultUnit || ''
+            ];
+        case 'craving':
+            return [
+                record.substanceId || record.substance || '',
+                record.date || '',
+                stableImportScalar(record.intensity),
+                stableImportScalar(record.notes)
+            ];
+        case 'goal':
+            return [
+                record.substanceId || '',
+                stableImportScalar(record.name),
+                record.startDate || '',
+                record.endDate || ''
+            ];
+        case 'budget':
+            return [
+                stableImportScalar(record.name),
+                record.startDate || '',
+                record.endDate || '',
+                stableImportScalar(record.amount)
+            ];
+        case 'contact':
+            return [
+                stableImportScalar(record.name),
+                stableImportScalar(record.phone || record.email)
+            ];
+        default:
+            return [stableImportScalar(record.name), stableImportScalar(record.date)];
+    }
+}
+
+function assignStableImportId(record, kind, takenIds = new Set()) {
+    const base = `import-${kind}-${stableImportHash(buildStableImportKey(record, kind))}`;
+    let id = base;
+    let suffix = 0;
+    while (takenIds.has(id)) {
+        suffix += 1;
+        id = `${base}-${suffix}`;
+    }
+    takenIds.add(id);
+    return id;
+}
+
+function assignStableIdsToImportRecords(data) {
+    if (!data || typeof data !== 'object') return data;
+    const taken = {
+        log: new Set((data.logs || []).filter(l => l?.id != null && l.id !== '').map(l => String(l.id))),
+        purchase: new Set((data.purchases || []).filter(p => p?.id != null && p.id !== '').map(p => String(p.id))),
+        taper: new Set((data.taperPlansV2 || []).filter(p => p?.id != null && p.id !== '').map(p => String(p.id))),
+        substance: new Set((data.substances || []).filter(s => s?.id != null && s.id !== '').map(s => String(s.id))),
+        craving: new Set((data.cravings || []).filter(c => c?.id != null && c.id !== '').map(c => String(c.id))),
+        goal: new Set((data.goals || []).filter(g => g?.id != null && g.id !== '').map(g => String(g.id))),
+        budget: new Set((data.budgets || []).filter(b => b?.id != null && b.id !== '').map(b => String(b.id))),
+        contact: new Set((data.contacts || []).filter(c => c?.id != null && c.id !== '').map(c => String(c.id)))
+    };
+    (data.substances || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'substance', taken.substance);
+        else taken.substance.add(String(item.id));
+    });
+    (data.logs || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'log', taken.log);
+        else taken.log.add(String(item.id));
+    });
+    (data.purchases || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'purchase', taken.purchase);
+        else taken.purchase.add(String(item.id));
+    });
+    (data.taperPlansV2 || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'taper', taken.taper);
+        else taken.taper.add(String(item.id));
+    });
+    (data.cravings || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'craving', taken.craving);
+        else taken.craving.add(String(item.id));
+    });
+    (data.goals || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'goal', taken.goal);
+        else taken.goal.add(String(item.id));
+    });
+    (data.budgets || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'budget', taken.budget);
+        else taken.budget.add(String(item.id));
+    });
+    (data.contacts || []).forEach(item => {
+        if (item?.id == null || item.id === '') item.id = assignStableImportId(item, 'contact', taken.contact);
+        else taken.contact.add(String(item.id));
+    });
+    return data;
+}
+
+function mergeLegacyTaperPlansForImport(existing, incoming) {
+    const merged = { ...(existing || {}) };
+    Object.entries(incoming || {}).forEach(([substanceId, plan]) => {
+        if (!plan || typeof plan !== 'object') return;
+        const prev = merged[substanceId];
+        if (!prev || typeof prev !== 'object') {
+            merged[substanceId] = plan;
+            return;
+        }
+        merged[substanceId] = getTaperPlanUpdatedAt(plan) >= getTaperPlanUpdatedAt(prev) ? plan : prev;
+    });
+    return merged;
+}
+
+function mergeArrayById(existing, incoming, kind = 'record') {
+    const map = new Map((existing || []).map(item => [String(item.id), item]));
+    const taken = new Set(map.keys());
     (incoming || []).forEach(item => {
-        if (item?.id != null) map.set(item.id, item);
-        else map.set(`import-${Date.now()}-${Math.random()}`, item);
+        if (!item || typeof item !== 'object') return;
+        let id = item.id != null && item.id !== '' ? String(item.id) : null;
+        if (!id) {
+            id = assignStableImportId(item, kind, taken);
+            item.id = id;
+        }
+        map.set(id, item);
+        taken.add(id);
     });
     return [...map.values()];
 }
@@ -60255,13 +61432,13 @@ function mergeArrayById(existing, incoming) {
 function mergeImportedData(current, imported) {
     const merged = JSON.parse(JSON.stringify(current));
     if (Array.isArray(imported.useLogs)) {
-        imported.logs = mergeArrayById(imported.logs || [], imported.useLogs);
+        imported.logs = mergeArrayById(imported.logs || [], imported.useLogs, 'log');
         delete imported.useLogs;
     }
-    merged.substances = mergeArrayById(merged.substances, imported.substances);
-    merged.logs = mergeArrayById(merged.logs, imported.logs);
-    merged.purchases = mergeArrayById(merged.purchases, imported.purchases);
-    merged.cravings = mergeArrayById(merged.cravings || [], imported.cravings || []);
+    merged.substances = mergeArrayById(merged.substances, imported.substances, 'substance');
+    merged.logs = mergeArrayById(merged.logs, imported.logs, 'log');
+    merged.purchases = mergeArrayById(merged.purchases, imported.purchases, 'purchase');
+    merged.cravings = mergeArrayById(merged.cravings || [], imported.cravings || [], 'craving');
     merged.settings = {
         ...merged.settings,
         ...imported.settings,
@@ -60280,24 +61457,26 @@ function mergeImportedData(current, imported) {
     if (typeof reconcileOnboardingAfterImport === 'function') {
         reconcileOnboardingAfterImport(merged);
     }
-    merged.taperPlans = { ...(merged.taperPlans || {}), ...(imported.taperPlans || {}) };
+    merged.taperPlans = mergeLegacyTaperPlansForImport(merged.taperPlans || {}, imported.taperPlans || {});
     if (Array.isArray(imported.taperPlansV2)) {
-        merged.taperPlansV2 = mergeArrayById(merged.taperPlansV2 || [], imported.taperPlansV2);
+        merged.taperPlansV2 = mergeArrayById(merged.taperPlansV2 || [], imported.taperPlansV2, 'taper');
     }
     if (Array.isArray(imported.goals)) {
-        merged.goals = mergeArrayById(merged.goals || [], imported.goals);
+        merged.goals = mergeArrayById(merged.goals || [], imported.goals, 'goal');
     }
     if (Array.isArray(imported.budgets)) {
-        merged.budgets = mergeArrayById(merged.budgets || [], imported.budgets);
+        merged.budgets = mergeArrayById(merged.budgets || [], imported.budgets, 'budget');
     }
     if (Array.isArray(imported.contacts)) {
-        merged.contacts = mergeArrayById(merged.contacts || [], imported.contacts);
+        merged.contacts = mergeArrayById(merged.contacts || [], imported.contacts, 'contact');
     }
     merged.recoveryStreaks = { ...(merged.recoveryStreaks || {}), ...(imported.recoveryStreaks || {}) };
     if (imported.privacy && typeof imported.privacy === 'object') {
         merged.privacy = { ...merged.privacy, ...imported.privacy };
     }
     ensureAppDataSubstancesReady(merged);
+    promoteLegacyTaperPlansToV2(merged);
+    syncLegacyTaperPlansFromV2(merged);
     return merged;
 }
 
@@ -60385,7 +61564,7 @@ function confirmImportPreview(mode) {
 
 function applyImportedBackup(imported, mode, extras = null) {
     createAutoBackup(mode === 'replace' ? 'before-import-replace' : 'before-import-merge');
-    const normalized = normalizeImportedAppData(imported);
+    const normalized = assignStableIdsToImportRecords(normalizeImportedAppData(imported));
     if (mode === 'replace') {
         appData = normalized;
     } else {
@@ -60393,6 +61572,7 @@ function applyImportedBackup(imported, mode, extras = null) {
     }
     normalizeAppData(appData);
     repairAppDataAfterImport(appData);
+    syncLegacyTaperPlansFromV2(appData);
     saveData(appData);
     if (extras) applyImportedColumnSettings(extras);
     else if (imported && (imported.columnSettings || imported.purchaseHistoryColumns)) {
@@ -60541,6 +61721,48 @@ if (typeof window !== 'undefined') {
         applyStatsCustomRange
     });
 }
+
+/** Load persisted data after all module definitions exist (avoids startup TDZ). */
+function bootstrapRecoveryTrackerFromStorage() {
+    try {
+        appData = loadData();
+    } catch (error) {
+        console.error('Failed to load app data:', error);
+        const hasStoredData = !!localStorage.getItem(STORAGE_KEY) || !!localStorage.getItem(STORAGE_KEY_V1);
+        const backup = loadAutoBackupAppData();
+        if (backup) {
+            appDataLoadedFromStorage = true;
+            appData = normalizeAppDataSafe(backup);
+            console.log('Loaded saved recovery data');
+        } else if (hasStoredData) {
+            console.error('Saved data exists but could not be loaded. Defaults shown in memory only — storage was not overwritten.');
+            appData = normalizeAppDataSafe(getDefaultAppData());
+        } else {
+            appData = normalizeAppDataSafe(getDefaultAppData());
+            console.log('No saved data found, using defaults');
+        }
+    }
+
+    ensureAppDataSubstancesReady(appData);
+    currentSubstanceId = resolveStartupSubstanceId() || DASHBOARD_ALL;
+    selectedSubstanceId = resolveDefaultSelectedSubstanceId() || DASHBOARD_ALL;
+    selectedDashboardSubstance = currentSubstanceId || DASHBOARD_ALL;
+
+    if (typeof loadInsightsFiltersIntoState === 'function') {
+        loadInsightsFiltersIntoState(appData);
+    }
+    if (typeof initInsightsSimplify === 'function') {
+        try { initInsightsSimplify(); } catch (_) { /* DOM may be absent in tests */ }
+    }
+    if (typeof initExperienceMode === 'function') {
+        try { initExperienceMode(); } catch (_) { /* DOM may be absent in tests */ }
+    }
+    if (typeof initInventorySource === 'function') {
+        try { initInventorySource(); } catch (_) { /* DOM may be absent in tests */ }
+    }
+}
+
+bootstrapRecoveryTrackerFromStorage();
 
 function __setTestAppData(data) {
     appData = data;
@@ -62117,6 +63339,12 @@ function __getRecoveryTrackerTestExports() {
         duplicatePurchaseNow,
         cleanExportData,
         mergeImportedData,
+        normalizeImportedAppData,
+        assignStableIdsToImportRecords,
+        assignStableImportId,
+        promoteLegacyTaperPlansToV2,
+        getTaperPlanImportFingerprint,
+        mergeArrayById,
         purchaseMatchesInventorySearch,
         comparePurchaseHistoryByFlavor,
         isVapePuffPurchase,
@@ -62204,9 +63432,20 @@ function __getRecoveryTrackerTestExports() {
         scanDataHealth,
         previewDataHealthRepairs,
         applyDataHealthRepairs,
+        applyAllSafeDataHealthRepairs,
+        isDataHealthIssueSafe,
+        buildDataHealthRecalcSandbox,
+        DATA_HEALTH_SAFE_FIXES,
+        DATA_HEALTH_REVIEW_REQUIRED_FIXES,
+        persistLoadedAppDataIfNeeded,
+        detectPersistNeededAfterNormalize,
+        persistComparableSnapshot,
+        __getAppDataPersistAfterLoad: () => appDataPersistAfterLoad,
         pushChangeHistory,
         loadChangeHistory,
         restoreChangeHistoryEntry,
+        getNormalizeAppDataInvocationCount: () => normalizeAppDataInvocationCount,
+        resetNormalizeAppDataInvocationCount: () => { normalizeAppDataInvocationCount = 0; },
         buildImportPreview,
         getColumnPresetDefinition,
         applyColumnPreset,
@@ -62236,6 +63475,9 @@ function __getRecoveryTrackerTestExports() {
         getCurrentManualWeekRow,
         getManualWeeklyWeekNumber,
         getTaperWeeklySummary,
+        getTaperPeriodUsageBounds,
+        getTaperPeriodSummary,
+        renderTaperPeriodSummary,
         getPlannedWeeklyTarget,
         resolvePlanCostPerGram,
         computeWeightedAverageCostPerGram,
@@ -62321,17 +63563,59 @@ function __getRecoveryTrackerTestExports() {
         },
         getTaperPlanById,
         getSelectedTaperPlan,
+        getSelectedTaperId,
+        isTaperEditFormActive,
+        getPrimaryTaperPlan,
         selectedTaperPlanIdRef: {
-            get value() { return selectedTaperPlanId; },
-            set value(v) { selectedTaperPlanId = v; }
+            get value() { return taperUiState.selectedTaperId; },
+            set value(v) { setTaperUiState({ selectedTaperId: v || null }); }
         },
         taperFormPlanIdRef: {
-            get value() { return taperFormPlanId; },
-            set value(v) { taperFormPlanId = v; }
+            get value() { return taperUiState.mode === 'edit' ? taperUiState.editingTaperId : null; },
+            set value(v) {
+                if (v) {
+                    setTaperUiState({
+                        mode: 'edit',
+                        editingTaperId: v,
+                        selectedTaperId: taperUiState.selectedTaperId || v
+                    });
+                } else {
+                    setTaperUiState({ editingTaperId: null });
+                }
+            }
         },
+        taperFormModeRef: {
+            get value() { return taperFormMode; },
+            set value(v) { setTaperFormMode(v); }
+        },
+        getTaperFormMode,
+        setTaperFormMode,
+        generateUnusedTaperPlanId,
+        TAPER_METRIC_DEFINITIONS,
+        TAPER_METRIC_KEYS,
+        getDefaultTaperMetricVisibility,
+        ensureTaperMetricVisibilityPrefs,
+        isTaperMetricVisible,
+        getHiddenTaperMetricKeys,
+        setTaperMetricVisibility,
+        onTaperMetricVisibilityToggle,
+        resetTaperMetricVisibility,
+        renderTaperMetricVisibilityPanel,
+        toggleTaperMetricVisibilityPanel,
+        applyTaperMetricVisibilityToForm,
+        applyTaperMetricVisibilityToDashboard,
+        filterTaperInsightItemsByVisibility,
+        renderTaperCurrentMetricsCard,
+        renderTaperInsights,
         taperEditingPlanRef: {
-            get value() { return taperEditingPlan; },
-            set value(v) { taperEditingPlan = v; }
+            get value() { return isTaperFormModeActive(); },
+            set value(v) {
+                if (!v && isTaperFormModeActive()) {
+                    setTaperUiState({ mode: 'view', editingTaperId: null, sourceTaperId: null });
+                } else if (v && taperUiState.mode === 'view') {
+                    setTaperUiState({ mode: 'create' });
+                }
+            }
         },
         COLUMN_SETTINGS_STORAGE_KEY,
         loadColumnSettingsStore,
@@ -62716,6 +64000,9 @@ function __getRecoveryTrackerTestExports() {
         pauseUnifiedTaperRecord,
         completeUnifiedTaperRecord,
         archiveUnifiedTaperRecord,
+        deleteUnifiedTaperRecord,
+        deleteTaperPlanById,
+        deleteSelectedTaperPlan,
         pauseTaperPlanById,
         duplicateTaperPlanById,
         completeTaperPlanById,
@@ -62723,14 +64010,58 @@ function __getRecoveryTrackerTestExports() {
         getDailyLimitForDate,
         getTaperLimitStatus,
         openUnifiedTaperRecord,
+        openTaperPlan,
+        onTaperPlanChange,
+        populateTaperPlanDropdown,
+        openTaperPlanFromManage,
+        TAPER_START_FROM,
+        setTaperStartFrom,
+        onTaperStartFromChange,
+        applyTaperStartFromSelection,
+        prefillCreateFormFromPlanSource,
+        getTaperMyTemplates,
+        isTaperCreateFormActive,
+        isTaperFormModeActive,
+        getTaperUiState,
+        setTaperUiState,
+        TAPER_UI_MODES,
+        taperUiStateRef: {
+            get value() { return taperUiState; }
+        },
+        computeTaperCalendarDayMetrics,
+        formatTaperDateSummary,
+        formatTaperTimeProgressSummary,
+        formatTaperDurationLabel,
+        formatCompactTaperDateRange,
+        validateTaperPlanDates,
+        detectSuspiciousDuplicateTapers,
+        reportSuspiciousDuplicateTapers,
+        prepareTaperDataForPersistence,
+        syncLegacyTaperPlansFromV2,
+        bindTaperFormSubmitHandlers,
+        renderTaperFormDateSummary,
+        renderTaperPlan,
         showTaperWorkspace,
         hideTaperWorkspace,
         ensureTaperSetupVisible,
         tapersRootEl,
         renderGoalsPlansRecordsView,
+        renderGoalsPlansOverviewHtml,
+        refreshGoalsPlansOverview,
+        buildUnifiedOverviewTaperRecords,
+        filterUnifiedOverviewTaperRecords,
+        sortUnifiedTaperRecords,
+        setGoalsPlansFilter,
+        setGoalsPlansHistoryFilter,
+        setGoalsPlansShowArchivedInList,
+        renderUnifiedOverviewTaperFilters,
+        goalsPlansUiState,
+        normalizeCombinedView,
+        applySimplePlanFormLayout,
         applyTaperTemplate,
         showNewTaperPlan,
         editTaperPlanById,
+        resolveTaperFormEditingPlanId,
         handleTaperSubmit,
         buildTaperPlanFromForm,
         applyBuiltTaperPlanToExisting,
@@ -62770,7 +64101,6 @@ function __getRecoveryTrackerTestExports() {
         buildFinancialSavings,
         buildFinancialForecast,
         buildFinancialBreakdowns,
-        buildFinancialAlerts,
         buildFinancialDataset,
         buildDashboardFinancialSummary,
         mapFinancialCalendarEvents,
@@ -62827,6 +64157,23 @@ function __getRecoveryTrackerTestExports() {
         applyInventorySourceToPayload,
         collectInventorySourceOptions,
         initInventorySource,
+        isInventorySourceDomElement,
+        isInventorySourceMountTarget,
+        ensureBuySourcePickerMounted,
+        mountBuySourcePickerHtml,
+        applyBuySourceAcquisitionUiPatch,
+        inventorySourcePickerMountedRef: {
+            get value() { return inventorySourcePickerMounted; },
+            set value(v) { inventorySourcePickerMounted = !!v; }
+        },
+        inventorySourcePickerMountWarnedRef: {
+            get value() { return inventorySourcePickerMountWarned; },
+            set value(v) { inventorySourcePickerMountWarned = !!v; }
+        },
+        BUYING_REDUCTION_RULE_KEYS,
+        normalizeBuyingReductionSettings,
+        migrateBuyingReductionSettings,
+        repairDataConsistency,
         INVENTORY_SOURCE_KINDS,
         ensureInsightsLayoutPrefs,
         getInsightsLayoutPrefs,
@@ -62847,6 +64194,9 @@ function __getRecoveryTrackerTestExports() {
         ensureSimpleModePrefs,
         getSimpleModePrefs,
         persistSimpleModePrefs,
+        openSimplePlanWizard,
+        applySimplePlanIntent,
+        closeSimplePlanWizard,
         migrateExperienceModeV1,
         buildSimpleHomeDataset,
         buildSimpleTodayCard,
@@ -62994,7 +64344,6 @@ function __getRecoveryTrackerTestExports() {
         buildPurchasePatternMetrics,
         buildInventoryTurnoverMetrics,
         buildProductAnalytics,
-        buildPurchaseAnalyticsWarnings,
         buildPurchaseAnalyticsDataset,
         buildPurchaseAnalyticsCsvRows,
         exportPurchaseAnalyticsCsv,
