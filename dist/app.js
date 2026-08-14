@@ -16030,7 +16030,6 @@ const COMBINED_NAV_ROUTE_REDIRECTS = {
 
 const GOALS_PLANS_VIEWS = [
     'overview',
-    'history',
     'templates'
 ];
 
@@ -16083,7 +16082,7 @@ function ensureCombinedNavPrefs(data = appData) {
         data.settings.combinedNav = { ...defaults, goalsPlansCollapsed: { ...defaults.goalsPlansCollapsed } };
     }
     const prefs = data.settings.combinedNav;
-    if (prefs.goalsPlansView === 'active') prefs.goalsPlansView = 'overview';
+    if (prefs.goalsPlansView === 'active' || prefs.goalsPlansView === 'history') prefs.goalsPlansView = 'overview';
     if (!GOALS_PLANS_VIEWS.includes(prefs.goalsPlansView)) prefs.goalsPlansView = defaults.goalsPlansView;
     // Migrate legacy Insights subviews into Overview / Calendar / Use / Money / More
     if (typeof normalizeCombinedView === 'function') {
@@ -16142,8 +16141,9 @@ function normalizeCombinedView(view, allowed, fallback) {
         tapers: 'overview',
         'active-goals': 'overview',
         'active-plans': 'overview',
-        'goal-history': 'history',
-        'plan-history': 'history',
+        history: 'overview',
+        'goal-history': 'overview',
+        'plan-history': 'overview',
         compare: 'more',
         comparison: 'more',
         comparisons: 'more',
@@ -16430,9 +16430,11 @@ function unlinkGoalFromPlan() { return null; }
 let goalsPlansUiState = {
     activeSubstanceId: 'all',
     activeStatus: 'all',
+    listStatus: 'all',
     historyFilter: 'all',
     historySubstanceId: 'all',
-    historyStatus: 'all'
+    historyStatus: 'all',
+    showArchivedInList: false
 };
 
 /** Match a taper plan to the Tapers page substance selector (incl. nicotine aliases). */
@@ -16499,6 +16501,7 @@ function syncGoalsPlansSubstanceFilters(substanceId) {
 function getTapersEmptyMessage(view, substanceId, data = appData) {
     const name = goalSubstanceLabel(substanceId, data) || 'selected';
     if (view === 'history') return `No completed or archived ${name} tapers.`;
+    if (view === 'overview-list') return `No ${name} tapers match the current filters.`;
     return `No active ${name} tapers.`;
 }
 
@@ -16522,15 +16525,20 @@ function getCompatibleTaperTemplates(substanceId, data = appData) {
     return TAPER_TEMPLATES.filter(t => allowed.has(t.reductionType));
 }
 
+function refreshGoalsPlansOverview(data = appData) {
+    if (typeof document === 'undefined') return;
+    const root = document.getElementById('gp-overview-root');
+    if (root) root.innerHTML = renderGoalsPlansOverviewHtml(buildGoalsPlansOverview(data), data);
+}
+
 function refreshTapersCombinedViews() {
     if (typeof document === 'undefined') return;
     const prefs = typeof ensureCombinedNavPrefs === 'function' ? ensureCombinedNavPrefs() : {};
     const view = prefs.goalsPlansView || 'overview';
     if (view === 'overview') {
-        const root = document.getElementById('gp-overview-root');
-        if (root) root.innerHTML = renderGoalsPlansOverviewHtml(buildGoalsPlansOverview());
-    } else if (typeof renderGoalsPlansRecordsView === 'function') {
-        renderGoalsPlansRecordsView(view);
+        refreshGoalsPlansOverview();
+    } else if (view === 'templates' && typeof renderGoalsPlansRecordsView === 'function') {
+        renderGoalsPlansRecordsView('templates');
     }
 }
 
@@ -16610,8 +16618,78 @@ function unifiedGoalPlanIsHistory(record) {
     return ['completed', 'archived', 'missed', 'cancelled', 'met'].includes(record.status);
 }
 
+function sortUnifiedTaperRecords(records) {
+    const rank = {
+        active: 0,
+        paused: 1,
+        draft: 2,
+        upcoming: 3,
+        completed: 4,
+        archived: 5,
+        missed: 6,
+        cancelled: 7,
+        met: 8
+    };
+    return (records || []).slice().sort((a, b) => {
+        const ra = rank[a.status] ?? 9;
+        const rb = rank[b.status] ?? 9;
+        if (ra !== rb) return ra - rb;
+        const ta = a.source?.updatedAt || a.endDate || a.startDate || '';
+        const tb = b.source?.updatedAt || b.endDate || b.startDate || '';
+        const cmp = String(tb).localeCompare(String(ta));
+        if (cmp !== 0) return cmp;
+        return String(b.id || '').localeCompare(String(a.id || ''));
+    });
+}
+
+/** Unified Overview taper list — active, paused, completed, archived per filters. */
+function filterUnifiedOverviewTaperRecords(records, data = appData) {
+    const historyFilter = goalsPlansUiState.historyFilter || 'all';
+    const statusFilter = goalsPlansUiState.listStatus
+        ?? goalsPlansUiState.activeStatus
+        ?? goalsPlansUiState.historyStatus
+        ?? 'all';
+    const showArchived = !!goalsPlansUiState.showArchivedInList;
+
+    return (records || []).filter(record => {
+        if (record.type !== 'taper') return false;
+        const st = record.status;
+
+        if (!showArchived && st === 'archived') return false;
+
+        if (historyFilter === 'completed-tapers' && st !== 'completed') return false;
+        if (historyFilter === 'archived' && st !== 'archived') return false;
+        if (historyFilter === 'missed' && st !== 'missed') return false;
+
+        if (statusFilter !== 'all' && st !== statusFilter) return false;
+
+        return true;
+    });
+}
+
+function buildUnifiedOverviewTaperRecords(data = appData, substanceId = null) {
+    const sid = substanceId ?? getTapersPageSubstanceId(data);
+    const allRecords = getFilteredTapers({
+        substance: sid,
+        includeArchived: true,
+        data
+    })
+        .map(plan => normalizeUnifiedGoalPlanRecord(plan, { kind: 'taper', data }))
+        .filter(Boolean);
+    return sortUnifiedTaperRecords(filterUnifiedOverviewTaperRecords(allRecords, data));
+}
+
 function filterUnifiedGoalsPlansRecords(records, view, data = appData) {
     const pageSubstanceId = getTapersPageSubstanceId(data);
+    if (view === 'overview') {
+        return filterUnifiedOverviewTaperRecords(
+            (records || []).filter(record =>
+                record.type === 'taper'
+                && taperPlanMatchesSubstance({ substanceId: record.substanceId }, pageSubstanceId, data)
+            ),
+            data
+        );
+    }
     if (view === 'history') {
         const filter = goalsPlansUiState.historyFilter || 'all';
         const status = goalsPlansUiState.historyStatus || 'all';
@@ -16698,7 +16776,32 @@ function renderUnifiedGoalPlanCard(record, data = appData) {
         </article>`;
 }
 
+function renderUnifiedOverviewTaperFilters(data = appData) {
+    const historyFilter = goalsPlansUiState.historyFilter || 'all';
+    const statusValue = goalsPlansUiState.listStatus
+        ?? goalsPlansUiState.activeStatus
+        ?? goalsPlansUiState.historyStatus
+        ?? 'all';
+    const showArchived = !!goalsPlansUiState.showArchivedInList;
+    const statusOptions = ['all', 'active', 'paused', 'draft', 'completed', 'archived']
+        .map(s => `<option value="${s}"${statusValue === s ? ' selected' : ''}>${escapeHtml(s === 'all' ? 'All statuses' : s.replace(/_/g, ' '))}</option>`)
+        .join('');
+
+    return `
+        <section class="goal-filters taper-overview-filters">
+            <label class="goal-filter"><span>History</span><select onchange="setGoalsPlansHistoryFilter(this.value)">
+                ${['all', 'completed-tapers', 'archived'].map(v => `<option value="${v}"${historyFilter === v ? ' selected' : ''}>${escapeHtml(v === 'all' ? 'All' : v.replace(/-/g, ' '))}</option>`).join('')}
+            </select></label>
+            <label class="goal-filter"><span>Status</span><select onchange="setGoalsPlansFilter('listStatus', this.value)">${statusOptions}</select></label>
+            <label class="goal-filter checkbox-label taper-show-archived-list">
+                <input type="checkbox"${showArchived ? ' checked' : ''} onchange="setGoalsPlansShowArchivedInList(this.checked)">
+                Show archived
+            </label>
+        </section>`;
+}
+
 function renderUnifiedGoalsPlansFilters(view, data = appData) {
+    if (view === 'overview') return renderUnifiedOverviewTaperFilters(data);
     const statusStateKey = view === 'history' ? 'historyStatus' : 'activeStatus';
     const statusValue = goalsPlansUiState[statusStateKey] || 'all';
     const statusOptions = ['all', 'active', 'paused', 'draft', 'completed', 'archived']
@@ -16784,60 +16887,33 @@ function applyTaperTemplate(templateId) {
 function renderGoalsPlansRecordsView(view = null) {
     const root = tapersRootEl();
     if (!root) return;
-    const activeView = view || ensureCombinedNavPrefs().goalsPlansView || 'history';
+    const activeView = view || ensureCombinedNavPrefs().goalsPlansView || 'templates';
     if (activeView === 'templates') {
         renderTaperTemplatesView();
         return;
     }
-    if (activeView === 'overview' || activeView === 'active') {
-        // Active tab removed — active tapers live on Overview.
-        const rootOverview = document.getElementById('gp-overview-root');
-        if (rootOverview) rootOverview.innerHTML = renderGoalsPlansOverviewHtml(buildGoalsPlansOverview());
-        return;
+    if (activeView === 'overview' || activeView === 'active' || activeView === 'history') {
+        refreshGoalsPlansOverview();
     }
-    const data = appData;
-    if (typeof ensureTaperPlansV2 === 'function') ensureTaperPlansV2(data);
-    const substanceId = getTapersPageSubstanceId(data);
-    syncGoalsPlansSubstanceFilters(substanceId);
-
-    const filteredPlans = getFilteredTapers({
-        substance: substanceId,
-        includeArchived: true,
-        data
-    });
-    const allRecords = filteredPlans
-        .map(plan => normalizeUnifiedGoalPlanRecord(plan, { kind: 'taper', data }))
-        .filter(Boolean);
-    const records = filterUnifiedGoalsPlansRecords(allRecords, activeView, data);
-    const activeTapers = allRecords.filter(r => unifiedGoalPlanIsActive(r)).length;
-    const emptyCopy = getTapersEmptyMessage(activeView, substanceId, data);
-    const substanceLabel = goalSubstanceLabel(substanceId, data);
-    root.innerHTML = `
-        <div class="goal-view unified-goals-plans-view">
-            <header class="goal-view-head">
-                <div>
-                    <h2 class="goal-view-title">${activeView === 'history' ? 'History' : 'Tapers'}</h2>
-                    <p class="goal-view-sub">${activeTapers} active ${escapeHtml(substanceLabel)} taper${activeTapers === 1 ? '' : 's'}</p>
-                </div>
-                <div class="goal-view-actions">
-                    <button type="button" class="btn-primary" onclick="openUnifiedNewTaper()">New Taper</button>
-                </div>
-            </header>
-            ${renderUnifiedGoalsPlansFilters(activeView, data)}
-            <section class="goal-list" id="taper-list">
-                ${records.length ? records.map(record => renderUnifiedGoalPlanCard(record, data)).join('') : `<div class="goal-empty"><p>${escapeHtml(emptyCopy)}</p></div>`}
-            </section>
-        </div>`;
 }
 
-function setGoalsPlansFilter(key, value, view = 'active') {
+function setGoalsPlansFilter(key, value, view = 'overview') {
     if (Object.prototype.hasOwnProperty.call(goalsPlansUiState, key)) goalsPlansUiState[key] = value;
+    if (view === 'overview' || view === 'active' || view === 'history') {
+        refreshGoalsPlansOverview();
+        return;
+    }
     renderGoalsPlansRecordsView(view);
 }
 
 function setGoalsPlansHistoryFilter(value) {
     goalsPlansUiState.historyFilter = value || 'all';
-    renderGoalsPlansRecordsView('history');
+    refreshGoalsPlansOverview();
+}
+
+function setGoalsPlansShowArchivedInList(checked) {
+    goalsPlansUiState.showArchivedInList = !!checked;
+    refreshGoalsPlansOverview();
 }
 
 function attachUnifiedTaperSurface(..._ids) {
@@ -16847,7 +16923,7 @@ function attachUnifiedTaperSurface(..._ids) {
 function openUnifiedNewTaper() {
     const prefs = ensureCombinedNavPrefs();
     const current = prefs.goalsPlansView || 'overview';
-    const stay = (current === 'overview' || current === 'history' || current === 'templates')
+    const stay = (current === 'overview' || current === 'templates')
         ? current
         : 'overview';
     // Keep the editor mount alive while syncing the subnav — hideTaperWorkspace would blank the page.
@@ -16872,7 +16948,7 @@ function openUnifiedTaperRecord(planId) {
 function editUnifiedTaperRecord(planId) {
     const prefs = ensureCombinedNavPrefs();
     const current = prefs.goalsPlansView || 'overview';
-    const stay = (current === 'overview' || current === 'history' || current === 'templates')
+    const stay = (current === 'overview' || current === 'templates')
         ? current
         : 'overview';
     setGoalsPlansView(stay, { persist: true, keepTaperEditor: true });
@@ -16900,14 +16976,14 @@ function pauseUnifiedTaperRecord(planId) {
 
 function completeUnifiedTaperRecord(planId) {
     if (typeof completeTaperPlanById === 'function') completeTaperPlanById(planId);
-    setGoalsPlansView('history', { persist: true });
-    renderGoalsPlansRecordsView('history');
+    setGoalsPlansView('overview', { persist: true });
+    refreshGoalsPlansOverview();
 }
 
 function archiveUnifiedTaperRecord(planId) {
     if (typeof archiveTaperPlanById === 'function') archiveTaperPlanById(planId);
-    setGoalsPlansView('history', { persist: true });
-    renderGoalsPlansRecordsView('history');
+    setGoalsPlansView('overview', { persist: true });
+    refreshGoalsPlansOverview();
 }
 
 function deleteUnifiedTaperRecord(planId) {
@@ -17029,15 +17105,16 @@ function buildGoalsPlansOverview(data = appData, options = {}) {
     };
 }
 
-function renderGoalsPlansOverviewHtml(overview) {
+function renderGoalsPlansOverviewHtml(overview, data = appData) {
     const substanceLabel = overview.substanceLabel || 'selected';
     const deadline = overview.closestGoalDeadline
         ? `${escapeHtml(overview.closestGoalDeadline.name || 'Taper')} · ${escapeHtml(overview.closestGoalDeadline.endDate)}`
         : 'None set';
-    const emptyActive = getTapersEmptyMessage('active', overview.substanceId, appData);
-    const activeList = overview.activeRecords?.length
-        ? `<div class="goal-list combined-overview-list">${overview.activeRecords.map(record => renderUnifiedGoalPlanCard(record)).join('')}</div>`
-        : `<p class="settings-hint">${escapeHtml(emptyActive)}</p>`;
+    const listRecords = buildUnifiedOverviewTaperRecords(data, overview.substanceId);
+    const emptyCopy = getTapersEmptyMessage('overview-list', overview.substanceId, data);
+    const listHtml = listRecords.length
+        ? `<div class="goal-list combined-overview-list" id="taper-list">${listRecords.map(record => renderUnifiedGoalPlanCard(record, data)).join('')}</div>`
+        : `<div class="goal-empty"><p>${escapeHtml(emptyCopy)}</p></div>`;
 
     return `
         <div class="combined-overview">
@@ -17048,9 +17125,10 @@ function renderGoalsPlansOverviewHtml(overview) {
                 <article class="combined-stat-card"><span class="combined-stat-label">Closest end date</span><strong class="combined-stat-text">${deadline}</strong></article>
                 <article class="combined-stat-card"><span class="combined-stat-label">Current taper step</span><strong class="combined-stat-text">${escapeHtml(String(overview.currentPlanWeek))}</strong></article>
             </div>
-            <section class="combined-overview-block">
-                <h3>Active ${escapeHtml(substanceLabel)} tapers</h3>
-                ${activeList}
+            <section class="combined-overview-block taper-overview-list-block">
+                <h3>${escapeHtml(substanceLabel)} tapers</h3>
+                ${renderUnifiedOverviewTaperFilters(data)}
+                ${listHtml}
             </section>
             <div class="combined-overview-actions">
                 <button type="button" class="secondary-btn" onclick="openUnifiedNewTaper();">New Taper</button>
@@ -17088,10 +17166,9 @@ function setGoalsPlansView(view, options = {}) {
     if (!options.keepTaperEditor) hideTaperWorkspace();
 
     if (next === 'overview') {
-        const root = document.getElementById('gp-overview-root');
-        if (root) root.innerHTML = renderGoalsPlansOverviewHtml(buildGoalsPlansOverview());
-    } else if (next === 'history' || next === 'templates') {
-        if (typeof renderGoalsPlansRecordsView === 'function') renderGoalsPlansRecordsView(next);
+        refreshGoalsPlansOverview();
+    } else if (next === 'templates') {
+        if (typeof renderGoalsPlansRecordsView === 'function') renderGoalsPlansRecordsView('templates');
     }
 
     if (typeof renderTaperMetricVisibilityPanel === 'function') renderTaperMetricVisibilityPanel();
@@ -27642,30 +27719,13 @@ function applySimplePlanFormLayout(data = appData) {
     if (typeof document === 'undefined') return;
     const page = document.getElementById('goals-plans-tab');
     if (!page) return;
-    const simple = isSimpleExperienceMode(data);
-    page.classList.toggle('sm-plan-simple', simple);
-    const prefs = ensureSimpleModePrefs(data);
-    const intent = prefs.planIntent;
-    page.dataset.planIntent = intent || '';
-
-    // Hide purchase-heavy / advanced blocks unless Custom or Advanced Mode
-    const advancedBlocks = page.querySelectorAll('[data-sm-plan-advanced="true"]');
-    advancedBlocks.forEach(el => {
-        el.classList.toggle('sm-hidden-in-simple', simple && intent !== 'custom');
+    // Tapers use the same layout in Simple and Advanced — do not hide controls by mode.
+    page.classList.remove('sm-plan-simple');
+    page.classList.remove('sm-show-advanced-plan');
+    delete page.dataset.planIntent;
+    page.querySelectorAll('[data-sm-plan-advanced="true"]').forEach(el => {
+        el.classList.remove('sm-hidden-in-simple');
     });
-
-    const empty = document.getElementById('taper-no-plan');
-    if (empty) {
-        const heading = empty.querySelector('h3');
-        const copy = empty.querySelector('p');
-        if (simple) {
-            if (heading) heading.textContent = 'No active taper';
-            if (copy) copy.textContent = 'Create one when you’re ready.';
-        } else {
-            if (heading) heading.textContent = 'No taper plans for this substance yet.';
-            if (copy) copy.textContent = 'Set starting and target averages, pick a reduction style, and track progress week by week.';
-        }
-    }
 }
 
 function syncExperienceModeSettingsUI(data = appData) {
@@ -27768,14 +27828,6 @@ function applyExperienceMode(data = appData) {
 function initExperienceMode() {
     ensureExperienceMode(appData);
     applyExperienceMode(appData);
-
-    // Hook new-plan buttons in simple mode toward wizard
-    if (typeof document !== 'undefined') {
-        document.getElementById('sm-new-plan-btn')?.addEventListener('click', (e) => {
-            e.preventDefault();
-            openSimplePlanWizard();
-        });
-    }
     maybeStartOnboarding(appData);
 }
 
@@ -28405,7 +28457,9 @@ function completeOnboarding(options = {}, data = appData) {
         if (typeof switchTab === 'function') {
             try { switchTab('goals-plans-tab'); } catch (_) { /* ignore */ }
         }
-        if (typeof applySimplePlanIntent === 'function') {
+        if (typeof openUnifiedNewTaper === 'function') {
+            try { openUnifiedNewTaper(); } catch (_) { /* ignore */ }
+        } else if (typeof applySimplePlanIntent === 'function') {
             try { applySimplePlanIntent(intent.planIntent); } catch (_) { /* ignore */ }
         }
     }
@@ -56814,14 +56868,6 @@ function refreshTaperSuggestions(options = {}) {
 }
 
 function showNewTaperPlan() {
-    if (typeof isSimpleExperienceMode === 'function' && isSimpleExperienceMode()
-        && typeof openSimplePlanWizard === 'function'
-        && !(typeof globalThis !== 'undefined' && globalThis.__smPlanWizardBypass)
-        && typeof document !== 'undefined'
-        && document.getElementById('simple-plan-wizard')) {
-        openSimplePlanWizard();
-        return false;
-    }
     if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return false;
     taperFormPlanId = null;
     setInputValue('taper-editing-plan-id', '');
@@ -62828,6 +62874,18 @@ function __getRecoveryTrackerTestExports() {
         ensureTaperSetupVisible,
         tapersRootEl,
         renderGoalsPlansRecordsView,
+        renderGoalsPlansOverviewHtml,
+        refreshGoalsPlansOverview,
+        buildUnifiedOverviewTaperRecords,
+        filterUnifiedOverviewTaperRecords,
+        sortUnifiedTaperRecords,
+        setGoalsPlansFilter,
+        setGoalsPlansHistoryFilter,
+        setGoalsPlansShowArchivedInList,
+        renderUnifiedOverviewTaperFilters,
+        goalsPlansUiState,
+        normalizeCombinedView,
+        applySimplePlanFormLayout,
         applyTaperTemplate,
         showNewTaperPlan,
         editTaperPlanById,

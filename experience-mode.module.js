@@ -1649,30 +1649,13 @@ function applySimplePlanFormLayout(data = appData) {
     if (typeof document === 'undefined') return;
     const page = document.getElementById('goals-plans-tab');
     if (!page) return;
-    const simple = isSimpleExperienceMode(data);
-    page.classList.toggle('sm-plan-simple', simple);
-    const prefs = ensureSimpleModePrefs(data);
-    const intent = prefs.planIntent;
-    page.dataset.planIntent = intent || '';
-
-    // Hide purchase-heavy / advanced blocks unless Custom or Advanced Mode
-    const advancedBlocks = page.querySelectorAll('[data-sm-plan-advanced="true"]');
-    advancedBlocks.forEach(el => {
-        el.classList.toggle('sm-hidden-in-simple', simple && intent !== 'custom');
+    // Tapers use the same layout in Simple and Advanced — do not hide controls by mode.
+    page.classList.remove('sm-plan-simple');
+    page.classList.remove('sm-show-advanced-plan');
+    delete page.dataset.planIntent;
+    page.querySelectorAll('[data-sm-plan-advanced="true"]').forEach(el => {
+        el.classList.remove('sm-hidden-in-simple');
     });
-
-    const empty = document.getElementById('taper-no-plan');
-    if (empty) {
-        const heading = empty.querySelector('h3');
-        const copy = empty.querySelector('p');
-        if (simple) {
-            if (heading) heading.textContent = 'No active taper';
-            if (copy) copy.textContent = 'Create one when you’re ready.';
-        } else {
-            if (heading) heading.textContent = 'No taper plans for this substance yet.';
-            if (copy) copy.textContent = 'Set starting and target averages, pick a reduction style, and track progress week by week.';
-        }
-    }
 }
 
 function syncExperienceModeSettingsUI(data = appData) {

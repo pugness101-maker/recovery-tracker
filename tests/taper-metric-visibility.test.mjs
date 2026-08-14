@@ -63,8 +63,8 @@ function installDom(rt) {
     const overview = put('gp-overview', { className: 'combined-subview active', dataset: { gpView: 'overview' } });
     overview.getAttribute = (name) => (name === 'data-gp-view' ? 'overview' : null);
     put('gp-overview-root');
-    const records = put('tapers-root', { className: 'combined-subview', hidden: true, dataset: { gpView: 'history templates' } });
-    records.getAttribute = (name) => (name === 'data-gp-view' ? 'history templates' : null);
+    const records = put('tapers-root', { className: 'combined-subview', hidden: true, dataset: { gpView: 'templates' } });
+    records.getAttribute = (name) => (name === 'data-gp-view' ? 'templates' : null);
     put('gp-subnav', { tag: 'nav' });
     put('gp-subnav-select', { tag: 'select', value: 'overview' });
     put('gp-loading', { className: 'hidden' });

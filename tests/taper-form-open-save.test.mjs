@@ -74,9 +74,9 @@ function installDom(rt) {
     const records = put('tapers-root', {
         className: 'combined-subview',
         hidden: true,
-        dataset: { gpView: 'history templates' }
+        dataset: { gpView: 'templates' }
     });
-    records.getAttribute = (name) => (name === 'data-gp-view' ? 'history templates' : null);
+    records.getAttribute = (name) => (name === 'data-gp-view' ? 'templates' : null);
     const workspace = put('taper-tab', { className: 'taper-page taper-workspace', hidden: true });
     const setup = put('taper-setup', { className: 'taper-editor-panel hidden' });
     put('taper-dashboard', { className: 'hidden' });

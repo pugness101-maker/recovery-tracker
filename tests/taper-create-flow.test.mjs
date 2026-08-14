@@ -59,8 +59,8 @@ function installDom(rt) {
     const overview = put('gp-overview', { className: 'combined-subview active', dataset: { gpView: 'overview' } });
     overview.getAttribute = (name) => (name === 'data-gp-view' ? 'overview' : null);
     put('gp-overview-root');
-    const records = put('tapers-root', { className: 'combined-subview', hidden: true, dataset: { gpView: 'history templates' } });
-    records.getAttribute = (name) => (name === 'data-gp-view' ? 'history templates' : null);
+    const records = put('tapers-root', { className: 'combined-subview', hidden: true, dataset: { gpView: 'templates' } });
+    records.getAttribute = (name) => (name === 'data-gp-view' ? 'templates' : null);
     const workspace = put('taper-tab', { hidden: true });
     put('taper-setup', { className: 'taper-editor-panel hidden' });
     put('taper-form', { tag: 'form' });
@@ -293,17 +293,13 @@ test('edit mode keeps the stable id and does not append', () => {
     assert.equal(data.taperPlansV2[0].name, 'Edited taper');
 });
 
-test('Simple mode New Taper goes through the wizard and creates a new record', () => {
+test('Simple mode New Taper opens the same create form as Advanced', () => {
     const rt = setupApp([makePlan()], { experienceMode: 'simple' });
     const { nodes } = installDom(rt);
     rt.selectedTaperPlanIdRef.value = 'existing-taper';
     assert.equal(rt.isSimpleExperienceMode(), true);
 
-    // In simple mode the taper button opens the intent wizard instead of the form.
-    assert.equal(rt.showNewTaperPlan(), false);
-    assert.equal(nodes.get('simple-plan-wizard').className.includes('hidden'), false);
-
-    rt.applySimplePlanIntent('use-less');
+    assert.equal(rt.showNewTaperPlan(), true);
     assert.equal(rt.getTaperFormMode(), 'create');
     assert.equal(rt.resolveTaperFormEditingPlanId(), null);
 
@@ -315,22 +311,13 @@ test('Simple mode New Taper goes through the wizard and creates a new record', (
     assert.equal(data.taperPlansV2.find(p => p.id === 'existing-taper').notes, 'original note');
 });
 
-test('simple wizard started from an open edit session creates instead of updating', () => {
+test('New Taper after Edit in Simple mode still creates instead of updating', () => {
     const rt = setupApp([makePlan()], { experienceMode: 'simple' });
     const { nodes } = installDom(rt);
     rt.editUnifiedTaperRecord('existing-taper');
-    assert.equal(rt.getTaperFormMode(), 'edit');
-
-    rt.applySimplePlanIntent('use-less');
+    assert.equal(rt.openUnifiedNewTaper(), true);
     assert.equal(rt.getTaperFormMode(), 'create');
-    assert.equal(rt.resolveTaperFormEditingPlanId(), null);
-    assert.equal(nodes.get('taper-editing-plan-id').value, '');
-
-    fillCreateForm(nodes, 'Wizard taper');
+    fillCreateForm(nodes, 'After edit simple');
     assert.equal(rt.handleTaperSubmit({ preventDefault() {} }), true);
-    const data = rt.__getTestAppData();
-    assert.equal(data.taperPlansV2.length, 2);
-    const original = data.taperPlansV2.find(p => p.id === 'existing-taper');
-    assert.equal(original.name, 'Existing taper');
-    assert.equal(original.notes, 'original note');
+    assert.equal(rt.__getTestAppData().taperPlansV2.length, 2);
 });

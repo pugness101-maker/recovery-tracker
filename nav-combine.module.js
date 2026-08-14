@@ -18,7 +18,6 @@ const COMBINED_NAV_ROUTE_REDIRECTS = {
 
 const GOALS_PLANS_VIEWS = [
     'overview',
-    'history',
     'templates'
 ];
 
@@ -71,7 +70,7 @@ function ensureCombinedNavPrefs(data = appData) {
         data.settings.combinedNav = { ...defaults, goalsPlansCollapsed: { ...defaults.goalsPlansCollapsed } };
     }
     const prefs = data.settings.combinedNav;
-    if (prefs.goalsPlansView === 'active') prefs.goalsPlansView = 'overview';
+    if (prefs.goalsPlansView === 'active' || prefs.goalsPlansView === 'history') prefs.goalsPlansView = 'overview';
     if (!GOALS_PLANS_VIEWS.includes(prefs.goalsPlansView)) prefs.goalsPlansView = defaults.goalsPlansView;
     // Migrate legacy Insights subviews into Overview / Calendar / Use / Money / More
     if (typeof normalizeCombinedView === 'function') {
@@ -130,8 +129,9 @@ function normalizeCombinedView(view, allowed, fallback) {
         tapers: 'overview',
         'active-goals': 'overview',
         'active-plans': 'overview',
-        'goal-history': 'history',
-        'plan-history': 'history',
+        history: 'overview',
+        'goal-history': 'overview',
+        'plan-history': 'overview',
         compare: 'more',
         comparison: 'more',
         comparisons: 'more',

@@ -11426,14 +11426,6 @@ body.experience-simple #insights-calendar-tab.sm-show-detailed-analytics .simple
 }
 
 body.experience-simple .sm-plan-simple-actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 10px;
-    margin: 0 0 16px;
-}
-
-body.experience-simple #goals-plans-tab.sm-plan-simple:not(.sm-show-advanced-plan) .combined-subnav-wrap,
-body.experience-simple #goals-plans-tab.sm-plan-simple:not(.sm-show-advanced-plan) [data-sm-plan-advanced="true"] {
     display: none !important;
 }
 
