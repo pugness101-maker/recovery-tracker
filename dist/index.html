@@ -730,6 +730,14 @@
                     </div>
                 </div>
 
+                <div class="taper-metric-visibility-wrap">
+                    <button type="button" class="secondary-btn btn-small" onclick="toggleTaperMetricVisibilityPanel()">Customize metrics</button>
+                    <div id="taper-metric-visibility-panel" class="taper-metric-visibility-panel hidden">
+                        <h4>Visible metrics</h4>
+                        <div id="taper-metric-visibility-body"></div>
+                    </div>
+                </div>
+
                 <div class="combined-subnav-wrap">
                     <label class="combined-subnav-mobile-label" for="gp-subnav-select">View</label>
                     <select id="gp-subnav-select" class="combined-subnav-select" aria-label="Tapers view" onchange="setGoalsPlansView(this.value)">
@@ -813,11 +821,11 @@
                                                 <span>Start</span>
                                                 <strong id="taper-plan-start-date">—</strong>
                                             </div>
-                                            <div class="taper-plan-meta-item">
+                                            <div class="taper-plan-meta-item" id="taper-plan-end-meta">
                                                 <span id="taper-plan-end-meta-label">End</span>
                                                 <strong id="taper-plan-end-date">—</strong>
                                             </div>
-                                            <div class="taper-plan-meta-item">
+                                            <div class="taper-plan-meta-item" id="taper-plan-week-meta">
                                                 <span>Current week</span>
                                                 <strong id="taper-plan-current-week">—</strong>
                                             </div>
@@ -852,8 +860,8 @@
                                     <div class="taper-mini-stat"><span>Used this week</span><strong id="taper-weekly-used">—</strong></div>
                                     <div class="taper-mini-stat"><span>Remaining this week</span><strong id="taper-weekly-remaining">—</strong></div>
                                     <div class="taper-mini-stat"><span>Difference from target</span><strong id="taper-weekly-over-under">—</strong></div>
-                                    <div class="taper-mini-stat"><span>Status</span><strong id="taper-weekly-status-text">—</strong></div>
-                                    <div class="taper-mini-stat"><span>Average per day</span><strong id="taper-weekly-avg-day">—</strong></div>
+                                    <div class="taper-mini-stat" id="taper-weekly-status-stat"><span>Status</span><strong id="taper-weekly-status-text">—</strong></div>
+                                    <div class="taper-mini-stat" id="taper-weekly-avg-day-stat"><span>Average per day</span><strong id="taper-weekly-avg-day">—</strong></div>
                                     <div class="taper-mini-stat"><span>Change from last week</span><strong id="taper-weekly-change-last">—</strong></div>
                                     <div class="taper-mini-stat taper-spending-stat hidden" id="taper-weekly-spent-month-wrap"><span>Spent this month</span><strong id="taper-weekly-spent-month">—</strong></div>
                                 </div>
@@ -943,7 +951,7 @@
                         </div>
                         <div class="form-row" id="taper-start-goal-row">
                             <div class="form-group" id="taper-start-avg-group">
-                                <label for="current-avg">Starting Daily Average (optional)</label>
+                                <label for="current-avg">Starting daily average (optional)</label>
                                 <input type="number" id="current-avg" min="0" step="0.1">
                             </div>
                             <div class="form-group" id="goal-avg-group">
@@ -960,7 +968,7 @@
                             <div id="taper-current-metrics-body" class="taper-current-metrics-body"></div>
                         </div>
 
-                        <div class="form-group">
+                        <div class="form-group" id="taper-reduction-type-group">
                             <label for="reduction-type">Reduction Target</label>
                             <select id="reduction-type" onchange="toggleTaperPlanTypeFields()">
                                 <option value="reduce-amount">Reduce by amount</option>
@@ -1417,7 +1425,7 @@
                         </div>
                         <div class="taper-form-actions">
                             <button type="button" class="secondary-btn hidden" id="taper-cancel-edit-btn" onclick="cancelTaperEdit()">Cancel Edit</button>
-                            <button type="button" class="submit-btn" id="taper-generate-btn" onclick="handleTaperSubmitClick()">Save Plan</button>
+                            <button type="button" class="submit-btn" id="taper-generate-btn" onclick="handleTaperSubmitClick()">Save Taper</button>
                         </div>
                         <p id="taper-form-status" class="taper-form-status" role="status" aria-live="polite" hidden></p>
                     </form>

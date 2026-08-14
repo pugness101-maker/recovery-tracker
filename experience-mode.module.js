@@ -1572,11 +1572,15 @@ function applySimplePlanIntent(intentId) {
     const wizard = document.getElementById('simple-plan-wizard');
     if (wizard) wizard.classList.add('hidden');
     if (typeof globalThis !== 'undefined') globalThis.__smPlanWizardBypass = true;
+    let opened = false;
     try {
-        if (typeof showNewTaperPlan === 'function') showNewTaperPlan();
+        opened = typeof showNewTaperPlan === 'function' ? showNewTaperPlan() !== false : false;
     } finally {
         if (typeof globalThis !== 'undefined') globalThis.__smPlanWizardBypass = false;
     }
+    // Never prefill a form that is still bound to an existing taper — that would
+    // turn "New Taper" into an edit of whatever was open before.
+    if (!opened) return;
 
     // Prefill relevant fields based on intent
     if (intent.reductionType && typeof populateTaperReductionTypeSelect === 'function') {

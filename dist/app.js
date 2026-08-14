@@ -12576,8 +12576,39 @@ let taperFormMode = 'create';
 let showArchivedTaperPlans = false;
 let taperManagePlansFilter = 'active';
 
+/**
+ * Single source of truth for create vs edit. Edit requires BOTH the explicit mode
+ * and a plan id, so a lost/absent id can never turn a create into an in-place update.
+ */
+function getTaperFormMode() {
+    if (taperFormMode !== 'edit') return 'create';
+    const hasId = !!taperFormPlanId
+        || !!(typeof document !== 'undefined' && document.getElementById('taper-editing-plan-id')?.value?.trim());
+    return hasId ? 'edit' : 'create';
+}
+
+function setTaperFormMode(mode) {
+    taperFormMode = mode === 'edit' ? 'edit' : 'create';
+    if (typeof document !== 'undefined') {
+        const form = document.getElementById('taper-form');
+        if (form) {
+            if (!form.dataset) form.dataset = {};
+            form.dataset.taperFormMode = taperFormMode;
+        }
+    }
+    return taperFormMode;
+}
+
 function ensureTaperPlansV2(data) {
     if (!Array.isArray(data.taperPlansV2)) data.taperPlansV2 = [];
+}
+
+/** Mint a taper id that cannot collide with an existing record. */
+function generateUnusedTaperPlanId(data = appData) {
+    const taken = new Set((data?.taperPlansV2 || []).map(p => String(p?.id)));
+    let id = generateUniqueId('taper');
+    while (taken.has(String(id))) id = generateUniqueId('taper');
+    return id;
 }
 
 function isTaperPlanPaused(plan) {
@@ -16376,6 +16407,7 @@ function ensureTaperSetupVisible() {
     showTaperWorkspace();
     const setup = document.getElementById('taper-setup');
     setup?.classList.remove('hidden');
+    if (typeof applyTaperMetricVisibilityToForm === 'function') applyTaperMetricVisibilityToForm();
     document.getElementById('taper-dashboard')?.classList.add('hidden');
     document.getElementById('taper-no-plan')?.classList.add('hidden');
     document.getElementById('taper-disabled-msg')?.classList.add('hidden');
@@ -16614,10 +16646,18 @@ function getTaperPlanProgressLabelSafe(status) {
 }
 
 function renderUnifiedGoalPlanCard(record, data = appData) {
+    const showStatus = isTaperMetricVisible('status', data);
+    const showEndDate = isTaperMetricVisible('endDate', data);
+    const showCurrentStep = isTaperMetricVisible('currentStep', data);
     const title = escapeHtml(record.name || 'Taper');
     const status = escapeHtml(getTaperPlanProgressLabelSafe(record.status));
-    const dateRange = [record.startDate, record.endDate].filter(Boolean).join(' - ') || 'No dates set';
-    const primaryMetric = `Current step: ${escapeHtml(String(record.currentStep))} · ${escapeHtml(String(record.stepStatus))}`;
+    const dateRange = [record.startDate, showEndDate ? record.endDate : null]
+        .filter(Boolean).join(' - ') || 'No dates set';
+    const stepParts = [
+        showCurrentStep ? `Current step: ${escapeHtml(String(record.currentStep))}` : '',
+        showStatus ? escapeHtml(String(record.stepStatus)) : ''
+    ].filter(Boolean);
+    const primaryMetric = stepParts.join(' · ');
     const progress = record.progressPct != null
         ? `<span>Progress: <strong>${escapeHtml(String(Math.round(Number(record.progressPct))))}%</strong></span>`
         : '';
@@ -16637,12 +16677,12 @@ function renderUnifiedGoalPlanCard(record, data = appData) {
                     <h3 class="goal-card-title">${title}</h3>
                     <p class="goal-card-period">${escapeHtml(record.substanceLabel)} · ${escapeHtml(dateRange)}</p>
                 </div>
-                <span class="goal-status-pill goal-tone-neutral">${status}</span>
+                ${showStatus ? `<span class="goal-status-pill goal-tone-neutral">${status}</span>` : ''}
             </header>
             ${record.description ? `<p class="goal-card-desc">${escapeHtml(record.description)}</p>` : ''}
             <div class="goal-card-foot">
                 <span>${secondary}</span>
-                <span>${primaryMetric}</span>
+                ${primaryMetric ? `<span>${primaryMetric}</span>` : ''}
                 ${progress}
                 <span>Priority: <strong>${escapeHtml(record.priority || 'normal')}</strong></span>
             </div>
@@ -16724,7 +16764,7 @@ function applyTaperTemplate(templateId) {
     const compatible = getCompatibleTaperTemplates(substanceId);
     const template = compatible.find(t => t.id === templateId)
         || TAPER_TEMPLATES.find(t => t.id === templateId);
-    openUnifiedNewTaper();
+    if (openUnifiedNewTaper() === false) return;
     if (!template) return;
     if (!compatible.some(t => t.id === template.id)) return;
     const nameEl = typeof document !== 'undefined' ? document.getElementById('taper-plan-name') : null;
@@ -16817,9 +16857,10 @@ function openUnifiedNewTaper() {
     if (opened === false) {
         hideTaperWorkspace();
         setGoalsPlansView(stay, { persist: true, skipRoute: true });
-        return;
+        return false;
     }
     ensureTaperSetupVisible();
+    return true;
 }
 
 function openUnifiedTaperRecord(planId) {
@@ -17053,6 +17094,8 @@ function setGoalsPlansView(view, options = {}) {
         if (typeof renderGoalsPlansRecordsView === 'function') renderGoalsPlansRecordsView(next);
     }
 
+    if (typeof renderTaperMetricVisibilityPanel === 'function') renderTaperMetricVisibilityPanel();
+    if (typeof applyTaperMetricVisibilityToDashboard === 'function') applyTaperMetricVisibilityToDashboard();
     if (!options.skipRoute) syncLocationToCombinedRoute('goals-plans-tab', next);
     if (typeof applyCollapsedSections === 'function') applyCollapsedSections();
 }
@@ -27522,11 +27565,15 @@ function applySimplePlanIntent(intentId) {
     const wizard = document.getElementById('simple-plan-wizard');
     if (wizard) wizard.classList.add('hidden');
     if (typeof globalThis !== 'undefined') globalThis.__smPlanWizardBypass = true;
+    let opened = false;
     try {
-        if (typeof showNewTaperPlan === 'function') showNewTaperPlan();
+        opened = typeof showNewTaperPlan === 'function' ? showNewTaperPlan() !== false : false;
     } finally {
         if (typeof globalThis !== 'undefined') globalThis.__smPlanWizardBypass = false;
     }
+    // Never prefill a form that is still bound to an existing taper — that would
+    // turn "New Taper" into an edit of whatever was open before.
+    if (!opened) return;
 
     // Prefill relevant fields based on intent
     if (intent.reductionType && typeof populateTaperReductionTypeSelect === 'function') {
@@ -55996,6 +56043,175 @@ function setTaperSuggestLookbackDays(value, data = appData) {
     return prefs.lookbackDays;
 }
 
+/**
+ * Taper metric visibility.
+ *
+ * Visibility is presentation-only: metrics stay calculated and stored so taper
+ * math, weekly targets, and saved plans are unaffected by hiding a card.
+ * Preference is shared across tapers and lives in settings so it survives refresh.
+ */
+const TAPER_METRIC_DEFINITIONS = [
+    { key: 'startingDailyAverage', label: 'Starting daily average', group: 'plan' },
+    { key: 'dailyAverageAllowed', label: 'Daily average allowed', group: 'plan' },
+    { key: 'currentAveragePerDay', label: 'Current average/day', group: 'usage' },
+    { key: 'averagePerWeek', label: 'Average/week', group: 'usage' },
+    { key: 'averagePerMonth', label: 'Average/month', group: 'usage' },
+    { key: 'averageSession', label: 'Average session', group: 'usage' },
+    { key: 'sessionsPerDay', label: 'Sessions/day', group: 'usage' },
+    { key: 'averageDuration', label: 'Average duration', group: 'usage' },
+    { key: 'spendingPerWeek', label: 'Average spending/week', group: 'spending' },
+    { key: 'spendingPerMonth', label: 'Average spending/month', group: 'spending' },
+    { key: 'currentInventory', label: 'Current inventory', group: 'supply' },
+    { key: 'estimatedSupply', label: 'Estimated supply', group: 'supply' },
+    { key: 'reductionTarget', label: 'Reduction target', group: 'plan' },
+    { key: 'currentStep', label: 'Current step', group: 'progress' },
+    { key: 'status', label: 'Status / on-track state', group: 'progress' },
+    { key: 'endDate', label: 'End date / estimated completion', group: 'progress' }
+];
+
+const TAPER_METRIC_KEYS = TAPER_METRIC_DEFINITIONS.map(m => m.key);
+
+function getDefaultTaperMetricVisibility() {
+    const defaults = {};
+    TAPER_METRIC_KEYS.forEach(key => { defaults[key] = true; });
+    return defaults;
+}
+
+function ensureTaperMetricVisibilityPrefs(data = appData) {
+    if (!data.settings || typeof data.settings !== 'object') data.settings = {};
+    const defaults = getDefaultTaperMetricVisibility();
+    const current = data.settings.taperMetricVisibility;
+    if (!current || typeof current !== 'object') {
+        data.settings.taperMetricVisibility = defaults;
+        return data.settings.taperMetricVisibility;
+    }
+    TAPER_METRIC_KEYS.forEach(key => {
+        current[key] = current[key] === undefined ? defaults[key] : current[key] !== false;
+    });
+    // Drop keys that no longer exist so stale prefs cannot hide unknown metrics.
+    Object.keys(current).forEach(key => {
+        if (!TAPER_METRIC_KEYS.includes(key)) delete current[key];
+    });
+    return current;
+}
+
+function isTaperMetricVisible(key, data = appData) {
+    if (!TAPER_METRIC_KEYS.includes(key)) return true;
+    return ensureTaperMetricVisibilityPrefs(data)[key] !== false;
+}
+
+function getHiddenTaperMetricKeys(data = appData) {
+    const prefs = ensureTaperMetricVisibilityPrefs(data);
+    return TAPER_METRIC_KEYS.filter(key => prefs[key] === false);
+}
+
+function setTaperMetricVisibility(key, visible, data = appData) {
+    if (!TAPER_METRIC_KEYS.includes(key)) return false;
+    const prefs = ensureTaperMetricVisibilityPrefs(data);
+    prefs[key] = visible !== false;
+    if (typeof saveData === 'function') saveData(data);
+    refreshTaperMetricVisibilityUi(data);
+    return prefs[key];
+}
+
+function onTaperMetricVisibilityToggle(key, el) {
+    setTaperMetricVisibility(key, el ? el.checked !== false : true);
+}
+
+function resetTaperMetricVisibility(data = appData) {
+    if (!data.settings || typeof data.settings !== 'object') data.settings = {};
+    data.settings.taperMetricVisibility = getDefaultTaperMetricVisibility();
+    if (typeof saveData === 'function') saveData(data);
+    refreshTaperMetricVisibilityUi(data);
+    return data.settings.taperMetricVisibility;
+}
+
+function refreshTaperMetricVisibilityUi(data = appData) {
+    renderTaperMetricVisibilityPanel(data);
+    applyTaperMetricVisibilityToForm(data);
+    applyTaperMetricVisibilityToDashboard(data);
+    if (typeof refreshTaperDashboard === 'function') {
+        try { refreshTaperDashboard(); } catch (_) { /* soft */ }
+    }
+    if (typeof refreshTapersCombinedViews === 'function') {
+        try { refreshTapersCombinedViews(); } catch (_) { /* soft */ }
+    }
+}
+
+function toggleTaperMetricVisibilityPanel(force) {
+    if (typeof document === 'undefined') return false;
+    const panel = document.getElementById('taper-metric-visibility-panel');
+    if (!panel) return false;
+    const shouldShow = force === undefined ? panel.classList.contains('hidden') : !!force;
+    renderTaperMetricVisibilityPanel();
+    panel.classList.toggle('hidden', !shouldShow);
+    return shouldShow;
+}
+
+function renderTaperMetricVisibilityPanel(data = appData) {
+    if (typeof document === 'undefined') return;
+    const body = document.getElementById('taper-metric-visibility-body');
+    if (!body) return;
+    const prefs = ensureTaperMetricVisibilityPrefs(data);
+    const rows = TAPER_METRIC_DEFINITIONS.map(metric => `
+        <label class="checkbox-label taper-metric-visibility-row">
+            <input type="checkbox" data-taper-metric="${escapeAttr(metric.key)}"${prefs[metric.key] === false ? '' : ' checked'}
+                onchange="onTaperMetricVisibilityToggle('${escapeAttr(metric.key)}', this)">
+            ${escapeHtml(metric.label)}
+        </label>`).join('');
+    body.innerHTML = `
+        <p class="settings-hint">Hidden metrics disappear from taper cards and summaries. Your data keeps recording and taper targets keep calculating.</p>
+        <div class="taper-metric-visibility-grid">${rows}</div>
+        <div class="taper-metric-visibility-actions">
+            <button type="button" class="secondary-btn btn-small" onclick="resetTaperMetricVisibility()">Reset to defaults</button>
+        </div>`;
+}
+
+/** Hide plan inputs for metrics the user turned off (values stay saved on the plan). */
+function applyTaperMetricVisibilityToForm(data = appData) {
+    if (typeof document === 'undefined') return;
+    const prefs = ensureTaperMetricVisibilityPrefs(data);
+    const groups = [
+        ['startingDailyAverage', 'taper-start-avg-group'],
+        ['dailyAverageAllowed', 'goal-avg-group'],
+        ['reductionTarget', 'taper-reduction-type-group']
+    ];
+    groups.forEach(([key, groupId]) => {
+        const group = document.getElementById(groupId);
+        if (!group) return;
+        const hidden = prefs[key] === false;
+        group.classList.toggle('taper-metric-hidden', hidden);
+        // Keep validation satisfiable while a field is out of view.
+        const input = typeof group.querySelector === 'function'
+            ? group.querySelector('input, select')
+            : null;
+        if (input && hidden && input.required) {
+            input.required = false;
+            if (input.dataset) input.dataset.taperMetricRequired = '1';
+        } else if (input && !hidden && input.dataset?.taperMetricRequired === '1') {
+            input.required = true;
+            delete input.dataset.taperMetricRequired;
+        }
+    });
+}
+
+function applyTaperMetricVisibilityToDashboard(data = appData) {
+    if (typeof document === 'undefined') return;
+    const prefs = ensureTaperMetricVisibilityPrefs(data);
+    const toggles = [
+        ['endDate', 'taper-plan-end-meta'],
+        ['currentStep', 'taper-plan-week-meta'],
+        ['status', 'taper-plan-badges'],
+        ['status', 'taper-weekly-status-stat'],
+        ['currentAveragePerDay', 'taper-weekly-avg-day-stat']
+    ];
+    toggles.forEach(([key, id]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.classList.toggle('taper-metric-hidden', prefs[key] === false);
+    });
+}
+
 function syncTaperSuggestSettingsUI(data = appData) {
     const prefs = ensureTaperSuggestPrefs(data);
     const enabledEl = typeof document !== 'undefined'
@@ -56418,18 +56634,25 @@ function renderTaperCurrentMetricsCard(metrics) {
     }
     const unit = escapeHtml(metrics.unit || '');
     const amount = (v) => (v == null ? '—' : `${escapeHtml(formatAmount(v))} ${unit}`.trim());
+    const items = [
+        ['currentAveragePerDay', 'Average/day', amount(metrics.avgPerDay)],
+        ['averagePerWeek', 'Average/week', amount(metrics.avgPerWeek)],
+        ['averagePerMonth', 'Average/month', amount(metrics.avgPerMonth)],
+        ['averageSession', 'Average session', amount(metrics.avgSession)],
+        ['sessionsPerDay', 'Sessions/day', metrics.sessionsPerDay == null ? '—' : escapeHtml(formatAmount(metrics.sessionsPerDay))],
+        ['averageDuration', 'Average duration', escapeHtml(formatTaperSuggestDurationMinutes(metrics.avgDurationMinutes))],
+        ['spendingPerWeek', 'Average spending/week', escapeHtml(formatTaperSuggestMoney(metrics.spendPerWeek))],
+        ['spendingPerMonth', 'Average spending/month', escapeHtml(formatTaperSuggestMoney(metrics.spendPerMonth))],
+        ['currentInventory', 'Current inventory', amount(metrics.inventory)],
+        ['estimatedSupply', 'Estimated supply', metrics.estimatedSupplyDays == null ? '—' : `${escapeHtml(String(metrics.estimatedSupplyDays))} days`]
+    ].filter(([key]) => isTaperMetricVisible(key));
+    if (!items.length) {
+        body.innerHTML = '<p class="taper-suggest-empty">All usage metrics are hidden. Use Customize metrics to show them again.</p>';
+        return;
+    }
     body.innerHTML = `
         <div class="taper-current-metrics-grid">
-            <div class="taper-metric-item"><span>Average/day</span><strong>${amount(metrics.avgPerDay)}</strong></div>
-            <div class="taper-metric-item"><span>Average/week</span><strong>${amount(metrics.avgPerWeek)}</strong></div>
-            <div class="taper-metric-item"><span>Average/month</span><strong>${amount(metrics.avgPerMonth)}</strong></div>
-            <div class="taper-metric-item"><span>Average session</span><strong>${amount(metrics.avgSession)}</strong></div>
-            <div class="taper-metric-item"><span>Sessions/day</span><strong>${metrics.sessionsPerDay == null ? '—' : escapeHtml(formatAmount(metrics.sessionsPerDay))}</strong></div>
-            <div class="taper-metric-item"><span>Average duration</span><strong>${escapeHtml(formatTaperSuggestDurationMinutes(metrics.avgDurationMinutes))}</strong></div>
-            <div class="taper-metric-item"><span>Average spending/week</span><strong>${escapeHtml(formatTaperSuggestMoney(metrics.spendPerWeek))}</strong></div>
-            <div class="taper-metric-item"><span>Average spending/month</span><strong>${escapeHtml(formatTaperSuggestMoney(metrics.spendPerMonth))}</strong></div>
-            <div class="taper-metric-item"><span>Current inventory</span><strong>${amount(metrics.inventory)}</strong></div>
-            <div class="taper-metric-item"><span>Estimated supply</span><strong>${metrics.estimatedSupplyDays == null ? '—' : `${escapeHtml(String(metrics.estimatedSupplyDays))} days`}</strong></div>
+            ${items.map(([, label, value]) => `<div class="taper-metric-item"><span>${escapeHtml(label)}</span><strong>${value}</strong></div>`).join('')}
         </div>`;
 }
 
@@ -56600,11 +56823,11 @@ function showNewTaperPlan() {
         return false;
     }
     if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return false;
-    taperFormMode = 'create';
     taperFormPlanId = null;
+    setInputValue('taper-editing-plan-id', '');
+    setTaperFormMode('create');
     taperEditingPlan = true;
     resetTaperFormLifecycleState();
-    setInputValue('taper-editing-plan-id', '');
     setText('taper-setup-title', 'Create Taper Plan');
     setText('taper-generate-btn', 'Save Taper');
     ensureTaperSetupVisible();
@@ -56652,7 +56875,7 @@ function duplicateTaperPlanById(planId) {
     const plan = getTaperPlanById(planId);
     if (!plan) return;
     const copy = JSON.parse(JSON.stringify(plan));
-    copy.id = generateUniqueId('taper');
+    copy.id = generateUnusedTaperPlanId();
     copy.name = `${plan.name} copy`;
     copy.status = 'active';
     copy.isPrimary = false;
@@ -56800,7 +57023,7 @@ function editTaperPlanById(planId) {
     if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) return false;
     selectedTaperPlanId = planId;
     taperFormPlanId = planId;
-    taperFormMode = 'edit';
+    setTaperFormMode('edit');
     taperEditingPlan = true;
     resetTaperFormLifecycleState();
     // Backup before normalizing/migrating plan data for edit.
@@ -56916,7 +57139,7 @@ function deleteTaperPlanById(planId, options = {}) {
     }
     if (taperFormPlanId === planId) {
         taperFormPlanId = null;
-        taperFormMode = 'create';
+        setTaperFormMode('create');
         taperEditingPlan = false;
         setInputValue('taper-editing-plan-id', '');
     }
@@ -57001,7 +57224,7 @@ function toggleTaperPlanTypeFields(options = {}) {
     document.getElementById('purchase-taper-section')?.classList.toggle('hidden', isNicotineVape);
 
     if (startAvgLabel) {
-        startAvgLabel.textContent = isPuffs ? 'Baseline average puffs/day' : 'Starting Daily Average (optional)';
+        startAvgLabel.textContent = isPuffs ? 'Baseline average puffs/day' : 'Starting daily average (optional)';
     }
     if (goalAvgLabel) {
         if (isManual) goalAvgLabel.textContent = 'Goal Daily Average (optional)';
@@ -57790,8 +58013,8 @@ function renderTaperCurrentWeekSummary(substanceId) {
                 <div class="taper-mini-stat"><span>Used this week</span><strong id="taper-weekly-used">—</strong></div>
                 <div class="taper-mini-stat"><span>Remaining this week</span><strong id="taper-weekly-remaining">—</strong></div>
                 <div class="taper-mini-stat"><span>Difference from target</span><strong id="taper-weekly-over-under">—</strong></div>
-                <div class="taper-mini-stat"><span>Status</span><strong id="taper-weekly-status-text">—</strong></div>
-                <div class="taper-mini-stat"><span>Average per day</span><strong id="taper-weekly-avg-day">—</strong></div>
+                <div class="taper-mini-stat" id="taper-weekly-status-stat"><span>Status</span><strong id="taper-weekly-status-text">—</strong></div>
+                <div class="taper-mini-stat" id="taper-weekly-avg-day-stat"><span>Average per day</span><strong id="taper-weekly-avg-day">—</strong></div>
                 <div class="taper-mini-stat"><span>Change from last week</span><strong id="taper-weekly-change-last">—</strong></div>
                 <div class="taper-mini-stat taper-spending-stat hidden" id="taper-weekly-spent-month-wrap"><span>Spent this month</span><strong id="taper-weekly-spent-month">—</strong></div>
             </div>
@@ -58441,7 +58664,7 @@ function mergeWeeklyTargetsPreservingProgress(previousWeeks, nextWeeks) {
 
 function resolveTaperFormEditingPlanId() {
     // Create mode must never inherit selectedTaperPlanId / fall back into edit.
-    if (taperFormMode === 'create') return null;
+    if (getTaperFormMode() === 'create') return null;
     const fromState = taperFormPlanId ? String(taperFormPlanId) : '';
     const fromInput = document.getElementById('taper-editing-plan-id')?.value?.trim() || '';
     return fromState || fromInput || null;
@@ -58473,24 +58696,31 @@ function handleTaperSubmit(e) {
         }
         setTaperFormStatus('Saving…', 'saving');
 
+        const formMode = getTaperFormMode();
+
         // If the form was still mid-load, try to finish from the selected/editing plan once.
         if (!taperFormInitialized) {
-            const pendingId = resolveTaperFormEditingPlanId();
-            const pendingPlan = pendingId ? getTaperPlanById(pendingId) : null;
-            if (pendingPlan) {
-                fillTaperFormFromPlan(pendingPlan);
+            if (formMode === 'create') {
+                // A create never has a plan to load from — accept the values on screen.
+                markTaperFormClean();
+            } else {
+                const pendingId = resolveTaperFormEditingPlanId();
+                const pendingPlan = pendingId ? getTaperPlanById(pendingId) : null;
+                if (pendingPlan) {
+                    fillTaperFormFromPlan(pendingPlan);
+                }
             }
         }
         if (!taperFormInitialized) {
             return fail('Plan form is still loading. Please wait a moment and try again.');
         }
 
-        const editingPlanId = taperFormMode === 'edit' ? resolveTaperFormEditingPlanId() : null;
+        const editingPlanId = formMode === 'edit' ? resolveTaperFormEditingPlanId() : null;
         const existingPlan = editingPlanId ? getTaperPlanById(editingPlanId) : null;
-        if (taperFormMode === 'edit' && editingPlanId && !existingPlan) {
+        if (formMode === 'edit' && editingPlanId && !existingPlan) {
             return fail('Could not find the selected plan to update. Reload and try again.');
         }
-        if (taperFormMode === 'create' && (taperFormPlanId || document.getElementById('taper-editing-plan-id')?.value?.trim())) {
+        if (formMode === 'create' && (taperFormPlanId || document.getElementById('taper-editing-plan-id')?.value?.trim())) {
             // Hard guard: create must not silently mutate an existing taper.
             taperFormPlanId = null;
             setInputValue('taper-editing-plan-id', '');
@@ -58668,7 +58898,7 @@ function handleTaperSubmit(e) {
             if (setPrimary) setTaperPlanPrimary(existingPlan.id, substanceId);
             selectedTaperPlanId = preservedId;
         } else {
-            built.id = generateUniqueId('taper');
+            built.id = generateUnusedTaperPlanId();
             // New tapers are Active by default; honor explicit draft/paused from the form.
             const formStatus = document.getElementById('taper-status')?.value;
             built.status = (formStatus === 'draft' || formStatus === 'paused') ? formStatus : 'active';
@@ -58697,7 +58927,7 @@ function handleTaperSubmit(e) {
         // Leave edit mode and show the saved taper on Overview.
         taperEditingPlan = false;
         taperFormPlanId = null;
-        taperFormMode = 'create';
+        setTaperFormMode('create');
         setInputValue('taper-editing-plan-id', '');
         resetTaperFormLifecycleState();
         document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
@@ -58804,6 +59034,7 @@ function renderTaperPlan() {
     setup?.classList.add('hidden');
     dashboard?.classList.remove('hidden');
     migrateTaperPlan(plan, substanceId);
+    applyTaperMetricVisibilityToDashboard();
     renderTaperPlanSummary(substanceId);
     renderLegacyPuffConvertBanner(substanceId);
     renderTaperCurrentWeekSummary(substanceId);
@@ -59303,9 +59534,29 @@ function renderTaperInsights(substanceId) {
             ['Status', getTaperPlanStatusLabel(getTaperPlanStatus(plan))]
         ];
     }
-    container.innerHTML = items.map(([label, val]) =>
+    container.innerHTML = filterTaperInsightItemsByVisibility(items).map(([label, val]) =>
         `<div class="taper-insight-item"><span>${label}</span><strong>${val}</strong></div>`
     ).join('');
+}
+
+const TAPER_INSIGHT_METRIC_KEYS = {
+    'Start average': 'startingDailyAverage',
+    'Starting strength': 'startingDailyAverage',
+    'Current buy frequency': 'startingDailyAverage',
+    'Goal average': 'dailyAverageAllowed',
+    'Goal strength': 'dailyAverageAllowed',
+    'Goal buy frequency': 'dailyAverageAllowed',
+    Reduction: 'reductionTarget',
+    'Step-down': 'reductionTarget',
+    'Target end': 'endDate',
+    Status: 'status'
+};
+
+function filterTaperInsightItemsByVisibility(items, data = appData) {
+    return (items || []).filter(([label]) => {
+        const key = TAPER_INSIGHT_METRIC_KEYS[label];
+        return !key || isTaperMetricVisible(key, data);
+    });
 }
 
 function editTaperPlan() {
@@ -59318,7 +59569,7 @@ function cancelTaperEdit() {
     if (taperFormDirty && !confirmDiscardTaperFormChanges()) return;
     taperEditingPlan = false;
     taperFormPlanId = null;
-    taperFormMode = 'create';
+    setTaperFormMode('create');
     setInputValue('taper-editing-plan-id', '');
     resetTaperFormLifecycleState();
     document.getElementById('taper-setup')?.classList.add('hidden');
@@ -62154,8 +62405,27 @@ function __getRecoveryTrackerTestExports() {
         },
         taperFormModeRef: {
             get value() { return taperFormMode; },
-            set value(v) { taperFormMode = v === 'edit' ? 'edit' : 'create'; }
+            set value(v) { setTaperFormMode(v); }
         },
+        getTaperFormMode,
+        setTaperFormMode,
+        generateUnusedTaperPlanId,
+        TAPER_METRIC_DEFINITIONS,
+        TAPER_METRIC_KEYS,
+        getDefaultTaperMetricVisibility,
+        ensureTaperMetricVisibilityPrefs,
+        isTaperMetricVisible,
+        getHiddenTaperMetricKeys,
+        setTaperMetricVisibility,
+        onTaperMetricVisibilityToggle,
+        resetTaperMetricVisibility,
+        renderTaperMetricVisibilityPanel,
+        toggleTaperMetricVisibilityPanel,
+        applyTaperMetricVisibilityToForm,
+        applyTaperMetricVisibilityToDashboard,
+        filterTaperInsightItemsByVisibility,
+        renderTaperCurrentMetricsCard,
+        renderTaperInsights,
         taperEditingPlanRef: {
             get value() { return taperEditingPlan; },
             set value(v) { taperEditingPlan = v; }
@@ -62677,6 +62947,9 @@ function __getRecoveryTrackerTestExports() {
         ensureSimpleModePrefs,
         getSimpleModePrefs,
         persistSimpleModePrefs,
+        openSimplePlanWizard,
+        applySimplePlanIntent,
+        closeSimplePlanWizard,
         migrateExperienceModeV1,
         buildSimpleHomeDataset,
         buildSimpleTodayCard,

@@ -3004,6 +3004,48 @@ input[type="range"]::-webkit-slider-thumb {
     color: var(--text-secondary);
 }
 
+/* Metric visibility (Customize metrics) */
+.taper-metric-visibility-wrap {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin: 0 0 12px;
+    align-items: flex-start;
+}
+
+.taper-metric-visibility-panel {
+    width: 100%;
+    padding: 12px 14px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--card-bg);
+}
+
+.taper-metric-visibility-panel h4 {
+    margin: 0 0 6px;
+    font-size: 0.95rem;
+}
+
+.taper-metric-visibility-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 4px 14px;
+    margin: 8px 0;
+}
+
+.taper-metric-visibility-row {
+    font-size: 0.85rem;
+}
+
+.taper-metric-visibility-actions {
+    display: flex;
+    gap: 8px;
+}
+
+.taper-metric-hidden {
+    display: none !important;
+}
+
 .taper-suggest-empty {
     margin: 0;
     font-size: 0.88rem;

@@ -358,6 +358,7 @@ test('Open Edit Duplicate Pause Complete Archive Delete and New Taper still work
     rt.onTaperSubstanceChange();
     assert.equal(rt.getTaperSubstanceId(), NICOTINE_ID);
     const opened = rt.openUnifiedNewTaper();
-    assert.equal(opened, undefined);
+    assert.equal(opened, true);
+    assert.equal(rt.getTaperFormMode(), 'create');
     assert.equal(rt.getTaperSubstanceId(), NICOTINE_ID);
 });
