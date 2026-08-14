@@ -26281,6 +26281,16 @@ const SIMPLE_PLAN_INTENTS = Object.freeze([
     { id: 'custom', label: 'Custom', reductionType: null, hint: 'Open full plan settings.' }
 ]);
 
+const SIMPLE_DUPLICATE_WINDOW_MS = 90 * 1000;
+const SIMPLE_RECENT_LOG_LIMIT = 3;
+const SIMPLE_RECENT_AMOUNT_LIMIT = 5;
+
+let simpleQuickLogContext = {
+    substanceId: null,
+    locked: false,
+    lastSavedId: null
+};
+
 function getDefaultSimpleModePrefs() {
     return {
         quickLogBySubstance: {},
@@ -26572,10 +26582,12 @@ function renderSimpleHome(data = appData) {
         </div>
         <div class="sm-primary-actions" role="group" aria-label="Primary actions">
             <button type="button" class="sm-action-btn sm-action-primary" onclick="openSimpleQuickLog()">Quick Log</button>
+            ${renderSimpleRepeatLastButton(data)}
             <button type="button" class="sm-action-btn sm-action-secondary" onclick="openSimpleLogDetails()">Log Details</button>
             <button type="button" class="sm-action-btn sm-action-secondary" onclick="openSimpleProgress()">View Progress</button>
         </div>
         <div class="sm-today-grid" id="sm-today-grid">${cardsHtml}</div>
+        ${renderSimpleRecentlyLoggedHtml(data)}
         <div class="sm-home-footer">
             <button type="button" class="sm-text-btn" onclick="showAdvancedHomeDashboard()">Show full dashboard</button>
         </div>`;
@@ -26603,11 +26615,47 @@ function openSimpleProgress() {
     renderSimpleProgress();
 }
 
+function rememberQuickLogSettings(patch, data = appData) {
+    const substanceId = patch?.substanceId;
+    if (!substanceId) return null;
+    const prefs = ensureSimpleModePrefs(data);
+    const prev = prefs.quickLogBySubstance[substanceId] && typeof prefs.quickLogBySubstance[substanceId] === 'object'
+        ? prefs.quickLogBySubstance[substanceId]
+        : {};
+    const amount = Number.isFinite(Number(patch.amount)) ? Number(patch.amount) : (prev.amount ?? null);
+    const next = {
+        substanceId,
+        productType: patch.productType !== undefined ? (patch.productType || null) : (prev.productType || null),
+        amount: amount != null && Number.isFinite(amount) ? amount : null,
+        unit: patch.unit !== undefined ? (patch.unit || '') : (prev.unit || ''),
+        purchaseId: patch.purchaseId !== undefined ? (patch.purchaseId || null) : (prev.purchaseId || null),
+        transactionType: patch.transactionType || prev.transactionType || 'use',
+        logMode: patch.logMode !== undefined ? (patch.logMode || null) : (prev.logMode || null),
+        vapeMode: patch.vapeMode !== undefined ? (patch.vapeMode || null) : (prev.vapeMode || null),
+        updatedAt: new Date().toISOString()
+    };
+    prefs.quickLogBySubstance[substanceId] = next;
+    prefs.lastQuickSubstanceId = substanceId;
+    if (next.amount != null && next.amount > 0) {
+        rememberRecentAmount(substanceId, next.amount, data);
+    } else if (typeof saveData === 'function') {
+        saveData(data);
+    }
+    return next;
+}
+
+function getQuickLogMemoryForSubstance(substanceId, data = appData) {
+    if (!substanceId) return null;
+    const prefs = ensureSimpleModePrefs(data);
+    const mem = prefs.quickLogBySubstance?.[substanceId];
+    return mem && typeof mem === 'object' ? mem : null;
+}
+
 function rememberQuickLogFromForm(data = appData) {
+    if (typeof document === 'undefined') return null;
     const substanceId = document.getElementById('use-substance')?.value
         || document.getElementById('use-log-substance')?.value;
-    if (!substanceId) return;
-    const prefs = ensureSimpleModePrefs(data);
+    if (!substanceId) return null;
     const amountRaw = document.getElementById('use-amount')?.value
         || document.getElementById('use-vape-puffs-used')?.value
         || document.getElementById('use-cigarettes-smoked')?.value
@@ -26623,24 +26671,46 @@ function rememberQuickLogFromForm(data = appData) {
         || null;
     const transactionType = document.getElementById('use-transaction-type')?.value || 'use';
     const vapeMode = document.getElementById('use-vape-log-mode')?.value || null;
-
-    prefs.quickLogBySubstance[substanceId] = {
+    const logMode = document.getElementById('use-lsd-log-mode')?.value
+        || document.getElementById('use-xanax-log-mode')?.value
+        || document.getElementById('use-weed-cart-log-mode')?.value
+        || vapeMode
+        || null;
+    return rememberQuickLogSettings({
         substanceId,
         productType,
         amount: Number.isFinite(amount) ? amount : null,
         unit,
         purchaseId: purchaseId || null,
         transactionType,
-        vapeMode,
-        updatedAt: new Date().toISOString()
-    };
-    prefs.lastQuickSubstanceId = substanceId;
+        logMode,
+        vapeMode
+    }, data);
+}
 
-    if (Number.isFinite(amount) && amount > 0) {
-        rememberRecentAmount(substanceId, amount, data);
-    } else if (typeof saveData === 'function') {
-        saveData(data);
-    }
+function rememberQuickLogFromEntry(entry, data = appData) {
+    if (!entry) return null;
+    const substanceId = typeof getUseSubstanceId === 'function'
+        ? getUseSubstanceId(entry)
+        : (entry.substanceId || entry.substance);
+    if (!substanceId) return null;
+    const productType = entry.nicotineProductType || entry.weedProductType || null;
+    const purchaseId = typeof getLogPurchaseId === 'function'
+        ? getLogPurchaseId(entry)
+        : (entry.purchaseId || entry.inventoryId || null);
+    return rememberQuickLogSettings({
+        substanceId,
+        productType,
+        amount: Number(entry.amount),
+        unit: entry.unit || '',
+        purchaseId: purchaseId || null,
+        transactionType: (typeof getLogTransactionType === 'function'
+            ? getLogTransactionType(entry)
+            : entry.transactionType) || 'use',
+        logMode: entry.logMode || null,
+        vapeMode: entry.logMode === 'vape_puffs' ? 'puffs'
+            : (entry.logMode === 'percent_remaining' ? 'percent' : null)
+    }, data);
 }
 
 function rememberRecentAmount(substanceId, amount, data = appData) {
@@ -26651,7 +26721,8 @@ function rememberRecentAmount(substanceId, amount, data = appData) {
         ? prefs.recentAmountsBySubstance[key].slice()
         : [];
     const rounded = Math.round(amount * 1000) / 1000;
-    const next = [rounded, ...list.filter(v => Math.abs(v - rounded) > 1e-9)].slice(0, 6);
+    const next = [rounded, ...list.filter(v => Math.abs(v - rounded) > 1e-9)]
+        .slice(0, SIMPLE_RECENT_AMOUNT_LIMIT);
     prefs.recentAmountsBySubstance[key] = next;
     if (typeof saveData === 'function') saveData(data);
 }
@@ -26660,12 +26731,15 @@ function getRecentAmountsForSubstance(substanceId, data = appData) {
     const prefs = ensureSimpleModePrefs(data);
     const remembered = prefs.recentAmountsBySubstance?.[substanceId];
     if (Array.isArray(remembered) && remembered.length) {
-        return remembered.filter(n => Number.isFinite(n) && n > 0).slice(0, 5);
+        return remembered.filter(n => Number.isFinite(n) && n > 0).slice(0, SIMPLE_RECENT_AMOUNT_LIMIT);
     }
-    // Derive from recent logs when prefs are empty
     const logs = (data.logs || [])
-        .filter(l => l && String(l.substanceId) === String(substanceId) && Number(l.amount) > 0)
-        .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+        .filter(l => l && String(l.substanceId || l.substance) === String(substanceId) && Number(l.amount) > 0)
+        .sort((a, b) => {
+            const msA = typeof getLogDatetimeMs === 'function' ? getLogDatetimeMs(a) : 0;
+            const msB = typeof getLogDatetimeMs === 'function' ? getLogDatetimeMs(b) : 0;
+            return msB - msA;
+        })
         .slice(0, 40);
     const seen = [];
     logs.forEach(log => {
@@ -26673,9 +26747,8 @@ function getRecentAmountsForSubstance(substanceId, data = appData) {
         if (!(amt > 0)) return;
         if (!seen.some(v => Math.abs(v - amt) < 1e-9)) seen.push(amt);
     });
-    if (seen.length) return seen.slice(0, 5);
+    if (seen.length) return seen.slice(0, SIMPLE_RECENT_AMOUNT_LIMIT);
 
-    // Light sensible fallbacks by tracking mode
     if (typeof isNicotineTrackingMode === 'function' && isNicotineTrackingMode(substanceId, data)) {
         return [100, 250, 500];
     }
@@ -26685,10 +26758,133 @@ function getRecentAmountsForSubstance(substanceId, data = appData) {
     return [1, 2, 5];
 }
 
+function getCompatibleSimpleInventoryItems(substanceId, productType, data = appData) {
+    if (!substanceId || typeof getActiveInventoryItems !== 'function') return [];
+    let items = getActiveInventoryItems(substanceId, data) || [];
+    if (productType && typeof isNicotineTrackingMode === 'function' && isNicotineTrackingMode(substanceId, data)) {
+        items = items.filter(p => {
+            const pt = typeof getNicotineProductType === 'function'
+                ? getNicotineProductType(p, data)
+                : (p.nicotineProductType || null);
+            return !pt || pt === productType;
+        });
+    }
+    if (productType && typeof isWeedTrackingMode === 'function' && isWeedTrackingMode(substanceId, data)) {
+        items = items.filter(p => (p.weedProductType || 'bud') === productType);
+    }
+    return items;
+}
+
+function resolveSimpleInventoryPrefill(substanceId, data = appData, options = {}) {
+    if (!substanceId) return null;
+    const mem = options.memory || getQuickLogMemoryForSubstance(substanceId, data);
+    const productType = options.productType || mem?.productType || null;
+    const items = getCompatibleSimpleInventoryItems(substanceId, productType, data);
+    const rememberedId = options.purchaseId !== undefined ? options.purchaseId : (mem?.purchaseId || null);
+    if (rememberedId != null && rememberedId !== '') {
+        const still = items.find(p => String(p.id) === String(rememberedId));
+        if (still) return still.id;
+    }
+    if (items.length === 1) return items[0].id;
+    return null;
+}
+
+function applySimpleInventoryPrefill(substanceId, data = appData, mem = null) {
+    if (typeof setUsePurchaseLinkMode !== 'function') return null;
+    const prefillId = resolveSimpleInventoryPrefill(substanceId, data, { memory: mem });
+    if (prefillId) {
+        setUsePurchaseLinkMode('manual');
+        const sel = document.getElementById('use-purchase-select');
+        if (sel) sel.value = String(prefillId);
+        const vapeSel = document.getElementById('use-vape-purchase-select');
+        if (vapeSel) vapeSel.value = String(prefillId);
+        if (typeof updateUsePurchaseLinkUI === 'function') {
+            try { updateUsePurchaseLinkUI(); } catch (_) { /* ignore */ }
+        }
+        if (typeof updateVapePurchaseSelectDetails === 'function') {
+            try { updateVapePurchaseSelectDetails(); } catch (_) { /* ignore */ }
+        }
+        return prefillId;
+    }
+    if (isSimpleExperienceMode(data)) setUsePurchaseLinkMode('none');
+    return null;
+}
+
+function applySimpleLogModeMemory(mem) {
+    if (!mem) return;
+    if (mem.vapeMode && typeof setVapeLogInputMode === 'function') {
+        try { setVapeLogInputMode(mem.vapeMode); } catch (_) { /* ignore */ }
+    } else if (mem.logMode === 'vape_puffs' && typeof setVapeLogInputMode === 'function') {
+        try { setVapeLogInputMode('puffs'); } catch (_) { /* ignore */ }
+    } else if (mem.logMode === 'percent_remaining' && typeof setVapeLogInputMode === 'function') {
+        try { setVapeLogInputMode('percent'); } catch (_) { /* ignore */ }
+    }
+    if (typeof setLsdLogInputMode === 'function' && (mem.logMode === 'tabs' || mem.logMode === 'ug')) {
+        try { setLsdLogInputMode(mem.logMode); } catch (_) { /* ignore */ }
+    }
+    if (typeof setXanaxLogInputMode === 'function' && (mem.logMode === 'pills' || mem.logMode === 'mg')) {
+        try { setXanaxLogInputMode(mem.logMode); } catch (_) { /* ignore */ }
+    }
+}
+
+function applySimpleAmountToVisibleFields(amount, mem = null) {
+    const n = Number(amount);
+    if (!Number.isFinite(n) || n < 0) return;
+    const amountEl = document.getElementById('use-amount');
+    if (amountEl) amountEl.value = String(n);
+    const fillIfVisible = (id, after) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const hidden = el.closest?.('.hidden');
+        if (!hidden) {
+            el.value = String(n);
+            if (typeof after === 'function') after();
+        }
+    };
+    fillIfVisible('use-vape-puffs-used', () => {
+        if (typeof setVapeLogInputMode === 'function' && (mem?.vapeMode === 'puffs' || mem?.productType === 'vape')) {
+            try { setVapeLogInputMode('puffs'); } catch (_) { /* ignore */ }
+        }
+        if (typeof updateVapeUsePreview === 'function') {
+            try { updateVapeUsePreview(); } catch (_) { /* ignore */ }
+        }
+    });
+    fillIfVisible('use-cigarettes-smoked');
+    fillIfVisible('use-pouches-used');
+    fillIfVisible('use-gum-pieces-used');
+    fillIfVisible('use-patches-used');
+    fillIfVisible('use-lsd-tabs-used');
+    fillIfVisible('use-lsd-ug-used');
+    fillIfVisible('use-xanax-pills-used');
+    fillIfVisible('use-xanax-mg-used');
+}
+
+function updateSimpleLockedSubstanceChip(substanceId, data = appData) {
+    if (typeof document === 'undefined') return;
+    const chip = document.getElementById('sm-locked-substance-chip');
+    const nameEl = document.getElementById('sm-locked-substance-name');
+    const locked = !!(simpleQuickLogContext.locked && substanceId);
+    if (nameEl && substanceId) {
+        nameEl.textContent = getSimpleSubstanceDisplayName(substanceId, data);
+    }
+    chip?.classList.toggle('hidden', !locked);
+}
+
+function getSimpleQuickLogContext() {
+    return { ...simpleQuickLogContext };
+}
+
+function unlockSimpleQuickLogSubstance() {
+    simpleQuickLogContext.locked = false;
+    applySimpleLogFormLayout(appData);
+    document.getElementById('use-substance')?.focus?.();
+}
+
 function applyQuickLogMemoryToForm(substanceId, data = appData) {
-    if (!substanceId || typeof document === 'undefined') return;
-    const prefs = ensureSimpleModePrefs(data);
-    const mem = prefs.quickLogBySubstance?.[substanceId];
+    if (!substanceId) return;
+    simpleQuickLogContext.substanceId = substanceId;
+    if (typeof document === 'undefined') return;
+    const mem = getQuickLogMemoryForSubstance(substanceId, data);
     const substanceEl = document.getElementById('use-substance');
     const pageSubstanceEl = document.getElementById('use-log-substance');
     if (substanceEl) substanceEl.value = substanceId;
@@ -26712,6 +26908,8 @@ function applyQuickLogMemoryToForm(substanceId, data = appData) {
         }
     }
 
+    applySimpleLogModeMemory(mem);
+
     if (mem?.unit) {
         const unitEl = document.getElementById('use-unit');
         if (unitEl && [...unitEl.options].some(o => o.value === mem.unit)) {
@@ -26719,34 +26917,16 @@ function applyQuickLogMemoryToForm(substanceId, data = appData) {
         }
     }
 
-    if (mem?.amount != null && Number.isFinite(mem.amount)) {
-        const amountEl = document.getElementById('use-amount');
-        if (amountEl) amountEl.value = String(mem.amount);
-        const puffsEl = document.getElementById('use-vape-puffs-used');
-        if (puffsEl && (mem.productType === 'vape' || mem.vapeMode === 'puffs')) {
-            puffsEl.value = String(mem.amount);
-            if (typeof setVapeLogInputMode === 'function') setVapeLogInputMode('puffs');
-        }
+    if (mem?.amount != null && Number.isFinite(Number(mem.amount))) {
+        applySimpleAmountToVisibleFields(mem.amount, mem);
     }
 
     if (mem?.transactionType && typeof setUseTransactionType === 'function') {
         try { setUseTransactionType(mem.transactionType); } catch (_) { /* ignore */ }
     }
 
-    // Inventory is optional in Simple Mode — default none unless memory has a link
-    if (typeof setUsePurchaseLinkMode === 'function') {
-        if (mem?.purchaseId) {
-            setUsePurchaseLinkMode('manual');
-            const sel = document.getElementById('use-purchase-select');
-            if (sel) sel.value = String(mem.purchaseId);
-            const vapeSel = document.getElementById('use-vape-purchase-select');
-            if (vapeSel) vapeSel.value = String(mem.purchaseId);
-            if (typeof updateUsePurchaseLinkUI === 'function') updateUsePurchaseLinkUI();
-        } else if (isSimpleExperienceMode(data)) {
-            setUsePurchaseLinkMode('none');
-        }
-    }
-
+    applySimpleInventoryPrefill(substanceId, data, mem);
+    updateSimpleLockedSubstanceChip(substanceId, data);
     renderSimpleRecentAmountChips(substanceId, data);
 }
 
@@ -26760,12 +26940,12 @@ function renderSimpleRecentAmountChips(substanceId, data = appData) {
         return;
     }
     const amounts = getRecentAmountsForSubstance(substanceId, data);
-    const unit = typeof getSubstanceDisplayUnit === 'function'
-        ? getSubstanceDisplayUnit(substanceId, data)
-        : '';
+    const mem = getQuickLogMemoryForSubstance(substanceId, data);
+    const unit = mem?.unit
+        || (typeof getSubstanceDisplayUnit === 'function' ? getSubstanceDisplayUnit(substanceId, data) : '');
     host.classList.remove('hidden');
     host.innerHTML = `
-        <span class="sm-recent-label">Recent amounts</span>
+        <span class="sm-recent-label">Recent</span>
         <div class="sm-recent-chips" role="group" aria-label="Recent amounts">
             ${amounts.map(amt => {
                 const label = unit ? `${amt} ${unit}` : String(amt);
@@ -26775,29 +26955,23 @@ function renderSimpleRecentAmountChips(substanceId, data = appData) {
 }
 
 function applySimpleQuickAmount(amount) {
-    const n = Number(amount);
-    if (!(n > 0)) return;
-    const amountEl = document.getElementById('use-amount');
-    if (amountEl) amountEl.value = String(n);
-    const puffsEl = document.getElementById('use-vape-puffs-used');
-    if (puffsEl && !puffsEl.closest('.hidden')) {
-        puffsEl.value = String(n);
-        if (typeof setVapeLogInputMode === 'function') setVapeLogInputMode('puffs');
-        if (typeof updateVapeUsePreview === 'function') {
-            try { updateVapeUsePreview(); } catch (_) { /* ignore */ }
-        }
-    }
-    const cigEl = document.getElementById('use-cigarettes-smoked');
-    if (cigEl && !cigEl.closest('.hidden')) cigEl.value = String(n);
+    applySimpleAmountToVisibleFields(amount, getQuickLogMemoryForSubstance(
+        simpleQuickLogContext.substanceId
+        || document.getElementById('use-substance')?.value
+    ));
 }
 
 function openSimpleQuickLog(substanceId) {
     const prefs = ensureSimpleModePrefs(appData);
+    const fromContext = substanceId != null && substanceId !== '';
     const sid = substanceId
         || prefs.lastQuickSubstanceId
         || prefs.progressSubstanceId
         || (typeof resolveDefaultSelectedSubstanceId === 'function' ? resolveDefaultSelectedSubstanceId() : null)
         || getActiveSubstances?.(appData)?.[0]?.id;
+
+    simpleQuickLogContext.substanceId = sid || null;
+    simpleQuickLogContext.locked = !!(fromContext && sid);
 
     if (typeof switchTab === 'function') switchTab('use-log-tab');
     if (typeof selectUseEntryType === 'function') selectUseEntryType('quick');
@@ -26805,21 +26979,24 @@ function openSimpleQuickLog(substanceId) {
     if (typeof setDefaultUseLogDateTime === 'function') setDefaultUseLogDateTime();
 
     if (sid) applyQuickLogMemoryToForm(sid, appData);
+    applySimpleLogFormLayout(appData);
 
-    // Focus amount for fastest path
     setTimeout(() => {
         const amount = document.getElementById('use-amount');
         const puffs = document.getElementById('use-vape-puffs-used');
-        const target = (puffs && !puffs.closest?.('.hidden')) ? puffs : amount;
+        const cigs = document.getElementById('use-cigarettes-smoked');
+        const target = (puffs && !puffs.closest?.('.hidden'))
+            ? puffs
+            : ((cigs && !cigs.closest?.('.hidden')) ? cigs : amount);
         target?.focus?.();
         target?.scrollIntoView?.({ block: 'center', behavior: 'smooth' });
     }, 60);
 
-    // Expand form section if collapsed
     const formSection = document.querySelector('#use-log-tab [data-section="useLogForm"]');
     if (formSection?.classList.contains('collapsed') && typeof toggleSection === 'function') {
         try { toggleSection('useLogForm'); } catch (_) { /* ignore */ }
     }
+    return getSimpleQuickLogContext();
 }
 
 function applySimpleLogFormLayout(data = appData) {
@@ -26827,7 +27004,12 @@ function applySimpleLogFormLayout(data = appData) {
     const page = document.getElementById('use-log-tab');
     if (!page) return;
     const simple = isSimpleExperienceMode(data);
+    const substanceId = simpleQuickLogContext.substanceId
+        || document.getElementById('use-substance')?.value
+        || document.getElementById('use-log-substance')?.value;
+    const locked = simple && simpleQuickLogContext.locked && !!substanceId;
     page.classList.toggle('sm-log-simple', simple);
+    page.classList.toggle('sm-substance-locked', locked);
 
     const summary = document.querySelector('#use-advanced-section .use-log-advanced-summary');
     if (summary) summary.textContent = simple ? 'More Options' : 'Advanced options';
@@ -26841,7 +27023,6 @@ function applySimpleLogFormLayout(data = appData) {
                 if (el.parentElement !== slot) slot.appendChild(el);
             });
         } else {
-            // Restore near top of form (before core card) when leaving Simple
             const core = form.querySelector('.use-log-core-card');
             moreFields.forEach(el => {
                 if (el.parentElement === slot && core) {
@@ -26851,14 +27032,18 @@ function applySimpleLogFormLayout(data = appData) {
         }
     }
 
-    // Default inventory optional in Simple for new entries (not while editing)
-    if (simple && typeof editingUseId !== 'undefined' && !editingUseId && typeof setUsePurchaseLinkMode === 'function') {
-        const mode = getUsePurchaseLinkMode();
-        if (mode === 'auto') setUsePurchaseLinkMode('none');
+    if (simple && typeof editingUseId !== 'undefined' && !editingUseId) {
+        if (typeof setUseFormSubmitLabel === 'function') setUseFormSubmitLabel('Save');
+        if (typeof setUsePurchaseLinkMode === 'function') {
+            const mode = typeof getUsePurchaseLinkMode === 'function' ? getUsePurchaseLinkMode() : null;
+            if (mode === 'auto') setUsePurchaseLinkMode('none');
+        }
+    } else if (!simple && typeof editingUseId !== 'undefined' && !editingUseId
+        && typeof setUseFormSubmitLabel === 'function') {
+        setUseFormSubmitLabel('Save Entry');
     }
 
-    const substanceId = document.getElementById('use-substance')?.value
-        || document.getElementById('use-log-substance')?.value;
+    updateSimpleLockedSubstanceChip(substanceId, data);
     if (simple && substanceId) renderSimpleRecentAmountChips(substanceId, data);
     else {
         const host = document.getElementById('sm-recent-amounts');
@@ -26866,7 +27051,376 @@ function applySimpleLogFormLayout(data = appData) {
             host.innerHTML = '';
             host.classList.add('hidden');
         }
+        document.getElementById('sm-locked-substance-chip')?.classList.add('hidden');
     }
+}
+
+function formatSimpleLogAmount(log) {
+    if (!log) return '';
+    const amt = Number(log.amount);
+    const formatted = typeof formatAmount === 'function'
+        ? formatAmount(amt)
+        : (Number.isFinite(amt) ? String(amt) : '');
+    const unit = log.unit || '';
+    return unit ? `${formatted} ${unit}` : formatted;
+}
+
+function getSimpleInventoryShortName(purchase) {
+    if (!purchase) return '';
+    if (typeof formatVapePurchaseTitleLine === 'function') {
+        const isVape = purchase.nicotineProductType === 'vape'
+            || purchase.logMode === 'vape_puffs'
+            || Number(purchase.fullPuffCount) > 0
+            || (purchase.unit || '').toLowerCase() === 'puffs';
+        if (isVape) {
+            const title = formatVapePurchaseTitleLine(purchase);
+            if (title && title !== 'Vape') return title;
+        }
+    }
+    return purchase.productName || purchase.name || purchase.flavor || purchase.store || '';
+}
+
+function isSimpleRecentLogEligible(log) {
+    if (!log || log.deletedAt || log.deleted || log.hidden) return false;
+    if (typeof isPercentLeftDistributedChildLog === 'function' && isPercentLeftDistributedChildLog(log)) return false;
+    if (typeof isAlcoholMultiDayChildLog === 'function' && isAlcoholMultiDayChildLog(log)) return false;
+    return true;
+}
+
+function getLastSimpleUseLog(data = appData) {
+    return (data.logs || [])
+        .filter(isSimpleRecentLogEligible)
+        .slice()
+        .sort((a, b) => {
+            const msA = typeof getLogDatetimeMs === 'function' ? getLogDatetimeMs(a) : Date.parse(a.timestamp || 0);
+            const msB = typeof getLogDatetimeMs === 'function' ? getLogDatetimeMs(b) : Date.parse(b.timestamp || 0);
+            return (msB || 0) - (msA || 0);
+        })[0] || null;
+}
+
+function formatSimpleRepeatLastLabel(log, data = appData) {
+    if (!log) return 'Repeat Last';
+    const amount = formatSimpleLogAmount(log);
+    const name = getSimpleSubstanceDisplayName(
+        typeof getUseSubstanceId === 'function' ? getUseSubstanceId(log) : (log.substanceId || log.substance),
+        data
+    );
+    const pid = typeof getLogPurchaseId === 'function' ? getLogPurchaseId(log) : (log.purchaseId || null);
+    const purchase = pid && typeof findPurchaseInData === 'function'
+        ? findPurchaseInData(pid, data)
+        : (data.purchases || []).find(p => String(p.id) === String(pid));
+    const invName = getSimpleInventoryShortName(purchase);
+    if (invName) return `Repeat: ${amount} · ${invName}`;
+    return `Repeat: ${amount} ${name}`.replace(/\s+/g, ' ').trim();
+}
+
+function formatSimpleRecentLogTime(log) {
+    const ms = typeof getLogDatetimeMs === 'function'
+        ? getLogDatetimeMs(log)
+        : Date.parse(log?.timestamp || '');
+    if (!Number.isFinite(ms) || ms <= 0) return '';
+    try {
+        return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+    } catch (_) {
+        return '';
+    }
+}
+
+function buildSimpleRecentLogs(data = appData, limit = SIMPLE_RECENT_LOG_LIMIT) {
+    return (data.logs || [])
+        .filter(isSimpleRecentLogEligible)
+        .slice()
+        .sort((a, b) => {
+            const msA = typeof getLogDatetimeMs === 'function' ? getLogDatetimeMs(a) : 0;
+            const msB = typeof getLogDatetimeMs === 'function' ? getLogDatetimeMs(b) : 0;
+            return msB - msA;
+        })
+        .slice(0, limit)
+        .map(log => {
+            const sid = typeof getUseSubstanceId === 'function'
+                ? getUseSubstanceId(log)
+                : (log.substanceId || log.substance);
+            return {
+                id: log.id,
+                substanceId: sid,
+                substanceName: getSimpleSubstanceDisplayName(sid, data),
+                amountLabel: formatSimpleLogAmount(log),
+                timeLabel: formatSimpleRecentLogTime(log),
+                log
+            };
+        });
+}
+
+function renderSimpleRepeatLastButton(data = appData) {
+    const last = getLastSimpleUseLog(data);
+    if (!last) return '';
+    const label = formatSimpleRepeatLastLabel(last, data);
+    return `<button type="button" class="sm-action-btn sm-action-repeat" onclick="repeatSimpleLastEntry()">${escapeHtml(label)}</button>`;
+}
+
+function renderSimpleRecentlyLoggedHtml(data = appData) {
+    const rows = buildSimpleRecentLogs(data);
+    if (!rows.length) return '';
+    return `
+        <section class="sm-recently-logged" aria-label="Recently logged">
+            <h3 class="sm-recently-logged-title">Recently Logged</h3>
+            <ul class="sm-recently-logged-list">
+                ${rows.map(row => `
+                    <li class="sm-recent-log-row">
+                        <span class="sm-recent-log-main">${escapeHtml(row.timeLabel)} · ${escapeHtml(row.substanceName)} · ${escapeHtml(row.amountLabel)}</span>
+                        <span class="sm-recent-log-actions">
+                            <button type="button" class="sm-text-btn" onclick="editSimpleRecentLog(${JSON.stringify(String(row.id))})">Edit</button>
+                            <button type="button" class="sm-text-btn" onclick="undoSimpleLoggedEntry(${JSON.stringify(String(row.id))}, { confirmDelete: true })">Undo</button>
+                        </span>
+                    </li>`).join('')}
+            </ul>
+        </section>`;
+}
+
+function editSimpleRecentLog(id) {
+    if (typeof editUseEntry === 'function') editUseEntry(id);
+}
+
+function cloneSimpleRepeatLog(source, now = new Date()) {
+    const clone = JSON.parse(JSON.stringify(source || {}));
+    const dateStr = typeof getLocalDateString === 'function'
+        ? getLocalDateString(now)
+        : now.toISOString().slice(0, 10);
+    const timeStr = typeof getLocalTimeString === 'function'
+        ? getLocalTimeString(now)
+        : `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
+    clone.id = typeof generateUniqueId === 'function'
+        ? generateUniqueId('use')
+        : `use-${now.getTime()}-${Math.random().toString(36).slice(2, 9)}`;
+    clone.date = dateStr;
+    clone.startTime = timeStr;
+    clone.time = timeStr;
+    clone.createdAt = now.toISOString();
+    clone.updatedAt = now.toISOString();
+    clone.timestamp = typeof getUseEventTimestamp === 'function'
+        ? getUseEventTimestamp(dateStr, timeStr)
+        : now.toISOString();
+    delete clone.startedAt;
+    delete clone.endedAt;
+    delete clone.durationMs;
+    delete clone.endTime;
+    delete clone.endDate;
+    delete clone.breakMinutes;
+    delete clone.breakHours;
+    delete clone.breakText;
+    delete clone.parentLogId;
+    delete clone.isDistributedChild;
+    delete clone.isMultiDay;
+    delete clone.dailyBreakdown;
+    delete clone.parentPercentLogId;
+    return clone;
+}
+
+function buildSimpleRepeatPreview(source, now = new Date(), data = appData) {
+    const next = cloneSimpleRepeatLog(source, now);
+    return {
+        previousId: source?.id ?? null,
+        previousTimestamp: source?.timestamp || source?.createdAt || null,
+        nextId: next.id,
+        nextTimestamp: next.timestamp,
+        summary: formatSimpleRepeatLastLabel(source, data).replace(/^Repeat:\s*/, ''),
+        amountLabel: formatSimpleLogAmount(source),
+        timeLabel: formatSimpleRecentLogTime({ ...next, timestamp: next.timestamp, date: next.date, startTime: next.startTime })
+    };
+}
+
+function repeatSimpleLastEntry(options = {}) {
+    const data = options.data || appData;
+    const now = options.now instanceof Date ? options.now : new Date();
+    const last = getLastSimpleUseLog(data);
+    if (!last) return { ok: false, error: 'No previous entry' };
+    const preview = buildSimpleRepeatPreview(last, now, data);
+    if (options.confirm !== false) {
+        const ok = typeof confirm === 'function'
+            ? confirm(`Repeat last entry?\n\n${preview.summary}\nTime: now\n\nSave this log?`)
+            : true;
+        if (!ok) return { ok: false, cancelled: true, preview };
+    }
+    const clone = cloneSimpleRepeatLog(last, now);
+    if (clone.id === last.id) {
+        clone.id = `use-${now.getTime()}-${Math.random().toString(36).slice(2, 9)}`;
+    }
+    const persist = options.persist !== false && data === appData;
+    const result = typeof commitUseLogEntry === 'function'
+        ? commitUseLogEntry(clone, { data, persist, applyInventory: clone.inventoryAffects !== false })
+        : { ok: true, log: clone };
+    if (!result.ok) return result;
+    rememberQuickLogFromEntry(result.log || clone, data);
+    simpleQuickLogContext.lastSavedId = (result.log || clone).id;
+    if (data === appData) {
+        if (typeof refreshUseLogRelatedViews === 'function') {
+            try { refreshUseLogRelatedViews(); } catch (_) { /* ignore */ }
+        } else {
+            renderSimpleHome(data);
+        }
+        notifySimpleQuickLogSaved(result.log || clone);
+        if (typeof switchTab === 'function') {
+            try { switchTab('dashboard-tab'); } catch (_) { /* ignore */ }
+        }
+    }
+    return { ok: true, log: result.log || clone, preview, previousId: last.id };
+}
+
+function logsLookLikeSimpleDuplicate(a, b) {
+    if (!a || !b) return false;
+    const sidA = String(a.substanceId || a.substance || '');
+    const sidB = String(b.substanceId || b.substance || '');
+    if (!sidA || sidA !== sidB) return false;
+    if (Math.abs(Number(a.amount || 0) - Number(b.amount || 0)) > 1e-9) return false;
+    if (String(a.unit || '') !== String(b.unit || '')) return false;
+    const txA = typeof getLogTransactionType === 'function' ? getLogTransactionType(a) : (a.transactionType || 'use');
+    const txB = typeof getLogTransactionType === 'function' ? getLogTransactionType(b) : (b.transactionType || 'use');
+    if (String(txA || 'use') !== String(txB || 'use')) return false;
+    const ptA = a.nicotineProductType || a.weedProductType || '';
+    const ptB = b.nicotineProductType || b.weedProductType || '';
+    if (String(ptA) !== String(ptB)) return false;
+    return true;
+}
+
+function findSimpleQuickLogDuplicate(candidate, data = appData, nowMs = Date.now()) {
+    if (!candidate) return null;
+    return (data.logs || []).find(log => {
+        if (!isSimpleRecentLogEligible(log)) return false;
+        if (!logsLookLikeSimpleDuplicate(log, candidate)) return false;
+        const ms = typeof getLogDatetimeMs === 'function'
+            ? getLogDatetimeMs(log)
+            : Date.parse(log.timestamp || log.createdAt || '');
+        return Number.isFinite(ms) && Math.abs(nowMs - ms) <= SIMPLE_DUPLICATE_WINDOW_MS;
+    }) || null;
+}
+
+function confirmSimpleQuickLogDuplicate(payload, data = appData) {
+    if (typeof isSimpleExperienceMode === 'function' && !isSimpleExperienceMode(data)) return true;
+    const dup = findSimpleQuickLogDuplicate(payload, data, Date.now());
+    if (!dup) return true;
+    if (typeof confirm !== 'function') return true;
+    return confirm('Possible duplicate\n\nAn identical entry was just logged.\n\nKeep both?');
+}
+
+let simpleToastTimer = null;
+let lastSimpleToast = null;
+
+function getLastSimpleToast() {
+    return lastSimpleToast;
+}
+
+function hideSimpleToast() {
+    if (simpleToastTimer) {
+        clearTimeout(simpleToastTimer);
+        simpleToastTimer = null;
+    }
+    lastSimpleToast = null;
+    const host = typeof document !== 'undefined' ? document.getElementById('sm-toast') : null;
+    if (!host) return;
+    host.classList.add('hidden');
+    host.innerHTML = '';
+}
+
+function showSimpleToast(message, options = {}) {
+    lastSimpleToast = { message, actionLabel: options.actionLabel || null };
+    if (typeof document === 'undefined') return lastSimpleToast;
+    let host = document.getElementById('sm-toast');
+    if (!host && document.body) {
+        host = document.createElement('div');
+        host.id = 'sm-toast';
+        host.className = 'sm-toast';
+        host.setAttribute('role', 'status');
+        host.setAttribute('aria-live', 'polite');
+        document.body.appendChild(host);
+    }
+    if (!host) return lastSimpleToast;
+    const action = options.actionLabel
+        ? `<button type="button" class="sm-toast-action" id="sm-toast-action">${escapeHtml(options.actionLabel)}</button>`
+        : '';
+    host.classList.remove('hidden');
+    host.innerHTML = `<span class="sm-toast-msg">${escapeHtml(message)}</span>${action}`;
+    const btn = document.getElementById('sm-toast-action');
+    if (btn && typeof options.onAction === 'function') {
+        btn.addEventListener('click', () => {
+            options.onAction();
+            hideSimpleToast();
+        });
+    }
+    if (simpleToastTimer) clearTimeout(simpleToastTimer);
+    simpleToastTimer = setTimeout(() => hideSimpleToast(), options.durationMs || 6000);
+    return lastSimpleToast;
+}
+
+function notifySimpleQuickLogSaved(log) {
+    if (!log) return;
+    simpleQuickLogContext.lastSavedId = log.id;
+    const amountLabel = formatSimpleLogAmount(log) || 'entry';
+    showSimpleToast(`Logged ${amountLabel}`, {
+        actionLabel: 'Undo',
+        onAction: () => undoSimpleLoggedEntry(log.id, { confirmDelete: false })
+    });
+}
+
+function notifyUseLogSaved(log, options = {}) {
+    if (isSimpleExperienceMode() && log) {
+        if (!options.isUpdate) notifySimpleQuickLogSaved(log);
+        else showSimpleToast(`Updated ${formatSimpleLogAmount(log) || 'entry'}`);
+        if (typeof switchTab === 'function') {
+            try { switchTab('dashboard-tab'); } catch (_) { renderSimpleHome(appData); }
+        } else {
+            renderSimpleHome(appData);
+        }
+        return;
+    }
+    const msg = options.isUpdate
+        ? (typeof getUseUpdateSuccessMessage === 'function' ? getUseUpdateSuccessMessage(log) : 'Entry updated!')
+        : (typeof getUseSaveSuccessMessage === 'function' ? getUseSaveSuccessMessage(log) : 'Use logged!');
+    if (typeof alert === 'function') alert(msg);
+}
+
+function undoSimpleLoggedEntry(id, options = {}) {
+    const data = options.data || appData;
+    if (id == null || id === '') return { ok: false, error: 'Missing id' };
+    const entry = (data.logs || []).find(l => l.id === id || String(l.id) === String(id));
+    if (!entry) return { ok: false, error: 'Entry not found' };
+    if (options.confirmDelete) {
+        const ok = typeof confirm === 'function' ? confirm('Delete this entry?') : true;
+        if (!ok) return { ok: false, cancelled: true };
+    }
+    if (typeof restoreLogInventoryEffect === 'function') {
+        try { restoreLogInventoryEffect(entry, data); } catch (_) { /* ignore */ }
+    }
+    data.logs = (data.logs || []).filter(l => l.id !== id && String(l.id) !== String(id));
+    if (typeof saveData === 'function' && data === appData) saveData(data);
+    if (data === appData) {
+        if (typeof refreshUseLogRelatedViews === 'function') {
+            try { refreshUseLogRelatedViews(); } catch (_) { /* ignore */ }
+        } else {
+            renderSimpleHome(data);
+        }
+        hideSimpleToast();
+    }
+    if (simpleQuickLogContext.lastSavedId === id || String(simpleQuickLogContext.lastSavedId) === String(id)) {
+        simpleQuickLogContext.lastSavedId = null;
+    }
+    return { ok: true, removed: entry };
+}
+
+function mergeSimpleModePrefs(currentPrefs, incomingPrefs) {
+    const base = { ...getDefaultSimpleModePrefs(), ...(currentPrefs && typeof currentPrefs === 'object' ? currentPrefs : {}) };
+    const inc = incomingPrefs && typeof incomingPrefs === 'object' ? incomingPrefs : {};
+    return {
+        ...base,
+        ...inc,
+        quickLogBySubstance: {
+            ...(base.quickLogBySubstance || {}),
+            ...(inc.quickLogBySubstance || {})
+        },
+        recentAmountsBySubstance: {
+            ...(base.recentAmountsBySubstance || {}),
+            ...(inc.recentAmountsBySubstance || {})
+        }
+    };
 }
 
 function getProgressRangeBounds(rangeKey, data = appData) {
@@ -39377,6 +39931,12 @@ function handleUseLogSubmit(e) {
 
     if (!confirmTaperBeforeLog(substanceId, amount, type === 'quick', editingUseId, transactionType, payload.date)) return;
 
+    if (editingUseId == null
+        && typeof confirmSimpleQuickLogDuplicate === 'function'
+        && !confirmSimpleQuickLogDuplicate({ ...payload, timestamp: eventTimestamp }, appData)) {
+        return;
+    }
+
     if (editingUseId != null) {
         const existing = findUseEntry(editingUseId);
         const idx = getUseEntries().findIndex(l => l.id === editingUseId || String(l.id) === String(editingUseId));
@@ -39403,7 +39963,8 @@ function handleUseLogSubmit(e) {
             refreshUseLogRelatedViews();
             resetUseFormAfterSave();
             populateAllSubstanceDropdowns();
-            alert(getUseUpdateSuccessMessage(editResult.updated));
+            if (typeof notifyUseLogSaved === 'function') notifyUseLogSaved(editResult.updated, { isUpdate: true });
+            else alert(getUseUpdateSuccessMessage(editResult.updated));
             return;
         }
 
@@ -39520,7 +40081,8 @@ function handleUseLogSubmit(e) {
         refreshUseLogRelatedViews();
         resetUseFormAfterSave();
         populateAllSubstanceDropdowns();
-        alert(getUseUpdateSuccessMessage(updated));
+        if (typeof notifyUseLogSaved === 'function') notifyUseLogSaved(updated, { isUpdate: true });
+        else alert(getUseUpdateSuccessMessage(updated));
         return;
     }
 
@@ -39602,7 +40164,8 @@ function handleUseLogSubmit(e) {
         resetUseFormAfterSave();
         populateAllSubstanceDropdowns();
         refreshUseLogRelatedViews();
-        alert(getUseSaveSuccessMessage(log));
+        if (typeof notifyUseLogSaved === 'function') notifyUseLogSaved(log);
+        else alert(getUseSaveSuccessMessage(log));
         return;
     }
 
@@ -39616,7 +40179,8 @@ function handleUseLogSubmit(e) {
         resetUseFormAfterSave();
         populateAllSubstanceDropdowns();
         refreshUseLogRelatedViews();
-        alert(getUseSaveSuccessMessage(log));
+        if (typeof notifyUseLogSaved === 'function') notifyUseLogSaved(log);
+        else alert(getUseSaveSuccessMessage(log));
         return;
     }
 
@@ -39653,7 +40217,8 @@ function handleUseLogSubmit(e) {
     resetUseFormAfterSave();
     populateAllSubstanceDropdowns();
     refreshUseLogRelatedViews();
-    alert(getUseSaveSuccessMessage(log));
+    if (typeof notifyUseLogSaved === 'function') notifyUseLogSaved(log);
+    else alert(getUseSaveSuccessMessage(log));
 }
 
 function deleteUseEntry(id) {
@@ -59014,6 +59579,13 @@ function mergeImportedData(current, imported) {
             ...(imported.settings?.substanceSettings || {})
         }
     };
+    if (typeof mergeSimpleModePrefs === 'function'
+        && (current.settings?.simpleModePrefs || imported.settings?.simpleModePrefs)) {
+        merged.settings.simpleModePrefs = mergeSimpleModePrefs(
+            current.settings?.simpleModePrefs,
+            imported.settings?.simpleModePrefs
+        );
+    }
     merged.taperPlans = { ...(merged.taperPlans || {}), ...(imported.taperPlans || {}) };
     if (Array.isArray(imported.taperPlansV2)) {
         merged.taperPlansV2 = mergeArrayById(merged.taperPlansV2 || [], imported.taperPlansV2);
@@ -60850,6 +61422,7 @@ function __getRecoveryTrackerTestExports() {
         finalizeNewPurchaseRecord,
         duplicatePurchaseNow,
         cleanExportData,
+        mergeImportedData,
         purchaseMatchesInventorySearch,
         comparePurchaseHistoryByFlavor,
         isVapePuffPurchase,
@@ -61587,6 +62160,24 @@ function __getRecoveryTrackerTestExports() {
         getRecentAmountsForSubstance,
         rememberRecentAmount,
         rememberQuickLogFromForm,
+        rememberQuickLogSettings,
+        rememberQuickLogFromEntry,
+        getQuickLogMemoryForSubstance,
+        applyQuickLogMemoryToForm,
+        openSimpleQuickLog,
+        getSimpleQuickLogContext,
+        resolveSimpleInventoryPrefill,
+        repeatSimpleLastEntry,
+        cloneSimpleRepeatLog,
+        findSimpleQuickLogDuplicate,
+        logsLookLikeSimpleDuplicate,
+        buildSimpleRecentLogs,
+        undoSimpleLoggedEntry,
+        notifyUseLogSaved,
+        notifySimpleQuickLogSaved,
+        mergeSimpleModePrefs,
+        SIMPLE_DUPLICATE_WINDOW_MS,
+        formatSimpleRepeatLastLabel,
         applyExperienceMode,
         initExperienceMode,
         resolveSimpleTaperStatus,

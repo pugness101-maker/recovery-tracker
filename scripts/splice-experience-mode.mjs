@@ -274,6 +274,98 @@ app = tryReplace(app,
         SIMPLE_PLAN_INTENTS,`,
     'experience mode taper status exports (already renamed)');
 
+app = tryReplace(app,
+    `        rememberQuickLogFromForm,
+        applyExperienceMode,`,
+    `        rememberQuickLogFromForm,
+        rememberQuickLogSettings,
+        rememberQuickLogFromEntry,
+        getQuickLogMemoryForSubstance,
+        applyQuickLogMemoryToForm,
+        openSimpleQuickLog,
+        getSimpleQuickLogContext,
+        resolveSimpleInventoryPrefill,
+        repeatSimpleLastEntry,
+        cloneSimpleRepeatLog,
+        findSimpleQuickLogDuplicate,
+        logsLookLikeSimpleDuplicate,
+        buildSimpleRecentLogs,
+        undoSimpleLoggedEntry,
+        notifyUseLogSaved,
+        notifySimpleQuickLogSaved,
+        mergeSimpleModePrefs,
+        SIMPLE_DUPLICATE_WINDOW_MS,
+        formatSimpleRepeatLastLabel,
+        applyExperienceMode,`,
+    'simple quick log test exports');
+
+app = tryReplace(app,
+    `        cleanExportData,`,
+    `        cleanExportData,
+        mergeImportedData,`,
+    'export mergeImportedData');
+
+app = tryReplace(app,
+    `    if (!confirmTaperBeforeLog(substanceId, amount, type === 'quick', editingUseId, transactionType, payload.date)) return;`,
+    `    if (!confirmTaperBeforeLog(substanceId, amount, type === 'quick', editingUseId, transactionType, payload.date)) return;
+
+    if (editingUseId == null
+        && typeof confirmSimpleQuickLogDuplicate === 'function'
+        && !confirmSimpleQuickLogDuplicate({ ...payload, timestamp: eventTimestamp }, appData)) {
+        return;
+    }`,
+    'simple duplicate warning');
+
+app = tryReplace(app,
+    `            alert(getUseUpdateSuccessMessage(editResult.updated));`,
+    `            if (typeof notifyUseLogSaved === 'function') notifyUseLogSaved(editResult.updated, { isUpdate: true });
+            else alert(getUseUpdateSuccessMessage(editResult.updated));`,
+    'vape edit notify');
+
+app = tryReplace(app,
+    `        alert(getUseUpdateSuccessMessage(updated));`,
+    `        if (typeof notifyUseLogSaved === 'function') notifyUseLogSaved(updated, { isUpdate: true });
+        else alert(getUseUpdateSuccessMessage(updated));`,
+    'use update notify');
+
+app = tryReplace(app,
+    `        alert(getUseSaveSuccessMessage(log));`,
+    `        if (typeof notifyUseLogSaved === 'function') notifyUseLogSaved(log);
+        else alert(getUseSaveSuccessMessage(log));`,
+    'use save notify xanax/lsd');
+
+app = tryReplace(app,
+    `    alert(getUseSaveSuccessMessage(log));`,
+    `    if (typeof notifyUseLogSaved === 'function') notifyUseLogSaved(log);
+    else alert(getUseSaveSuccessMessage(log));`,
+    'use save notify default');
+
+app = tryReplace(app,
+    `    merged.settings = {
+        ...merged.settings,
+        ...imported.settings,
+        substanceSettings: {
+            ...(merged.settings?.substanceSettings || {}),
+            ...(imported.settings?.substanceSettings || {})
+        }
+    };`,
+    `    merged.settings = {
+        ...merged.settings,
+        ...imported.settings,
+        substanceSettings: {
+            ...(merged.settings?.substanceSettings || {}),
+            ...(imported.settings?.substanceSettings || {})
+        }
+    };
+    if (typeof mergeSimpleModePrefs === 'function'
+        && (current.settings?.simpleModePrefs || imported.settings?.simpleModePrefs)) {
+        merged.settings.simpleModePrefs = mergeSimpleModePrefs(
+            current.settings?.simpleModePrefs,
+            imported.settings?.simpleModePrefs
+        );
+    }`,
+    'merge simpleModePrefs on import');
+
 // ——— HTML ———
 
 // Simple home shell inside dashboard
@@ -341,6 +433,38 @@ html = tryReplace(html,
     `                    <div class="use-log-field-block" id="use-transaction-type-block">`,
     `                    <div class="use-log-field-block sm-log-more-field" id="use-transaction-type-block">`,
     'mark tx type as more-field');
+
+html = tryReplace(html,
+    `                        <div class="form-group use-log-compact use-log-notes-group">
+                            <label for="use-notes">Notes</label>
+                            <textarea id="use-notes" rows="2" placeholder="Optional notes…"></textarea>
+                        </div>`,
+    `                        <div class="form-group use-log-compact use-log-notes-group sm-log-more-field">
+                            <label for="use-notes">Notes</label>
+                            <textarea id="use-notes" rows="2" placeholder="Optional notes…"></textarea>
+                        </div>`,
+    'notes more-options field');
+
+html = tryReplace(html,
+    `                        <div class="form-group use-log-compact" id="use-substance-group">
+                            <label for="use-substance">Substance</label>
+                            <select id="use-substance" required></select>
+                        </div>`,
+    `                        <div class="form-group use-log-compact" id="use-substance-group">
+                            <label for="use-substance">Substance</label>
+                            <select id="use-substance" required></select>
+                            <div id="sm-locked-substance-chip" class="sm-locked-substance-chip hidden">
+                                <span id="sm-locked-substance-name"></span>
+                                <button type="button" class="sm-text-btn" onclick="unlockSimpleQuickLogSubstance()">Change</button>
+                            </div>
+                        </div>`,
+    'locked substance chip');
+
+html = tryReplace(html,
+    `    <script src="app.js" defer></script>`,
+    `    <div id="sm-toast" class="sm-toast hidden" role="status" aria-live="polite"></div>
+    <script src="app.js" defer></script>`,
+    'simple toast host');
 
 html = tryReplace(html,
     `                    <details class="use-log-advanced" id="use-advanced-section">

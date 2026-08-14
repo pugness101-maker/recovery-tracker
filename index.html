@@ -374,7 +374,7 @@
                         </div>
                     </div>
 
-                    <div class="use-log-field-block hidden" id="use-adjustment-direction-group">
+                    <div class="use-log-field-block hidden sm-log-more-field" id="use-adjustment-direction-group">
                         <span class="use-log-field-label">Adjustment</span>
                         <div class="use-adj-pills" role="group" aria-label="Adjustment direction">
                             <button type="button" class="use-adj-pill active" data-dir="add" onclick="setUseAdjustmentDirection('add')">Add to inventory</button>
@@ -386,6 +386,10 @@
                         <div class="form-group use-log-compact" id="use-substance-group">
                             <label for="use-substance">Substance</label>
                             <select id="use-substance" required></select>
+                            <div id="sm-locked-substance-chip" class="sm-locked-substance-chip hidden">
+                                <span id="sm-locked-substance-name"></span>
+                                <button type="button" class="sm-text-btn" onclick="unlockSimpleQuickLogSubstance()">Change</button>
+                            </div>
                         </div>
 
                         <div class="use-log-datetime-grid" id="use-datetime-grid">
@@ -608,14 +612,14 @@
                             <p id="use-xanax-preview" class="use-supply-preview">—</p>
                         </div>
 
-                        <div class="form-group use-log-compact hidden" id="use-gift-party-group">
+                        <div class="form-group use-log-compact hidden sm-log-more-field" id="use-gift-party-group">
                             <label for="use-gift-party" id="use-gift-party-label">Recipient Name</label>
                             <input type="text" id="use-gift-party" placeholder="Name">
                         </div>
 
                         <div id="use-inventory-core-anchor"></div>
 
-                        <div class="form-group use-log-compact use-log-notes-group">
+                        <div class="form-group use-log-compact use-log-notes-group sm-log-more-field">
                             <label for="use-notes">Notes</label>
                             <textarea id="use-notes" rows="2" placeholder="Optional notes…"></textarea>
                         </div>
@@ -3289,6 +3293,7 @@
         </div>
     </div>
 
+    <div id="sm-toast" class="sm-toast hidden" role="status" aria-live="polite"></div>
     <script src="app.js" defer></script>
 </body>
 </html>

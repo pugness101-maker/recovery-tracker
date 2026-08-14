@@ -11522,13 +11522,132 @@ body.experience-advanced .sm-plan-simple-actions {
     cursor: pointer;
 }
 
-.sm-action-btn.sm-action-primary {
-    background: var(--accent);
+.sm-action-btn.sm-action-repeat {
+    min-height: 48px;
+    background: var(--accent-soft);
     border-color: transparent;
-    color: var(--on-accent);
-    font-size: 1.08rem;
-    min-height: 56px;
-    letter-spacing: -0.01em;
+    color: var(--accent-light);
+    font-weight: 650;
+}
+
+.sm-recently-logged {
+    margin: 16px 0 8px;
+}
+
+.sm-recently-logged-title {
+    margin: 0 0 8px;
+    font-size: 0.82rem;
+    font-weight: 650;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--text-secondary);
+}
+
+.sm-recently-logged-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card);
+    overflow: hidden;
+}
+
+.sm-recent-log-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    min-height: 44px;
+}
+
+.sm-recent-log-row:last-child {
+    border-bottom: none;
+}
+
+.sm-recent-log-main {
+    font-size: 0.88rem;
+    font-weight: 550;
+    color: var(--text);
+    min-width: 0;
+}
+
+.sm-recent-log-actions {
+    display: flex;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.sm-recent-log-actions .sm-text-btn {
+    min-height: 36px;
+    padding: 4px 8px;
+    font-size: 0.8rem;
+}
+
+.sm-locked-substance-chip {
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    min-height: 44px;
+    margin-top: 6px;
+    padding: 8px 12px;
+    border-radius: 12px;
+    background: var(--card-soft);
+    font-weight: 650;
+}
+
+body.experience-simple #use-log-tab.sm-substance-locked #use-substance {
+    display: none;
+}
+
+body.experience-simple #use-log-tab.sm-substance-locked #sm-locked-substance-chip {
+    display: flex;
+}
+
+body.experience-simple #use-log-tab.sm-substance-locked #use-substance-group > label[for="use-substance"] {
+    display: none;
+}
+
+.sm-toast {
+    position: fixed;
+    left: 50%;
+    bottom: calc(72px + env(safe-area-inset-bottom, 0px));
+    transform: translateX(-50%);
+    z-index: 80;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    max-width: min(92vw, 420px);
+    padding: 12px 16px;
+    border-radius: 14px;
+    background: var(--text);
+    color: var(--card);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.22);
+    font-weight: 600;
+}
+
+.sm-toast.hidden {
+    display: none;
+}
+
+.sm-toast-action {
+    margin-left: auto;
+    border: none;
+    background: transparent;
+    color: var(--accent-light);
+    font: inherit;
+    font-weight: 700;
+    cursor: pointer;
+    min-height: 36px;
+    padding: 4px 4px 4px 8px;
+}
+
+body.experience-simple #use-submit-btn {
+    min-height: 52px;
+    font-size: 1.05rem;
 }
 
 .sm-action-btn.sm-action-secondary {
@@ -12092,8 +12211,12 @@ body.experience-simple .use-log-page [data-section="bulkActions"] {
 
 @media (min-width: 900px) {
     .sm-primary-actions {
-        grid-template-columns: 1.6fr 1fr 1fr;
+        grid-template-columns: 1fr 1fr;
         align-items: end;
+    }
+    .sm-action-btn.sm-action-primary,
+    .sm-action-btn.sm-action-repeat {
+        grid-column: 1 / -1;
     }
     .sm-today-grid {
         grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
