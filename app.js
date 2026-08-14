@@ -12783,6 +12783,34 @@ function syncTaperLegacyRefsFromUiState() {
         || taperUiState.mode === 'duplicate';
 }
 
+/** Authoritative selected taper id (view mode). */
+function getSelectedTaperId() {
+    return taperUiState.selectedTaperId || null;
+}
+
+function isTaperEditFormActive() {
+    return taperUiState.mode === 'edit' && !!taperUiState.editingTaperId;
+}
+
+/** Sync DOM transport fields from taperUiState — never read these inputs as authority. */
+function syncTaperFormTransportFromUiState() {
+    if (typeof document === 'undefined') return;
+    const editTransport = taperUiState.mode === 'edit' ? (taperUiState.editingTaperId || '') : '';
+    setInputValue('taper-editing-plan-id', editTransport);
+    const select = document.getElementById('taper-plan-select');
+    if (select && taperUiState.mode === 'view' && taperUiState.selectedTaperId) {
+        const options = select.options ? [...select.options] : [];
+        if (options.some(o => o.value === taperUiState.selectedTaperId)) {
+            select.value = taperUiState.selectedTaperId;
+        }
+    }
+    const form = document.getElementById('taper-form');
+    if (form?.dataset) {
+        form.dataset.taperUiMode = taperUiState.mode;
+        form.dataset.taperFormMode = getTaperFormMode();
+    }
+}
+
 function getTaperUiState() {
     return { ...taperUiState };
 }
@@ -12794,10 +12822,7 @@ function setTaperUiState(patch = {}) {
     if ('sourceTaperId' in patch) taperUiState.sourceTaperId = patch.sourceTaperId || null;
     if ('isSaving' in patch) taperUiState.isSaving = !!patch.isSaving;
     syncTaperLegacyRefsFromUiState();
-    if (typeof document !== 'undefined') {
-        const form = document.getElementById('taper-form');
-        if (form?.dataset) form.dataset.taperUiMode = taperUiState.mode;
-    }
+    syncTaperFormTransportFromUiState();
     return getTaperUiState();
 }
 
@@ -12810,41 +12835,20 @@ function isTaperFormModeActive() {
  * and a plan id, so a lost/absent id can never turn a create into an in-place update.
  */
 function getTaperFormMode() {
-    if (taperUiState.mode === 'edit') {
-        const editId = taperUiState.editingTaperId
-            || taperFormPlanId
-            || (typeof document !== 'undefined' && document.getElementById('taper-editing-plan-id')?.value?.trim());
-        if (editId) return 'edit';
-    }
-    if (taperFormMode === 'edit') {
-        const hasId = !!taperFormPlanId
-            || !!(typeof document !== 'undefined' && document.getElementById('taper-editing-plan-id')?.value?.trim());
-        if (hasId) return 'edit';
-    }
+    if (taperUiState.mode === 'edit' && taperUiState.editingTaperId) return 'edit';
     return 'create';
 }
 
 function setTaperFormMode(mode) {
     if (mode === 'edit') {
-        const editId = taperUiState.editingTaperId
-            || taperFormPlanId
-            || (typeof document !== 'undefined' && document.getElementById('taper-editing-plan-id')?.value?.trim())
-            || null;
-        taperUiState.mode = 'edit';
-        taperUiState.editingTaperId = editId;
+        if (!taperUiState.editingTaperId) return 'create';
+        setTaperUiState({ mode: 'edit', editingTaperId: taperUiState.editingTaperId });
     } else if (mode === 'create') {
+        const patch = { editingTaperId: null };
         if (taperUiState.mode !== 'duplicate' && taperUiState.mode !== 'view') {
-            taperUiState.mode = 'create';
+            patch.mode = 'create';
         }
-        taperUiState.editingTaperId = null;
-    }
-    syncTaperLegacyRefsFromUiState();
-    if (typeof document !== 'undefined') {
-        const form = document.getElementById('taper-form');
-        if (form) {
-            if (!form.dataset) form.dataset = {};
-            form.dataset.taperFormMode = getTaperFormMode();
-        }
+        setTaperUiState(patch);
     }
     return getTaperFormMode();
 }
@@ -12884,7 +12888,6 @@ function exitTaperFormToView(planId = taperUiState.selectedTaperId) {
         sourceTaperId: null,
         isSaving: false
     });
-    setInputValue('taper-editing-plan-id', '');
     resetTaperFormLifecycleState();
     document.getElementById('taper-setup')?.classList.add('hidden');
     document.getElementById('taper-cancel-edit-btn')?.classList.add('hidden');
@@ -12901,10 +12904,6 @@ function openTaperPlan(planId, options = {}) {
     if (typeof showTaperWorkspace === 'function') showTaperWorkspace();
 
     populateTaperPlanDropdown();
-    const select = document.getElementById('taper-plan-select');
-    if (select) select.value = planId;
-    taperUiState.selectedTaperId = planId;
-    syncTaperLegacyRefsFromUiState();
 
     refreshTaperDashboard();
     if (options.closeManageModal !== false) closeManageTaperPlansModal();
@@ -12989,8 +12988,9 @@ function getPrimaryTaperPlan(substanceId, data = appData) {
 
 function getSelectedTaperPlan(data = appData) {
     ensureTaperPlansV2(data);
-    if (selectedTaperPlanId) {
-        const plan = getTaperPlanById(selectedTaperPlanId, data);
+    const selectedId = getSelectedTaperId();
+    if (selectedId) {
+        const plan = getTaperPlanById(selectedId, data);
         if (plan) return plan;
     }
     const substanceId = getTaperSubstanceId();
@@ -33829,8 +33829,8 @@ function deleteSubstance(id) {
     if (Array.isArray(appData.taperPlansV2)) {
         appData.taperPlansV2 = appData.taperPlansV2.filter(p => p.substanceId !== id);
     }
-    if (selectedTaperPlanId && getTaperPlanById(selectedTaperPlanId)?.substanceId === id) {
-        selectedTaperPlanId = null;
+    if (getSelectedTaperId() && getTaperPlanById(getSelectedTaperId())?.substanceId === id) {
+        setTaperUiState({ selectedTaperId: null });
     }
     delete appData.recoveryStreaks[id];
     normalizeMainSubstances(appData);
@@ -56471,9 +56471,9 @@ function syncTaperSubstanceToSelected() {
 }
 
 function onTaperSubstanceChange() {
-    if (taperEditingPlan && taperFormDirty && !confirmDiscardTaperFormChanges()) {
-        // Revert select to the plan/substance being edited.
-        const editing = taperFormPlanId ? getTaperPlanById(taperFormPlanId) : null;
+    const ui = getTaperUiState();
+    if (isTaperFormModeActive() && taperFormDirty && !confirmDiscardTaperFormChanges()) {
+        const editing = ui.editingTaperId ? getTaperPlanById(ui.editingTaperId) : null;
         const substanceEl = document.getElementById('taper-substance');
         if (substanceEl && editing?.substanceId) substanceEl.value = editing.substanceId;
         return;
@@ -56482,30 +56482,35 @@ function onTaperSubstanceChange() {
     if (id) setSelectedSubstanceId(id, { source: 'taper', refresh: false });
     persistTaperSubstanceId(id);
     syncGoalsPlansSubstanceFilters(id);
-    // Changing substance abandons an in-progress edit for a different substance.
-    if (taperFormPlanId) {
-        const editing = getTaperPlanById(taperFormPlanId);
-        if (!editing || editing.substanceId !== id) {
-            taperEditingPlan = false;
-            taperFormPlanId = null;
-            setInputValue('taper-editing-plan-id', '');
+    const defaultPlan = resolveDefaultTaperPlanForSubstance(id);
+    if (isTaperFormModeActive()) {
+        if (ui.mode === 'edit' && ui.editingTaperId) {
+            const editing = getTaperPlanById(ui.editingTaperId);
+            if (!editing || editing.substanceId !== id) {
+                setTaperUiState({
+                    mode: 'create',
+                    editingTaperId: null,
+                    sourceTaperId: null,
+                    selectedTaperId: defaultPlan?.id || null
+                });
+                resetTaperFormLifecycleState();
+            }
+        } else {
+            setTaperUiState({
+                editingTaperId: null,
+                selectedTaperId: defaultPlan?.id || null
+            });
             resetTaperFormLifecycleState();
         }
     } else {
-        taperEditingPlan = false;
-        setInputValue('taper-editing-plan-id', '');
-        resetTaperFormLifecycleState();
-    }
-    const defaultPlan = resolveDefaultTaperPlanForSubstance(id);
-    if (!taperEditingPlan) {
-        selectedTaperPlanId = defaultPlan?.id || null;
+        setTaperUiState({ selectedTaperId: defaultPlan?.id || null });
     }
     populateTaperReductionTypeSelect(getTaperSubstanceId());
     toggleTaperPlanTypeFields();
     prefillVapeTaperDefaults(getTaperSubstanceId());
     if (typeof refreshTaperSuggestions === 'function') {
         refreshTaperSuggestions({
-            autoFill: isTaperAutoSuggestEnabled() && !taperFormPlanId,
+            autoFill: isTaperAutoSuggestEnabled() && !isTaperEditFormActive(),
             forceRender: true
         });
     }
@@ -56526,7 +56531,7 @@ function onTaperPlanChange() {
     if (openTaperPlan(planId, { closeManageModal: false }) === false) {
         populateTaperPlanDropdown();
         const restore = document.getElementById('taper-plan-select');
-        if (restore && selectedTaperPlanId) restore.value = selectedTaperPlanId;
+        if (restore && getSelectedTaperId()) restore.value = getSelectedTaperId();
         return;
     }
     if (columnSettingsTableKey === 'taperByWeek') {
@@ -56574,14 +56579,16 @@ function populateTaperPlanDropdown() {
     if (inCreateForm) {
         select.value = '';
     } else {
-        const valid = plans.some(p => p.id === selectedTaperPlanId);
+        let selectedId = getSelectedTaperId();
+        const valid = plans.some(p => p.id === selectedId);
         if (!valid) {
             const defaultPlan = resolveDefaultTaperPlanForSubstance(substanceId);
-            selectedTaperPlanId = defaultPlan?.id && plans.some(p => p.id === defaultPlan.id)
+            selectedId = defaultPlan?.id && plans.some(p => p.id === defaultPlan.id)
                 ? defaultPlan.id
                 : plans[0].id;
+            setTaperUiState({ selectedTaperId: selectedId });
         }
-        select.value = selectedTaperPlanId || '';
+        select.value = selectedId || '';
     }
     if (toolbar) toolbar.classList.remove('hidden');
 }
@@ -56654,7 +56661,7 @@ function setTaperAutoSuggestEnabled(enabled, data = appData) {
     if (typeof saveData === 'function') saveData(data);
     syncTaperSuggestSettingsUI(data);
     if (typeof refreshTaperSuggestions === 'function') {
-        refreshTaperSuggestions({ autoFill: !!enabled && !taperFormPlanId });
+        refreshTaperSuggestions({ autoFill: !!enabled && !isTaperEditFormActive() });
     }
     return prefs.autoSuggestEnabled;
 }
@@ -56669,7 +56676,7 @@ function setTaperSuggestLookbackDays(value, data = appData) {
     if (typeof saveData === 'function') saveData(data);
     syncTaperSuggestSettingsUI(data);
     if (typeof refreshTaperSuggestions === 'function') {
-        refreshTaperSuggestions({ autoFill: isTaperAutoSuggestEnabled(data) && !taperFormPlanId });
+        refreshTaperSuggestions({ autoFill: isTaperAutoSuggestEnabled(data) && !isTaperEditFormActive() });
     }
     return prefs.lookbackDays;
 }
@@ -57453,7 +57460,6 @@ function showNewTaperPlan() {
         sourceTaperId: null,
         isSaving: false
     });
-    setInputValue('taper-editing-plan-id', '');
     resetTaperFormLifecycleState();
     setText('taper-setup-title', 'Create Taper Plan');
     setText('taper-generate-btn', 'Save Taper');
@@ -57501,7 +57507,6 @@ function duplicateTaperPlanById(planId) {
         sourceTaperId: planId,
         isSaving: false
     });
-    setInputValue('taper-editing-plan-id', '');
     resetTaperFormLifecycleState();
     setText('taper-setup-title', 'Duplicate Taper Plan');
     setText('taper-generate-btn', 'Save Taper');
@@ -57543,7 +57548,9 @@ function archiveSelectedTaperPlan() {
         if (next) setTaperPlanPrimary(next.id, plan.substanceId);
     }
     saveData(appData);
-    selectedTaperPlanId = resolveDefaultTaperPlanForSubstance(plan.substanceId)?.id || null;
+    setTaperUiState({
+        selectedTaperId: resolveDefaultTaperPlanForSubstance(plan.substanceId)?.id || null
+    });
     refreshTaperDashboard();
 }
 
@@ -57721,9 +57728,7 @@ function prefillCreateFormFromPlanSource(plan, options = {}) {
     const suffix = options.nameSuffix != null ? options.nameSuffix : ' copy';
     const name = options.name ?? `${plan.name || getDefaultTaperPlanName(substanceId)}${suffix}`;
     setInputValue('taper-plan-name', name);
-    taperFormPlanId = null;
     setTaperFormMode('create');
-    setInputValue('taper-editing-plan-id', '');
     markTaperFormClean();
 }
 
@@ -57752,9 +57757,7 @@ function applyTaperStartFromSelection() {
     const substanceId = getTaperSubstanceId();
     const mode = document.getElementById('taper-start-from')?.value || TAPER_START_FROM.BLANK;
     updateTaperStartFromDetailVisibility(mode);
-    taperFormPlanId = null;
     setTaperFormMode('create');
-    setInputValue('taper-editing-plan-id', '');
 
     if (mode === TAPER_START_FROM.BLANK) {
         resetTaperCreateFormBasics(substanceId);
@@ -57825,7 +57828,6 @@ function editTaperPlanById(planId) {
             setSelectedSubstanceId(plan.substanceId, { source: 'taper', refresh: false });
         } catch (_) { /* soft — test DOM may omit full substance selects */ }
     }
-    setInputValue('taper-editing-plan-id', planId);
     try {
         fillTaperFormFromPlan(plan);
         setText('taper-setup-title', 'Edit Taper Plan');
@@ -57883,8 +57885,10 @@ function archiveTaperPlanById(planId) {
         if (next) setTaperPlanPrimary(next.id, plan.substanceId);
     }
     saveData(appData);
-    if (selectedTaperPlanId === planId) {
-        selectedTaperPlanId = resolveDefaultTaperPlanForSubstance(plan.substanceId)?.id || null;
+    if (getSelectedTaperId() === planId) {
+        setTaperUiState({
+            selectedTaperId: resolveDefaultTaperPlanForSubstance(plan.substanceId)?.id || null
+        });
     }
     renderManageTaperPlansList();
     refreshTaperDashboard();
@@ -58083,7 +58087,7 @@ function toggleTaperPlanTypeFields(options = {}) {
     }
 
     // Never invent baseline defaults while loading an existing plan into Edit.
-    const skipPrefill = options.skipPrefill === true || !!taperFormPlanId;
+    const skipPrefill = options.skipPrefill === true || isTaperEditFormActive();
     if (!skipPrefill && isVape && (isNicotineVape || isPuffs || isBuying || isNicotine)) {
         prefillVapeTaperDefaults(substanceId);
     }
@@ -58092,7 +58096,7 @@ function toggleTaperPlanTypeFields(options = {}) {
     try {
         if (typeof refreshTaperSuggestions === 'function') {
             refreshTaperSuggestions({
-                autoFill: !options.skipPrefill && !taperFormPlanId && isTaperAutoSuggestEnabled(),
+                autoFill: !options.skipPrefill && !isTaperEditFormActive() && isTaperAutoSuggestEnabled(),
                 forceRender: true
             });
         }
@@ -58381,7 +58385,7 @@ function bindTaperFormDirtyTracking() {
     if (!taperFormBeforeUnloadBound && typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
         taperFormBeforeUnloadBound = true;
         window.addEventListener('beforeunload', (e) => {
-            if (!taperEditingPlan || !taperFormDirty) return;
+            if (!isTaperFormModeActive() || !taperFormDirty) return;
             e.preventDefault();
             e.returnValue = '';
         });
@@ -59440,9 +59444,7 @@ function mergeWeeklyTargetsPreservingProgress(previousWeeks, nextWeeks) {
 
 function resolveTaperFormEditingPlanId() {
     if (getTaperFormMode() !== 'edit') return null;
-    const fromState = taperUiState.editingTaperId || (taperFormPlanId ? String(taperFormPlanId) : '');
-    const fromInput = document.getElementById('taper-editing-plan-id')?.value?.trim() || '';
-    return fromState || fromInput || null;
+    return taperUiState.editingTaperId || null;
 }
 
 function handleTaperSubmitClick(e) {
@@ -59497,11 +59499,8 @@ function handleTaperSubmit(e) {
         if (formMode === 'edit' && editingPlanId && !existingPlan) {
             return fail('Could not find the selected plan to update. Reload and try again.');
         }
-        if (formMode === 'create' && (taperUiState.editingTaperId || taperFormPlanId || document.getElementById('taper-editing-plan-id')?.value?.trim())) {
-            taperUiState.editingTaperId = null;
-            taperFormPlanId = null;
-            setInputValue('taper-editing-plan-id', '');
-            syncTaperLegacyRefsFromUiState();
+        if (formMode === 'create' && taperUiState.editingTaperId) {
+            setTaperUiState({ editingTaperId: null });
         }
 
         const substanceId = existingPlan?.substanceId
@@ -63171,24 +63170,24 @@ function __getRecoveryTrackerTestExports() {
         },
         getTaperPlanById,
         getSelectedTaperPlan,
+        getSelectedTaperId,
+        isTaperEditFormActive,
         getPrimaryTaperPlan,
         selectedTaperPlanIdRef: {
-            get value() { return selectedTaperPlanId; },
-            set value(v) {
-                selectedTaperPlanId = v;
-                if (taperUiState.mode === 'view') taperUiState.selectedTaperId = v || null;
-            }
+            get value() { return taperUiState.selectedTaperId; },
+            set value(v) { setTaperUiState({ selectedTaperId: v || null }); }
         },
         taperFormPlanIdRef: {
-            get value() { return taperFormPlanId; },
+            get value() { return taperUiState.mode === 'edit' ? taperUiState.editingTaperId : null; },
             set value(v) {
-                taperFormPlanId = v;
                 if (v) {
-                    taperUiState.editingTaperId = v;
-                    if (taperUiState.mode === 'view' || taperUiState.mode === 'create') {
-                        taperUiState.mode = 'edit';
-                    }
-                    syncTaperLegacyRefsFromUiState();
+                    setTaperUiState({
+                        mode: 'edit',
+                        editingTaperId: v,
+                        selectedTaperId: taperUiState.selectedTaperId || v
+                    });
+                } else {
+                    setTaperUiState({ editingTaperId: null });
                 }
             }
         },
@@ -63216,8 +63215,14 @@ function __getRecoveryTrackerTestExports() {
         renderTaperCurrentMetricsCard,
         renderTaperInsights,
         taperEditingPlanRef: {
-            get value() { return taperEditingPlan; },
-            set value(v) { taperEditingPlan = v; }
+            get value() { return isTaperFormModeActive(); },
+            set value(v) {
+                if (!v && isTaperFormModeActive()) {
+                    setTaperUiState({ mode: 'view', editingTaperId: null, sourceTaperId: null });
+                } else if (v && taperUiState.mode === 'view') {
+                    setTaperUiState({ mode: 'create' });
+                }
+            }
         },
         COLUMN_SETTINGS_STORAGE_KEY,
         loadColumnSettingsStore,
@@ -63614,6 +63619,7 @@ function __getRecoveryTrackerTestExports() {
         openUnifiedTaperRecord,
         openTaperPlan,
         onTaperPlanChange,
+        populateTaperPlanDropdown,
         openTaperPlanFromManage,
         TAPER_START_FROM,
         setTaperStartFrom,
