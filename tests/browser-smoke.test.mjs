@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { loadRecoveryTrackerApp } from './harness.mjs';
 
@@ -124,35 +125,11 @@ test('inventory mount target rejects array and accepts real element', () => {
     assert.equal(rt.isInventorySourceMountTarget(el), true);
 });
 
-test('new taper save creates exactly one record; edit creates zero', () => {
-    const rt = loadRecoveryTrackerApp();
-    rt.__setTestAppData(savedPayload([{
-        id: 'existing-1', name: 'Existing', substanceId: COKE_ID, status: 'active', isPrimary: true,
-        startDate: '2026-08-01', endDate: '2026-09-01', reductionType: 'reduce-amount', weeklyTargets: []
-    }]));
-    const before = rt.__getTestAppData().taperPlansV2.length;
-
-    rt.setTaperUiState({ mode: 'create', selectedTaperId: null, editingTaperId: null, sourceTaperId: null });
-    const newPlan = {
-        id: rt.generateUnusedTaperPlanId(rt.__getTestAppData()),
-        name: 'Brand new',
-        substanceId: COKE_ID,
-        status: 'active',
-        isPrimary: false,
-        startDate: '2026-08-01',
-        endDate: '2026-09-15',
-        reductionType: 'reduce-amount',
-        weeklyTargets: [],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString()
-    };
-    rt.__getTestAppData().taperPlansV2.push(newPlan);
-    assert.equal(rt.__getTestAppData().taperPlansV2.length, before + 1);
-
-    rt.setTaperUiState({ mode: 'edit', editingTaperId: 'existing-1', selectedTaperId: 'existing-1' });
-    const editTarget = rt.getTaperPlanById('existing-1');
-    editTarget.name = 'Existing edited';
-    assert.equal(rt.__getTestAppData().taperPlansV2.length, before + 1);
+test('taper save button has no inline onclick (bound once via setupEventListeners)', () => {
+    const html = readFileSync(new URL('../index.html', import.meta.url), 'utf8');
+    const match = html.match(/id="taper-generate-btn"[^>]*>/);
+    assert.ok(match, 'taper-generate-btn present in index.html');
+    assert.doesNotMatch(match[0], /onclick\s*=/, 'Save Taper must not use inline onclick');
 });
 
 test('inventory form mount via buy-source-mount does not duplicate source UI on rerender', () => {

@@ -325,3 +325,50 @@ test('New Taper after Edit in Simple mode still creates instead of updating', ()
     assert.equal(rt.handleTaperSubmit({ preventDefault() {} }), true);
     assert.equal(rt.__getTestAppData().taperPlansV2.length, 2);
 });
+
+test('double-bound Save Taper click creates exactly one record', () => {
+    const rt = setupApp([]);
+    const { nodes } = installDom(rt);
+    rt.showNewTaperPlan();
+    fillCreateForm(nodes, 'Single create');
+
+    const btn = nodes.get('taper-generate-btn');
+    btn.addEventListener = (type, fn) => {
+        if (type === 'click') btn._boundClick = fn;
+    };
+    btn.removeAttribute = (name) => {
+        if (name === 'onclick') btn.dataset.onclick = '';
+    };
+    btn.onclick = () => rt.handleTaperSubmitClick({ preventDefault() {} });
+    btn.dataset.onclick = 'handleTaperSubmitClick()';
+    rt.bindTaperFormSubmitHandlers();
+
+    assert.equal(btn.dataset.onclick, '', 'bindTaperFormSubmitHandlers strips legacy onclick');
+    assert.equal(btn.onclick, null);
+    assert.equal(typeof btn._boundClick, 'function');
+
+    const event = { preventDefault() {} };
+    // Legacy production: inline onclick and bound listener both invoked handleTaperSubmitClick.
+    rt.handleTaperSubmitClick(event);
+    rt.handleTaperSubmitClick(event);
+
+    const data = rt.__getTestAppData();
+    assert.equal(data.taperPlansV2.length, 1);
+    assert.equal(data.taperPlansV2[0].name, 'Single create');
+});
+
+test('double-bound Save Taper click edits in place without appending', () => {
+    const rt = setupApp([makePlan()]);
+    const { nodes } = installDom(rt);
+    rt.editUnifiedTaperRecord('existing-taper');
+    nodes.get('taper-plan-name').value = 'Edited in place';
+
+    const event = { preventDefault() {} };
+    rt.handleTaperSubmitClick(event);
+    rt.handleTaperSubmitClick(event);
+
+    const data = rt.__getTestAppData();
+    assert.equal(data.taperPlansV2.length, 1);
+    assert.equal(data.taperPlansV2[0].id, 'existing-taper');
+    assert.equal(data.taperPlansV2[0].name, 'Edited in place');
+});

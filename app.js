@@ -12765,6 +12765,9 @@ const taperUiState = {
     isSaving: false
 };
 
+/** Blocks duplicate save handlers on the same click event (inline onclick + listener). */
+let lastTaperSubmitClickEvent = null;
+
 /** @deprecated synced from taperUiState — prefer getTaperUiState() */
 let selectedTaperPlanId = null;
 /** @deprecated synced from taperUiState */
@@ -44552,6 +44555,8 @@ function bindTaperFormSubmitHandlers() {
     if (btn && btn.dataset?.clickBound !== '1' && typeof btn.addEventListener === 'function') {
         if (!btn.dataset) btn.dataset = {};
         btn.dataset.clickBound = '1';
+        btn.removeAttribute?.('onclick');
+        btn.onclick = null;
         btn.addEventListener('click', handleTaperSubmitClick);
     }
 }
@@ -59494,7 +59499,17 @@ function resolveTaperFormEditingPlanId() {
 function handleTaperSubmitClick(e) {
     if (e?.preventDefault) e.preventDefault();
     if (taperUiState.isSaving) return false;
-    return handleTaperSubmit(e || { preventDefault() {} });
+    if (e && lastTaperSubmitClickEvent === e) return false;
+    if (e) lastTaperSubmitClickEvent = e;
+    try {
+        return handleTaperSubmit(e || { preventDefault() {} });
+    } finally {
+        if (e) {
+            queueMicrotask(() => {
+                if (lastTaperSubmitClickEvent === e) lastTaperSubmitClickEvent = null;
+            });
+        }
+    }
 }
 
 function handleTaperSubmit(e) {
