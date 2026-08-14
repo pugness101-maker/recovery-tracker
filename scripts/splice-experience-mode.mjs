@@ -534,38 +534,6 @@ html = tryReplace(html,
     'onboarding overlay');
 
 html = tryReplace(html,
-    `                <div class="collapsible-section" data-section="settingsSubstances">
-                    <button type="button" class="section-toggle" onclick="toggleSection('settingsSubstances')">
-                        <span>Manage Substances</span>
-                        <span class="chevron">⌄</span>
-                    </button>`,
-    `                <div class="collapsible-section" data-section="settingsOnboarding" id="onboarding-setup-section">
-                    <button type="button" class="section-toggle" onclick="toggleSection('settingsOnboarding')">
-                        <span>Onboarding / Setup</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                <div class="settings-section">
-                    <p class="settings-hint">Review what you chose during setup. Restarting setup never deletes logs, purchases, inventory, or tapers.</p>
-                    <div id="onboarding-settings-summary" class="onboarding-settings-summary"></div>
-                    <div class="data-management-buttons">
-                        <button type="button" class="secondary-btn" onclick="openOnboardingReview()">Review setup</button>
-                        <button type="button" class="secondary-btn" onclick="openTrackedSubstancesFromOnboarding()">Change tracked substances</button>
-                        <button type="button" class="secondary-btn" onclick="openTrackedSubstancesFromOnboarding()">Change primary substance</button>
-                        <button type="button" class="secondary-btn" onclick="restartOnboarding()">Restart onboarding</button>
-                    </div>
-                </div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="settingsSubstances">
-                    <button type="button" class="section-toggle" onclick="toggleSection('settingsSubstances')">
-                        <span>Manage Substances</span>
-                        <span class="chevron">⌄</span>
-                    </button>`,
-    'onboarding settings section');
-
-html = tryReplace(html,
     `                    <details class="use-log-advanced" id="use-advanced-section">
                         <summary class="use-log-advanced-summary">Advanced options</summary>
                         <div class="use-log-advanced-body">

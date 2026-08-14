@@ -12331,12 +12331,6 @@ body.experience-simple #use-submit-btn {
     width: 100%;
 }
 
-.onboarding-settings-facts {
-    margin: 8px 0 12px;
-    padding-left: 18px;
-    color: var(--text-secondary);
-}
-
 body.onboarding-open .bottom-nav {
     pointer-events: none;
 }

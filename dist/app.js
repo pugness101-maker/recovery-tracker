@@ -27947,7 +27947,6 @@ function onExperienceModeTabChange(tabId) {
         applySimplePlanFormLayout(appData);
     } else if (tabId === 'settings-tab') {
         syncExperienceModeSettingsUI(appData);
-        renderOnboardingSettingsPanel(appData);
     }
 }
 
@@ -28478,7 +28477,6 @@ function skipOnboarding(data = appData) {
     data.settings.onboardingCompleted = true;
     if (typeof saveData === 'function') saveData(data);
     hideOnboardingOverlay();
-    renderOnboardingSettingsPanel(data);
     if (typeof switchTab === 'function') {
         try { switchTab('dashboard-tab'); } catch (_) { /* ignore */ }
     }
@@ -28526,7 +28524,6 @@ function completeOnboarding(options = {}, data = appData) {
 
     hideOnboardingOverlay();
     if (typeof applyExperienceMode === 'function') applyExperienceMode(data);
-    renderOnboardingSettingsPanel(data);
 
     const createdTaperAfter = Array.isArray(data.taperPlansV2) ? data.taperPlansV2.length : 0;
     const result = {
@@ -28579,38 +28576,6 @@ function reconcileOnboardingAfterImport(merged) {
         if (merged.settings.onboarding) merged.settings.onboarding.restarting = false;
     }
     return merged;
-}
-
-function renderOnboardingSettingsPanel(data = appData) {
-    if (typeof document === 'undefined') return;
-    const root = document.getElementById('onboarding-settings-summary');
-    if (!root) return;
-    const state = getOnboardingState(data);
-    const completed = data.settings?.onboardingCompleted === true;
-    const mode = getExperienceMode(data) === EXPERIENCE_MODE_ADVANCED ? 'Detailed' : 'Simple';
-    const primary = getSimpleSubstanceDisplayName(state.primarySubstanceId || (data.substances || []).find(s => s.isMain), data);
-    const tracked = (data.substances || []).filter(s => s && s.active !== false).map(s => getSimpleSubstanceDisplayName(s, data));
-    root.innerHTML = `
-        <p class="settings-hint">${completed ? 'Setup complete.' : 'Setup has not been finished yet.'}</p>
-        <ul class="onboarding-settings-facts">
-            <li>Mode: ${escapeHtml(mode)}</li>
-            <li>Primary: ${escapeHtml(primary || '—')}</li>
-            <li>Tracking: ${escapeHtml(tracked.join(', ') || '—')}</li>
-        </ul>`;
-}
-
-function openOnboardingReview() {
-    if (typeof switchTab === 'function') switchTab('settings-tab');
-    document.getElementById('onboarding-setup-section')?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
-}
-
-function openTrackedSubstancesFromOnboarding() {
-    if (typeof switchTab === 'function') switchTab('settings-tab');
-    const section = document.querySelector('[data-section="settingsSubstances"]');
-    if (section?.classList.contains('collapsed') && typeof toggleSection === 'function') {
-        try { toggleSection('settingsSubstances'); } catch (_) { /* ignore */ }
-    }
-    section?.scrollIntoView?.({ behavior: 'smooth', block: 'start' });
 }
 
 const defaultData = {
