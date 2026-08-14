@@ -10715,9 +10715,6 @@ html[data-theme="light"] .metric-pc-tone-unfavorable .metric-pc-change .metric-p
 .fin-status-near_limit, .fin-status-at_limit { color: #ef6c00; }
 .fin-status-over_budget { color: #c62828; }
 .fin-estimate { font-style: italic; color: var(--text-secondary); }
-.fin-alert { border-left: 3px solid var(--accent); padding: 8px 10px; margin: 6px 0; background: rgba(127,127,127,0.08); border-radius: 0 8px 8px 0; }
-.fin-alert.fin-alert-warn { border-left-color: #ef6c00; }
-.fin-alert.fin-alert-danger { border-left-color: #c62828; }
 .fin-toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .fin-empty, .fin-loading, .fin-error, .fin-insufficient { color: var(--text-secondary); font-size: 0.9rem; }
 @media (max-width: 640px) {
@@ -10818,10 +10815,6 @@ html[data-theme="light"] .metric-pc-tone-unfavorable .metric-pc-change .metric-p
     margin: 0 0 8px;
     font-size: 1rem;
 }
-.combined-mini-list {
-    margin: 0 0 10px;
-    padding-left: 18px;
-}
 .combined-overview-actions {
     display: flex;
     flex-wrap: wrap;
@@ -10875,10 +10868,6 @@ html[data-theme="light"] .metric-pc-tone-unfavorable .metric-pc-change .metric-p
 .pa-bar-fill { display: block; height: 100%; background: var(--accent); border-radius: inherit; min-width: 2px; }
 .pa-table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
 .pa-table th, .pa-table td { border-bottom: 1px solid var(--border); padding: 6px 4px; text-align: left; }
-.pa-warnings { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
-.pa-alert { border-left: 3px solid var(--accent); padding: 8px 10px; background: rgba(127,127,127,0.08); border-radius: 0 8px 8px 0; }
-.pa-alert-warn { border-left-color: #ef6c00; }
-.pa-alert-info { border-left-color: #546e7a; }
 .pa-empty, .pa-loading, .pa-error { color: var(--text-secondary); font-size: 0.9rem; }
 @media (max-width: 640px) {
     .pa-summary-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
@@ -12010,6 +11999,51 @@ body.experience-simple #use-submit-btn {
     background: var(--card);
 }
 
+.sm-log-table-wrap {
+    width: 100%;
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    background: var(--card);
+    -webkit-overflow-scrolling: touch;
+}
+
+.sm-log-table {
+    width: 100%;
+    min-width: 42rem;
+    border-collapse: collapse;
+    font-size: 0.82rem;
+}
+
+.sm-log-table th,
+.sm-log-table td {
+    padding: 9px 10px;
+    border-bottom: 1px solid var(--border);
+    text-align: left;
+    vertical-align: top;
+}
+
+.sm-log-table th {
+    color: var(--text-secondary);
+    font-size: 0.72rem;
+    font-weight: 700;
+    white-space: nowrap;
+}
+
+.sm-log-table tbody tr:last-child td {
+    border-bottom: none;
+}
+
+.sm-log-table td:not(.sm-log-notes) {
+    white-space: nowrap;
+}
+
+.sm-log-notes {
+    min-width: 10rem;
+    max-width: 22rem;
+    overflow-wrap: anywhere;
+}
+
 .sm-cal-header {
     display: flex;
     align-items: center;
@@ -12333,6 +12367,68 @@ body.experience-simple #use-submit-btn {
 
 body.onboarding-open .bottom-nav {
     pointer-events: none;
+}
+
+@media (max-width: 640px) {
+    .sm-log-table-wrap {
+        overflow: visible;
+        border: none;
+        border-radius: 0;
+        background: transparent;
+    }
+
+    .sm-log-table {
+        min-width: 0;
+        border-collapse: separate;
+        border-spacing: 0 8px;
+    }
+
+    .sm-log-table thead {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+    }
+
+    .sm-log-table tbody,
+    .sm-log-table tr,
+    .sm-log-table td {
+        display: block;
+        width: 100%;
+    }
+
+    .sm-log-table tr {
+        padding: 8px 10px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--card);
+    }
+
+    .sm-log-table td {
+        display: grid;
+        grid-template-columns: minmax(5.5rem, 38%) 1fr;
+        gap: 8px;
+        padding: 4px 0;
+        border: none;
+        white-space: normal;
+    }
+
+    .sm-log-table td::before {
+        content: attr(data-label);
+        color: var(--text-secondary);
+        font-size: 0.72rem;
+        font-weight: 700;
+    }
+
+    .sm-log-notes {
+        min-width: 0;
+        max-width: none;
+    }
 }
 
 body.experience-simple .use-log-page [data-section="bulkActions"] {

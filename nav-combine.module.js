@@ -421,7 +421,6 @@ function buildInsightsCalendarOverview(data = appData) {
     let purchaseSummary = '—';
     let goalPerf = '—';
     let planPerf = '—';
-    let warnings = [];
 
     try {
         if (typeof buildDashboardFinancialSummary === 'function') {
@@ -444,12 +443,6 @@ function buildInsightsCalendarOverview(data = appData) {
         useSummary = `${gp.activeGoalCount} goals linked to recovery focus`;
     } catch (_) { /* overview soft-fail */ }
 
-    try {
-        if (typeof buildFinancialDataQualityIssues === 'function') {
-            warnings = (buildFinancialDataQualityIssues(data) || []).slice(0, 5);
-        }
-    } catch (_) { /* overview soft-fail */ }
-
     return {
         rangeLabel,
         substanceId,
@@ -458,15 +451,11 @@ function buildInsightsCalendarOverview(data = appData) {
         purchaseSummary,
         goalPerf,
         planPerf,
-        warnings,
         importantEvents: []
     };
 }
 
 function renderInsightsCalendarOverviewHtml(overview) {
-    const warnings = overview.warnings?.length
-        ? `<ul class="combined-mini-list">${overview.warnings.map(w => `<li>${escapeHtml(w.message || w.title || 'Data warning')}</li>`).join('')}</ul>`
-        : '<p class="settings-hint">No data warnings right now.</p>';
     return `
         <div class="combined-overview">
             <p class="settings-hint">Date range: <strong>${escapeHtml(overview.rangeLabel)}</strong></p>
@@ -477,17 +466,11 @@ function renderInsightsCalendarOverviewHtml(overview) {
                 <article class="combined-stat-card"><span class="combined-stat-label">Goal performance</span><strong class="combined-stat-text">${escapeHtml(String(overview.goalPerf))}</strong></article>
                 <article class="combined-stat-card"><span class="combined-stat-label">Plan performance</span><strong class="combined-stat-text">${escapeHtml(String(overview.planPerf))}</strong></article>
             </div>
-            <div class="combined-overview-columns">
-                <section class="combined-overview-block">
-                    <h3>Calendar preview</h3>
-                    <p class="settings-hint">Open the full calendar for month, week, day, and agenda views.</p>
-                    <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Open calendar</button>
-                </section>
-                <section class="combined-overview-block">
-                    <h3>Data warnings</h3>
-                    ${warnings}
-                </section>
-            </div>
+            <section class="combined-overview-block">
+                <h3>Calendar preview</h3>
+                <p class="settings-hint">Open the full calendar for month, week, day, and agenda views.</p>
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Open calendar</button>
+            </section>
             <div class="combined-overview-actions">
                 <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('use')">Use</button>
                 <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('money')">Money</button>

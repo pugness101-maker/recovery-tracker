@@ -1191,6 +1191,78 @@ function getProgressRangeBounds(rangeKey, data = appData) {
     return { key, label: `Last ${days} Days`, startDate, endDate: today, days };
 }
 
+function getSimpleProgressLogProductType(log, data = appData) {
+    const nicotineType = log?.nicotineProductType || '';
+    if (nicotineType) {
+        return typeof getNicotineProductTypeLabel === 'function'
+            ? getNicotineProductTypeLabel(nicotineType)
+            : nicotineType;
+    }
+    const substanceId = typeof getUseSubstanceId === 'function'
+        ? getUseSubstanceId(log)
+        : (log?.substanceId || log?.substance);
+    if (typeof isNicotineTrackingMode === 'function' && isNicotineTrackingMode(substanceId, data)
+        && typeof getNicotineProductType === 'function') {
+        const inferredType = getNicotineProductType(log, data);
+        return typeof getNicotineProductTypeLabel === 'function'
+            ? getNicotineProductTypeLabel(inferredType)
+            : inferredType;
+    }
+    const weedType = log?.weedProductType || '';
+    if (weedType) {
+        return typeof getWeedProductTypeLabel === 'function'
+            ? getWeedProductTypeLabel(weedType)
+            : weedType;
+    }
+    if (typeof getWeedLogProductTypeLabel === 'function') {
+        const label = getWeedLogProductTypeLabel(log, data);
+        if (label && label !== '—') return label;
+    }
+    return '';
+}
+
+function buildSimpleProgressLogRows(substanceId, bounds, data = appData) {
+    const seenIds = new Set();
+    const seenObjects = new Set();
+    return (typeof getUseEntries === 'function' ? getUseEntries(data) : (data.logs || []))
+        .filter(log => {
+            if (!isSimpleRecentLogEligible(log)) return false;
+            if (typeof logMatchesSubstance === 'function'
+                ? !logMatchesSubstance(log, substanceId, data)
+                : String(getUseSubstanceId(log)) !== String(substanceId)) return false;
+            if (!log.date || log.date < bounds.startDate || log.date > bounds.endDate) return false;
+            const id = log.id == null || log.id === '' ? '' : String(log.id);
+            if (id) {
+                if (seenIds.has(id)) return false;
+                seenIds.add(id);
+            } else {
+                if (seenObjects.has(log)) return false;
+                seenObjects.add(log);
+            }
+            return true;
+        })
+        .slice()
+        .sort((a, b) => {
+            const msA = typeof getLogDatetimeMs === 'function' ? getLogDatetimeMs(a) : Date.parse(a.timestamp || '');
+            const msB = typeof getLogDatetimeMs === 'function' ? getLogDatetimeMs(b) : Date.parse(b.timestamp || '');
+            return (msB || 0) - (msA || 0);
+        })
+        .map(log => ({
+            id: log.id ?? null,
+            date: log.date || '',
+            time: log.startTime || log.time || '',
+            amount: log.amount ?? log.personalAmount ?? '',
+            unit: log.unit || '',
+            productType: getSimpleProgressLogProductType(log, data),
+            cost: log.estimatedCost != null && log.estimatedCost !== ''
+                && Number.isFinite(Number(log.estimatedCost))
+                ? Number(log.estimatedCost)
+                : null,
+            notes: String(log.notes || '').trim(),
+            log
+        }));
+}
+
 function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
     const bounds = getProgressRangeBounds(rangeKey, data);
     const usedToday = getCanonicalUsageOnDate(substanceId, bounds.endDate, data);
@@ -1243,6 +1315,7 @@ function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
         spendPeriodLabel: formatSimpleSpendPeriodLabel(bounds),
         displayName: getSimpleSubstanceDisplayName(substanceId, data),
         series,
+        logs: buildSimpleProgressLogRows(substanceId, bounds, data),
         unit: typeof getSubstanceDisplayUnit === 'function'
             ? getSubstanceDisplayUnit(substanceId, data)
             : ''
@@ -1317,6 +1390,48 @@ function renderSimpleProgressCalendar(dataset, monthStr) {
             </div>
             <div class="sm-cal-dow">${['S','M','T','W','T','F','S'].map(d => `<span>${d}</span>`).join('')}</div>
             <div class="sm-cal-grid">${cells.join('')}</div>
+        </div>`;
+}
+
+function renderSimpleProgressLogTable(dataset) {
+    const rows = Array.isArray(dataset?.logs) ? dataset.logs : [];
+    if (!rows.length) {
+        return '<p class="sm-empty-hint">No logs for this substance in the selected date range.</p>';
+    }
+    const showProductType = rows.some(row => row.productType);
+    const showCost = rows.some(row => row.cost != null);
+    const money = value => {
+        if (value == null) return '—';
+        if (typeof fmtSheetMoney === 'function') return fmtSheetMoney(value, getCurrencySymbol());
+        return `${typeof getCurrencySymbol === 'function' ? getCurrencySymbol() : '$'}${Number(value).toFixed(2)}`;
+    };
+    return `
+        <div class="sm-log-table-wrap">
+            <table class="sm-log-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Amount</th>
+                        <th>Unit</th>
+                        ${showProductType ? '<th>Product Type</th>' : ''}
+                        ${showCost ? '<th>Cost</th>' : ''}
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.map(row => `
+                        <tr>
+                            <td data-label="Date">${escapeHtml(row.date || '—')}</td>
+                            <td data-label="Time">${escapeHtml(row.time || '—')}</td>
+                            <td data-label="Amount">${escapeHtml(row.amount === '' ? '—' : (typeof formatAmount === 'function' ? formatAmount(row.amount) : String(row.amount)))}</td>
+                            <td data-label="Unit">${escapeHtml(row.unit || '—')}</td>
+                            ${showProductType ? `<td data-label="Product Type">${escapeHtml(row.productType || '—')}</td>` : ''}
+                            ${showCost ? `<td data-label="Cost">${escapeHtml(money(row.cost))}</td>` : ''}
+                            <td data-label="Notes" class="sm-log-notes">${escapeHtml(row.notes || '—')}</td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
         </div>`;
 }
 
@@ -1411,6 +1526,13 @@ function renderSimpleProgress(data = appData) {
                 <h3>Calendar</h3>
             </div>
             <div id="sm-progress-calendar">${renderSimpleProgressCalendar(dataset, month)}</div>
+        </section>
+        <section class="sm-progress-section sm-log-section">
+            <div class="sm-section-head">
+                <h3>Log Table</h3>
+                <p class="sm-section-sub">${escapeHtml(dataset.bounds.label)}</p>
+            </div>
+            ${renderSimpleProgressLogTable(dataset)}
         </section>
         <div class="sm-progress-footer">
             <button type="button" class="sm-text-btn" onclick="openDetailedAnalyticsFromSimple()">View Detailed Analytics</button>

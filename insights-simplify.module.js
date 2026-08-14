@@ -201,7 +201,7 @@ function renderInsightsSectionToolbarHtml() {
                     <button type="button" class="secondary-btn btn-sm" onclick="resetInsightsLayout()">Reset layout</button>
                 </div>
             </div>
-            <p class="settings-hint ic-layout-hint">Simple mode shows summary cards, key charts, and alerts. Advanced unlocks Running Totals, detailed tables, custom metrics, and exports.</p>
+            <p class="settings-hint ic-layout-hint">Simple mode shows summary cards and key charts. Advanced unlocks Running Totals, detailed tables, custom metrics, and exports.</p>
         </div>`;
 }
 
@@ -412,29 +412,15 @@ function renderSimplifiedInsightsOverviewHtml() {
             ? buildInsightsCalendarOverview()
             : null;
     } catch (_) { overview = null; }
-    const warnings = overview?.warnings?.length
-        ? `<ul class="combined-mini-list">${overview.warnings.map(w =>
-            `<li>${typeof escapeHtml === 'function' ? escapeHtml(w.message || w.title || 'Data warning') : (w.message || 'Data warning')}</li>`
-        ).join('')}</ul>`
-        : '<p class="settings-hint">No alerts right now.</p>';
     const range = overview?.rangeLabel || 'Selected range';
     return `
         <div class="combined-overview ic-simplified-overview">
             <p class="settings-hint">Showing Overview for <strong>${typeof escapeHtml === 'function' ? escapeHtml(range) : range}</strong>. Use the shared filters below for substance, product type, and dates.</p>
-            <div class="combined-overview-columns">
-                <section class="combined-overview-block">
-                    <h3>Alerts</h3>
-                    ${warnings}
-                </section>
-                <section class="combined-overview-block">
-                    <h3>Quick links</h3>
-                    <div class="combined-overview-actions">
-                        <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('use')">Use</button>
-                        <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('money')">Money</button>
-                        <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Calendar</button>
-                        <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('more')">More</button>
-                    </div>
-                </section>
+            <div class="combined-overview-actions">
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('use')">Use</button>
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('money')">Money</button>
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Calendar</button>
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('more')">More</button>
             </div>
             <p class="settings-hint">Summary cards, trend charts, and calendar preview appear in the Insights sections below.</p>
         </div>`;

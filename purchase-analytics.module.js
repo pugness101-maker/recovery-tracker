@@ -14,30 +14,6 @@ const PURCHASE_ANALYTICS_WEEKDAYS = Object.freeze([
     'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
 ]);
 
-const PURCHASE_ANALYTICS_ALERT_TYPES = Object.freeze([
-    'aboveAveragePrice',
-    'duplicatePurchase',
-    'shortInterval',
-    'missingSupplier',
-    'missingStore',
-    'missingCost',
-    'missingQuantity',
-    'inventoryExpiring',
-    'overstocked'
-]);
-
-const PURCHASE_ANALYTICS_ALERT_LABELS = Object.freeze({
-    aboveAveragePrice: 'Paid above average',
-    duplicatePurchase: 'Possible duplicate purchase',
-    shortInterval: 'Very short purchase interval',
-    missingSupplier: 'Missing supplier',
-    missingStore: 'Missing store',
-    missingCost: 'Missing cost',
-    missingQuantity: 'Missing quantity',
-    inventoryExpiring: 'Inventory may be expiring',
-    overstocked: 'Overstocked inventory'
-});
-
 let purchaseAnalyticsCache = null;
 let purchaseAnalyticsCacheKey = '';
 
@@ -132,13 +108,8 @@ function getDefaultPurchaseAnalyticsFilters() {
 
 function getDefaultPurchaseAnalyticsPrefs() {
     return {
-        alertsEnabled: true,
-        alertTypes: PURCHASE_ANALYTICS_ALERT_TYPES.reduce((acc, id) => { acc[id] = true; return acc; }, {}),
         chartGrain: 'monthly',
         filtersCollapsed: false,
-        aboveAverageMultiplier: 1.35,
-        shortIntervalDays: 2,
-        overstockDaysSupply: 60,
         favoriteStores: [],
         storeDistances: {},
         filters: getDefaultPurchaseAnalyticsFilters()
@@ -152,7 +123,6 @@ function ensurePurchaseAnalyticsPrefs(data = appData) {
     if (!data.settings.purchaseAnalytics || typeof data.settings.purchaseAnalytics !== 'object') {
         data.settings.purchaseAnalytics = {
             ...defaults,
-            alertTypes: { ...defaults.alertTypes },
             filters: { ...defaults.filters },
             favoriteStores: [],
             storeDistances: {}
@@ -161,14 +131,10 @@ function ensurePurchaseAnalyticsPrefs(data = appData) {
     const prefs = data.settings.purchaseAnalytics;
     Object.keys(defaults).forEach(key => {
         if (prefs[key] === undefined) {
-            prefs[key] = (key === 'alertTypes' || key === 'filters' || key === 'storeDistances')
+            prefs[key] = (key === 'filters' || key === 'storeDistances')
                 ? { ...defaults[key] }
                 : Array.isArray(defaults[key]) ? [...defaults[key]] : defaults[key];
         }
-    });
-    if (!prefs.alertTypes || typeof prefs.alertTypes !== 'object') prefs.alertTypes = { ...defaults.alertTypes };
-    PURCHASE_ANALYTICS_ALERT_TYPES.forEach(id => {
-        if (prefs.alertTypes[id] === undefined) prefs.alertTypes[id] = true;
     });
     if (!prefs.filters || typeof prefs.filters !== 'object') prefs.filters = { ...defaults.filters };
     Object.keys(defaults.filters).forEach(key => {
@@ -176,9 +142,6 @@ function ensurePurchaseAnalyticsPrefs(data = appData) {
     });
     if (!Array.isArray(prefs.favoriteStores)) prefs.favoriteStores = [];
     if (!prefs.storeDistances || typeof prefs.storeDistances !== 'object') prefs.storeDistances = {};
-    prefs.aboveAverageMultiplier = Math.max(1.05, paToNumber(prefs.aboveAverageMultiplier, defaults.aboveAverageMultiplier));
-    prefs.shortIntervalDays = Math.max(1, Math.round(paToNumber(prefs.shortIntervalDays, defaults.shortIntervalDays)));
-    prefs.overstockDaysSupply = Math.max(7, Math.round(paToNumber(prefs.overstockDaysSupply, defaults.overstockDaysSupply)));
     return prefs;
 }
 
@@ -188,9 +151,8 @@ function getPurchaseAnalyticsPrefs(data = appData) {
 
 function persistPurchaseAnalyticsPrefs(patch = {}, data = appData) {
     const prefs = ensurePurchaseAnalyticsPrefs(data);
-    const { alertTypes, filters, favoriteStores, storeDistances, ...rest } = patch || {};
+    const { filters, favoriteStores, storeDistances, ...rest } = patch || {};
     Object.assign(prefs, rest);
-    if (alertTypes) prefs.alertTypes = { ...prefs.alertTypes, ...alertTypes };
     if (filters) prefs.filters = { ...prefs.filters, ...filters };
     if (favoriteStores) prefs.favoriteStores = [...favoriteStores];
     if (storeDistances) prefs.storeDistances = { ...prefs.storeDistances, ...storeDistances };
@@ -843,106 +805,6 @@ function buildProductAnalytics(purchases = [], data = appData) {
     }).sort((a, b) => b.spending - a.spending);
 }
 
-function buildPurchaseAnalyticsWarnings(purchases = [], data = appData, prefs = null) {
-    const p = prefs || ensurePurchaseAnalyticsPrefs(data);
-    const enabled = type => p.alertsEnabled !== false && p.alertTypes?.[type] !== false;
-    const alerts = [];
-    const spendPurchases = purchases.filter(purchaseAnalyticsCountsTowardSpend);
-    const avgSpend = paMean(spendPurchases.map(purchaseAnalyticsSpendAmount)) || 0;
-    const avgCpu = (() => {
-        let spend = 0;
-        let qty = 0;
-        spendPurchases.forEach(x => {
-            const q = purchaseAnalyticsQuantity(x);
-            if (q > 0) {
-                spend += purchaseAnalyticsSpendAmount(x);
-                qty += q;
-            }
-        });
-        return qty > 0 ? spend / qty : null;
-    })();
-
-    const sorted = spendPurchases.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    sorted.forEach((purchase, idx) => {
-        if (enabled('aboveAveragePrice') && avgCpu != null) {
-            const cpu = purchaseAnalyticsCostPerUnit(purchase);
-            if (cpu != null && cpu > avgCpu * p.aboveAverageMultiplier) {
-                alerts.push({
-                    type: 'aboveAveragePrice',
-                    severity: 'warn',
-                    purchaseId: purchase.id,
-                    message: `Purchase on ${purchase.date} is above average unit price.`
-                });
-            }
-        }
-        if (enabled('missingSupplier') && !purchaseAnalyticsSupplier(purchase)) {
-            alerts.push({ type: 'missingSupplier', severity: 'info', purchaseId: purchase.id, message: `Missing supplier on ${purchase.date}.` });
-        }
-        if (enabled('missingStore') && !purchaseAnalyticsStore(purchase)) {
-            alerts.push({ type: 'missingStore', severity: 'info', purchaseId: purchase.id, message: `Missing store on ${purchase.date}.` });
-        }
-        if (enabled('missingCost') && !(purchaseAnalyticsSpendAmount(purchase) > 0) && purchaseAnalyticsCountsTowardSpend(purchase)) {
-            const rawCost = paToNumber(purchase.totalCost ?? purchase.cost, NaN);
-            if (!Number.isFinite(rawCost) || rawCost <= 0) {
-                alerts.push({ type: 'missingCost', severity: 'warn', purchaseId: purchase.id, message: `Missing cost on ${purchase.date}.` });
-            }
-        }
-        if (enabled('missingQuantity') && !(purchaseAnalyticsQuantity(purchase) > 0)) {
-            alerts.push({ type: 'missingQuantity', severity: 'warn', purchaseId: purchase.id, message: `Missing quantity on ${purchase.date}.` });
-        }
-        if (enabled('shortInterval') && idx > 0) {
-            const gap = paDaysBetween(sorted[idx - 1].date, purchase.date);
-            if (gap != null && gap <= p.shortIntervalDays) {
-                alerts.push({
-                    type: 'shortInterval',
-                    severity: 'warn',
-                    purchaseId: purchase.id,
-                    message: `Only ${gap} day(s) between purchases (${sorted[idx - 1].date} → ${purchase.date}).`
-                });
-            }
-        }
-    });
-
-    if (enabled('duplicatePurchase')) {
-        const seen = new Map();
-        spendPurchases.forEach(purchase => {
-            const key = [
-                purchase.date,
-                purchase.substanceId,
-                paRound(purchaseAnalyticsSpendAmount(purchase), 2),
-                paRound(purchaseAnalyticsQuantity(purchase), 3),
-                paKey(purchaseAnalyticsStore(purchase))
-            ].join('|');
-            if (seen.has(key)) {
-                alerts.push({
-                    type: 'duplicatePurchase',
-                    severity: 'warn',
-                    purchaseId: purchase.id,
-                    message: `Possible duplicate purchase on ${purchase.date}.`
-                });
-            } else seen.set(key, purchase.id);
-        });
-    }
-
-    const turnover = buildInventoryTurnoverMetrics(purchases, data);
-    if (enabled('overstocked') && turnover.daysInventoryLasts != null && turnover.daysInventoryLasts > p.overstockDaysSupply) {
-        alerts.push({
-            type: 'overstocked',
-            severity: 'info',
-            message: `Inventory may last ~${turnover.daysInventoryLasts} days (overstock threshold ${p.overstockDaysSupply}).`
-        });
-    }
-    if (enabled('inventoryExpiring') && turnover.daysInventoryLasts != null && turnover.daysInventoryLasts < 3 && turnover.inventoryRemaining > 0) {
-        alerts.push({
-            type: 'inventoryExpiring',
-            severity: 'warn',
-            message: 'Remaining inventory may run out within a few days based on recent depletion.'
-        });
-    }
-
-    return alerts.slice(0, 50);
-}
-
 function buildPurchaseAnalyticsCharts(purchases = [], suppliers = [], stores = [], products = [], price = null, frequency = null) {
     const supplierSpend = suppliers.slice(0, 8).map(s => ({ label: s.name, value: s.totalSpent }));
     const storeSpend = stores.slice(0, 8).map(s => ({ label: s.name, value: s.totalSpent }));
@@ -992,7 +854,6 @@ function buildPurchaseAnalyticsDataset(data = appData, options = {}) {
     const patterns = buildPurchasePatternMetrics(purchases);
     const turnover = buildInventoryTurnoverMetrics(purchases, data, bounds);
     const products = buildProductAnalytics(purchases, data);
-    const warnings = buildPurchaseAnalyticsWarnings(purchases, data, prefs);
     const charts = buildPurchaseAnalyticsCharts(purchases, suppliers, stores, products, price, frequency);
 
     const dataset = {
@@ -1009,7 +870,6 @@ function buildPurchaseAnalyticsDataset(data = appData, options = {}) {
         patterns,
         turnover,
         products,
-        warnings,
         charts
     };
     purchaseAnalyticsCache = dataset;
@@ -1036,7 +896,6 @@ function buildPurchaseAnalyticsCsvRows(dataset) {
     });
     const t = dataset.turnover || {};
     Object.entries(t).forEach(([k, v]) => rows.push(['Turnover', k, v == null ? '' : v]));
-    (dataset.warnings || []).forEach(w => rows.push(['Warning', w.type, w.message]));
     return rows;
 }
 
@@ -1275,12 +1134,6 @@ function renderPurchaseAnalyticsView() {
                     <h4>Average purchase size</h4>${paBarChartHtml(dataset.charts.averagePurchaseSize)}
                 </section>
 
-                <section class="pa-panel">
-                    <h3>Smart Warnings</h3>
-                    ${(dataset.warnings || []).length
-                        ? `<ul class="pa-warnings">${dataset.warnings.map(w => `<li class="pa-alert pa-alert-${escapeHtml(w.severity)}"><strong>${escapeHtml(PURCHASE_ANALYTICS_ALERT_LABELS[w.type] || w.type)}</strong> ${escapeHtml(w.message)}</li>`).join('')}</ul>`
-                        : '<p class="pa-empty">No warnings for the current filters.</p>'}
-                </section>
             </div>
         `;
     } catch (err) {

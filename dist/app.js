@@ -12953,12 +12953,7 @@ const FINANCIAL_BUDGET_STATE_META = Object.freeze({
     ended: { label: 'Ended', tone: 'neutral' }
 });
 
-const FINANCIAL_ALERT_TYPES = Object.freeze([
-    'nearBudget', 'overBudget', 'largePurchase', 'spendingSpike', 'purchaseFrequency',
-    'costPerUnitIncrease', 'duplicatePurchase', 'missingCost', 'missingQuantity', 'invalidCostPerUnit'
-]);
-
-const FINANCIAL_ALERT_LABELS = Object.freeze({
+const FINANCIAL_ISSUE_LABELS = Object.freeze({
     nearBudget: 'Near budget',
     overBudget: 'Over budget',
     largePurchase: 'Unusually large purchase',
@@ -13176,8 +13171,6 @@ function getDefaultFinancialAnalyticsFilters() {
 function getDefaultFinancialAnalyticsPrefs() {
     return {
         thresholds: { nearLimit: 0.75, atLimit: 1 },
-        alertsEnabled: true,
-        alertTypes: FINANCIAL_ALERT_TYPES.reduce((acc, id) => { acc[id] = true; return acc; }, {}),
         showOnDashboard: true,
         showOnCalendar: true,
         chartGroupBy: 'spend',
@@ -13188,7 +13181,6 @@ function getDefaultFinancialAnalyticsPrefs() {
         // Financial analytics deliberately stays out of the Recovery Score: money spent is
         // not a recovery-quality signal, so this stays off and is never read by the score.
         scoreContributionEnabled: false,
-        largePurchaseMultiplier: 2,
         baselineLookbackDays: 90,
         filters: getDefaultFinancialAnalyticsFilters()
     };
@@ -13203,14 +13195,13 @@ function ensureFinancialAnalyticsPrefs(data = appData) {
         data.settings.financialAnalytics = {
             ...defaults,
             thresholds: { ...defaults.thresholds },
-            alertTypes: { ...defaults.alertTypes },
             filters: { ...defaults.filters }
         };
     }
     const prefs = data.settings.financialAnalytics;
     Object.keys(defaults).forEach(key => {
         if (prefs[key] === undefined) {
-            prefs[key] = (key === 'thresholds' || key === 'alertTypes' || key === 'filters')
+            prefs[key] = (key === 'thresholds' || key === 'filters')
                 ? { ...defaults[key] }
                 : defaults[key];
         }
@@ -13222,11 +13213,6 @@ function ensureFinancialAnalyticsPrefs(data = appData) {
     prefs.thresholds.nearLimit = Number.isFinite(near) && near > 0 && near <= 1 ? near : defaults.thresholds.nearLimit;
     prefs.thresholds.atLimit = Number.isFinite(at) && at > 0 ? at : defaults.thresholds.atLimit;
     if (prefs.thresholds.nearLimit > prefs.thresholds.atLimit) prefs.thresholds.nearLimit = defaults.thresholds.nearLimit;
-
-    if (!prefs.alertTypes || typeof prefs.alertTypes !== 'object') prefs.alertTypes = { ...defaults.alertTypes };
-    FINANCIAL_ALERT_TYPES.forEach(id => {
-        if (prefs.alertTypes[id] === undefined) prefs.alertTypes[id] = true;
-    });
 
     if (!prefs.filters || typeof prefs.filters !== 'object' || Array.isArray(prefs.filters)) {
         prefs.filters = { ...defaults.filters };
@@ -13240,7 +13226,6 @@ function ensureFinancialAnalyticsPrefs(data = appData) {
     if (!FINANCIAL_CHART_GROUP_BYS.some(g => g.id === prefs.chartGroupBy)) prefs.chartGroupBy = defaults.chartGroupBy;
     if (!FINANCIAL_CHART_GRAINS.includes(prefs.chartGrain)) prefs.chartGrain = defaults.chartGrain;
     if (!FINANCIAL_COMPARE_PRESETS.some(c => c.id === prefs.comparePreset)) prefs.comparePreset = defaults.comparePreset;
-    prefs.largePurchaseMultiplier = Math.max(1.1, finToNumber(prefs.largePurchaseMultiplier, defaults.largePurchaseMultiplier));
     prefs.baselineLookbackDays = Math.max(7, Math.round(finToNumber(prefs.baselineLookbackDays, defaults.baselineLookbackDays)));
     prefs.scoreContributionEnabled = false;
     return prefs;
@@ -13252,10 +13237,9 @@ function getFinancialAnalyticsPrefs(data = appData) {
 
 function persistFinancialAnalyticsPrefs(patch = {}, data = appData) {
     const prefs = ensureFinancialAnalyticsPrefs(data);
-    const { thresholds, alertTypes, filters, ...rest } = patch || {};
+    const { thresholds, filters, ...rest } = patch || {};
     Object.assign(prefs, rest);
     if (thresholds) prefs.thresholds = { ...prefs.thresholds, ...thresholds };
-    if (alertTypes) prefs.alertTypes = { ...prefs.alertTypes, ...alertTypes };
     if (filters) prefs.filters = { ...prefs.filters, ...filters };
     ensureFinancialAnalyticsPrefs(data);
     invalidateFinancialAnalyticsCache();
@@ -14668,121 +14652,7 @@ function buildPaymentMethodAnalytics(purchases = []) {
     };
 }
 
-// ——— Financial Analytics: alerts & data quality ———
-
-function financialAlert(type, severity, message, extra = {}) {
-    return {
-        type,
-        typeLabel: FINANCIAL_ALERT_LABELS[type] || type,
-        severity,
-        message,
-        ...extra
-    };
-}
-
-function buildFinancialAlerts(purchases = [], budgets = [], prefs = null, data = appData) {
-    const settings = prefs || getFinancialAnalyticsPrefs(data);
-    if (!settings.alertsEnabled) return [];
-    const enabled = type => settings.alertTypes?.[type] !== false;
-    const alerts = [];
-    const list = (purchases || []).slice().sort((a, b) => (getPurchaseDateStr(a) < getPurchaseDateStr(b) ? -1 : 1));
-
-    (budgets || []).forEach(ev => {
-        if (ev.status === 'over_budget' && enabled('overBudget')) {
-            alerts.push(financialAlert('overBudget', 'high',
-                `${ev.budget.name} is over budget: ${finMoney(ev.spent)} spent against ${finMoney(ev.amount)}.`,
-                { budgetId: ev.budget.id }));
-        } else if ((ev.status === 'near_limit' || ev.status === 'at_limit') && enabled('nearBudget')) {
-            alerts.push(financialAlert('nearBudget', 'medium',
-                `${ev.budget.name} is at ${finPctLabel(ev.pct)} of ${finMoney(ev.amount)} with ${ev.daysRemaining} day${ev.daysRemaining === 1 ? '' : 's'} left.`,
-                { budgetId: ev.budget.id }));
-        }
-    });
-
-    const costs = list.map(p => getPurchaseSpendAmount(p)).filter(c => c > 0);
-    if (costs.length >= 3 && enabled('largePurchase')) {
-        const median = finMedian(costs);
-        const threshold = Math.max(median * finToNumber(settings.largePurchaseMultiplier, 2), median + 2 * finStdDev(costs));
-        list.filter(p => getPurchaseSpendAmount(p) > threshold && threshold > 0).forEach(p => {
-            alerts.push(financialAlert('largePurchase', 'medium',
-                `${finMoney(getPurchaseSpendAmount(p))} on ${finDateLabel(getPurchaseDateStr(p))} is well above your typical ${finMoney(median)} purchase.`,
-                { purchaseId: p.id, date: getPurchaseDateStr(p) }));
-        });
-    }
-
-    const today = finToday();
-    const recentStart = finAddDays(today, -6);
-    const priorStart = finAddDays(today, -27);
-    const priorEnd = finAddDays(today, -7);
-    const recent = list.filter(p => getPurchaseDateStr(p) >= recentStart && getPurchaseDateStr(p) <= today);
-    const prior = list.filter(p => getPurchaseDateStr(p) >= priorStart && getPurchaseDateStr(p) <= priorEnd);
-    const recentSpend = sumFinancialSpend(recent);
-    const priorWeeklyAvg = prior.length ? sumFinancialSpend(prior) / 3 : 0;
-
-    if (enabled('spendingSpike') && prior.length >= 2 && priorWeeklyAvg > 0 && recentSpend > priorWeeklyAvg * 1.5) {
-        alerts.push(financialAlert('spendingSpike', 'medium',
-            `Last 7 days: ${finMoney(recentSpend)} versus a ${finMoney(priorWeeklyAvg)} weekly average over the prior three weeks.`));
-    }
-    if (enabled('purchaseFrequency') && prior.length >= 3) {
-        const priorWeeklyCount = prior.length / 3;
-        if (recent.length > priorWeeklyCount * 1.5 && recent.length >= 2) {
-            alerts.push(financialAlert('purchaseFrequency', 'low',
-                `${recent.length} purchases in the last 7 days versus about ${formatAmount(priorWeeklyCount, 1)} per week before that.`));
-        }
-    }
-
-    if (enabled('costPerUnitIncrease')) {
-        const bySubstanceUnit = new Map();
-        list.forEach(p => {
-            const cpu = financialPurchaseCostPerUnit(p);
-            if (cpu == null || !(cpu > 0)) return;
-            const key = `${getPurchaseSubstanceId(p)}|${finKey(financialPurchaseUnit(p, data))}`;
-            if (!bySubstanceUnit.has(key)) bySubstanceUnit.set(key, []);
-            bySubstanceUnit.get(key).push({ cpu, purchase: p });
-        });
-        bySubstanceUnit.forEach((entries, key) => {
-            if (entries.length < 4) return;
-            const recentEntries = entries.slice(-3);
-            const olderEntries = entries.slice(0, -3);
-            const recentAvg = finSum(recentEntries.map(e => e.cpu)) / recentEntries.length;
-            const olderAvg = finSum(olderEntries.map(e => e.cpu)) / olderEntries.length;
-            if (olderAvg > 0 && recentAvg > olderAvg * 1.2) {
-                const substanceId = key.split('|')[0];
-                alerts.push(financialAlert('costPerUnitIncrease', 'medium',
-                    `${financialSubstanceLabel(substanceId, data)} unit price is up ${finSignedPctLabel((recentAvg - olderAvg) / olderAvg)} (${finMoney(olderAvg, 4)} → ${finMoney(recentAvg, 4)}).`,
-                    { substanceId }));
-            }
-        });
-    }
-
-    if (enabled('duplicatePurchase')) {
-        const seen = new Map();
-        list.forEach(p => {
-            const key = [
-                getPurchaseDateStr(p),
-                getPurchaseSubstanceId(p),
-                finRound(getPurchaseSpendAmount(p), 2),
-                finRound(financialPurchaseQuantity(p), 3)
-            ].join('|');
-            if (seen.has(key)) {
-                alerts.push(financialAlert('duplicatePurchase', 'low',
-                    `Two identical ${finMoney(getPurchaseSpendAmount(p))} entries on ${finDateLabel(getPurchaseDateStr(p))} — check for a double entry.`,
-                    { purchaseId: p.id, duplicateOfId: seen.get(key) }));
-            } else {
-                seen.set(key, p.id);
-            }
-        });
-    }
-
-    const qualityIssues = scanFinancialDataQuality(data, { purchases: list });
-    qualityIssues.issues.forEach(issue => {
-        if (!enabled(issue.code)) return;
-        alerts.push(financialAlert(issue.code, issue.severity, issue.message, { purchaseId: issue.purchaseId, date: issue.date }));
-    });
-
-    const severityRank = { high: 0, medium: 1, low: 2 };
-    return alerts.sort((a, b) => (severityRank[a.severity] ?? 3) - (severityRank[b.severity] ?? 3));
-}
+// ——— Financial Analytics: data quality ———
 
 function scanFinancialDataQuality(data = appData, { purchases = null, mutate = false } = {}) {
     const list = purchases || (data?.purchases || []).filter(p => financialCountsTowardSpend(p));
@@ -14889,8 +14759,6 @@ function financialDatasetCacheKey(data, filters, prefs) {
             chartGroupBy: prefs.chartGroupBy,
             chartGrain: prefs.chartGrain,
             thresholds: prefs.thresholds,
-            alertsEnabled: prefs.alertsEnabled,
-            alertTypes: prefs.alertTypes,
             baselineLookbackDays: prefs.baselineLookbackDays
         }
     });
@@ -14935,7 +14803,6 @@ function buildFinancialDataset(data = appData, options = {}) {
         storeSupplier: buildStoreSupplierAnalytics(purchases, data),
         payments: buildPaymentMethodAnalytics(purchases),
         dataQuality: scanFinancialDataQuality(data, { purchases }),
-        alerts: buildFinancialAlerts(purchases, budgetEvaluations, prefs, data),
         isEmpty: purchases.length === 0
     };
 
@@ -15759,35 +15626,12 @@ function renderFinancialPaymentPanel(dataset) {
         </section>`;
 }
 
-function renderFinancialAlertsPanel(dataset) {
-    const alerts = dataset.alerts;
-    const items = alerts.map(a => `
-        <li class="fin-alert ${finToneClass(a.severity === 'high' ? 'bad' : a.severity === 'medium' ? 'warn' : 'neutral')}">
-            <span class="fin-alert-type">${escapeHtml(a.typeLabel)}</span>
-            <span class="fin-alert-message">${escapeHtml(a.message)}</span>
-        </li>`).join('');
-
-    return `
-        <section class="fin-panel">
-            <header class="fin-panel-head">
-                <h3>Alerts</h3>
-                <label class="fin-inline-field fin-inline-check">
-                    <input type="checkbox" id="fin-alerts-enabled" ${dataset.prefs.alertsEnabled ? 'checked' : ''} onchange="toggleFinancialAlerts(this.checked)">
-                    <span>Enabled</span>
-                </label>
-            </header>
-            ${dataset.prefs.alertsEnabled
-                ? (alerts.length ? `<ul class="fin-alert-list">${items}</ul>` : '<p class="fin-empty-inline">Nothing needs attention right now.</p>')
-                : '<p class="fin-empty-inline">Alerts are turned off.</p>'}
-        </section>`;
-}
-
 function renderFinancialDataQualityPanel(dataset) {
     const q = dataset.dataQuality;
     const rows = q.issues.slice(0, 25).map(i => `
         <tr>
             <td>${escapeHtml(i.date ? finDateLabel(i.date) : '—')}</td>
-            <td>${escapeHtml(FINANCIAL_ALERT_LABELS[i.code] || i.code)}</td>
+            <td>${escapeHtml(FINANCIAL_ISSUE_LABELS[i.code] || i.code)}</td>
             <td>${escapeHtml(i.message)}</td>
         </tr>`).join('');
 
@@ -15908,7 +15752,6 @@ function renderFinancialAnalyticsView() {
                 ${renderFinancialStorePanel(dataset)}
                 ${renderFinancialPaymentPanel(dataset)}
             `}
-            ${renderFinancialAlertsPanel(dataset)}
             ${renderFinancialDataQualityPanel(dataset)}
             ${renderFinancialExportPanel()}
         </div>`;
@@ -15980,11 +15823,6 @@ function setFinancialComparePreset(preset) {
 function setFinancialBreakdown(dimension) {
     if (!FINANCIAL_BREAKDOWN_DIMENSIONS.some(d => d.id === dimension)) return;
     financialAnalyticsUiState.activeBreakdown = dimension;
-    renderFinancialAnalyticsView();
-}
-
-function toggleFinancialAlerts(enabled) {
-    persistFinancialAnalyticsPrefs({ alertsEnabled: !!enabled }, appData);
     renderFinancialAnalyticsView();
 }
 
@@ -16109,7 +15947,6 @@ if (typeof window !== 'undefined') {
         setFinancialChartGrain,
         setFinancialComparePreset,
         setFinancialBreakdown,
-        toggleFinancialAlerts,
         markFinancialIssuesForReview,
         openBudgetForm,
         closeBudgetForm,
@@ -17201,7 +17038,6 @@ function buildInsightsCalendarOverview(data = appData) {
     let purchaseSummary = '—';
     let goalPerf = '—';
     let planPerf = '—';
-    let warnings = [];
 
     try {
         if (typeof buildDashboardFinancialSummary === 'function') {
@@ -17218,12 +17054,6 @@ function buildInsightsCalendarOverview(data = appData) {
         goalPerf = '—';
     } catch (_) { /* overview soft-fail */ }
 
-    try {
-        if (typeof buildFinancialDataQualityIssues === 'function') {
-            warnings = (buildFinancialDataQualityIssues(data) || []).slice(0, 5);
-        }
-    } catch (_) { /* overview soft-fail */ }
-
     return {
         rangeLabel,
         substanceId,
@@ -17232,15 +17062,11 @@ function buildInsightsCalendarOverview(data = appData) {
         purchaseSummary,
         goalPerf,
         planPerf,
-        warnings,
         importantEvents: []
     };
 }
 
 function renderInsightsCalendarOverviewHtml(overview) {
-    const warnings = overview.warnings?.length
-        ? `<ul class="combined-mini-list">${overview.warnings.map(w => `<li>${escapeHtml(w.message || w.title || 'Data warning')}</li>`).join('')}</ul>`
-        : '<p class="settings-hint">No data warnings right now.</p>';
     return `
         <div class="combined-overview">
             <p class="settings-hint">Date range: <strong>${escapeHtml(overview.rangeLabel)}</strong></p>
@@ -17250,17 +17076,11 @@ function renderInsightsCalendarOverviewHtml(overview) {
                 <article class="combined-stat-card"><span class="combined-stat-label">Purchase summary</span><strong class="combined-stat-text">${escapeHtml(String(overview.purchaseSummary))}</strong></article>
                 <article class="combined-stat-card"><span class="combined-stat-label">Taper performance</span><strong class="combined-stat-text">${escapeHtml(String(overview.planPerf))}</strong></article>
             </div>
-            <div class="combined-overview-columns">
-                <section class="combined-overview-block">
-                    <h3>Calendar preview</h3>
-                    <p class="settings-hint">Open the full calendar for month, week, day, and agenda views.</p>
-                    <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Open calendar</button>
-                </section>
-                <section class="combined-overview-block">
-                    <h3>Data warnings</h3>
-                    ${warnings}
-                </section>
-            </div>
+            <section class="combined-overview-block">
+                <h3>Calendar preview</h3>
+                <p class="settings-hint">Open the full calendar for month, week, day, and agenda views.</p>
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Open calendar</button>
+            </section>
             <div class="combined-overview-actions">
                 <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('use')">Use</button>
                 <button type="button" class="secondary-btn" onclick="setInsightsCalendarView('money')">Money</button>
@@ -17423,30 +17243,6 @@ const PURCHASE_ANALYTICS_WEEKDAYS = Object.freeze([
     'Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'
 ]);
 
-const PURCHASE_ANALYTICS_ALERT_TYPES = Object.freeze([
-    'aboveAveragePrice',
-    'duplicatePurchase',
-    'shortInterval',
-    'missingSupplier',
-    'missingStore',
-    'missingCost',
-    'missingQuantity',
-    'inventoryExpiring',
-    'overstocked'
-]);
-
-const PURCHASE_ANALYTICS_ALERT_LABELS = Object.freeze({
-    aboveAveragePrice: 'Paid above average',
-    duplicatePurchase: 'Possible duplicate purchase',
-    shortInterval: 'Very short purchase interval',
-    missingSupplier: 'Missing supplier',
-    missingStore: 'Missing store',
-    missingCost: 'Missing cost',
-    missingQuantity: 'Missing quantity',
-    inventoryExpiring: 'Inventory may be expiring',
-    overstocked: 'Overstocked inventory'
-});
-
 let purchaseAnalyticsCache = null;
 let purchaseAnalyticsCacheKey = '';
 
@@ -17524,13 +17320,8 @@ function getDefaultPurchaseAnalyticsFilters() {
 
 function getDefaultPurchaseAnalyticsPrefs() {
     return {
-        alertsEnabled: true,
-        alertTypes: PURCHASE_ANALYTICS_ALERT_TYPES.reduce((acc, id) => { acc[id] = true; return acc; }, {}),
         chartGrain: 'monthly',
         filtersCollapsed: false,
-        aboveAverageMultiplier: 1.35,
-        shortIntervalDays: 2,
-        overstockDaysSupply: 60,
         favoriteStores: [],
         storeDistances: {},
         filters: getDefaultPurchaseAnalyticsFilters()
@@ -17544,7 +17335,6 @@ function ensurePurchaseAnalyticsPrefs(data = appData) {
     if (!data.settings.purchaseAnalytics || typeof data.settings.purchaseAnalytics !== 'object') {
         data.settings.purchaseAnalytics = {
             ...defaults,
-            alertTypes: { ...defaults.alertTypes },
             filters: { ...defaults.filters },
             favoriteStores: [],
             storeDistances: {}
@@ -17553,14 +17343,10 @@ function ensurePurchaseAnalyticsPrefs(data = appData) {
     const prefs = data.settings.purchaseAnalytics;
     Object.keys(defaults).forEach(key => {
         if (prefs[key] === undefined) {
-            prefs[key] = (key === 'alertTypes' || key === 'filters' || key === 'storeDistances')
+            prefs[key] = (key === 'filters' || key === 'storeDistances')
                 ? { ...defaults[key] }
                 : Array.isArray(defaults[key]) ? [...defaults[key]] : defaults[key];
         }
-    });
-    if (!prefs.alertTypes || typeof prefs.alertTypes !== 'object') prefs.alertTypes = { ...defaults.alertTypes };
-    PURCHASE_ANALYTICS_ALERT_TYPES.forEach(id => {
-        if (prefs.alertTypes[id] === undefined) prefs.alertTypes[id] = true;
     });
     if (!prefs.filters || typeof prefs.filters !== 'object') prefs.filters = { ...defaults.filters };
     Object.keys(defaults.filters).forEach(key => {
@@ -17568,9 +17354,6 @@ function ensurePurchaseAnalyticsPrefs(data = appData) {
     });
     if (!Array.isArray(prefs.favoriteStores)) prefs.favoriteStores = [];
     if (!prefs.storeDistances || typeof prefs.storeDistances !== 'object') prefs.storeDistances = {};
-    prefs.aboveAverageMultiplier = Math.max(1.05, paToNumber(prefs.aboveAverageMultiplier, defaults.aboveAverageMultiplier));
-    prefs.shortIntervalDays = Math.max(1, Math.round(paToNumber(prefs.shortIntervalDays, defaults.shortIntervalDays)));
-    prefs.overstockDaysSupply = Math.max(7, Math.round(paToNumber(prefs.overstockDaysSupply, defaults.overstockDaysSupply)));
     return prefs;
 }
 
@@ -17580,9 +17363,8 @@ function getPurchaseAnalyticsPrefs(data = appData) {
 
 function persistPurchaseAnalyticsPrefs(patch = {}, data = appData) {
     const prefs = ensurePurchaseAnalyticsPrefs(data);
-    const { alertTypes, filters, favoriteStores, storeDistances, ...rest } = patch || {};
+    const { filters, favoriteStores, storeDistances, ...rest } = patch || {};
     Object.assign(prefs, rest);
-    if (alertTypes) prefs.alertTypes = { ...prefs.alertTypes, ...alertTypes };
     if (filters) prefs.filters = { ...prefs.filters, ...filters };
     if (favoriteStores) prefs.favoriteStores = [...favoriteStores];
     if (storeDistances) prefs.storeDistances = { ...prefs.storeDistances, ...storeDistances };
@@ -18247,106 +18029,6 @@ function buildProductAnalytics(purchases = [], data = appData) {
     }).sort((a, b) => b.spending - a.spending);
 }
 
-function buildPurchaseAnalyticsWarnings(purchases = [], data = appData, prefs = null) {
-    const p = prefs || ensurePurchaseAnalyticsPrefs(data);
-    const enabled = type => p.alertsEnabled !== false && p.alertTypes?.[type] !== false;
-    const alerts = [];
-    const spendPurchases = purchases.filter(purchaseAnalyticsCountsTowardSpend);
-    const avgSpend = paMean(spendPurchases.map(purchaseAnalyticsSpendAmount)) || 0;
-    const avgCpu = (() => {
-        let spend = 0;
-        let qty = 0;
-        spendPurchases.forEach(x => {
-            const q = purchaseAnalyticsQuantity(x);
-            if (q > 0) {
-                spend += purchaseAnalyticsSpendAmount(x);
-                qty += q;
-            }
-        });
-        return qty > 0 ? spend / qty : null;
-    })();
-
-    const sorted = spendPurchases.slice().sort((a, b) => String(a.date).localeCompare(String(b.date)));
-    sorted.forEach((purchase, idx) => {
-        if (enabled('aboveAveragePrice') && avgCpu != null) {
-            const cpu = purchaseAnalyticsCostPerUnit(purchase);
-            if (cpu != null && cpu > avgCpu * p.aboveAverageMultiplier) {
-                alerts.push({
-                    type: 'aboveAveragePrice',
-                    severity: 'warn',
-                    purchaseId: purchase.id,
-                    message: `Purchase on ${purchase.date} is above average unit price.`
-                });
-            }
-        }
-        if (enabled('missingSupplier') && !purchaseAnalyticsSupplier(purchase)) {
-            alerts.push({ type: 'missingSupplier', severity: 'info', purchaseId: purchase.id, message: `Missing supplier on ${purchase.date}.` });
-        }
-        if (enabled('missingStore') && !purchaseAnalyticsStore(purchase)) {
-            alerts.push({ type: 'missingStore', severity: 'info', purchaseId: purchase.id, message: `Missing store on ${purchase.date}.` });
-        }
-        if (enabled('missingCost') && !(purchaseAnalyticsSpendAmount(purchase) > 0) && purchaseAnalyticsCountsTowardSpend(purchase)) {
-            const rawCost = paToNumber(purchase.totalCost ?? purchase.cost, NaN);
-            if (!Number.isFinite(rawCost) || rawCost <= 0) {
-                alerts.push({ type: 'missingCost', severity: 'warn', purchaseId: purchase.id, message: `Missing cost on ${purchase.date}.` });
-            }
-        }
-        if (enabled('missingQuantity') && !(purchaseAnalyticsQuantity(purchase) > 0)) {
-            alerts.push({ type: 'missingQuantity', severity: 'warn', purchaseId: purchase.id, message: `Missing quantity on ${purchase.date}.` });
-        }
-        if (enabled('shortInterval') && idx > 0) {
-            const gap = paDaysBetween(sorted[idx - 1].date, purchase.date);
-            if (gap != null && gap <= p.shortIntervalDays) {
-                alerts.push({
-                    type: 'shortInterval',
-                    severity: 'warn',
-                    purchaseId: purchase.id,
-                    message: `Only ${gap} day(s) between purchases (${sorted[idx - 1].date} → ${purchase.date}).`
-                });
-            }
-        }
-    });
-
-    if (enabled('duplicatePurchase')) {
-        const seen = new Map();
-        spendPurchases.forEach(purchase => {
-            const key = [
-                purchase.date,
-                purchase.substanceId,
-                paRound(purchaseAnalyticsSpendAmount(purchase), 2),
-                paRound(purchaseAnalyticsQuantity(purchase), 3),
-                paKey(purchaseAnalyticsStore(purchase))
-            ].join('|');
-            if (seen.has(key)) {
-                alerts.push({
-                    type: 'duplicatePurchase',
-                    severity: 'warn',
-                    purchaseId: purchase.id,
-                    message: `Possible duplicate purchase on ${purchase.date}.`
-                });
-            } else seen.set(key, purchase.id);
-        });
-    }
-
-    const turnover = buildInventoryTurnoverMetrics(purchases, data);
-    if (enabled('overstocked') && turnover.daysInventoryLasts != null && turnover.daysInventoryLasts > p.overstockDaysSupply) {
-        alerts.push({
-            type: 'overstocked',
-            severity: 'info',
-            message: `Inventory may last ~${turnover.daysInventoryLasts} days (overstock threshold ${p.overstockDaysSupply}).`
-        });
-    }
-    if (enabled('inventoryExpiring') && turnover.daysInventoryLasts != null && turnover.daysInventoryLasts < 3 && turnover.inventoryRemaining > 0) {
-        alerts.push({
-            type: 'inventoryExpiring',
-            severity: 'warn',
-            message: 'Remaining inventory may run out within a few days based on recent depletion.'
-        });
-    }
-
-    return alerts.slice(0, 50);
-}
-
 function buildPurchaseAnalyticsCharts(purchases = [], suppliers = [], stores = [], products = [], price = null, frequency = null) {
     const supplierSpend = suppliers.slice(0, 8).map(s => ({ label: s.name, value: s.totalSpent }));
     const storeSpend = stores.slice(0, 8).map(s => ({ label: s.name, value: s.totalSpent }));
@@ -18396,7 +18078,6 @@ function buildPurchaseAnalyticsDataset(data = appData, options = {}) {
     const patterns = buildPurchasePatternMetrics(purchases);
     const turnover = buildInventoryTurnoverMetrics(purchases, data, bounds);
     const products = buildProductAnalytics(purchases, data);
-    const warnings = buildPurchaseAnalyticsWarnings(purchases, data, prefs);
     const charts = buildPurchaseAnalyticsCharts(purchases, suppliers, stores, products, price, frequency);
 
     const dataset = {
@@ -18413,7 +18094,6 @@ function buildPurchaseAnalyticsDataset(data = appData, options = {}) {
         patterns,
         turnover,
         products,
-        warnings,
         charts
     };
     purchaseAnalyticsCache = dataset;
@@ -18440,7 +18120,6 @@ function buildPurchaseAnalyticsCsvRows(dataset) {
     });
     const t = dataset.turnover || {};
     Object.entries(t).forEach(([k, v]) => rows.push(['Turnover', k, v == null ? '' : v]));
-    (dataset.warnings || []).forEach(w => rows.push(['Warning', w.type, w.message]));
     return rows;
 }
 
@@ -18679,12 +18358,6 @@ function renderPurchaseAnalyticsView() {
                     <h4>Average purchase size</h4>${paBarChartHtml(dataset.charts.averagePurchaseSize)}
                 </section>
 
-                <section class="pa-panel">
-                    <h3>Smart Warnings</h3>
-                    ${(dataset.warnings || []).length
-                        ? `<ul class="pa-warnings">${dataset.warnings.map(w => `<li class="pa-alert pa-alert-${escapeHtml(w.severity)}"><strong>${escapeHtml(PURCHASE_ANALYTICS_ALERT_LABELS[w.type] || w.type)}</strong> ${escapeHtml(w.message)}</li>`).join('')}</ul>`
-                        : '<p class="pa-empty">No warnings for the current filters.</p>'}
-                </section>
             </div>
         `;
     } catch (err) {
@@ -25148,7 +24821,7 @@ function renderInsightsSectionToolbarHtml() {
                     <button type="button" class="secondary-btn btn-sm" onclick="resetInsightsLayout()">Reset layout</button>
                 </div>
             </div>
-            <p class="settings-hint ic-layout-hint">Simple mode shows summary cards, key charts, and alerts. Advanced unlocks Running Totals, detailed tables, custom metrics, and exports.</p>
+            <p class="settings-hint ic-layout-hint">Simple mode shows summary cards and key charts. Advanced unlocks Running Totals, detailed tables, custom metrics, and exports.</p>
         </div>`;
 }
 
@@ -25359,29 +25032,15 @@ function renderSimplifiedInsightsOverviewHtml() {
             ? buildInsightsCalendarOverview()
             : null;
     } catch (_) { overview = null; }
-    const warnings = overview?.warnings?.length
-        ? `<ul class="combined-mini-list">${overview.warnings.map(w =>
-            `<li>${typeof escapeHtml === 'function' ? escapeHtml(w.message || w.title || 'Data warning') : (w.message || 'Data warning')}</li>`
-        ).join('')}</ul>`
-        : '<p class="settings-hint">No alerts right now.</p>';
     const range = overview?.rangeLabel || 'Selected range';
     return `
         <div class="combined-overview ic-simplified-overview">
             <p class="settings-hint">Showing Overview for <strong>${typeof escapeHtml === 'function' ? escapeHtml(range) : range}</strong>. Use the shared filters below for substance, product type, and dates.</p>
-            <div class="combined-overview-columns">
-                <section class="combined-overview-block">
-                    <h3>Alerts</h3>
-                    ${warnings}
-                </section>
-                <section class="combined-overview-block">
-                    <h3>Quick links</h3>
-                    <div class="combined-overview-actions">
-                        <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('use')">Use</button>
-                        <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('money')">Money</button>
-                        <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Calendar</button>
-                        <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('more')">More</button>
-                    </div>
-                </section>
+            <div class="combined-overview-actions">
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('use')">Use</button>
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('money')">Money</button>
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('calendar')">Calendar</button>
+                <button type="button" class="secondary-btn btn-sm" onclick="setInsightsCalendarView('more')">More</button>
             </div>
             <p class="settings-hint">Summary cards, trend charts, and calendar preview appear in the Insights sections below.</p>
         </div>`;
@@ -27452,6 +27111,78 @@ function getProgressRangeBounds(rangeKey, data = appData) {
     return { key, label: `Last ${days} Days`, startDate, endDate: today, days };
 }
 
+function getSimpleProgressLogProductType(log, data = appData) {
+    const nicotineType = log?.nicotineProductType || '';
+    if (nicotineType) {
+        return typeof getNicotineProductTypeLabel === 'function'
+            ? getNicotineProductTypeLabel(nicotineType)
+            : nicotineType;
+    }
+    const substanceId = typeof getUseSubstanceId === 'function'
+        ? getUseSubstanceId(log)
+        : (log?.substanceId || log?.substance);
+    if (typeof isNicotineTrackingMode === 'function' && isNicotineTrackingMode(substanceId, data)
+        && typeof getNicotineProductType === 'function') {
+        const inferredType = getNicotineProductType(log, data);
+        return typeof getNicotineProductTypeLabel === 'function'
+            ? getNicotineProductTypeLabel(inferredType)
+            : inferredType;
+    }
+    const weedType = log?.weedProductType || '';
+    if (weedType) {
+        return typeof getWeedProductTypeLabel === 'function'
+            ? getWeedProductTypeLabel(weedType)
+            : weedType;
+    }
+    if (typeof getWeedLogProductTypeLabel === 'function') {
+        const label = getWeedLogProductTypeLabel(log, data);
+        if (label && label !== '—') return label;
+    }
+    return '';
+}
+
+function buildSimpleProgressLogRows(substanceId, bounds, data = appData) {
+    const seenIds = new Set();
+    const seenObjects = new Set();
+    return (typeof getUseEntries === 'function' ? getUseEntries(data) : (data.logs || []))
+        .filter(log => {
+            if (!isSimpleRecentLogEligible(log)) return false;
+            if (typeof logMatchesSubstance === 'function'
+                ? !logMatchesSubstance(log, substanceId, data)
+                : String(getUseSubstanceId(log)) !== String(substanceId)) return false;
+            if (!log.date || log.date < bounds.startDate || log.date > bounds.endDate) return false;
+            const id = log.id == null || log.id === '' ? '' : String(log.id);
+            if (id) {
+                if (seenIds.has(id)) return false;
+                seenIds.add(id);
+            } else {
+                if (seenObjects.has(log)) return false;
+                seenObjects.add(log);
+            }
+            return true;
+        })
+        .slice()
+        .sort((a, b) => {
+            const msA = typeof getLogDatetimeMs === 'function' ? getLogDatetimeMs(a) : Date.parse(a.timestamp || '');
+            const msB = typeof getLogDatetimeMs === 'function' ? getLogDatetimeMs(b) : Date.parse(b.timestamp || '');
+            return (msB || 0) - (msA || 0);
+        })
+        .map(log => ({
+            id: log.id ?? null,
+            date: log.date || '',
+            time: log.startTime || log.time || '',
+            amount: log.amount ?? log.personalAmount ?? '',
+            unit: log.unit || '',
+            productType: getSimpleProgressLogProductType(log, data),
+            cost: log.estimatedCost != null && log.estimatedCost !== ''
+                && Number.isFinite(Number(log.estimatedCost))
+                ? Number(log.estimatedCost)
+                : null,
+            notes: String(log.notes || '').trim(),
+            log
+        }));
+}
+
 function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
     const bounds = getProgressRangeBounds(rangeKey, data);
     const usedToday = getCanonicalUsageOnDate(substanceId, bounds.endDate, data);
@@ -27504,6 +27235,7 @@ function buildSimpleProgressDataset(substanceId, rangeKey, data = appData) {
         spendPeriodLabel: formatSimpleSpendPeriodLabel(bounds),
         displayName: getSimpleSubstanceDisplayName(substanceId, data),
         series,
+        logs: buildSimpleProgressLogRows(substanceId, bounds, data),
         unit: typeof getSubstanceDisplayUnit === 'function'
             ? getSubstanceDisplayUnit(substanceId, data)
             : ''
@@ -27578,6 +27310,48 @@ function renderSimpleProgressCalendar(dataset, monthStr) {
             </div>
             <div class="sm-cal-dow">${['S','M','T','W','T','F','S'].map(d => `<span>${d}</span>`).join('')}</div>
             <div class="sm-cal-grid">${cells.join('')}</div>
+        </div>`;
+}
+
+function renderSimpleProgressLogTable(dataset) {
+    const rows = Array.isArray(dataset?.logs) ? dataset.logs : [];
+    if (!rows.length) {
+        return '<p class="sm-empty-hint">No logs for this substance in the selected date range.</p>';
+    }
+    const showProductType = rows.some(row => row.productType);
+    const showCost = rows.some(row => row.cost != null);
+    const money = value => {
+        if (value == null) return '—';
+        if (typeof fmtSheetMoney === 'function') return fmtSheetMoney(value, getCurrencySymbol());
+        return `${typeof getCurrencySymbol === 'function' ? getCurrencySymbol() : '$'}${Number(value).toFixed(2)}`;
+    };
+    return `
+        <div class="sm-log-table-wrap">
+            <table class="sm-log-table">
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Time</th>
+                        <th>Amount</th>
+                        <th>Unit</th>
+                        ${showProductType ? '<th>Product Type</th>' : ''}
+                        ${showCost ? '<th>Cost</th>' : ''}
+                        <th>Notes</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${rows.map(row => `
+                        <tr>
+                            <td data-label="Date">${escapeHtml(row.date || '—')}</td>
+                            <td data-label="Time">${escapeHtml(row.time || '—')}</td>
+                            <td data-label="Amount">${escapeHtml(row.amount === '' ? '—' : (typeof formatAmount === 'function' ? formatAmount(row.amount) : String(row.amount)))}</td>
+                            <td data-label="Unit">${escapeHtml(row.unit || '—')}</td>
+                            ${showProductType ? `<td data-label="Product Type">${escapeHtml(row.productType || '—')}</td>` : ''}
+                            ${showCost ? `<td data-label="Cost">${escapeHtml(money(row.cost))}</td>` : ''}
+                            <td data-label="Notes" class="sm-log-notes">${escapeHtml(row.notes || '—')}</td>
+                        </tr>`).join('')}
+                </tbody>
+            </table>
         </div>`;
 }
 
@@ -27672,6 +27446,13 @@ function renderSimpleProgress(data = appData) {
                 <h3>Calendar</h3>
             </div>
             <div id="sm-progress-calendar">${renderSimpleProgressCalendar(dataset, month)}</div>
+        </section>
+        <section class="sm-progress-section sm-log-section">
+            <div class="sm-section-head">
+                <h3>Log Table</h3>
+                <p class="sm-section-sub">${escapeHtml(dataset.bounds.label)}</p>
+            </div>
+            ${renderSimpleProgressLogTable(dataset)}
         </section>
         <div class="sm-progress-footer">
             <button type="button" class="sm-text-btn" onclick="openDetailedAnalyticsFromSimple()">View Detailed Analytics</button>
@@ -62733,7 +62514,6 @@ function __getRecoveryTrackerTestExports() {
         buildFinancialSavings,
         buildFinancialForecast,
         buildFinancialBreakdowns,
-        buildFinancialAlerts,
         buildFinancialDataset,
         buildDashboardFinancialSummary,
         mapFinancialCalendarEvents,
@@ -62957,7 +62737,6 @@ function __getRecoveryTrackerTestExports() {
         buildPurchasePatternMetrics,
         buildInventoryTurnoverMetrics,
         buildProductAnalytics,
-        buildPurchaseAnalyticsWarnings,
         buildPurchaseAnalyticsDataset,
         buildPurchaseAnalyticsCsvRows,
         exportPurchaseAnalyticsCsv,
