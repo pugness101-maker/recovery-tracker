@@ -42,8 +42,7 @@ function insertOnce(src, marker, insertion, label, after = false) {
 
 // ——— app.js module block ———
 const MODULE_START = '// ——— App-wide Experience Mode (Simple / Advanced) ———';
-const CLOUD_MARKER = '// ——— Cloud Sync (optional account layer) ———';
-const MODULE_END = app.includes(CLOUD_MARKER) ? CLOUD_MARKER : 'const defaultData = {';
+const MODULE_END = 'const defaultData = {';
 
 if (app.includes(MODULE_START)) {
     const start = app.indexOf(MODULE_START);

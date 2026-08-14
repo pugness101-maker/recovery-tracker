@@ -1,60 +1,21 @@
 /**
  * Recovery Tracker CSP helpers.
- * connect-src stays origin-scoped to the configured Supabase project — never `*`.
+ * connect-src is 'self' only — the app is local-first and makes no third-party API calls.
  */
-export const DEFAULT_SUPABASE_URL = 'https://sgrqnewbqtejxiouzmga.supabase.co';
-
 const META_CSP_RE = /(<meta\s+http-equiv="Content-Security-Policy"\s+content=")([^"]*)(")/i;
 
-function isLocalSupabaseHost(hostname) {
-    const host = String(hostname || '').toLowerCase();
-    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]';
+export function connectSrcSources() {
+    return ["'self'"];
 }
 
-function isAllowedSupabaseHost(hostname) {
-    const host = String(hostname || '').toLowerCase();
-    if (!host || host.includes('*')) return false;
-    if (isLocalSupabaseHost(host)) return true;
-    return host.endsWith('.supabase.co') && host !== 'supabase.co';
-}
-
-export function parseAllowedSupabaseOrigin(supabaseUrl) {
-    const raw = String(supabaseUrl || '').trim();
-    if (!raw) return null;
-    let parsed;
-    try {
-        parsed = new URL(raw);
-    } catch {
-        return null;
-    }
-    if (parsed.username || parsed.password) return null;
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
-    if (parsed.protocol === 'http:' && !isLocalSupabaseHost(parsed.hostname)) return null;
-    if (!isAllowedSupabaseHost(parsed.hostname)) return null;
-    return parsed.origin;
-}
-
-export function connectSrcSources(supabaseUrl = DEFAULT_SUPABASE_URL) {
-    const sources = ["'self'"];
-    const origin = parseAllowedSupabaseOrigin(supabaseUrl) || parseAllowedSupabaseOrigin(DEFAULT_SUPABASE_URL);
-    if (!origin) return sources;
-    sources.push(origin);
-    if (origin.startsWith('https://')) sources.push(`wss://${origin.slice('https://'.length)}`);
-    if (origin.startsWith('http://')) sources.push(`ws://${origin.slice('http://'.length)}`);
-    return sources;
-}
-
-export function buildCsp({
-    supabaseUrl = DEFAULT_SUPABASE_URL,
-    includeFrameAncestors = false
-} = {}) {
+export function buildCsp({ includeFrameAncestors = false } = {}) {
     const directives = [
         "default-src 'self'",
         "script-src 'self' 'unsafe-inline'",
         "style-src 'self' 'unsafe-inline'",
         "img-src 'self' data: blob:",
         "font-src 'self' data:",
-        `connect-src ${connectSrcSources(supabaseUrl).join(' ')}`,
+        `connect-src ${connectSrcSources().join(' ')}`,
         "object-src 'none'",
         "base-uri 'self'",
         "form-action 'none'"
@@ -63,16 +24,16 @@ export function buildCsp({
     return directives.join('; ');
 }
 
-export function buildMetaCsp(supabaseUrl = DEFAULT_SUPABASE_URL) {
-    return buildCsp({ supabaseUrl, includeFrameAncestors: false });
+export function buildMetaCsp() {
+    return buildCsp({ includeFrameAncestors: false });
 }
 
-export function buildHeaderCsp(supabaseUrl = DEFAULT_SUPABASE_URL) {
-    return buildCsp({ supabaseUrl, includeFrameAncestors: true });
+export function buildHeaderCsp() {
+    return buildCsp({ includeFrameAncestors: true });
 }
 
-export function applyCspToHtml(html, supabaseUrl = DEFAULT_SUPABASE_URL) {
-    const policy = buildMetaCsp(supabaseUrl);
+export function applyCspToHtml(html) {
+    const policy = buildMetaCsp();
     if (!META_CSP_RE.test(html)) {
         throw new Error('Content-Security-Policy meta tag not found');
     }

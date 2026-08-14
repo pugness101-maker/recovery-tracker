@@ -1,42 +1,31 @@
 ---
-description: Recovery Tracker is local-first with optional Supabase cloud sync
+description: Recovery Tracker stores data locally in the browser
 alwaysApply: true
 ---
 
-# Local-first data storage (optional cloud sync)
+# Local-first data storage
 
-Recovery Tracker stores data in the browser first. Cloud sync is an optional account layer on `feature/cloud-sync` until explicitly approved for merge.
+Recovery Tracker stores data in the browser. There is no cloud sync or account layer.
 
 ## Persistence
 
 - **Primary / offline source**: `localStorage` key `recovery-tracker-v2`
 - **Last saved timestamp**: `localStorage` key `recovery-tracker-v2-last-saved`
-- **Auth session (optional)**: `localStorage` key `recovery-tracker-v2-auth`
-- **Cloud sync metadata**: `localStorage` key `recovery-tracker-v2-cloud-meta`
 - Every data mutation must call `saveData(appData)` so changes persist across refresh and browser restarts
-- `saveData` must succeed locally before any cloud push. Sync failure must never erase local data.
-- The app must work signed out, offline, and when cloud sync fails
-- Empty cloud data must never wipe populated local data
-
-## Cloud (Supabase)
-
-- Client uses the **anon key only**. Never put the service-role key in browser/Capacitor code.
-- Credentials live in environment variables (`.env.local`, Vercel). See `.env.example` and `docs/CLOUD_SYNC.md`.
-- Row Level Security must keep rows scoped to `auth.uid()`. Do not rely on client-side filtering for privacy.
-- Do not reintroduce Goals. PIN hashes stay device-local.
+- The app must work fully offline, with no network or account required
+- Do not introduce cloud sync, Supabase, or remote account storage unless explicitly requested
 
 ## Backups
 
 1. **Auto-save**: all log, purchase, substance, settings, and taper changes via `saveData`
 2. **JSON export/import**: backup and restore with validation; import offers merge or replace after user confirmation
 3. **CSV export**: optional downloadable export for logs and purchases (client-side only)
-4. **Optional cloud sync**: never removes JSON export/import
 
 ## UI
 
 - Show **Last Saved: [date/time]** on Dashboard and Settings (updated whenever `saveData` runs)
-- Settings → Account & Data: Cloud Sync status (Saved / Syncing / Offline / Sync error), Last synced, Export JSON Backup, Import JSON Backup, Export CSV
-- Danger Zone must distinguish **delete cloud account data** from **delete data from this device**
+- Settings → Account & Data → Data & Backup: Export JSON Backup, Import JSON Backup, Restore Last Backup, Export CSV, Repair Data
+- Danger Zone deletes data from this device only
 
 ## Import flow
 

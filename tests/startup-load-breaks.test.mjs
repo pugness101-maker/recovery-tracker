@@ -114,17 +114,14 @@ test('USE_BREAK_FIELDS is initialized before the startup loadData() call', () =>
     assert.equal(src.split('const BUY_BREAK_FIELDS').length - 1, 1);
 });
 
-test('cloud init in initializeApp runs after local data is persisted', () => {
+test('initializeApp persists loaded data and does not start cloud sync', () => {
     const src = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
     const start = src.indexOf('function initializeApp()');
     const end = src.indexOf('function refreshAppAfterDataChange()');
     assert.ok(start >= 0 && end > start, 'initializeApp body must be locatable');
     const body = src.slice(start, end);
-    const persistIdx = body.indexOf('persistLoadedAppDataIfNeeded()');
-    const cloudIdx = body.indexOf('initCloudSync()');
-    assert.ok(persistIdx >= 0, 'initializeApp must persist loaded data');
-    assert.ok(cloudIdx >= 0, 'initializeApp must start cloud sync');
-    assert.ok(persistIdx < cloudIdx, 'cloud initialization must run after local data load/persist');
+    assert.ok(body.includes('persistLoadedAppDataIfNeeded()'), 'initializeApp must persist loaded data');
+    assert.equal(body.includes('initCloudSync()'), false);
 });
 
 test('existing saved data loads through the real startup path without a TDZ crash', () => {
@@ -149,13 +146,6 @@ test('existing saved data loads through the real startup path without a TDZ cras
     assert.equal(rt.getBreakBetweenUsesDetails(second, data).hours, 8);
     assert.equal(rt.getBreakBetweenUsesDetails(second, data).text, '8h');
     assert.equal(second.breakHours, 8);
-
-    const statusBefore = rt.getCloudSyncStatus();
-    assert.ok(statusBefore);
-    rt.initCloudSync();
-    const statusAfter = rt.getCloudSyncStatus();
-    assert.ok(statusAfter);
-    assert.equal(typeof statusAfter.status, 'string');
 });
 
 test('Simple and Advanced modes still load from saved data', () => {
