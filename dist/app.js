@@ -9024,6 +9024,38 @@ function getNormalizedUsageLabel(metricsOrEngine, data = appData) {
 
 // ——— Data Health (Phase 1) ———
 
+/** Deterministic fixes Data Health may apply without manual review. */
+const DATA_HEALTH_SAFE_FIXES = new Set([
+    'clamp-negative-remaining',
+    'recalc-purchase',
+    'normalize-legacy-log',
+    'clear-broken-link'
+]);
+
+/** Fixes that need explicit user review before applying (duplicates, uncertain ownership). */
+const DATA_HEALTH_REVIEW_REQUIRED_FIXES = new Set([
+    'dedupe-log',
+    'dedupe-purchase',
+    'clear-orphan-substance'
+]);
+
+function isDataHealthIssueSafe(issue) {
+    if (!issue?.fix || issue.fix === 'noop') return false;
+    if (issue.requiresReview || DATA_HEALTH_REVIEW_REQUIRED_FIXES.has(issue.fix)) return false;
+    return DATA_HEALTH_SAFE_FIXES.has(issue.fix);
+}
+
+/** Isolated copy for read-only inventory mismatch checks — never mutates live appData. */
+function buildDataHealthRecalcSandbox(data, purchaseId) {
+    return {
+        ...data,
+        logs: JSON.parse(JSON.stringify(data.logs || [])),
+        purchases: (data.purchases || []).map(p => (
+            String(p.id) === String(purchaseId) ? JSON.parse(JSON.stringify(p)) : p
+        ))
+    };
+}
+
 function scanDataHealth(data = appData) {
     const issues = [];
     const seenLogIds = new Map();
@@ -9041,6 +9073,7 @@ function scanDataHealth(data = appData) {
                 severity: 'warn',
                 label: `Duplicate use log id “${id}”`,
                 fix: 'dedupe-log',
+                requiresReview: true,
                 payload: { logId: log.id, index }
             });
         } else {
@@ -9054,6 +9087,7 @@ function scanDataHealth(data = appData) {
                 severity: 'warn',
                 label: `Log ${id} references missing substance “${sid}”`,
                 fix: 'clear-orphan-substance',
+                requiresReview: true,
                 payload: { logId: log.id, substanceId: sid }
             });
         }
@@ -9090,6 +9124,7 @@ function scanDataHealth(data = appData) {
                 severity: 'warn',
                 label: `Duplicate purchase id “${id}”`,
                 fix: 'dedupe-purchase',
+                requiresReview: true,
                 payload: { purchaseId: purchase.id, index }
             });
         } else {
@@ -9117,21 +9152,17 @@ function scanDataHealth(data = appData) {
                 severity: 'warn',
                 label: `Purchase ${id} references missing substance “${sid}”`,
                 fix: 'noop',
+                requiresReview: true,
                 payload: { purchaseId: purchase.id }
             });
         }
     });
 
-    // Mismatched inventory totals: remaining vs recalculated
+    // Mismatched inventory totals: remaining vs recalculated (sandbox — live logs/purchases untouched)
     (data.purchases || []).forEach(purchase => {
         if (!purchase?.id) return;
         const before = getPurchaseRemainingAmount(purchase);
-        const clone = JSON.parse(JSON.stringify(purchase));
-        const tempData = {
-            ...data,
-            purchases: (data.purchases || []).map(p => (String(p.id) === String(purchase.id) ? clone : p)),
-            logs: data.logs
-        };
+        const tempData = buildDataHealthRecalcSandbox(data, purchase.id);
         try {
             recalculatePurchaseRemaining(purchase.id, tempData);
             const after = getPurchaseRemainingAmount(
@@ -9165,24 +9196,39 @@ function scanDataHealth(data = appData) {
 
 function previewDataHealthRepairs(report = scanDataHealth()) {
     const fixable = (report.issues || []).filter(i => i.fix && i.fix !== 'noop');
+    const safeFixable = fixable.filter(isDataHealthIssueSafe);
+    const reviewRequired = fixable.filter(i => !isDataHealthIssueSafe(i));
     return {
         report,
         fixableCount: fixable.length,
-        preview: fixable.map(i => ({ id: i.id, type: i.type, label: i.label, fix: i.fix }))
+        safeFixableCount: safeFixable.length,
+        reviewRequiredCount: reviewRequired.length,
+        preview: fixable.map(i => ({
+            id: i.id,
+            type: i.type,
+            label: i.label,
+            fix: i.fix,
+            safe: isDataHealthIssueSafe(i)
+        })),
+        safePreview: safeFixable.map(i => ({ id: i.id, type: i.type, label: i.label, fix: i.fix }))
     };
 }
 
 function applyDataHealthRepairs(report = null, options = {}) {
-    createAutoBackup(options.reason || 'before-data-health-repair');
+    if (!options.skipBackup) {
+        createAutoBackup(options.reason || 'before-data-health-repair');
+    }
     const scan = report || scanDataHealth(appData);
     const preview = previewDataHealthRepairs(scan);
     const selected = options.fixIds
         ? new Set(options.fixIds)
-        : new Set(preview.preview.map(p => p.id));
+        : new Set(preview.preview.filter(p => p.safe).map(p => p.id));
     let applied = 0;
+    let skippedUnhandled = 0;
 
     scan.issues.forEach(issue => {
         if (!selected.has(issue.id)) return;
+        if (options.safeOnly && !isDataHealthIssueSafe(issue)) return;
         const log = (appData.logs || []).find(l => String(l.id) === String(issue.payload?.logId));
         const purchase = (appData.purchases || []).find(p => String(p.id) === String(issue.payload?.purchaseId));
         switch (issue.fix) {
@@ -9247,15 +9293,72 @@ function applyDataHealthRepairs(report = null, options = {}) {
                 }
                 break;
             }
+            case 'clear-orphan-substance':
+                if (log) {
+                    const orphanId = issue.payload?.substanceId ?? getUseSubstanceId(log);
+                    const resolved = orphanId ? normalizeSubstanceRef(orphanId, appData) : null;
+                    const stillMissing = orphanId
+                        && !getSubstance(orphanId, appData)
+                        && !(resolved && getSubstance(resolved, appData));
+                    if (stillMissing) {
+                        log.dataHealthOrphanSubstanceId = String(orphanId);
+                        delete log.substanceId;
+                        delete log.substance;
+                        log.needsReview = true;
+                        log.inventoryAffects = false;
+                        log.supplyUnlinked = true;
+                        applied++;
+                    }
+                }
+                break;
             default:
+                if (issue.fix && issue.fix !== 'noop') skippedUnhandled++;
                 break;
         }
     });
 
-    repairDataConsistency(appData);
-    saveData(appData);
-    refreshAppAfterDataChange();
-    return { applied, totalFixable: preview.fixableCount, scan };
+    let consistencyStats = null;
+    if (options.runMaintenance !== false) {
+        repairVapeInventoryLinks(appData);
+        consistencyStats = repairDataConsistency(appData);
+    }
+    if (!options.skipSave) {
+        saveData(appData);
+        refreshAppAfterDataChange();
+    }
+    return {
+        applied,
+        skippedUnhandled,
+        totalFixable: preview.fixableCount,
+        safeFixable: preview.safeFixableCount,
+        scan,
+        consistencyStats
+    };
+}
+
+function applyAllSafeDataHealthRepairs() {
+    if (!confirm(
+        'Repair all safe data health issues?\n\n'
+        + 'Duplicate removal, orphaned records, and uncertain ownership are excluded unless you select them manually.\n\n'
+        + 'An automatic backup will be created first.'
+    )) return;
+    pushChangeHistory('before-repair', { summary: 'Before safe data health repair' });
+    const report = scanDataHealth(appData);
+    const safeIds = report.issues.filter(isDataHealthIssueSafe).map(i => i.id);
+    const result = applyDataHealthRepairs(report, {
+        fixIds: safeIds,
+        reason: 'before-safe-repair-all',
+        skipBackup: false,
+        runMaintenance: true
+    });
+    const summary = formatRepairSummary(result.consistencyStats || {});
+    alert(
+        `Safe repair complete.\n\n`
+        + `Applied ${result.applied} scanned fix(es) from ${result.safeFixable} safe issue(s).\n\n`
+        + summary
+    );
+    renderDataHealthPanel();
+    renderChangeHistoryPanel();
 }
 
 function renderDataHealthPanel() {
@@ -9264,7 +9367,11 @@ function renderDataHealthPanel() {
     const report = scanDataHealth(appData);
     const preview = previewDataHealthRepairs(report);
     if (!report.total) {
-        container.innerHTML = '<p class="data-health-ok">No data health issues found.</p>';
+        container.innerHTML = `
+            <p class="data-health-ok">No data health issues found.</p>
+            <div class="data-health-actions">
+                <button type="button" class="secondary-btn" onclick="applyAllSafeDataHealthRepairs()">Repair all safe issues</button>
+            </div>`;
         return;
     }
     const countBits = Object.entries(report.counts)
@@ -9274,19 +9381,27 @@ function renderDataHealthPanel() {
     container.innerHTML = `
         <div class="data-health-summary">${countBits}</div>
         <ul class="data-health-issue-list">
-            ${report.issues.slice(0, 40).map(issue => `
-                <li class="data-health-issue data-health-${escapeAttr(issue.severity)}">
+            ${report.issues.slice(0, 40).map(issue => {
+                const safe = isDataHealthIssueSafe(issue);
+                const fixable = issue.fix && issue.fix !== 'noop';
+                const review = issue.requiresReview || DATA_HEALTH_REVIEW_REQUIRED_FIXES.has(issue.fix);
+                const checked = fixable && safe && !review;
+                const disabled = !fixable;
+                return `
+                <li class="data-health-issue data-health-${escapeAttr(issue.severity)}${review ? ' data-health-review-required' : ''}">
                     <label>
                         <input type="checkbox" class="data-health-fix-cb" data-issue-id="${escapeAttr(issue.id)}"
-                            ${issue.fix && issue.fix !== 'noop' ? 'checked' : 'disabled'}>
-                        <span>${escapeHtml(issue.label)}</span>
+                            ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+                        <span>${escapeHtml(issue.label)}${review ? ' <em class="data-health-review-tag">(review required)</em>' : ''}</span>
                     </label>
-                </li>`).join('')}
+                </li>`;
+            }).join('')}
         </ul>
-        <p class="field-hint">${preview.fixableCount} fixable issue(s). Preview repairs before applying.</p>
+        <p class="field-hint">${preview.safeFixableCount} safe fix(es), ${preview.reviewRequiredCount} review-required. Preview before applying. An automatic backup is created before any repair.</p>
         <div class="data-health-actions">
             <button type="button" class="secondary-btn" onclick="previewDataHealthRepairsUI()">Preview repairs</button>
             <button type="button" class="secondary-btn" onclick="applySelectedDataHealthRepairs()">Apply selected repairs</button>
+            <button type="button" class="secondary-btn" onclick="applyAllSafeDataHealthRepairs()">Repair all safe issues</button>
         </div>`;
 }
 
@@ -9296,8 +9411,13 @@ function previewDataHealthRepairsUI() {
         alert('No automatic repairs available.');
         return;
     }
-    const lines = preview.preview.slice(0, 20).map(p => `• ${p.label}`).join('\n');
-    alert(`Repair preview (${preview.fixableCount}):\n\n${lines}${preview.fixableCount > 20 ? '\n…' : ''}`);
+    const safeLines = preview.safePreview.slice(0, 15).map(p => `• ${p.label}`).join('\n');
+    const reviewLines = preview.preview.filter(p => !p.safe).slice(0, 10).map(p => `• ${p.label} (review required)`).join('\n');
+    let body = `Safe repairs (${preview.safeFixableCount}):\n\n${safeLines || '—'}`;
+    if (preview.reviewRequiredCount) {
+        body += `\n\nReview required (${preview.reviewRequiredCount}):\n\n${reviewLines}${preview.reviewRequiredCount > 10 ? '\n…' : ''}`;
+    }
+    alert(body);
 }
 
 function applySelectedDataHealthRepairs() {
@@ -9308,9 +9428,27 @@ function applySelectedDataHealthRepairs() {
         alert('Select at least one repair.');
         return;
     }
+    const report = scanDataHealth(appData);
+    const selectedIssues = report.issues.filter(i => checked.includes(i.id));
+    const reviewSelected = selectedIssues.filter(i => !isDataHealthIssueSafe(i));
+    if (reviewSelected.length) {
+        const names = reviewSelected.slice(0, 5).map(i => i.label).join('\n• ');
+        const extra = reviewSelected.length > 5 ? '\n…' : '';
+        if (!confirm(
+            `You selected ${reviewSelected.length} review-required repair(s):\n\n• ${names}${extra}\n\n`
+            + 'These may delete duplicates or change records with uncertain ownership. Continue?'
+        )) return;
+    }
     if (!confirm(`Apply ${checked.length} repair(s)? An automatic backup will be created first.`)) return;
-    const result = applyDataHealthRepairs(null, { fixIds: checked });
-    alert(`Applied ${result.applied} repair(s).`);
+    pushChangeHistory('before-repair', { summary: 'Before selected data health repair' });
+    const result = applyDataHealthRepairs(report, { fixIds: checked });
+    let msg = `Applied ${result.applied} repair(s).`;
+    if (result.skippedUnhandled) {
+        msg += `\n\n${result.skippedUnhandled} selected repair(s) had no handler and were not applied.`;
+    } else if (result.applied < checked.length) {
+        msg += `\n\n${checked.length - result.applied} selected repair(s) could not be applied (record missing or already fixed).`;
+    }
+    alert(msg);
     renderDataHealthPanel();
     renderChangeHistoryPanel();
 }
@@ -26469,6 +26607,7 @@ if (typeof document !== 'undefined') {
     }
 }
 
+// ——— END Inventory Source (splice boundary — do not remove) ———
 
 // ——— App-wide Experience Mode (Simple / Advanced) ———
 // Presentation layer only — reuses canonical calc engine, logs, inventory, tapers.
@@ -29076,6 +29215,37 @@ function migrateFromV1(v1) {
 }
 
 let appDataLoadedFromStorage = false;
+/** Set during loadData when normalization/migration changed persistable data. */
+let appDataPersistAfterLoad = false;
+
+const PERSIST_COMPARE_VOLATILE_KEYS = new Set(['updatedAt', 'scannedAt']);
+
+function stripPersistVolatileFields(value) {
+    if (value == null || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map(stripPersistVolatileFields);
+    const out = {};
+    Object.keys(value).forEach(key => {
+        if (PERSIST_COMPARE_VOLATILE_KEYS.has(key)) return;
+        out[key] = stripPersistVolatileFields(value[key]);
+    });
+    return out;
+}
+
+function persistComparableSnapshot(data) {
+    return JSON.stringify(stripPersistVolatileFields(data));
+}
+
+function migrationsPersistStateChanged(before, after) {
+    const b = before?.migrations && typeof before.migrations === 'object' ? before.migrations : {};
+    const a = after?.migrations && typeof after.migrations === 'object' ? after.migrations : {};
+    return JSON.stringify(b) !== JSON.stringify(a);
+}
+
+function detectPersistNeededAfterNormalize(rawBeforeNormalize, normalized) {
+    if (!rawBeforeNormalize || !normalized) return true;
+    if (migrationsPersistStateChanged(rawBeforeNormalize, normalized)) return true;
+    return persistComparableSnapshot(rawBeforeNormalize) !== persistComparableSnapshot(normalized);
+}
 
 function getDefaultAppData() {
     return typeof structuredClone === 'function'
@@ -29127,6 +29297,7 @@ function ensureLoadedDataDefaults(data) {
 }
 
 function loadData() {
+    appDataPersistAfterLoad = false;
     const raw = localStorage.getItem(STORAGE_KEY);
     let data = null;
 
@@ -29142,7 +29313,10 @@ function loadData() {
         appDataLoadedFromStorage = true;
         console.log('Loaded saved recovery data');
         ensureLoadedDataDefaults(data);
-        return normalizeAppDataSafe(data);
+        const rawSnapshot = JSON.parse(JSON.stringify(data));
+        const normalized = normalizeAppDataSafe(data);
+        appDataPersistAfterLoad = detectPersistNeededAfterNormalize(rawSnapshot, normalized);
+        return normalized;
     }
 
     const v1 = localStorage.getItem(STORAGE_KEY_V1);
@@ -29155,10 +29329,14 @@ function loadData() {
         appDataLoadedFromStorage = true;
         console.log('Loaded saved recovery data');
         ensureLoadedDataDefaults(data);
-        return normalizeAppDataSafe(data);
+        const rawSnapshot = JSON.parse(JSON.stringify(data));
+        const normalized = normalizeAppDataSafe(data);
+        appDataPersistAfterLoad = detectPersistNeededAfterNormalize(rawSnapshot, normalized);
+        return normalized;
     }
 
     console.log('No saved data found, using defaults');
+    appDataLoadedFromStorage = false;
     return normalizeAppDataSafe(getDefaultAppData());
 }
 
@@ -32582,8 +32760,9 @@ function saveData(data) {
 }
 
 function persistLoadedAppDataIfNeeded() {
-    if (appDataLoadedFromStorage) {
+    if (appDataLoadedFromStorage && appDataPersistAfterLoad) {
         saveData(appData);
+        appDataPersistAfterLoad = false;
     }
 }
 
@@ -32688,15 +32867,7 @@ function restoreLastAutoBackup() {
 }
 
 function repairAppData() {
-    if (!confirm('Repair data consistency issues?\n\nAn automatic backup will be saved first.')) return;
-    pushChangeHistory('before-repair', { summary: 'Before data repair' });
-    createAutoBackup('before-repair');
-    repairVapeInventoryLinks(appData);
-    const stats = repairDataConsistency(appData);
-    saveData(appData);
-    refreshAppAfterDataChange();
-    alert(`Data repair complete.\n\n${formatRepairSummary(stats)}`);
-    renderDataHealthPanel();
+    applyAllSafeDataHealthRepairs();
 }
 
 function setText(id, text) {
@@ -62874,6 +63045,15 @@ function __getRecoveryTrackerTestExports() {
         scanDataHealth,
         previewDataHealthRepairs,
         applyDataHealthRepairs,
+        applyAllSafeDataHealthRepairs,
+        isDataHealthIssueSafe,
+        buildDataHealthRecalcSandbox,
+        DATA_HEALTH_SAFE_FIXES,
+        DATA_HEALTH_REVIEW_REQUIRED_FIXES,
+        persistLoadedAppDataIfNeeded,
+        detectPersistNeededAfterNormalize,
+        persistComparableSnapshot,
+        __getAppDataPersistAfterLoad: () => appDataPersistAfterLoad,
         pushChangeHistory,
         loadChangeHistory,
         restoreChangeHistoryEntry,

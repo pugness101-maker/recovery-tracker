@@ -9045,6 +9045,17 @@ function isDataHealthIssueSafe(issue) {
     return DATA_HEALTH_SAFE_FIXES.has(issue.fix);
 }
 
+/** Isolated copy for read-only inventory mismatch checks — never mutates live appData. */
+function buildDataHealthRecalcSandbox(data, purchaseId) {
+    return {
+        ...data,
+        logs: JSON.parse(JSON.stringify(data.logs || [])),
+        purchases: (data.purchases || []).map(p => (
+            String(p.id) === String(purchaseId) ? JSON.parse(JSON.stringify(p)) : p
+        ))
+    };
+}
+
 function scanDataHealth(data = appData) {
     const issues = [];
     const seenLogIds = new Map();
@@ -9147,16 +9158,11 @@ function scanDataHealth(data = appData) {
         }
     });
 
-    // Mismatched inventory totals: remaining vs recalculated
+    // Mismatched inventory totals: remaining vs recalculated (sandbox — live logs/purchases untouched)
     (data.purchases || []).forEach(purchase => {
         if (!purchase?.id) return;
         const before = getPurchaseRemainingAmount(purchase);
-        const clone = JSON.parse(JSON.stringify(purchase));
-        const tempData = {
-            ...data,
-            purchases: (data.purchases || []).map(p => (String(p.id) === String(purchase.id) ? clone : p)),
-            logs: data.logs
-        };
+        const tempData = buildDataHealthRecalcSandbox(data, purchase.id);
         try {
             recalculatePurchaseRemaining(purchase.id, tempData);
             const after = getPurchaseRemainingAmount(
@@ -9218,6 +9224,7 @@ function applyDataHealthRepairs(report = null, options = {}) {
         ? new Set(options.fixIds)
         : new Set(preview.preview.filter(p => p.safe).map(p => p.id));
     let applied = 0;
+    let skippedUnhandled = 0;
 
     scan.issues.forEach(issue => {
         if (!selected.has(issue.id)) return;
@@ -9286,7 +9293,26 @@ function applyDataHealthRepairs(report = null, options = {}) {
                 }
                 break;
             }
+            case 'clear-orphan-substance':
+                if (log) {
+                    const orphanId = issue.payload?.substanceId ?? getUseSubstanceId(log);
+                    const resolved = orphanId ? normalizeSubstanceRef(orphanId, appData) : null;
+                    const stillMissing = orphanId
+                        && !getSubstance(orphanId, appData)
+                        && !(resolved && getSubstance(resolved, appData));
+                    if (stillMissing) {
+                        log.dataHealthOrphanSubstanceId = String(orphanId);
+                        delete log.substanceId;
+                        delete log.substance;
+                        log.needsReview = true;
+                        log.inventoryAffects = false;
+                        log.supplyUnlinked = true;
+                        applied++;
+                    }
+                }
+                break;
             default:
+                if (issue.fix && issue.fix !== 'noop') skippedUnhandled++;
                 break;
         }
     });
@@ -9302,6 +9328,7 @@ function applyDataHealthRepairs(report = null, options = {}) {
     }
     return {
         applied,
+        skippedUnhandled,
         totalFixable: preview.fixableCount,
         safeFixable: preview.safeFixableCount,
         scan,
@@ -9415,7 +9442,13 @@ function applySelectedDataHealthRepairs() {
     if (!confirm(`Apply ${checked.length} repair(s)? An automatic backup will be created first.`)) return;
     pushChangeHistory('before-repair', { summary: 'Before selected data health repair' });
     const result = applyDataHealthRepairs(report, { fixIds: checked });
-    alert(`Applied ${result.applied} repair(s).`);
+    let msg = `Applied ${result.applied} repair(s).`;
+    if (result.skippedUnhandled) {
+        msg += `\n\n${result.skippedUnhandled} selected repair(s) had no handler and were not applied.`;
+    } else if (result.applied < checked.length) {
+        msg += `\n\n${checked.length - result.applied} selected repair(s) could not be applied (record missing or already fixed).`;
+    }
+    alert(msg);
     renderDataHealthPanel();
     renderChangeHistoryPanel();
 }
@@ -26574,6 +26607,7 @@ if (typeof document !== 'undefined') {
     }
 }
 
+// ——— END Inventory Source (splice boundary — do not remove) ———
 
 // ——— App-wide Experience Mode (Simple / Advanced) ———
 // Presentation layer only — reuses canonical calc engine, logs, inventory, tapers.
@@ -29181,6 +29215,37 @@ function migrateFromV1(v1) {
 }
 
 let appDataLoadedFromStorage = false;
+/** Set during loadData when normalization/migration changed persistable data. */
+let appDataPersistAfterLoad = false;
+
+const PERSIST_COMPARE_VOLATILE_KEYS = new Set(['updatedAt', 'scannedAt']);
+
+function stripPersistVolatileFields(value) {
+    if (value == null || typeof value !== 'object') return value;
+    if (Array.isArray(value)) return value.map(stripPersistVolatileFields);
+    const out = {};
+    Object.keys(value).forEach(key => {
+        if (PERSIST_COMPARE_VOLATILE_KEYS.has(key)) return;
+        out[key] = stripPersistVolatileFields(value[key]);
+    });
+    return out;
+}
+
+function persistComparableSnapshot(data) {
+    return JSON.stringify(stripPersistVolatileFields(data));
+}
+
+function migrationsPersistStateChanged(before, after) {
+    const b = before?.migrations && typeof before.migrations === 'object' ? before.migrations : {};
+    const a = after?.migrations && typeof after.migrations === 'object' ? after.migrations : {};
+    return JSON.stringify(b) !== JSON.stringify(a);
+}
+
+function detectPersistNeededAfterNormalize(rawBeforeNormalize, normalized) {
+    if (!rawBeforeNormalize || !normalized) return true;
+    if (migrationsPersistStateChanged(rawBeforeNormalize, normalized)) return true;
+    return persistComparableSnapshot(rawBeforeNormalize) !== persistComparableSnapshot(normalized);
+}
 
 function getDefaultAppData() {
     return typeof structuredClone === 'function'
@@ -29232,6 +29297,7 @@ function ensureLoadedDataDefaults(data) {
 }
 
 function loadData() {
+    appDataPersistAfterLoad = false;
     const raw = localStorage.getItem(STORAGE_KEY);
     let data = null;
 
@@ -29247,7 +29313,10 @@ function loadData() {
         appDataLoadedFromStorage = true;
         console.log('Loaded saved recovery data');
         ensureLoadedDataDefaults(data);
-        return normalizeAppDataSafe(data);
+        const rawSnapshot = JSON.parse(JSON.stringify(data));
+        const normalized = normalizeAppDataSafe(data);
+        appDataPersistAfterLoad = detectPersistNeededAfterNormalize(rawSnapshot, normalized);
+        return normalized;
     }
 
     const v1 = localStorage.getItem(STORAGE_KEY_V1);
@@ -29260,10 +29329,14 @@ function loadData() {
         appDataLoadedFromStorage = true;
         console.log('Loaded saved recovery data');
         ensureLoadedDataDefaults(data);
-        return normalizeAppDataSafe(data);
+        const rawSnapshot = JSON.parse(JSON.stringify(data));
+        const normalized = normalizeAppDataSafe(data);
+        appDataPersistAfterLoad = detectPersistNeededAfterNormalize(rawSnapshot, normalized);
+        return normalized;
     }
 
     console.log('No saved data found, using defaults');
+    appDataLoadedFromStorage = false;
     return normalizeAppDataSafe(getDefaultAppData());
 }
 
@@ -32687,8 +32760,9 @@ function saveData(data) {
 }
 
 function persistLoadedAppDataIfNeeded() {
-    if (appDataLoadedFromStorage) {
+    if (appDataLoadedFromStorage && appDataPersistAfterLoad) {
         saveData(appData);
+        appDataPersistAfterLoad = false;
     }
 }
 
@@ -62973,8 +63047,13 @@ function __getRecoveryTrackerTestExports() {
         applyDataHealthRepairs,
         applyAllSafeDataHealthRepairs,
         isDataHealthIssueSafe,
+        buildDataHealthRecalcSandbox,
         DATA_HEALTH_SAFE_FIXES,
         DATA_HEALTH_REVIEW_REQUIRED_FIXES,
+        persistLoadedAppDataIfNeeded,
+        detectPersistNeededAfterNormalize,
+        persistComparableSnapshot,
+        __getAppDataPersistAfterLoad: () => appDataPersistAfterLoad,
         pushChangeHistory,
         loadChangeHistory,
         restoreChangeHistoryEntry,

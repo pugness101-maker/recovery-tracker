@@ -1,13 +1,83 @@
 #!/usr/bin/env node
+/**
+ * Splices inventory-source.module.js into app.js between unique boundary markers.
+ *
+ * SAFETY: This script does NOT write files unless invoked with --apply.
+ * Default mode is validate-only (dry run). Re-running with a missing/ambiguous
+ * end marker previously deleted thousands of lines — guarded below.
+ */
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), '..');
-let app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
-let html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
-let css = fs.readFileSync(path.join(root, 'styles.css'), 'utf8');
-const mod = fs.readFileSync(path.join(root, 'inventory-source.module.js'), 'utf8');
+
+export const INVENTORY_SOURCE_SPLICE_START = '// ——— Inventory Source (unified Store + Supplier Contact) ———';
+export const INVENTORY_SOURCE_SPLICE_END = '// ——— END Inventory Source (splice boundary — do not remove) ———';
+
+/** Max lines the inventory-source block may span; abort if larger (Experience Mode lives after END). */
+export const INVENTORY_SOURCE_MAX_BLOCK_LINES = 1200;
+
+export function stripInventorySourceModuleMarker(moduleSource) {
+    let mod = String(moduleSource || '').trim();
+    if (mod.startsWith(INVENTORY_SOURCE_SPLICE_START)) {
+        mod = mod.slice(INVENTORY_SOURCE_SPLICE_START.length).replace(/^\s*\n/, '');
+    }
+    return mod.trim();
+}
+
+export function locateInventorySourceSpliceBlock(appSource) {
+    const startMatches = appSource.split(INVENTORY_SOURCE_SPLICE_START).length - 1;
+    const endMatches = appSource.split(INVENTORY_SOURCE_SPLICE_END).length - 1;
+    if (startMatches !== 1) {
+        return { ok: false, error: `expected exactly one start marker, found ${startMatches}` };
+    }
+    if (endMatches !== 1) {
+        return { ok: false, error: `expected exactly one end marker, found ${endMatches}` };
+    }
+    const start = appSource.indexOf(INVENTORY_SOURCE_SPLICE_START);
+    const end = appSource.indexOf(INVENTORY_SOURCE_SPLICE_END, start + INVENTORY_SOURCE_SPLICE_START.length);
+    if (start < 0 || end < 0) {
+        return { ok: false, error: 'start or end marker missing' };
+    }
+    if (end <= start) {
+        return { ok: false, error: 'end marker precedes start marker' };
+    }
+    const block = appSource.slice(start, end + INVENTORY_SOURCE_SPLICE_END.length);
+    const lineCount = block.split('\n').length;
+    if (lineCount > INVENTORY_SOURCE_MAX_BLOCK_LINES) {
+        return {
+            ok: false,
+            error: `block too large (${lineCount} lines > ${INVENTORY_SOURCE_MAX_BLOCK_LINES}); refusing ambiguous splice`
+        };
+    }
+    const afterEnd = appSource.slice(end + INVENTORY_SOURCE_SPLICE_END.length, end + INVENTORY_SOURCE_SPLICE_END.length + 120);
+    if (!afterEnd.includes('App-wide Experience Mode')) {
+        return {
+            ok: false,
+            error: 'block end is not immediately followed by Experience Mode section'
+        };
+    }
+    return { ok: true, start, end, endExclusive: end + INVENTORY_SOURCE_SPLICE_END.length, lineCount };
+}
+
+export function previewInventorySourceSplice(appSource, moduleSource) {
+    const located = locateInventorySourceSpliceBlock(appSource);
+    if (!located.ok) return located;
+    const modBody = stripInventorySourceModuleMarker(moduleSource);
+    const replacement = `${INVENTORY_SOURCE_SPLICE_START}\n${modBody}\n\n${INVENTORY_SOURCE_SPLICE_END}\n`;
+    const next = appSource.slice(0, located.start) + replacement + appSource.slice(located.endExclusive);
+    const relocated = locateInventorySourceSpliceBlock(next);
+    if (!relocated.ok) {
+        return { ok: false, error: `post-splice validation failed: ${relocated.error}` };
+    }
+    return {
+        ok: true,
+        lineCount: located.lineCount,
+        replacementLineCount: replacement.split('\n').length,
+        next
+    };
+}
 
 function tryReplace(src, find, repl, label) {
     if (!src.includes(find)) {
@@ -17,19 +87,35 @@ function tryReplace(src, find, repl, label) {
     return src.replace(find, repl);
 }
 
-if (app.includes('// ——— Inventory Source (unified Store + Supplier Contact) ———')) {
-    const start = app.indexOf('// ——— Inventory Source (unified Store + Supplier Contact) ———');
-    const end = app.indexOf('const defaultData = {', start);
-    if (start < 0 || end < 0) throw new Error('markers missing for refresh');
-    app = app.slice(0, start) + mod + '\n\n' + app.slice(end);
-    console.log('Refreshed inventory-source module');
-} else {
-    const marker = 'const defaultData = {';
-    const idx = app.indexOf(marker);
-    if (idx < 0) throw new Error('defaultData missing');
-    app = app.slice(0, idx) + mod + '\n\n' + app.slice(idx);
-    console.log('Inserted inventory-source module');
+const isCliMain = process.argv[1]
+    && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url);
+
+if (isCliMain) {
+const apply = process.argv.includes('--apply');
+
+const appPath = path.join(root, 'app.js');
+const htmlPath = path.join(root, 'index.html');
+const cssPath = path.join(root, 'styles.css');
+const modPath = path.join(root, 'inventory-source.module.js');
+
+let app = fs.readFileSync(appPath, 'utf8');
+const mod = fs.readFileSync(modPath, 'utf8');
+
+const preview = previewInventorySourceSplice(app, mod);
+if (!preview.ok) {
+    console.error('splice-inventory-source: refused —', preview.error);
+    console.error('The script will not modify app.js. Fix boundary markers or run validate-only checks.');
+    process.exit(1);
 }
+
+console.log(`Inventory Source block: ${preview.lineCount} line(s); replacement ~${preview.replacementLineCount} line(s).`);
+
+if (!apply) {
+    console.log('Dry run only — no files written. Pass --apply to modify app.js, index.html, and styles.css.');
+    process.exit(0);
+}
+
+app = preview.next;
 
 app = tryReplace(app,
     `    ensureInsightsLayoutPrefs(data);
@@ -60,7 +146,6 @@ app = tryReplace(app,
         supplier: 'Source (legacy)',`,
     'history column labels');
 
-// Hide supplier by default in TABLE_COLUMN_DEFAULTS purchaseHistory.hidden
 app = tryReplace(app,
     `    purchaseHistory: {
         order: [`,
@@ -69,19 +154,6 @@ app = tryReplace(app,
         order: [`,
     'comment purchase history');
 
-// Ensure supplier in hidden list — find purchaseHistory hidden array
-if (app.includes("purchaseHistory:") && !app.match(/purchaseHistory:[\s\S]{0,400}?hidden:\s*\[[^\]]*supplier/)) {
-    app = tryReplace(app,
-        `        // Family-specific columns are gated by getUseHistoryColumnCatalog / getUseHistoryVisibleColumns.
-        // Only keep rarely used generic metrics hidden by default.
-        hidden: ['count', 'rate'],`,
-        `        // Family-specific columns are gated by getUseHistoryColumnCatalog / getUseHistoryVisibleColumns.
-        // Only keep rarely used generic metrics hidden by default.
-        hidden: ['count', 'rate'],`,
-        'noop useHistory');
-}
-
-// Patch purchase history store cell to use formatPurchaseSourceDisplay — in render switch
 app = tryReplace(app,
     `        case 'store':
             return phTd('store', store || '—');`,
@@ -95,7 +167,7 @@ app = tryReplace(app,
     `        ensureInsightsLayoutPrefs,
         getInsightsLayoutPrefs,`,
     `        ensureInventorySourcesMigrated,
-        migrateInventorySources,
+        migrateInventorySourceFields,
         migratePurchaseSourceFields,
         syncPurchaseSourceFields,
         getPurchaseSourceName,
@@ -110,7 +182,9 @@ app = tryReplace(app,
         getInsightsLayoutPrefs,`,
     'source test exports');
 
-// HTML: rename store group label; source picker will replace at runtime
+let html = fs.readFileSync(htmlPath, 'utf8');
+let css = fs.readFileSync(cssPath, 'utf8');
+
 html = tryReplace(html,
     `                    <div class="form-group" id="buy-store-group">
                         <label for="buy-store-select">Store / Location</label>
@@ -131,11 +205,7 @@ html = tryReplace(html,
                     <div id="buy-source-mount" class="buy-source-mount"></div>`,
     'html store → source mount');
 
-// Insights store breakdown header
-html = tryReplace(html,
-    `Store / Location`,
-    `Source`,
-    'insights store label');
+html = tryReplace(html, `Store / Location`, `Source`, 'insights store label');
 
 if (!css.includes('.buy-source-picker')) {
     css += `
@@ -162,7 +232,14 @@ if (!css.includes('.buy-source-picker')) {
     console.log('Appended source CSS');
 }
 
-fs.writeFileSync(path.join(root, 'app.js'), app);
-fs.writeFileSync(path.join(root, 'index.html'), html);
-fs.writeFileSync(path.join(root, 'styles.css'), css);
-console.log('splice-inventory-source complete');
+const postCheck = locateInventorySourceSpliceBlock(app);
+if (!postCheck.ok) {
+    console.error('Post-write validation failed:', postCheck.error);
+    process.exit(1);
+}
+
+fs.writeFileSync(appPath, app);
+fs.writeFileSync(htmlPath, html);
+fs.writeFileSync(cssPath, css);
+console.log('splice-inventory-source complete (--apply)');
+}

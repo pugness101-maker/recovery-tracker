@@ -202,6 +202,38 @@ test('Data Health classifies duplicates and orphans as review-required', () => {
     assert.ok(preview.safeFixableCount >= 1);
 });
 
+test('clear-orphan-substance apply quarantines orphan and increments applied', () => {
+    const data = makeData({
+        logs: [{
+            id: 'orphan-only',
+            substanceId: 'missing-substance',
+            date: '2026-07-26',
+            amount: 0.1,
+            unit: 'g',
+            transactionType: 'use',
+            type: 'quick'
+        }]
+    });
+    const rt = setup(data);
+    const report = rt.scanDataHealth(rt.__getTestAppData());
+    const orphan = report.issues.find(i => i.fix === 'clear-orphan-substance');
+    assert.ok(orphan);
+
+    const result = rt.applyDataHealthRepairs(report, {
+        fixIds: [orphan.id],
+        skipBackup: true,
+        skipSave: true,
+        runMaintenance: false
+    });
+    assert.equal(result.applied, 1);
+    assert.equal(result.skippedUnhandled, 0);
+
+    const log = rt.__getTestAppData().logs.find(l => l.id === 'orphan-only');
+    assert.equal(log.dataHealthOrphanSubstanceId, 'missing-substance');
+    assert.equal(log.needsReview, true);
+    assert.equal(log.substanceId, undefined);
+});
+
 test('applyAllSafeDataHealthRepairs skips review-required duplicates', () => {
     const data = makeData({
         logs: [
