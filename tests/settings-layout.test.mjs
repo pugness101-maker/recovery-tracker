@@ -14,7 +14,9 @@ const SETTINGS_SECTION_ORDER = Object.freeze([
     'settingsDataHealth',
     'settingsDashboardLayout',
     'settingsContacts',
-    'settingsDangerZone'
+    'settingsDangerZone',
+    'settingsAdvancedTools',
+    'settingsAbout'
 ]);
 
 function readSettingsTabHtml() {

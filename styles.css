@@ -12571,3 +12571,226 @@ body.experience-simple .use-log-page [data-section="bulkActions"] {
     grid-template-columns: 1fr 1fr;
 }
 
+/* ——— Layout redesign ——— */
+.app-sidebar {
+    display: none;
+}
+
+.layout-legacy-hidden,
+.layout-workspace-hidden,
+.layout-settings-hidden,
+.layout-secondary-tab {
+    display: none !important;
+}
+
+.layout-section {
+    margin: 16px 0 20px;
+}
+
+.layout-section-title {
+    font-size: 0.95rem;
+    font-weight: 650;
+    margin: 0 0 10px;
+}
+
+.page-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin: 0 0 16px;
+}
+
+.page-toolbar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.today-glance,
+.glance-today-grid,
+.glance-status-grid {
+    display: grid;
+    gap: 12px;
+}
+
+.glance-today-grid,
+.glance-status-grid {
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+}
+
+.glance-today-card,
+.glance-status-card,
+.use-log-total-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+}
+
+.glance-today-card h3,
+.glance-status-card span,
+.use-log-total-card span {
+    display: block;
+    color: var(--text-muted);
+    font-size: 0.78rem;
+}
+
+.glance-today-amount,
+.glance-status-card strong,
+.use-log-total-card strong {
+    display: block;
+    font-size: 1.15rem;
+    line-height: 1.3;
+}
+
+.glance-today-label {
+    color: var(--text-muted);
+    font-size: 0.75rem;
+    margin: 0;
+}
+
+.glance-actions,
+.sidebar-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.use-log-totals-extra {
+    margin-top: 10px;
+}
+
+.collapsible-section.layout-bulk-idle .section-content {
+    display: none;
+}
+
+.settings-cat-nav,
+.inventory-view-nav,
+.taper-workspace-nav {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 0 0 16px;
+}
+
+.inventory-detail-list {
+    display: grid;
+    gap: 8px;
+}
+
+.inventory-detail-list div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+}
+
+.inventory-detail-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.inventory-layout-cards {
+    margin-bottom: 12px;
+}
+
+:root[data-view-layout="laptop"] .app-sidebar {
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    width: 240px;
+    z-index: 40;
+    overflow: auto;
+    padding: 16px 14px 24px;
+    background: var(--panel);
+    border-right: 1px solid var(--border);
+}
+
+:root[data-view-layout="laptop"] .app-container {
+    margin-left: 240px;
+    max-width: none;
+    min-width: 0;
+    width: calc(100% - 240px);
+}
+
+:root[data-view-layout="laptop"] .bottom-nav {
+    display: none;
+}
+
+:root[data-view-layout="laptop"] main {
+    padding-bottom: 32px;
+}
+
+.sidebar-brand {
+    margin-bottom: 16px;
+}
+
+.sidebar-app-name {
+    font-weight: 700;
+    font-size: 1rem;
+}
+
+.sidebar-heading {
+    font-size: 0.7rem;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--text-muted);
+    margin: 0 0 8px;
+}
+
+.sidebar-nav,
+.sidebar-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-bottom: 18px;
+}
+
+.sidebar-nav .nav-btn {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    min-height: 40px;
+    padding: 8px 10px;
+    border: 0;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text);
+    text-align: left;
+    cursor: pointer;
+}
+
+.sidebar-nav .nav-btn.active {
+    background: var(--accent-soft);
+}
+
+.sidebar-field select {
+    width: 100%;
+}
+
+.sidebar-mode-control {
+    display: flex;
+    gap: 6px;
+}
+
+:root[data-view-layout="phone"] .app-sidebar {
+    display: none;
+}
+
+:root[data-view-layout="phone"] .page-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+}
+
+:root[data-view-layout="phone"] .glance-today-grid,
+:root[data-view-layout="phone"] .glance-status-grid,
+:root[data-view-layout="phone"] .inventory-layout-cards {
+    grid-template-columns: 1fr 1fr;
+}

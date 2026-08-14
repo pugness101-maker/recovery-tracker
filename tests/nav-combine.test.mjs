@@ -30,7 +30,7 @@ test('markup uses combined nav tabs and keeps taper content ids', () => {
     assert.match(html, />Tapers</);
     assert.match(html, /Tapers define a gradual reduction path/);
     assert.doesNotMatch(html, /Goals &amp; Plans|New Goal|Convert Taper to Goal|goals define the target/i);
-    assert.match(html, /Insights &amp; Calendar|Insights & Calendar/);
+    assert.match(html, /Insights &amp; Calendar|Insights & Calendar|>Insights</);
 });
 
 test('legacy tab ids resolve to combined tabs with expected views', () => {
