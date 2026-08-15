@@ -131,15 +131,6 @@
                 </label>
             </div>
             <div class="sidebar-block">
-                <p class="sidebar-heading">Quick Add</p>
-                <div class="sidebar-actions">
-                    <button type="button" class="secondary-btn btn-sm" onclick="openLayoutLogUse()">Log Use</button>
-                    <button type="button" class="secondary-btn btn-sm" onclick="openLayoutAddPurchase()">Add Purchase</button>
-                    <button type="button" class="secondary-btn btn-sm" onclick="openLayoutAddInventory()">Add Inventory</button>
-                    <button type="button" class="secondary-btn btn-sm" onclick="openLayoutAddAdjustment()">Add Adjustment</button>
-                </div>
-            </div>
-            <div class="sidebar-block">
                 <p class="sidebar-heading">Shortcuts</p>
                 <div class="sidebar-actions">
                     <button type="button" class="secondary-btn btn-sm" onclick="openLayoutCalendar()">Calendar</button>
@@ -376,7 +367,7 @@
             <section id="use-log-tab" class="tab use-log-page">
                 <div class="page-header-row use-log-page-header">
                     <h2>Log</h2>
-                    <div class="page-substance-selector substance-select-card">
+                    <div class="page-substance-selector substance-select-card layout-global-substance-duplicate">
                         <label for="use-log-substance" class="page-substance-label">Substance</label>
                         <select id="use-log-substance" class="page-substance-select" onchange="onUseLogSubstanceChange()"></select>
                     </div>
@@ -419,7 +410,7 @@
                         </button>
                         <button type="button" class="use-entry-toggle-btn type-toggle-btn" data-type="gift_adjustment" onclick="selectUseEntryType('gift_adjustment')">
                             <span class="use-entry-toggle-icon">🎁</span>
-                            <span class="use-entry-toggle-label">Gift / Adjustment</span>
+                            <span class="use-entry-toggle-label">Gift</span>
                         </button>
                         <input type="hidden" id="use-type" value="quick">
                     </div>
@@ -430,9 +421,9 @@
                             <button type="button" class="use-tx-pill active" data-tx="use" data-tx-group="use" onclick="setUseTransactionType('use')">Personal Use</button>
                             <button type="button" class="use-tx-pill" data-tx="gift_given" data-tx-group="gift" onclick="setUseTransactionType('gift_given')">Gift Given</button>
                             <button type="button" class="use-tx-pill" data-tx="gift_received" data-tx-group="gift" onclick="setUseTransactionType('gift_received')">Gift Received</button>
-                            <button type="button" class="use-tx-pill" data-tx="inventory_adjustment" data-tx-group="gift" onclick="setUseTransactionType('inventory_adjustment')">Adjustment</button>
+                            <button type="button" class="use-tx-pill deprecated-ui-option" data-tx="inventory_adjustment" data-tx-group="gift" onclick="setUseTransactionType('inventory_adjustment')" hidden>Adjustment</button>
                         </div>
-                        <p id="use-legacy-shared-banner" class="use-supply-preview hidden">This is a Legacy Shared Use entry. Choose Personal Use, Gift Given, Gift Received, or Adjustment to convert it before saving.</p>
+                        <p id="use-legacy-shared-banner" class="use-supply-preview hidden">This is a legacy shared-use entry. Choose Personal Use, Gift Given, or Gift Received to convert it before saving.</p>
                         <input type="hidden" id="use-transaction-type" value="use">
                     </div>
 
@@ -795,7 +786,7 @@
                         <h2>Tapers</h2>
                         <p class="settings-hint">Tapers define a gradual reduction path.</p>
                     </div>
-                    <div class="page-substance-selector substance-select-card">
+                    <div class="page-substance-selector substance-select-card layout-global-substance-duplicate">
                         <label for="taper-substance" class="page-substance-label">Substance</label>
                         <select id="taper-substance" class="page-substance-select" required onchange="onTaperSubstanceChange()"></select>
                     </div>
@@ -1592,7 +1583,7 @@
                 <div id="calendar-tab" class="combined-subview calendar-page" data-ic-view="calendar" role="tabpanel" hidden>
                     <div class="page-header-row calendar-page-header">
                     <h2>Calendar</h2>
-                    <p class="settings-hint">Review use, inventory, tapers, and milestones in one place.</p>
+                    <p class="settings-hint">Review use, inventory, and tapers in one place.</p>
                 </div>
 
                 <div class="cal-toolbar">
@@ -1648,12 +1639,10 @@
                                 <option value="">All transactions</option>
                                 <option value="use">Personal use</option>
                                 <option value="session">Session</option>
-                                <option value="shared_use">Legacy Shared Use</option>
                                 <option value="gift_given">Gift given</option>
                                 <option value="gift_received">Gift received</option>
                                 <option value="purchase">Purchase</option>
                                 <option value="purchased_as_gift">Purchased as gift</option>
-                                <option value="inventory_adjustment">Adjustment</option>
                             </select>
                         </label>
                         <div class="cal-filter-chips" role="group" aria-label="Quick filters">
@@ -1662,7 +1651,7 @@
                             <label><input type="checkbox" id="cal-filter-gifts-only" onchange="onCalendarFilterChange()"> Gifts only</label>
                             <label><input type="checkbox" id="cal-filter-plans-only" onchange="onCalendarFilterChange()"> Plans only</label>
                             <label><input type="checkbox" id="cal-filter-goals-only" onchange="onCalendarFilterChange()"> Tapers only</label>
-                            <label><input type="checkbox" id="cal-filter-milestones-only" onchange="onCalendarFilterChange()"> Milestones only</label>
+                            <label class="deprecated-ui-option" hidden><input type="checkbox" id="cal-filter-milestones-only" onchange="onCalendarFilterChange()"> Milestones only</label>
                         </div>
                     </div>
                 </div>
@@ -1751,7 +1740,6 @@
                     <select id="stats-transaction-type" onchange="onInsightsTransactionTypeChange()">
                         <option value="">Personal Use</option>
                         <option value="use">Personal Use</option>
-                        <option value="shared_use">Legacy Shared Use</option>
                     </select>
                 </div>
 
@@ -1977,7 +1965,7 @@
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
-                        <p class="settings-hint">Cumulative personal-use by session. Gift, adjustment, and legacy Shared Use entries are excluded.</p>
+                        <p class="settings-hint">Cumulative personal-use by session. Gift entries are excluded.</p>
                         <div id="running-totals-root" class="running-totals-root" aria-live="polite"></div>
                     </div>
                 </div>
@@ -1988,7 +1976,7 @@
                         <span class="chevron">⌄</span>
                     </button>
                     <div class="section-content">
-                        <p class="settings-hint">Spending, gifts, and legacy shared-use history by linked contacts and suppliers.</p>
+                        <p class="settings-hint">Spending and gift history by linked contacts and suppliers.</p>
                         <div id="insights-contacts-root" class="insights-contacts-root" aria-live="polite"></div>
                     </div>
                 </div>
@@ -2159,7 +2147,7 @@
             <section id="buy-tracker-tab" class="tab">
                 <div class="page-header-row inventory-page-header">
                     <h2>Inventory</h2>
-                    <div class="page-substance-selector substance-select-card inventory-substance-field">
+                    <div class="page-substance-selector substance-select-card inventory-substance-field layout-global-substance-duplicate">
                         <label for="inventory-substance" class="page-substance-label">Substance</label>
                         <select id="inventory-substance" class="page-substance-select" onchange="onInventorySubstanceChange()"></select>
                     </div>

@@ -81,21 +81,25 @@ const RECOVERY_SCORE_FACTORS = Object.freeze([
 const CALENDAR_EVENT_TYPE_META = Object.freeze({
     personal_use: { label: 'Personal Use', className: 'cal-ev-personal-use', movable: false },
     session: { label: 'Session', className: 'cal-ev-session', movable: false },
-    shared_use: { label: 'Legacy Shared Use', className: 'cal-ev-shared-use', movable: false },
+    shared_use: { label: 'Legacy Shared Use', className: 'cal-ev-shared-use', movable: false, uiHidden: true },
     gift_given: { label: 'Gift Given', className: 'cal-ev-gift-given', movable: false },
     gift_received: { label: 'Gift Received', className: 'cal-ev-gift-received', movable: false },
     purchase: { label: 'Purchase', className: 'cal-ev-purchase', movable: false },
     purchased_as_gift: { label: 'Purchased as Gift', className: 'cal-ev-purchased-as-gift', movable: false },
-    inventory_adjustment: { label: 'Inventory Adjustment', className: 'cal-ev-adjustment', movable: false },
+    inventory_adjustment: { label: 'Inventory Adjustment', className: 'cal-ev-adjustment', movable: false, uiHidden: true },
     inventory_depletion: { label: 'Inventory Depletion', className: 'cal-ev-depletion', movable: false },
     expected_depletion: { label: 'Expected Depletion', className: 'cal-ev-forecast', movable: false, forecast: true },
     plan_target: { label: 'Plan Target', className: 'cal-ev-plan', movable: true },
     goal_deadline: { label: 'Plan Deadline', className: 'cal-ev-goal', movable: true },
     goal_completion: { label: 'Plan Completion', className: 'cal-ev-goal-done', movable: false },
-    recovery_milestone: { label: 'Recovery Milestone', className: 'cal-ev-milestone', movable: true },
-    craving: { label: 'Craving', className: 'cal-ev-craving', movable: false },
+    recovery_milestone: { label: 'Recovery Milestone', className: 'cal-ev-milestone', movable: true, uiHidden: true },
+    craving: { label: 'Craving', className: 'cal-ev-craving', movable: false, uiHidden: true },
     note: { label: 'Notes', className: 'cal-ev-note', movable: false }
 });
+
+const CALENDAR_UI_HIDDEN_EVENT_TYPES = Object.freeze(
+    Object.entries(CALENDAR_EVENT_TYPE_META).filter(([, meta]) => meta.uiHidden).map(([key]) => key)
+);
 
 const RECOVERY_DASHBOARD_SECTION_DEFAULTS = Object.freeze({
     summary: true,
@@ -20757,7 +20761,7 @@ const CHART_METRICS = Object.freeze([
     { id: 'no_use_streak', label: 'No-use streak', category: 'recovery', defaultType: 'line', unitFamily: 'days' },
     { id: 'no_purchase_streak', label: 'No-purchase streak', category: 'recovery', defaultType: 'line', unitFamily: 'days' },
     { id: 'recovery_score', label: 'Recovery score history', category: 'recovery', defaultType: 'area', unitFamily: 'score' },
-    { id: 'milestone_timeline', label: 'Milestone timeline', category: 'recovery', defaultType: 'scatter', unitFamily: 'count' }
+    { id: 'milestone_timeline', label: 'Milestone timeline', category: 'recovery', defaultType: 'scatter', unitFamily: 'count', uiHidden: true }
 ]);
 
 const CHART_PRESETS = Object.freeze({
@@ -22128,7 +22132,7 @@ function renderChartWidgetHtml(entry) {
 }
 
 function renderChartBuilderHtml(prefs) {
-    const metricOpts = CHART_METRICS.map(m => `<option value="${m.id}">${chEsc(m.label)}</option>`).join('');
+    const metricOpts = CHART_METRICS.filter(m => !m.uiHidden).map(m => `<option value="${m.id}">${chEsc(m.label)}</option>`).join('');
     return `<div class="ch-builder collapsible-section ${prefs.builderCollapsed ? 'collapsed' : ''}" data-section="chartBuilder">
         <button type="button" class="section-toggle" onclick="toggleSection('chartBuilder'); persistChartSystemPrefs({ builderCollapsed: !getChartSystemPrefs().builderCollapsed });">
             <span>Custom Chart Builder</span><span class="chevron">⌄</span>
@@ -29359,6 +29363,9 @@ function getLayoutTodayActivityLabel(card = {}) {
     if (haystack.includes('xanax') || haystack.includes('alprazolam') || haystack.includes('pill')) {
         return 'pills / mg today';
     }
+    if (haystack.includes('weed') || haystack.includes('thc') || haystack.includes('ketamine')) {
+        return 'used today';
+    }
     return 'used today';
 }
 
@@ -29384,13 +29391,16 @@ function renderTodayAtAGlance(data = appData) {
     const status = getLayoutStatusSnapshot(data);
 
     const todayCards = cards.length
-        ? cards.map(card => `
-            <article class="glance-today-card" data-substance-id="${escapeLayoutHtml(card.substanceId)}">
-                <h3>${escapeLayoutHtml(card.name)}</h3>
-                <p class="glance-today-amount">${escapeLayoutHtml(card.usedLabel)}</p>
-                <p class="glance-today-label">${escapeLayoutHtml(getLayoutTodayActivityLabel(card))}</p>
-            </article>`)
-        : `<p class="empty-hint">No substances to show yet. Add one in Settings.</p>`;
+        ? cards.map(card => [
+            '<article class="glance-today-card" data-substance-id="',
+            escapeLayoutHtml(card.substanceId),
+            '">',
+            '<h3>', escapeLayoutHtml(card.name), '</h3>',
+            '<p class="glance-today-amount">', escapeLayoutHtml(card.usedLabel), '</p>',
+            '<p class="glance-today-label">', escapeLayoutHtml(getLayoutTodayActivityLabel(card)), '</p>',
+            '</article>'
+        ].join('')).join('')
+        : '<p class="empty-hint">No substances to show yet. Add one in Settings.</p>';
 
     root.innerHTML = `
         <section class="layout-section" aria-labelledby="glance-today-heading">
@@ -62595,7 +62605,9 @@ let calendarTouchStartX = null;
 
 function getDefaultCalendarViewPrefs() {
     const visibleTypes = {};
-    Object.keys(CALENDAR_EVENT_TYPE_META).forEach(key => { visibleTypes[key] = true; });
+    Object.keys(CALENDAR_EVENT_TYPE_META).forEach(key => {
+        visibleTypes[key] = !CALENDAR_EVENT_TYPE_META[key].uiHidden;
+    });
     return {
         viewMode: 'month',
         anchorDate: '',
@@ -62640,7 +62652,8 @@ function ensureCalendarViewPrefs(data = appData) {
         prefs.visibleTypes = { ...defaults.visibleTypes };
     }
     Object.keys(CALENDAR_EVENT_TYPE_META).forEach(key => {
-        if (prefs.visibleTypes[key] === undefined) prefs.visibleTypes[key] = true;
+        if (CALENDAR_EVENT_TYPE_META[key].uiHidden) prefs.visibleTypes[key] = false;
+        else if (prefs.visibleTypes[key] === undefined) prefs.visibleTypes[key] = true;
     });
     if (!['month', 'week', 'day', 'agenda'].includes(prefs.viewMode)) prefs.viewMode = 'month';
     if (!prefs.weekStarts) prefs.weekStarts = 'sunday';
@@ -63379,7 +63392,9 @@ function syncCalendarControlsFromPrefs() {
 
     const toggles = document.getElementById('calendar-type-toggles');
     if (toggles) {
-        toggles.innerHTML = Object.entries(CALENDAR_EVENT_TYPE_META).map(([key, meta]) => `
+        toggles.innerHTML = Object.entries(CALENDAR_EVENT_TYPE_META)
+            .filter(([, meta]) => !meta.uiHidden)
+            .map(([key, meta]) => `
             <label><input type="checkbox" data-cal-type="${key}" ${prefs.visibleTypes[key] !== false ? 'checked' : ''} onchange="onCalendarTypeToggle('${key}', this.checked)"> ${escapeHtml(meta.label)}</label>
         `).join('');
     }
@@ -65166,6 +65181,7 @@ function __getRecoveryTrackerTestExports() {
         exportCalendarCsv,
         exportCalendarIcs,
         CALENDAR_EVENT_TYPE_META,
+        CALENDAR_UI_HIDDEN_EVENT_TYPES,
         invalidateCalendarEventsCache,
         getRecoveryDashboardPrefs,
         persistRecoveryDashboardPrefs,

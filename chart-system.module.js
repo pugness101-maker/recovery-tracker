@@ -83,7 +83,7 @@ const CHART_METRICS = Object.freeze([
     { id: 'no_use_streak', label: 'No-use streak', category: 'recovery', defaultType: 'line', unitFamily: 'days' },
     { id: 'no_purchase_streak', label: 'No-purchase streak', category: 'recovery', defaultType: 'line', unitFamily: 'days' },
     { id: 'recovery_score', label: 'Recovery score history', category: 'recovery', defaultType: 'area', unitFamily: 'score' },
-    { id: 'milestone_timeline', label: 'Achievement timeline', category: 'recovery', defaultType: 'scatter', unitFamily: 'count' }
+    { id: 'milestone_timeline', label: 'Achievement timeline', category: 'recovery', defaultType: 'scatter', unitFamily: 'count', uiHidden: true }
 ]);
 
 const CHART_PRESETS = Object.freeze({
@@ -1453,7 +1453,7 @@ function renderChartWidgetHtml(entry) {
 }
 
 function renderChartBuilderHtml(prefs) {
-    const metricOpts = CHART_METRICS.map(m => `<option value="${m.id}">${chEsc(m.label)}</option>`).join('');
+    const metricOpts = CHART_METRICS.filter(m => !m.uiHidden).map(m => `<option value="${m.id}">${chEsc(m.label)}</option>`).join('');
     return `<div class="ch-builder collapsible-section ${prefs.builderCollapsed ? 'collapsed' : ''}" data-section="chartBuilder">
         <button type="button" class="section-toggle" onclick="toggleSection('chartBuilder'); persistChartSystemPrefs({ builderCollapsed: !getChartSystemPrefs().builderCollapsed });">
             <span>Custom Chart Builder</span><span class="chevron">⌄</span>

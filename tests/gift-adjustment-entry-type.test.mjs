@@ -98,7 +98,7 @@ test('Log tab markup includes Gift / Adjustment beside Quick Use and Session', (
     const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
     assert.match(html, /data-type="gift_adjustment"/);
     assert.match(html, /selectUseEntryType\('gift_adjustment'\)/);
-    assert.match(html, /Gift \/ Adjustment/);
+    assert.match(html, />Gift</);
     assert.match(html, /use-entry-type-three/);
     assert.match(html, /data-tx-group="gift"/);
     assert.match(html, /data-tx="gift_given"/);

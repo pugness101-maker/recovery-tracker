@@ -244,6 +244,9 @@ function getLayoutTodayActivityLabel(card = {}) {
     if (haystack.includes('xanax') || haystack.includes('alprazolam') || haystack.includes('pill')) {
         return 'pills / mg today';
     }
+    if (haystack.includes('weed') || haystack.includes('thc') || haystack.includes('ketamine')) {
+        return 'used today';
+    }
     return 'used today';
 }
 
@@ -269,13 +272,16 @@ function renderTodayAtAGlance(data = appData) {
     const status = getLayoutStatusSnapshot(data);
 
     const todayCards = cards.length
-        ? cards.map(card => `
-            <article class="glance-today-card" data-substance-id="${escapeLayoutHtml(card.substanceId)}">
-                <h3>${escapeLayoutHtml(card.name)}</h3>
-                <p class="glance-today-amount">${escapeLayoutHtml(card.usedLabel)}</p>
-                <p class="glance-today-label">${escapeLayoutHtml(getLayoutTodayActivityLabel(card))}</p>
-            </article>`)
-        : `<p class="empty-hint">No substances to show yet. Add one in Settings.</p>`;
+        ? cards.map(card => [
+            '<article class="glance-today-card" data-substance-id="',
+            escapeLayoutHtml(card.substanceId),
+            '">',
+            '<h3>', escapeLayoutHtml(card.name), '</h3>',
+            '<p class="glance-today-amount">', escapeLayoutHtml(card.usedLabel), '</p>',
+            '<p class="glance-today-label">', escapeLayoutHtml(getLayoutTodayActivityLabel(card)), '</p>',
+            '</article>'
+        ].join('')).join('')
+        : '<p class="empty-hint">No substances to show yet. Add one in Settings.</p>';
 
     root.innerHTML = `
         <section class="layout-section" aria-labelledby="glance-today-heading">

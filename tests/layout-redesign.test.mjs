@@ -10,6 +10,8 @@ const root = path.dirname(path.dirname(fileURLToPath(import.meta.url)));
 test('layout redesign markup uses the approved page hierarchy', () => {
     const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
     assert.match(html, /id="app-sidebar"/);
+    assert.doesNotMatch(html, /sidebar-heading">Quick Add</);
+    assert.doesNotMatch(html, /openLayoutAddAdjustment/);
     assert.match(html, /Today at a Glance/);
     assert.match(html, /id="today-glance"/);
     assert.match(html, /id="simple-home"[^>]*layout-legacy-hidden/);
@@ -31,6 +33,8 @@ test('layout redesign markup uses the approved page hierarchy', () => {
     assert.match(html, /data-settings-cat-btn="about"/);
     assert.match(html, /setInsightsCalendarView\('money'\)">Spending</);
     assert.doesNotMatch(html, /Low Stock Alerts/);
+    assert.doesNotMatch(html, /<option value="shared_use">/);
+    assert.doesNotMatch(html, /<option value="inventory_adjustment">/);
     assert.match(html, /data-section="recentUse"/);
     const glanceIdx = html.indexOf('id="today-glance"');
     const wrapIdx = html.indexOf('id="advanced-home-wrap"');
@@ -59,4 +63,10 @@ test('layout helpers keep inventory views and settings categories', () => {
     assert.equal(rt.getLayoutTodayActivityLabel({ name: 'Nicotine', unit: 'puffs' }), 'puffs today');
     assert.equal(rt.getLayoutTodayActivityLabel({ name: 'LSD', unit: 'tabs' }), 'tabs / µg today');
     assert.equal(rt.getLayoutTodayActivityLabel({ name: 'Xanax', unit: 'mg' }), 'pills / mg today');
+    assert.deepEqual([...rt.CALENDAR_UI_HIDDEN_EVENT_TYPES].sort(), [
+        'craving',
+        'inventory_adjustment',
+        'recovery_milestone',
+        'shared_use'
+    ]);
 });

@@ -2525,7 +2525,6 @@ input[type="range"]::-webkit-slider-thumb {
 
 .taper-period-summary .taper-mini-stats {
     margin-top: 0;
-}
     margin-bottom: 8px;
 }
 
@@ -10584,6 +10583,16 @@ html[data-theme="light"] .metric-pc-tone-unfavorable .metric-pc-change .metric-p
 .cal-side-panel { margin-bottom: 12px; border: 1px solid var(--border); border-radius: 10px; padding: 0 10px; }
 .cal-filters-grid, .cal-settings-grid { display: grid; gap: 10px; padding-bottom: 10px; }
 .cal-filter-chips { display: flex; flex-wrap: wrap; gap: 8px 12px; font-size: 0.85rem; }
+.cal-type-toggles .cal-filter-chips,
+#calendar-type-toggles {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+    gap: 8px 14px;
+    align-items: start;
+}
+.cal-type-toggles legend {
+    margin-bottom: 8px;
+}
 .cal-summary-panel { margin-bottom: 12px; }
 .cal-period-summary {
     display: grid;
@@ -12623,6 +12632,11 @@ body.experience-simple .use-log-page [data-section="bulkActions"] {
 .glance-today-grid,
 .glance-status-grid {
     grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    align-items: stretch;
+}
+
+.glance-today-grid {
+    width: 100%;
 }
 
 .glance-today-card,
@@ -12681,7 +12695,13 @@ body.layout-redesign #simple-home,
 body.layout-redesign #advanced-home-wrap,
 body.layout-redesign #dashboard-tab .dash-header-meta,
 body.layout-redesign #dashboard-tab .dash-substance-field,
-body.layout-redesign #home-last-saved {
+body.layout-redesign #home-last-saved,
+body.layout-redesign .deprecated-ui-option,
+.deprecated-ui-option[hidden] {
+    display: none !important;
+}
+
+:root[data-view-layout="laptop"] body.layout-redesign .layout-global-substance-duplicate {
     display: none !important;
 }
 
