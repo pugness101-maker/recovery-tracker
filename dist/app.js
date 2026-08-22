@@ -16889,7 +16889,6 @@ function syncCombinedSubnav(navId, selectId, attrName, activeView) {
 const GOAL_TEMPLATES = Object.freeze([]);
 const GOAL_TYPE_META = Object.freeze({});
 const GOAL_LIFECYCLE = Object.freeze(['draft', 'active', 'paused', 'completed', 'archived', 'missed', 'cancelled']);
-let goalSystemUiState = { bucket: 'active', filter: 'all', substanceId: 'all' };
 
 const TAPER_TEMPLATES = Object.freeze([
     { id: 'linear', name: 'Linear reduction', reductionType: 'reduce-amount', description: 'Reduce by a fixed amount each step.' },
@@ -16912,8 +16911,6 @@ function ensureGoalSystemPrefs(data = appData) {
     if (!data.settings.goalSystem || typeof data.settings.goalSystem !== 'object') data.settings.goalSystem = {};
     return data.settings.goalSystem;
 }
-function getGoalSystemPrefs(data = appData) { return ensureGoalSystemPrefs(data); }
-function persistGoalSystemPrefs() {}
 function getDefaultGoalRecord() {
     return { id: '', name: '', type: '', status: 'active', substanceId: 'all', linkedPlanId: '', changeHistory: [] };
 }
@@ -16921,31 +16918,11 @@ function normalizeGoalRecord(goal) {
     if (!goal || typeof goal !== 'object') return getDefaultGoalRecord();
     return { ...getDefaultGoalRecord(), ...goal, linkedPlanId: goal.linkedPlanId || '', changeHistory: Array.isArray(goal.changeHistory) ? goal.changeHistory : [] };
 }
-function validateGoalRecord() { return { ok: false, errors: ['Goals have been removed'] }; }
 function saveGoalRecord() { return { goal: null, ok: false }; }
-function createGoalFromTemplate() { return null; }
-function duplicateGoal() { return null; }
-function pauseGoal() { return null; }
-function resumeGoal() { return null; }
-function completeGoalManually() { return null; }
-function archiveGoal() { return null; }
-function deleteGoal() { return null; }
-function evaluateGoal() { return null; }
 function evaluateAllGoals() { return []; }
-function computeGoalStatusFromProgress() { return 'active'; }
-function computeGoalActual() { return 0; }
-function resolveGoalPeriodBounds() { return null; }
-function syncGoalPeriodHistory() {}
-function filterAndSortGoalEvaluations(list) { return Array.isArray(list) ? list : []; }
 function buildGoalDashboardSummary() { return { counts: { active: 0, atRisk: 0, completed: 0, paused: 0 } }; }
-function buildGoalInsightsAnalytics() { return {}; }
-function buildGoalReminders() { return []; }
 function mapGoalsToCalendarEvents() { return []; }
-function suggestGoalsFromPlan() { return []; }
 function migrateLegacyGoals() {}
-function openGoalCreateForm() { if (typeof openUnifiedNewTaper === 'function') openUnifiedNewTaper(); }
-function openGoalDetail() {}
-function openGoalEditForm() {}
 function renderGoalsView() {
     if (typeof setGoalsPlansView === 'function') setGoalsPlansView('overview');
 }
@@ -16963,11 +16940,7 @@ function goalSubstanceLabel(substanceId, data = appData) {
         ? getSubstanceDisplayName(sub, data)
         : String(substanceId || '');
 }
-function formatGoalStatusLabel(status) { return String(status || '').replace(/_/g, ' '); }
-function formatGoalTargetDisplay() { return '—'; }
-function getGoalTypeMeta() { return null; }
 function pushGoalChange() {}
-function goalAfterMutation(data = appData) { if (typeof saveData === 'function') saveData(data); }
 
 function tapersRootEl() {
     return typeof document !== 'undefined' ? document.getElementById('tapers-root') : null;
@@ -17027,8 +17000,6 @@ function createGoalsFromPlanAndOpen() {
 }
 
 function linkGoalToPlan() { return null; }
-
-function unlinkGoalFromPlan() { return null; }
 
 let goalsPlansUiState = {
     activeSubstanceId: 'all',
@@ -17716,7 +17687,6 @@ function buildInsightsCalendarOverview(data = appData) {
     let useSummary = '—';
     let spendSummary = '—';
     let purchaseSummary = '—';
-    let goalPerf = '—';
     let planPerf = '—';
 
     try {
@@ -17731,7 +17701,6 @@ function buildInsightsCalendarOverview(data = appData) {
         const gp = buildGoalsPlansOverview(data, { substance: substanceId });
         planPerf = `${gp.plansOnTrack} tapers on track · ${gp.plansAboveTarget} above target`;
         useSummary = `${gp.activeTaperCount} active taper${gp.activeTaperCount === 1 ? '' : 's'}`;
-        goalPerf = '—';
     } catch (_) { /* overview soft-fail */ }
 
     return {
@@ -17740,7 +17709,6 @@ function buildInsightsCalendarOverview(data = appData) {
         useSummary,
         spendSummary,
         purchaseSummary,
-        goalPerf,
         planPerf,
         importantEvents: []
     };
@@ -20481,7 +20449,7 @@ function renderContactsView() {
                 <header class="ct-page-head">
                     <div>
                         <h2>Manage Contacts</h2>
-                        <p class="settings-hint">Shared across Log, Inventory, Goals &amp; Plans, Insights, and Home. Free-text history stays intact.</p>
+                        <p class="settings-hint">Shared across Log, Inventory, Tapers, Insights, and Home. Free-text history stays intact.</p>
                     </div>
                     <nav class="ct-subnav" aria-label="Contacts sections">
                         <button type="button" class="ct-subnav-btn${view === 'dashboard' ? ' active' : ''}" onclick="setContactsView('dashboard')">Dashboard</button>
@@ -62396,7 +62364,7 @@ function mapPlanGoalMilestoneEvents(bounds, data = appData) {
                 date: goalDate,
                 substanceId: plan.substanceId,
                 substanceName: name,
-                title: `Goal deadline · ${plan.name || name}`,
+                title: `Taper deadline · ${plan.name || name}`,
                 status: goalDate < getLocalDateString() ? 'missed' : 'planned',
                 searchable: plan.name || ''
             }));
@@ -62921,10 +62889,8 @@ function renderCalendarPeriodSummaryPanel(summary) {
                 </ul>
             </div>
             <div>
-                <h4>Goals &amp; plans</h4>
+                <h4>Tapers</h4>
                 <ul>
-                    <li>Goals completed: ${summary.goalsCompleted}</li>
-                    <li>Goals missed: ${summary.goalsMissed}</li>
                     <li>Plan adherence: ${summary.planAdherence != null ? `${summary.planAdherence}%` : '—'}</li>
                     <li>Gifts given: ${summary.giftsGiven}</li>
                     <li>Gifts received: ${summary.giftsReceived}</li>
@@ -63067,7 +63033,7 @@ function openCalendarEventSheet(eventId) {
         ['Cost', event.cost != null ? `${getCurrencySymbol()}${Number(event.cost).toFixed(2)}` : '—'],
         ['Contact', event.contact || '—'],
         ['Notes', event.notes || '—'],
-        ['Plan / goal', event.linkedPlanId || event.linkedGoalId || '—'],
+        ['Plan', event.linkedPlanId || '—'],
         ['Status', event.status || (event.forecast ? 'forecast' : '—')]
     ];
     body.innerHTML = `<dl class="cal-detail-list">${rows.map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd></div>`).join('')}</dl>`;
@@ -63085,9 +63051,6 @@ function openCalendarEventSheet(eventId) {
     }
     if (event.linkedPlanId) {
         actionBtns.push(`<button type="button" class="secondary-btn" onclick="calendarOpenLinkedPlan('${escapeHtml(event.id)}')">Open plan</button>`);
-    }
-    if (event.linkedGoalId) {
-        actionBtns.push(`<button type="button" class="secondary-btn" onclick="calendarOpenLinkedGoal('${escapeHtml(event.id)}')">Open goal</button>`);
     }
     if (event.linkedInventoryId && event.recordKind !== 'purchase') {
         actionBtns.push(`<button type="button" class="secondary-btn" onclick="calendarOpenLinkedInventory('${escapeHtml(event.id)}')">Open linked inventory</button>`);
@@ -63109,9 +63072,6 @@ function calendarEditEvent(eventId) {
         editUseEntry(event.recordId);
     } else if (event.recordKind === 'purchase') {
         editPurchase(event.recordId);
-    } else if (event.recordKind === 'goal' || event.linkedGoalId) {
-        switchTab('goals-tab');
-        openGoalDetail(event.linkedGoalId || event.recordId);
     } else if (event.linkedPlanId) {
         switchTab('taper-tab');
         openTaperPlanFromManage(event.linkedPlanId);
@@ -63157,14 +63117,6 @@ function calendarOpenLinkedPlan(eventId) {
 }
 
 function calendarOpenLinkedGoal(eventId) {
-    const event = findCalendarEventById(eventId);
-    if (!event) return;
-    closeCalendarEventSheet();
-    if (event.linkedGoalId || event.recordKind === 'goal') {
-        switchTab('goals-tab');
-        openGoalDetail(event.linkedGoalId || event.recordId);
-        return;
-    }
     calendarOpenLinkedPlan(eventId);
 }
 
@@ -64119,32 +64071,12 @@ function __getRecoveryTrackerTestExports() {
         getGoals,
         getGoalById,
         ensureGoalSystemPrefs,
-        getGoalSystemPrefs,
-        persistGoalSystemPrefs,
         getDefaultGoalRecord,
         normalizeGoalRecord,
-        validateGoalRecord,
         saveGoalRecord,
-        createGoalFromTemplate,
-        duplicateGoal,
-        pauseGoal,
-        resumeGoal,
-        completeGoalManually,
-        archiveGoal,
-        deleteGoal,
-        evaluateGoal,
         evaluateAllGoals,
-        computeGoalStatusFromProgress,
-        computeGoalActual,
-        resolveGoalPeriodBounds,
-        syncGoalPeriodHistory,
-        filterAndSortGoalEvaluations,
         buildGoalDashboardSummary,
-        buildGoalInsightsAnalytics,
-        buildGoalReminders,
         mapGoalsToCalendarEvents,
-        suggestGoalsFromPlan,
-        unlinkGoalFromPlan,
         ensureCombinedNavPrefs,
         migrateCombinedNavActiveTab,
         resolveTabNavigation,
