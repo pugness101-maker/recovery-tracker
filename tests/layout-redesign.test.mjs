@@ -22,9 +22,13 @@ test('layout redesign markup uses the approved page hierarchy', () => {
     assert.match(homeSaved[0], /layout-legacy-hidden/);
     assert.ok((html.match(/data-last-saved-display/g) || []).length >= 2, 'dashboard should expose last-saved display hooks');
     assert.doesNotMatch(html, /id="dashboard-last-saved"/);
-    assert.match(html, /data-inv-view="active"/);
-    assert.match(html, /data-inv-view="purchases"/);
-    assert.match(html, /data-inv-view="history"/);
+    assert.doesNotMatch(html, /data-inv-view="active"/);
+    assert.doesNotMatch(html, /data-inv-view="purchases"/);
+    assert.doesNotMatch(html, /data-inv-view="history"/);
+    assert.match(html, /data-inv-date="today"/);
+    assert.match(html, /data-inv-date="last-7"/);
+    assert.match(html, /data-inv-date="all"/);
+    assert.match(html, /openLayoutAddPurchase\(\)">\+ Add Purchase</);
     assert.match(html, /data-taper-workspace="weekly"/);
     assert.match(html, /data-settings-cat-btn="substances"/);
     assert.match(html, /data-settings-cat-btn="data"/);
@@ -54,7 +58,7 @@ test('layout redesign CSS includes sidebar and shared cards', () => {
 
 test('layout helpers keep inventory views and settings categories', () => {
     const rt = loadRecoveryTrackerApp();
-    assert.deepEqual([...rt.LAYOUT_INVENTORY_VIEWS], ['active', 'purchases', 'history']);
+    assert.deepEqual([...rt.LAYOUT_INVENTORY_VIEWS], ['all']);
     assert.deepEqual([...rt.LAYOUT_TAPER_WORKSPACE_VIEWS], ['weekly', 'purchases', 'details']);
     assert.deepEqual([...rt.LAYOUT_SETTINGS_CATEGORIES], ['substances', 'data', 'appearance', 'advanced', 'about']);
     assert.equal(typeof rt.renderTodayAtAGlance, 'function');

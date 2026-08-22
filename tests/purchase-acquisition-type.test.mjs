@@ -170,7 +170,8 @@ test('Add Inventory markup uses a visible full-width How Acquired select', () =>
     assert.match(html, /id="buy-gift-date"/);
     assert.match(html, /id="buy-total-cost-group"/);
     assert.match(html, /id="buy-store-group"/);
-    assert.match(html, /id="buy-payment-group"/);
+    assert.doesNotMatch(html, /id="buy-payment-group"/);
+    assert.doesNotMatch(html, /Payment Method/);
 });
 
 test('How Acquired select CSS forces visible full-width control', () => {

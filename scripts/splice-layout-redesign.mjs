@@ -83,9 +83,9 @@ app = tryReplace(app,
     'export layout redesign');
 
 app = tryReplace(app,
-    `let inventoryTabFilter = 'all';`,
     `let inventoryTabFilter = 'active';`,
-    'default inventory filter active');
+    `let inventoryTabFilter = 'all';`,
+    'default inventory filter all');
 
 app = tryReplace(app,
     `    ['dashboard-last-saved', 'settings-last-saved'].forEach(id => {`,

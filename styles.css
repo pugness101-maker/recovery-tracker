@@ -8660,10 +8660,27 @@ html[data-theme="light"] .ccr-contrast-warning.ccr-contrast-bad {
     cursor: pointer;
 }
 
-.use-log-filter-btn.active {
+.use-log-filter-btn.active,
+.date-shortcut-btn.active {
     border-color: var(--accent);
     background: rgba(76, 175, 80, 0.15);
     color: var(--accent);
+}
+
+.date-shortcut-custom {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    gap: 10px 12px;
+    margin: 0 0 12px;
+}
+
+.date-shortcut-custom.hidden {
+    display: none;
+}
+
+.inventory-date-bar {
+    margin-bottom: 10px;
 }
 
 .use-log-filter-chips {

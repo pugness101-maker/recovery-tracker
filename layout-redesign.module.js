@@ -2,14 +2,14 @@
 // Presentation-only reorganization. Reuses the existing calculation layer.
 // Does not reset data, duplicate totals, or remove working features.
 
-const LAYOUT_INVENTORY_VIEWS = Object.freeze(['active', 'purchases', 'history']);
+const LAYOUT_INVENTORY_VIEWS = Object.freeze(['all']);
 const LAYOUT_TAPER_WORKSPACE_VIEWS = Object.freeze(['weekly', 'purchases', 'details']);
 const LAYOUT_SETTINGS_CATEGORIES = Object.freeze(['substances', 'data', 'appearance', 'advanced', 'about']);
 const LAYOUT_APP_VERSION = '2.0';
 
 let layoutTaperWorkspaceView = 'weekly';
 let layoutSettingsCategory = 'substances';
-let layoutInventoryView = 'active';
+let layoutInventoryView = 'all';
 let layoutHooksInstalled = false;
 
 function escapeLayoutHtml(value) {
@@ -402,37 +402,15 @@ function applyLogLayout() {
 }
 
 function setLayoutInventoryView(view) {
-    const next = LAYOUT_INVENTORY_VIEWS.includes(view) ? view : 'active';
-    layoutInventoryView = next;
-    if (typeof inventoryTabFilter !== 'undefined') {
-        if (next === 'active') inventoryTabFilter = 'active';
-        else if (next === 'purchases') inventoryTabFilter = 'all';
-        else inventoryTabFilter = 'history';
-    }
-    if (typeof normalizeInventoryStatusFilter === 'function' && next !== 'purchases' && next !== 'history') {
-        inventoryTabFilter = normalizeInventoryStatusFilter(next);
-    }
-    document.querySelectorAll('[data-inv-view]').forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('data-inv-view') === next);
-    });
-    const statusEl = document.getElementById('inventory-filter-status');
-    if (statusEl) {
-        if (next === 'active') statusEl.value = 'active';
-        else if (next === 'purchases') statusEl.value = 'all';
-        else statusEl.value = 'depleted';
-    }
-    if (typeof saveInventoryFilterState === 'function') saveInventoryFilterState();
+    layoutInventoryView = 'all';
+    void view;
     if (typeof renderInventorySummaryCards === 'function') renderInventorySummaryCards();
     if (typeof renderPurchaseHistory === 'function') renderPurchaseHistory(null);
     if (typeof updateInventoryFiltersPanelUI === 'function') updateInventoryFiltersPanelUI();
 }
 
 function applyInventoryHistoryFilter(list) {
-    if (layoutInventoryView !== 'history' && inventoryTabFilter !== 'history') return list;
-    return (list || []).filter(p => {
-        const tab = typeof getPurchaseInventoryTab === 'function' ? getPurchaseInventoryTab(p) : 'active';
-        return tab === 'depleted' || tab === 'gifted' || tab === 'hidden';
-    });
+    return list || [];
 }
 
 function enhanceInventorySummaryCards() {
@@ -441,16 +419,18 @@ function enhanceInventorySummaryCards() {
     const selectedId = typeof getInventorySubstanceFilterId === 'function'
         ? getInventorySubstanceFilterId()
         : getLayoutSelectedSubstanceId();
+    const purchases = typeof getInventoryFilteredPurchases === 'function'
+        ? getInventoryFilteredPurchases(selectedId || null)
+        : (appData.purchases || []).filter(p => {
+            if (isLayoutAllSubstances(selectedId)) return true;
+            const sid = typeof getPurchaseSubstanceId === 'function' ? getPurchaseSubstanceId(p) : p.substanceId;
+            return sid === selectedId;
+        });
     const summary = typeof getInventorySummary === 'function'
-        ? getInventorySummary(selectedId || null, appData)
+        ? getInventorySummary(selectedId || null, appData, purchases)
         : null;
     if (!summary) return;
     const cur = typeof getCurrencySymbol === 'function' ? getCurrencySymbol() : '$';
-    const purchases = (appData.purchases || []).filter(p => {
-        if (isLayoutAllSubstances(selectedId)) return true;
-        const sid = typeof getPurchaseSubstanceId === 'function' ? getPurchaseSubstanceId(p) : p.substanceId;
-        return sid === selectedId;
-    });
     const totalSpent = purchases.reduce((s, p) => {
         if (typeof purchaseCountsTowardSpend === 'function' && !purchaseCountsTowardSpend(p)) return s;
         const amt = typeof getPurchaseSpendAmount === 'function'
@@ -697,27 +677,6 @@ function installLayoutHooks() {
         };
     }
 
-    function patchInventoryListFilter(original) {
-        return function patchedInventoryList(substanceId, data) {
-            const prev = inventoryTabFilter;
-            if (layoutInventoryView === 'purchases' || inventoryTabFilter === 'purchases') {
-                inventoryTabFilter = 'all';
-            }
-            let list = original(substanceId, data);
-            inventoryTabFilter = prev;
-            if (layoutInventoryView === 'history' || prev === 'history') {
-                list = applyInventoryHistoryFilter(list);
-            }
-            return list;
-        };
-    }
-    if (typeof getInventoryFilteredPurchases === 'function') {
-        getInventoryFilteredPurchases = patchInventoryListFilter(getInventoryFilteredPurchases);
-    }
-    if (typeof getInventoryPurchasesForStatusView === 'function') {
-        getInventoryPurchasesForStatusView = patchInventoryListFilter(getInventoryPurchasesForStatusView);
-    }
-
     if (typeof renderInsightsCalendarOverviewHtml === 'function') {
         const original = renderInsightsCalendarOverviewHtml;
         renderInsightsCalendarOverviewHtml = function patchedRenderInsightsOverview(overview) {
@@ -757,10 +716,7 @@ function installLayoutHooks() {
 function initLayoutRedesign() {
     applyLayoutPageClass();
     installLayoutHooks();
-    if (typeof inventoryTabFilter !== 'undefined' && inventoryTabFilter === 'all') {
-        layoutInventoryView = 'active';
-        inventoryTabFilter = 'active';
-    }
+    layoutInventoryView = 'all';
     applyLayoutRedesign(typeof appData !== 'undefined' ? appData : {});
     setLayoutTaperWorkspaceView(layoutTaperWorkspaceView);
     setLayoutSettingsCategory(layoutSettingsCategory);

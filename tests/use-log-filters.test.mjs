@@ -151,6 +151,15 @@ test('Log Filters markup includes date shortcuts, transaction, entry, and Clear 
     assert.match(html, /onclick="setUseLogFilter\('today'\)"/);
     assert.match(html, /onclick="setUseLogFilter\('week'\)"/);
     assert.match(html, /onclick="setUseLogFilter\('month'\)"/);
+    assert.match(html, /onclick="setUseLogFilter\('last-7'\)"/);
+    assert.match(html, /onclick="setUseLogFilter\('last-30'\)"/);
+    assert.match(html, /onclick="setUseLogFilter\('custom'\)"/);
+    assert.match(html, />All Time</);
+    assert.match(html, />Last 7 Days</);
+    assert.match(html, />Last 30 Days</);
+    assert.match(html, />Custom Range</);
+    assert.match(html, /id="use-log-filter-date-start"/);
+    assert.match(html, /id="use-log-filter-date-end"/);
     assert.match(html, /id="sidebar-substance"/);
     assert.match(html, /Transaction Type/);
     assert.match(html, /Entry Type/);
@@ -227,6 +236,36 @@ test('Date shortcuts All, Today, This Week, and This Month use local dates', () 
     bounds = rt.getUseLogFilterBounds();
     assert.equal(bounds.startDate, null);
     assert.equal(bounds.endDate, null);
+
+    rt.setUseLogFilter('last-7');
+    bounds = rt.getUseLogFilterBounds();
+    assert.equal(bounds.startDate, '2026-07-22');
+    assert.equal(bounds.endDate, REFERENCE_DATE);
+    ids = rt.getFilteredUseLogs().map(l => l.id);
+    assert.ok(ids.includes('coke-today'));
+    assert.ok(ids.includes('coke-week'));
+    assert.ok(!ids.includes('coke-old'));
+
+    rt.setUseLogFilter('last-30');
+    bounds = rt.getUseLogFilterBounds();
+    assert.equal(bounds.startDate, '2026-06-29');
+    assert.equal(bounds.endDate, REFERENCE_DATE);
+    ids = rt.getFilteredUseLogs().map(l => l.id);
+    assert.ok(ids.includes('coke-old'));
+
+    rt.setUseLogFilter('custom');
+    rt.useLogListFiltersRef.value = {
+        datePreset: 'custom',
+        customStart: '2026-07-26',
+        customEnd: '2026-07-28'
+    };
+    bounds = rt.getUseLogFilterBounds();
+    assert.equal(bounds.startDate, '2026-07-26');
+    assert.equal(bounds.endDate, '2026-07-28');
+    ids = rt.getFilteredUseLogs().map(l => l.id);
+    assert.ok(ids.includes('coke-today'));
+    assert.ok(ids.includes('coke-week'));
+    assert.ok(!ids.includes('coke-old'));
 });
 
 test('This Week respects calendar week-start Monday', () => {
@@ -263,6 +302,16 @@ test('Transaction Type and Entry Type filters combine with AND logic', () => {
     });
     assert.equal(combined.length, 1);
     assert.equal(combined[0].id, 'coke-today');
+
+    rt.setUseLogFilter('last-7');
+    const last7Use = rt.getFilteredUseLogs({
+        substanceId: COKE_ID,
+        dateFilter: 'last-7',
+        transactionType: 'use',
+        entryType: 'quick'
+    });
+    assert.equal(last7Use.length, 1);
+    assert.equal(last7Use[0].id, 'coke-week');
 
     const none = rt.getFilteredUseLogs({
         transactionType: 'gift_given',
