@@ -6,6 +6,16 @@
 let inventoryTabFilter = 'all';
 let inventorySearchQuery = '';
 const inventorySelectedIds = new Set();
+const INVENTORY_RANGE_FILTER_KEYS = Object.freeze([
+    'totalCostMin', 'totalCostMax',
+    'costPerUnitMin', 'costPerUnitMax',
+    'qtyBoughtMin', 'qtyBoughtMax',
+    'qtyRemainingMin', 'qtyRemainingMax',
+    'amountUsedMin', 'amountUsedMax',
+    'pctUsedMin', 'pctUsedMax',
+    'purchaseDateMin', 'purchaseDateMax'
+]);
+
 const inventoryListFilters = {
     substanceId: '',
     datePreset: 'all',
@@ -13,7 +23,21 @@ const inventoryListFilters = {
     dateEnd: '',
     hasRemaining: '',
     hasCost: '',
-    vapeOnly: false
+    acquisitionType: '',
+    totalCostMin: '',
+    totalCostMax: '',
+    costPerUnitMin: '',
+    costPerUnitMax: '',
+    qtyBoughtMin: '',
+    qtyBoughtMax: '',
+    qtyRemainingMin: '',
+    qtyRemainingMax: '',
+    amountUsedMin: '',
+    amountUsedMax: '',
+    pctUsedMin: '',
+    pctUsedMax: '',
+    purchaseDateMin: '',
+    purchaseDateMax: ''
 };
 let inventoryFiltersPanelOpen = false;
 const INVENTORY_FILTERS_PANEL_KEY = 'recoveryTracker.inventoryFiltersPanel.v1';
@@ -51,6 +75,94 @@ function purchaseMatchesInventoryStatus(purchase, status = inventoryTabFilter) {
     if (normalized === 'history') return tab === 'depleted' || tab === 'gifted' || tab === 'hidden';
     return tab === normalized;
 }
+function getPurchaseFilterTotalCost(purchase) {
+    const cost = parseFloat(typeof getPurchaseTotalCost === 'function' ? getPurchaseTotalCost(purchase) : purchase?.totalCost);
+    return Number.isFinite(cost) ? cost : null;
+}
+
+function getPurchaseFilterCostPerUnit(purchase) {
+    const cpu = parseFloat(purchase?.costPerUnit);
+    if (Number.isFinite(cpu)) return cpu;
+    const cost = getPurchaseFilterTotalCost(purchase);
+    const qty = typeof getPurchaseQuantityBought === 'function'
+        ? getPurchaseQuantityBought(purchase)
+        : parseFloat(purchase?.quantityBought);
+    if (cost == null || !Number.isFinite(qty) || qty <= 0) return null;
+    return cost / qty;
+}
+
+function getPurchaseFilterQuantityBought(purchase) {
+    const qty = typeof getPurchaseQuantityBought === 'function'
+        ? getPurchaseQuantityBought(purchase)
+        : parseFloat(purchase?.quantityBought ?? purchase?.quantity);
+    return Number.isFinite(qty) ? qty : null;
+}
+
+function getPurchaseFilterQuantityRemaining(purchase) {
+    const rem = typeof getPurchaseRemainingDisplayAmount === 'function'
+        ? getPurchaseRemainingDisplayAmount(purchase)
+        : (typeof getPurchaseRemainingAmount === 'function'
+            ? getPurchaseRemainingAmount(purchase)
+            : parseFloat(purchase?.remainingAmount));
+    return rem == null || !Number.isFinite(rem) ? null : rem;
+}
+
+function getPurchaseFilterAmountUsed(purchase) {
+    const bought = getPurchaseFilterQuantityBought(purchase);
+    const remaining = getPurchaseFilterQuantityRemaining(purchase);
+    if (bought == null || remaining == null) return null;
+    return Math.max(0, bought - remaining);
+}
+
+function getPurchaseFilterPercentUsed(purchase) {
+    if (typeof getPurchasePercentUsed === 'function') {
+        const pct = getPurchasePercentUsed(purchase);
+        return Number.isFinite(pct) ? pct : null;
+    }
+    const bought = getPurchaseFilterQuantityBought(purchase);
+    const used = getPurchaseFilterAmountUsed(purchase);
+    if (bought == null || !(bought > 0) || used == null) return null;
+    return Math.round((used / bought) * 100);
+}
+
+function getInventoryFilterUnitLabel(selectedSubstanceId = getInventorySubstanceFilterId()) {
+    if (!selectedSubstanceId) return 'record unit';
+    if (typeof getSubstancePrimaryUnit === 'function') {
+        return getSubstancePrimaryUnit(selectedSubstanceId) || 'units';
+    }
+    const sub = typeof getSubstance === 'function' ? getSubstance(selectedSubstanceId) : null;
+    return sub?.primaryUnit || sub?.defaultUnit || 'units';
+}
+
+function purchaseMatchesInventoryRangeFilters(purchase, filters = inventoryListFilters) {
+    const parse = typeof parseOptionalFilterNumber === 'function'
+        ? parseOptionalFilterNumber
+        : (value) => {
+            if (value == null || value === '') return null;
+            const n = parseFloat(value);
+            return Number.isFinite(n) ? n : null;
+        };
+    const matches = typeof valueMatchesMinMax === 'function'
+        ? valueMatchesMinMax
+        : (value, min, max) => {
+            if (min == null && max == null) return true;
+            if (value == null || !Number.isFinite(value)) return false;
+            if (min != null && value < min) return false;
+            if (max != null && value > max) return false;
+            return true;
+        };
+    if (!matches(getPurchaseFilterTotalCost(purchase), parse(filters.totalCostMin), parse(filters.totalCostMax))) return false;
+    if (!matches(getPurchaseFilterCostPerUnit(purchase), parse(filters.costPerUnitMin), parse(filters.costPerUnitMax))) return false;
+    if (!matches(getPurchaseFilterQuantityBought(purchase), parse(filters.qtyBoughtMin), parse(filters.qtyBoughtMax))) return false;
+    if (!matches(getPurchaseFilterQuantityRemaining(purchase), parse(filters.qtyRemainingMin), parse(filters.qtyRemainingMax))) return false;
+    if (!matches(getPurchaseFilterAmountUsed(purchase), parse(filters.amountUsedMin), parse(filters.amountUsedMax))) return false;
+    if (!matches(getPurchaseFilterPercentUsed(purchase), parse(filters.pctUsedMin), parse(filters.pctUsedMax))) return false;
+    const dateStr = typeof getPurchaseDateStr === 'function' ? getPurchaseDateStr(purchase) : purchase?.date;
+    if (filters.purchaseDateMin && (!dateStr || dateStr < filters.purchaseDateMin)) return false;
+    if (filters.purchaseDateMax && (!dateStr || dateStr > filters.purchaseDateMax)) return false;
+    return true;
+}
+
 function purchaseMatchesInventoryFilters(purchase, filters = inventoryListFilters, data = appData) {
     if (filters.substanceId && getPurchaseSubstanceId(purchase) !== filters.substanceId) return false;
     const bounds = getInventoryDateFilterBounds(filters, data);
@@ -61,7 +173,13 @@ function purchaseMatchesInventoryFilters(purchase, filters = inventoryListFilter
     const cost = parseFloat(getPurchaseTotalCost(purchase)) || 0;
     if (filters.hasCost === 'yes' && cost <= 0) return false;
     if (filters.hasCost === 'no' && cost > 0) return false;
-    if (filters.vapeOnly && !isVapePuffPurchase(purchase, data)) return false;
+    if (filters.acquisitionType) {
+        const acq = typeof getPurchaseAcquisitionType === 'function'
+            ? getPurchaseAcquisitionType(purchase)
+            : (purchase?.acquisitionType || 'purchased');
+        if (acq !== filters.acquisitionType) return false;
+    }
+    if (!purchaseMatchesInventoryRangeFilters(purchase, filters)) return false;
     return true;
 }
 function getInventoryFilteredPurchases(substanceId, data = appData) {
@@ -331,7 +449,14 @@ function countActiveInventoryFilters() {
     if (preset !== 'all') count++;
     if (inventoryListFilters.hasRemaining) count++;
     if (inventoryListFilters.hasCost) count++;
-    if (inventoryListFilters.vapeOnly) count++;
+    if (inventoryListFilters.acquisitionType) count++;
+    if (inventoryListFilters.totalCostMin !== '' || inventoryListFilters.totalCostMax !== '') count++;
+    if (inventoryListFilters.costPerUnitMin !== '' || inventoryListFilters.costPerUnitMax !== '') count++;
+    if (inventoryListFilters.qtyBoughtMin !== '' || inventoryListFilters.qtyBoughtMax !== '') count++;
+    if (inventoryListFilters.qtyRemainingMin !== '' || inventoryListFilters.qtyRemainingMax !== '') count++;
+    if (inventoryListFilters.amountUsedMin !== '' || inventoryListFilters.amountUsedMax !== '') count++;
+    if (inventoryListFilters.pctUsedMin !== '' || inventoryListFilters.pctUsedMax !== '') count++;
+    if (inventoryListFilters.purchaseDateMin || inventoryListFilters.purchaseDateMax) count++;
     return count;
 }
 function hasActiveInventoryFilters() {
@@ -354,7 +479,11 @@ function loadInventoryFiltersPanelState() {
             }
             if (saved.hasRemaining != null) inventoryListFilters.hasRemaining = saved.hasRemaining;
             if (saved.hasCost != null) inventoryListFilters.hasCost = saved.hasCost;
-            if (typeof saved.vapeOnly === 'boolean') inventoryListFilters.vapeOnly = saved.vapeOnly;
+            if (saved.acquisitionType != null) inventoryListFilters.acquisitionType = saved.acquisitionType;
+            INVENTORY_RANGE_FILTER_KEYS.forEach(key => {
+                if (saved[key] != null) inventoryListFilters[key] = saved[key];
+            });
+            // Legacy vapeOnly is ignored so old saved filters still load.
         }
         if (localStorage.getItem(INVENTORY_FILTERS_PANEL_KEY) === '1') {
             inventoryFiltersPanelOpen = true;
@@ -364,19 +493,10 @@ function loadInventoryFiltersPanelState() {
     syncInventoryStatusFilterUI();
     const searchEl = document.getElementById('inventory-search');
     if (searchEl) searchEl.value = inventorySearchQuery;
-    ['inventory-filter-date-start', 'inventory-filter-date-end',
-        'inventory-filter-remaining', 'inventory-filter-cost'].forEach(id => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        if (id === 'inventory-filter-date-start') el.value = inventoryListFilters.dateStart;
-        else if (id === 'inventory-filter-date-end') el.value = inventoryListFilters.dateEnd;
-        else if (id === 'inventory-filter-remaining') el.value = inventoryListFilters.hasRemaining;
-        else if (id === 'inventory-filter-cost') el.value = inventoryListFilters.hasCost;
-    });
-    const vapeOnlyEl = document.getElementById('inventory-filter-vape-only');
-    if (vapeOnlyEl) vapeOnlyEl.checked = inventoryListFilters.vapeOnly;
+    syncInventoryFilterInputsFromState();
     syncInventoryDateShortcutButtons();
     syncInventoryCustomDateInputs();
+    syncInventoryFilterUnitLabels();
 }
 function saveInventoryFiltersPanelState() {
     try {
@@ -386,7 +506,7 @@ function saveInventoryFiltersPanelState() {
 function saveInventoryFilterState() {
     saveInventoryFiltersPanelState();
     try {
-        localStorage.setItem(INVENTORY_FILTERS_STORAGE_KEY, JSON.stringify({
+        const payload = {
             status: inventoryTabFilter,
             search: inventorySearchQuery,
             datePreset: inventoryListFilters.datePreset,
@@ -394,8 +514,12 @@ function saveInventoryFilterState() {
             dateEnd: inventoryListFilters.dateEnd,
             hasRemaining: inventoryListFilters.hasRemaining,
             hasCost: inventoryListFilters.hasCost,
-            vapeOnly: inventoryListFilters.vapeOnly
-        }));
+            acquisitionType: inventoryListFilters.acquisitionType
+        };
+        INVENTORY_RANGE_FILTER_KEYS.forEach(key => {
+            payload[key] = inventoryListFilters[key];
+        });
+        localStorage.setItem(INVENTORY_FILTERS_STORAGE_KEY, JSON.stringify(payload));
     } catch (_) { /* ignore */ }
 }
 function toggleInventoryFiltersPanel() {
@@ -440,12 +564,81 @@ function renderInventoryFilterChips() {
     } else if (inventoryListFilters.hasCost === 'no') {
         chips.push('<span class="inventory-filter-chip">Cost: No cost</span>');
     }
-    if (inventoryListFilters.vapeOnly) {
-        chips.push('<span class="inventory-filter-chip">Vape only</span>');
+    if (inventoryListFilters.acquisitionType) {
+        const labels = {
+            purchased: 'Purchased',
+            gift_received: 'Gift Received',
+            purchased_as_gift: 'Purchased as Gift',
+            other_adjustment: 'Adjustment'
+        };
+        chips.push(`<span class="inventory-filter-chip">Acquisition: ${escapeHtml(labels[inventoryListFilters.acquisitionType] || inventoryListFilters.acquisitionType)}</span>`);
     }
+    const unit = getInventoryFilterUnitLabel();
+    const rangeChip = (label, min, max, suffix = '') => {
+        const hasMin = min != null && min !== '';
+        const hasMax = max != null && max !== '';
+        if (!hasMin && !hasMax) return '';
+        let range;
+        if (hasMin && hasMax) range = `${min}–${max}`;
+        else if (hasMin) range = `≥ ${min}`;
+        else range = `≤ ${max}`;
+        return `<span class="inventory-filter-chip">${escapeHtml(label)}: ${escapeHtml(range)}${suffix ? ` ${escapeHtml(suffix)}` : ''}</span>`;
+    };
+    const totalCostChip = rangeChip('Total Cost', inventoryListFilters.totalCostMin, inventoryListFilters.totalCostMax);
+    if (totalCostChip) chips.push(totalCostChip);
+    const cpuChip = rangeChip('Cost Per Unit', inventoryListFilters.costPerUnitMin, inventoryListFilters.costPerUnitMax);
+    if (cpuChip) chips.push(cpuChip);
+    const boughtChip = rangeChip('Quantity Bought', inventoryListFilters.qtyBoughtMin, inventoryListFilters.qtyBoughtMax, unit);
+    if (boughtChip) chips.push(boughtChip);
+    const remainingChip = rangeChip('Quantity Remaining', inventoryListFilters.qtyRemainingMin, inventoryListFilters.qtyRemainingMax, unit);
+    if (remainingChip) chips.push(remainingChip);
+    const usedChip = rangeChip('Amount used', inventoryListFilters.amountUsedMin, inventoryListFilters.amountUsedMax, unit);
+    if (usedChip) chips.push(usedChip);
+    const pctChip = rangeChip('Percentage used', inventoryListFilters.pctUsedMin, inventoryListFilters.pctUsedMax, '%');
+    if (pctChip) chips.push(pctChip);
+    const purchaseDateChip = rangeChip('Purchase Date', inventoryListFilters.purchaseDateMin, inventoryListFilters.purchaseDateMax);
+    if (purchaseDateChip) chips.push(purchaseDateChip);
     container.innerHTML = chips.join('');
     container.classList.toggle('hidden', !chips.length);
 }
+function syncInventoryFilterUnitLabels() {
+    const unit = getInventoryFilterUnitLabel();
+    const text = unit ? `(${unit})` : '';
+    ['inventory-filter-bought-unit', 'inventory-filter-remaining-unit', 'inventory-filter-used-unit']
+        .forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = text;
+        });
+}
+
+function syncInventoryFilterInputsFromState() {
+    const map = {
+        'inventory-filter-date-start': 'dateStart',
+        'inventory-filter-date-end': 'dateEnd',
+        'inventory-filter-remaining': 'hasRemaining',
+        'inventory-filter-cost': 'hasCost',
+        'inventory-filter-acquisition': 'acquisitionType',
+        'inventory-filter-total-cost-min': 'totalCostMin',
+        'inventory-filter-total-cost-max': 'totalCostMax',
+        'inventory-filter-cost-per-unit-min': 'costPerUnitMin',
+        'inventory-filter-cost-per-unit-max': 'costPerUnitMax',
+        'inventory-filter-qty-bought-min': 'qtyBoughtMin',
+        'inventory-filter-qty-bought-max': 'qtyBoughtMax',
+        'inventory-filter-qty-remaining-min': 'qtyRemainingMin',
+        'inventory-filter-qty-remaining-max': 'qtyRemainingMax',
+        'inventory-filter-amount-used-min': 'amountUsedMin',
+        'inventory-filter-amount-used-max': 'amountUsedMax',
+        'inventory-filter-pct-used-min': 'pctUsedMin',
+        'inventory-filter-pct-used-max': 'pctUsedMax',
+        'inventory-filter-purchase-min': 'purchaseDateMin',
+        'inventory-filter-purchase-max': 'purchaseDateMax'
+    };
+    Object.entries(map).forEach(([id, key]) => {
+        const el = document.getElementById(id);
+        if (el) el.value = inventoryListFilters[key] ?? '';
+    });
+}
+
 function updateInventoryFiltersPanelUI() {
     const panel = document.getElementById('inventory-filter-panel');
     const toggle = document.getElementById('inventory-filter-toggle');
@@ -454,6 +647,7 @@ function updateInventoryFiltersPanelUI() {
     toggle?.classList.toggle('open', inventoryFiltersPanelOpen);
     const count = countActiveInventoryFilters();
     if (countEl) countEl.textContent = count > 0 ? `(${count})` : '';
+    syncInventoryFilterUnitLabels();
     renderInventoryFilterChips();
     syncInventorySearchPlaceholder();
 }
@@ -464,18 +658,13 @@ function clearInventoryFilters() {
     inventoryListFilters.dateEnd = '';
     inventoryListFilters.hasRemaining = '';
     inventoryListFilters.hasCost = '';
-    inventoryListFilters.vapeOnly = false;
+    inventoryListFilters.acquisitionType = '';
+    INVENTORY_RANGE_FILTER_KEYS.forEach(key => { inventoryListFilters[key] = ''; });
     inventoryTabFilter = 'all';
     inventoryFiltersPanelOpen = false;
     const searchEl = document.getElementById('inventory-search');
     if (searchEl) searchEl.value = '';
-    ['inventory-filter-date-start', 'inventory-filter-date-end',
-        'inventory-filter-remaining', 'inventory-filter-cost'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-    const vapeOnlyEl = document.getElementById('inventory-filter-vape-only');
-    if (vapeOnlyEl) vapeOnlyEl.checked = false;
+    syncInventoryFilterInputsFromState();
     syncInventorySubstanceFilterState();
     syncInventoryStatusFilterUI();
     syncInventoryDateShortcutButtons();
@@ -538,7 +727,21 @@ function applyInventorySearchFilters() {
     );
     inventoryListFilters.hasRemaining = document.getElementById('inventory-filter-remaining')?.value || '';
     inventoryListFilters.hasCost = document.getElementById('inventory-filter-cost')?.value || '';
-    inventoryListFilters.vapeOnly = !!document.getElementById('inventory-filter-vape-only')?.checked;
+    inventoryListFilters.acquisitionType = document.getElementById('inventory-filter-acquisition')?.value || '';
+    inventoryListFilters.totalCostMin = document.getElementById('inventory-filter-total-cost-min')?.value ?? '';
+    inventoryListFilters.totalCostMax = document.getElementById('inventory-filter-total-cost-max')?.value ?? '';
+    inventoryListFilters.costPerUnitMin = document.getElementById('inventory-filter-cost-per-unit-min')?.value ?? '';
+    inventoryListFilters.costPerUnitMax = document.getElementById('inventory-filter-cost-per-unit-max')?.value ?? '';
+    inventoryListFilters.qtyBoughtMin = document.getElementById('inventory-filter-qty-bought-min')?.value ?? '';
+    inventoryListFilters.qtyBoughtMax = document.getElementById('inventory-filter-qty-bought-max')?.value ?? '';
+    inventoryListFilters.qtyRemainingMin = document.getElementById('inventory-filter-qty-remaining-min')?.value ?? '';
+    inventoryListFilters.qtyRemainingMax = document.getElementById('inventory-filter-qty-remaining-max')?.value ?? '';
+    inventoryListFilters.amountUsedMin = document.getElementById('inventory-filter-amount-used-min')?.value ?? '';
+    inventoryListFilters.amountUsedMax = document.getElementById('inventory-filter-amount-used-max')?.value ?? '';
+    inventoryListFilters.pctUsedMin = document.getElementById('inventory-filter-pct-used-min')?.value ?? '';
+    inventoryListFilters.pctUsedMax = document.getElementById('inventory-filter-pct-used-max')?.value ?? '';
+    inventoryListFilters.purchaseDateMin = document.getElementById('inventory-filter-purchase-min')?.value ?? '';
+    inventoryListFilters.purchaseDateMax = document.getElementById('inventory-filter-purchase-max')?.value ?? '';
     syncInventorySubstanceFilterState();
     syncInventoryStatusFilterUI();
     syncInventoryDateShortcutButtons();

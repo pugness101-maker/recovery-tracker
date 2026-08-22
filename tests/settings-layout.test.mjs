@@ -12,7 +12,6 @@ const SETTINGS_SECTION_ORDER = Object.freeze([
     'settingsTaperSuggestions',
     'settingsSubstances',
     'settingsDataHealth',
-    'settingsDashboardLayout',
     'settingsContacts',
     'settingsDangerZone',
     'settingsAdvancedTools',
@@ -64,4 +63,8 @@ test('Settings tab lists Account & Data first with expected section order', () =
     const dangerIdx = settingsHtml.indexOf('data-section="settingsDangerZone"');
     assert.ok(backupIdx < appearanceIdx, 'Account & Data must render before Appearance');
     assert.ok(backupIdx < dangerIdx, 'Account & Data must render before Danger Zone');
+    assert.doesNotMatch(settingsHtml, /Daily Dashboard/);
+    assert.doesNotMatch(settingsHtml, /settingsDashboardLayout/);
+    assert.doesNotMatch(settingsHtml, /dashboard-layout-editor/);
+    assert.doesNotMatch(settingsHtml, /Save Dashboard Layout/);
 });

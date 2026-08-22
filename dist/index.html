@@ -408,6 +408,78 @@
                                 <option value="gift">Gift</option>
                             </select>
                         </div>
+                        <div class="use-log-filter-field use-log-filter-range">
+                            <span class="use-log-filter-range-label">Amount used <span id="use-log-filter-amount-unit" class="use-log-filter-unit"></span></span>
+                            <div class="use-log-filter-minmax">
+                                <label for="use-log-filter-amount-min">Min</label>
+                                <input type="number" id="use-log-filter-amount-min" min="0" step="any" inputmode="decimal" placeholder="Min" onchange="applyUseLogSearchFilters()">
+                                <label for="use-log-filter-amount-max">Max</label>
+                                <input type="number" id="use-log-filter-amount-max" min="0" step="any" inputmode="decimal" placeholder="Max" onchange="applyUseLogSearchFilters()">
+                            </div>
+                        </div>
+                        <div class="use-log-filter-field use-log-filter-range">
+                            <span class="use-log-filter-range-label">Session duration (hours)</span>
+                            <div class="use-log-filter-minmax">
+                                <label for="use-log-filter-duration-min">Min</label>
+                                <input type="number" id="use-log-filter-duration-min" min="0" step="any" inputmode="decimal" placeholder="Min" onchange="applyUseLogSearchFilters()">
+                                <label for="use-log-filter-duration-max">Max</label>
+                                <input type="number" id="use-log-filter-duration-max" min="0" step="any" inputmode="decimal" placeholder="Max" onchange="applyUseLogSearchFilters()">
+                            </div>
+                        </div>
+                        <div class="use-log-filter-field use-log-filter-range">
+                            <span class="use-log-filter-range-label">Estimated cost</span>
+                            <div class="use-log-filter-minmax">
+                                <label for="use-log-filter-cost-min">Min</label>
+                                <input type="number" id="use-log-filter-cost-min" min="0" step="any" inputmode="decimal" placeholder="Min" onchange="applyUseLogSearchFilters()">
+                                <label for="use-log-filter-cost-max">Max</label>
+                                <input type="number" id="use-log-filter-cost-max" min="0" step="any" inputmode="decimal" placeholder="Max" onchange="applyUseLogSearchFilters()">
+                            </div>
+                        </div>
+                        <div class="use-log-filter-field use-log-filter-range">
+                            <span class="use-log-filter-range-label">Number of lines</span>
+                            <div class="use-log-filter-minmax">
+                                <label for="use-log-filter-lines-min">Min</label>
+                                <input type="number" id="use-log-filter-lines-min" min="0" step="any" inputmode="decimal" placeholder="Min" onchange="applyUseLogSearchFilters()">
+                                <label for="use-log-filter-lines-max">Max</label>
+                                <input type="number" id="use-log-filter-lines-max" min="0" step="any" inputmode="decimal" placeholder="Max" onchange="applyUseLogSearchFilters()">
+                            </div>
+                        </div>
+                        <div class="use-log-filter-field use-log-filter-range">
+                            <span class="use-log-filter-range-label">Use rate <span id="use-log-filter-rate-unit" class="use-log-filter-unit">(per hour)</span></span>
+                            <div class="use-log-filter-minmax">
+                                <label for="use-log-filter-rate-min">Min</label>
+                                <input type="number" id="use-log-filter-rate-min" min="0" step="any" inputmode="decimal" placeholder="Min" onchange="applyUseLogSearchFilters()">
+                                <label for="use-log-filter-rate-max">Max</label>
+                                <input type="number" id="use-log-filter-rate-max" min="0" step="any" inputmode="decimal" placeholder="Max" onchange="applyUseLogSearchFilters()">
+                            </div>
+                        </div>
+                        <div class="use-log-filter-field use-log-filter-range">
+                            <span class="use-log-filter-range-label">Start time</span>
+                            <div class="use-log-filter-minmax">
+                                <label for="use-log-filter-start-min">From</label>
+                                <input type="time" id="use-log-filter-start-min" onchange="applyUseLogSearchFilters()">
+                                <label for="use-log-filter-start-max">To</label>
+                                <input type="time" id="use-log-filter-start-max" onchange="applyUseLogSearchFilters()">
+                            </div>
+                        </div>
+                        <div class="use-log-filter-field use-log-filter-range">
+                            <span class="use-log-filter-range-label">End time</span>
+                            <div class="use-log-filter-minmax">
+                                <label for="use-log-filter-end-min">From</label>
+                                <input type="time" id="use-log-filter-end-min" onchange="applyUseLogSearchFilters()">
+                                <label for="use-log-filter-end-max">To</label>
+                                <input type="time" id="use-log-filter-end-max" onchange="applyUseLogSearchFilters()">
+                            </div>
+                        </div>
+                        <div class="use-log-filter-field use-log-filter-range">
+                            <span class="use-log-filter-range-label">Break between uses (hours)</span>
+                            <div class="use-log-filter-minmax">
+                                <label for="use-log-filter-break-min">Min</label>
+                                <input type="number" id="use-log-filter-break-min" min="0" step="any" inputmode="decimal" placeholder="Min" onchange="applyUseLogSearchFilters()">
+                                <label for="use-log-filter-break-max">Max</label>
+                                <input type="number" id="use-log-filter-break-max" min="0" step="any" inputmode="decimal" placeholder="Max" onchange="applyUseLogSearchFilters()">
+                            </div>
+                        </div>
                         <div class="use-log-filter-actions">
                             <button type="button" class="secondary-btn btn-sm" onclick="clearUseLogFilters()">Clear Filters</button>
                         </div>
@@ -2221,7 +2293,17 @@
                     <div id="inventory-filter-panel" class="inventory-filter-panel hidden">
                         <div class="inventory-filter-grid">
                             <div class="inventory-filter-field">
-                                <label for="inventory-filter-remaining">Remaining</label>
+                                <label for="inventory-filter-acquisition">Acquisition</label>
+                                <select id="inventory-filter-acquisition" onchange="applyInventorySearchFilters()">
+                                    <option value="">All acquisitions</option>
+                                    <option value="purchased">Purchased</option>
+                                    <option value="gift_received">Gift Received</option>
+                                    <option value="purchased_as_gift">Purchased as Gift</option>
+                                    <option value="other_adjustment">Adjustment</option>
+                                </select>
+                            </div>
+                            <div class="inventory-filter-field">
+                                <label for="inventory-filter-remaining">Has remaining</label>
                                 <select id="inventory-filter-remaining" onchange="applyInventorySearchFilters()">
                                     <option value="">Any remaining</option>
                                     <option value="yes">Has remaining</option>
@@ -2229,16 +2311,78 @@
                                 </select>
                             </div>
                             <div class="inventory-filter-field">
-                                <label for="inventory-filter-cost">Cost</label>
+                                <label for="inventory-filter-cost">Has cost</label>
                                 <select id="inventory-filter-cost" onchange="applyInventorySearchFilters()">
                                     <option value="">Any cost</option>
                                     <option value="yes">Has cost</option>
                                     <option value="no">No cost</option>
                                 </select>
                             </div>
-                            <label class="inventory-filter-check"><input type="checkbox" id="inventory-filter-vape-only" onchange="applyInventorySearchFilters()"> Vape only</label>
+                            <div class="inventory-filter-field use-log-filter-range">
+                                <span class="use-log-filter-range-label">Total Cost</span>
+                                <div class="use-log-filter-minmax">
+                                    <label for="inventory-filter-total-cost-min">Min</label>
+                                    <input type="number" id="inventory-filter-total-cost-min" min="0" step="any" inputmode="decimal" placeholder="Min" onchange="applyInventorySearchFilters()">
+                                    <label for="inventory-filter-total-cost-max">Max</label>
+                                    <input type="number" id="inventory-filter-total-cost-max" min="0" step="any" inputmode="decimal" placeholder="Max" onchange="applyInventorySearchFilters()">
+                                </div>
+                            </div>
+                            <div class="inventory-filter-field use-log-filter-range">
+                                <span class="use-log-filter-range-label">Cost Per Unit</span>
+                                <div class="use-log-filter-minmax">
+                                    <label for="inventory-filter-cost-per-unit-min">Min</label>
+                                    <input type="number" id="inventory-filter-cost-per-unit-min" min="0" step="any" inputmode="decimal" placeholder="Min" onchange="applyInventorySearchFilters()">
+                                    <label for="inventory-filter-cost-per-unit-max">Max</label>
+                                    <input type="number" id="inventory-filter-cost-per-unit-max" min="0" step="any" inputmode="decimal" placeholder="Max" onchange="applyInventorySearchFilters()">
+                                </div>
+                            </div>
+                            <div class="inventory-filter-field use-log-filter-range">
+                                <span class="use-log-filter-range-label">Quantity Bought <span id="inventory-filter-bought-unit" class="use-log-filter-unit"></span></span>
+                                <div class="use-log-filter-minmax">
+                                    <label for="inventory-filter-qty-bought-min">Min</label>
+                                    <input type="number" id="inventory-filter-qty-bought-min" min="0" step="any" inputmode="decimal" placeholder="Min" onchange="applyInventorySearchFilters()">
+                                    <label for="inventory-filter-qty-bought-max">Max</label>
+                                    <input type="number" id="inventory-filter-qty-bought-max" min="0" step="any" inputmode="decimal" placeholder="Max" onchange="applyInventorySearchFilters()">
+                                </div>
+                            </div>
+                            <div class="inventory-filter-field use-log-filter-range">
+                                <span class="use-log-filter-range-label">Quantity Remaining <span id="inventory-filter-remaining-unit" class="use-log-filter-unit"></span></span>
+                                <div class="use-log-filter-minmax">
+                                    <label for="inventory-filter-qty-remaining-min">Min</label>
+                                    <input type="number" id="inventory-filter-qty-remaining-min" min="0" step="any" inputmode="decimal" placeholder="Min" onchange="applyInventorySearchFilters()">
+                                    <label for="inventory-filter-qty-remaining-max">Max</label>
+                                    <input type="number" id="inventory-filter-qty-remaining-max" min="0" step="any" inputmode="decimal" placeholder="Max" onchange="applyInventorySearchFilters()">
+                                </div>
+                            </div>
+                            <div class="inventory-filter-field use-log-filter-range">
+                                <span class="use-log-filter-range-label">Amount used <span id="inventory-filter-used-unit" class="use-log-filter-unit"></span></span>
+                                <div class="use-log-filter-minmax">
+                                    <label for="inventory-filter-amount-used-min">Min</label>
+                                    <input type="number" id="inventory-filter-amount-used-min" min="0" step="any" inputmode="decimal" placeholder="Min" onchange="applyInventorySearchFilters()">
+                                    <label for="inventory-filter-amount-used-max">Max</label>
+                                    <input type="number" id="inventory-filter-amount-used-max" min="0" step="any" inputmode="decimal" placeholder="Max" onchange="applyInventorySearchFilters()">
+                                </div>
+                            </div>
+                            <div class="inventory-filter-field use-log-filter-range">
+                                <span class="use-log-filter-range-label">Percentage used</span>
+                                <div class="use-log-filter-minmax">
+                                    <label for="inventory-filter-pct-used-min">Min</label>
+                                    <input type="number" id="inventory-filter-pct-used-min" min="0" max="100" step="any" inputmode="decimal" placeholder="Min" onchange="applyInventorySearchFilters()">
+                                    <label for="inventory-filter-pct-used-max">Max</label>
+                                    <input type="number" id="inventory-filter-pct-used-max" min="0" max="100" step="any" inputmode="decimal" placeholder="Max" onchange="applyInventorySearchFilters()">
+                                </div>
+                            </div>
+                            <div class="inventory-filter-field use-log-filter-range">
+                                <span class="use-log-filter-range-label">Purchase Date</span>
+                                <div class="use-log-filter-minmax">
+                                    <label for="inventory-filter-purchase-min">From</label>
+                                    <input type="date" id="inventory-filter-purchase-min" onchange="applyInventorySearchFilters()">
+                                    <label for="inventory-filter-purchase-max">To</label>
+                                    <input type="date" id="inventory-filter-purchase-max" onchange="applyInventorySearchFilters()">
+                                </div>
+                            </div>
                             <div class="inventory-filter-actions">
-                                <button type="button" class="secondary-btn btn-sm" onclick="clearInventoryFilters()">Clear filters</button>
+                                <button type="button" class="secondary-btn btn-sm" onclick="clearInventoryFilters()">Clear Filters</button>
                             </div>
                         </div>
                     </div>
@@ -3132,21 +3276,6 @@
                             <div id="data-health-results" class="data-health-results"></div>
                             <h4 class="settings-subhead">Change History</h4>
                             <div id="change-history-list" class="change-history-list"></div>
-                        </div>
-                    </div>
-                </div>
-
-                <div class="collapsible-section" data-section="settingsDashboardLayout" data-settings-cat="advanced">
-                    <button type="button" class="section-toggle" onclick="toggleSection('settingsDashboardLayout')">
-                        <span>Daily Dashboard</span>
-                        <span class="chevron">⌄</span>
-                    </button>
-                    <div class="section-content">
-                        <div class="settings-section">
-                            <p class="settings-hint">Choose which Home widgets to show. Grouped substance summaries are used for All Substances (no fake mixed-unit totals).</p>
-                            <div id="dashboard-layout-editor" class="dashboard-layout-editor"></div>
-                            <button type="button" class="secondary-btn" onclick="saveDashboardLayoutFromEditor()">Save Dashboard Layout</button>
-                            <p class="settings-hint">Home shows a concise recovery overview. Full analytics live on Insights.</p>
                         </div>
                     </div>
                 </div>

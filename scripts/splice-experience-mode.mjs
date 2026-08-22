@@ -110,13 +110,12 @@ app = tryReplace(app,
 
 // refreshAppAfterDataChange
 app = tryReplace(app,
-    `    applyDashboardLayout();
-    updateUndoButtonState();
-    renderDashboardLayoutEditor();
+    `    updateUndoButtonState();
+    if (typeof applyExperienceMode === 'function') {
+        try { applyExperienceMode(appData); } catch (_) { /* ignore */ }
+    }
 }`,
-    `    applyDashboardLayout();
-    updateUndoButtonState();
-    renderDashboardLayoutEditor();
+    `    updateUndoButtonState();
     if (typeof applyExperienceMode === 'function') {
         try { applyExperienceMode(appData); } catch (_) { /* ignore */ }
     }
