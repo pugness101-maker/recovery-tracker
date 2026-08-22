@@ -12639,17 +12639,6 @@ const TAPER_REDUCTION_LABELS = {
     'reduce-buying': 'Purchase-frequency taper',
     'reduce-nicotine': 'Nicotine strength taper'
 };
-const NICOTINE_VAPE_GOAL_LABELS = {
-    combined: 'Combined plan (recommended)',
-    'reduce-vapes-purchased': 'Buy fewer vapes',
-    'extend-vape-lifespan': 'Make each vape last longer',
-    'increase-buy-interval': 'Increase days between purchases',
-    'reduce-personal-puffs': 'Reduce personal puffs',
-    'reduce-nicotine-strength': 'Reduce nicotine strength',
-    'reduce-spending': 'Reduce monthly spending',
-    'nicotine-free-blocks': 'Add nicotine-free time blocks',
-    'quit-by-date': 'Quit by a target date'
-};
 const TAPER_LEGACY_REDUCTION_ALIASES = {
     'step-weekly': '__legacy_step__',
     'weekly-step-down': '__legacy_step__',
@@ -32213,22 +32202,6 @@ function ensureUseStatsConfig(data) {
     migrateLegacyUseStatsLayoutIfNeeded(data);
 }
 
-function getUseStatsConfig(substanceId = currentSubstanceId) {
-    const layout = getUseStatsLayout(substanceId);
-    return {
-        order: layout.order,
-        hidden: layout.order.filter(id => !layout.enabled.includes(id))
-    };
-}
-
-function getVisibleUseStatsOrder() {
-    return getVisibleUseStatsOrderForSubstance(currentSubstanceId);
-}
-
-function saveUseStatsConfig(substanceId, layout) {
-    saveUseStatsLayout(substanceId, layout);
-}
-
 function resetUseStatsConfig(substanceId = currentSubstanceId) {
     const layout = layoutFromDefaults(substanceId);
     saveUseStatsLayout(substanceId, layout);
@@ -36444,10 +36417,6 @@ function sumUsageForRange(logs, startDate, endDate, substanceId = 'all', options
     );
 }
 
-function sumSegmentsForDate(substanceId, dateStr, excludeLogId = null, data = appData) {
-    return sumUseAmountForDate(substanceId, dateStr, excludeLogId, data);
-}
-
 function sumSegmentsForRange(substanceId, startDate, endDate, excludeLogId = null, data = appData) {
     return sumUseAmountForRange(substanceId, startDate, endDate, excludeLogId, data);
 }
@@ -36704,49 +36673,6 @@ function inventoryAdjustmentAdds(log) {
 
 function inventoryAdjustmentRemoves(log) {
     return isInventoryAdjustmentLog(log) && getAdjustmentDirection(log) === 'remove';
-}
-
-function getTransactionTypeLabel(tx) {
-    if (tx === 'shared_use') return 'Legacy Shared Use';
-    if (tx === 'gift_given') return 'Gift Given';
-    if (tx === 'gift_received') return 'Gift Received';
-    if (tx === 'inventory_adjustment') return 'Inventory Adjustment';
-    return 'Personal Use';
-}
-
-function formatLogHistoryLabel(entry, sub) {
-    const tx = getLogTransactionType(entry);
-    const unit = entry.unit || sub?.defaultUnit || 'units';
-    const amount = entry.amount ?? '—';
-    if (tx === 'gift_given') {
-        if (isLsdDateOnlyUseLog(entry)) return `🎁 ${formatLsdUseSummary(entry)}`;
-        const who = entry.giftPartyName ? ` — ${entry.giftPartyName}` : '';
-        return `🎁 Gift Given${who} — ${amount}${unit}`;
-    }
-    if (tx === 'gift_received') {
-        if (isLsdDateOnlyUseLog(entry)) return `🎁 ${formatLsdUseSummary(entry)}`;
-        const who = entry.giftPartyName ? ` — ${entry.giftPartyName}` : '';
-        return `🎁 Gift Received${who} — ${amount}${unit}`;
-    }
-    if (tx === 'inventory_adjustment') {
-        if (isLsdDateOnlyUseLog(entry)) return `📦 ${formatLsdUseSummary(entry)}`;
-        const dir = getAdjustmentDirection(entry) === 'remove' ? '−' : '+';
-        return `📦 Inventory ${dir}${amount}${unit}`;
-    }
-    if (isVapeUseLog(entry)) {
-        return formatVapeUseSummary(entry, sub);
-    }
-    if (isLsdDateOnlyUseLog(entry)) {
-        return formatLsdUseSummary(entry);
-    }
-    if (isXanaxDateOnlyUseLog(entry)) {
-        return formatXanaxUseSummary(entry);
-    }
-    if (isWeedDateOnlyUseLog(entry)) {
-        return `${sub?.icon || ''} ${amount} ${unit}`;
-    }
-    const typeLabel = getUseLogType(entry) === 'session' ? '⏱️ Session' : '⚡ Quick Use';
-    return `${typeLabel} ${sub?.icon || ''} ${amount} ${unit} ${sub?.name || 'Unknown'}`;
 }
 
 function setLegacySharedUseFormTransactionType() {
@@ -37764,10 +37690,6 @@ function formatPercentRemainingLabel(remaining, bought) {
 
 function isVapeNicotineSubstanceId(substanceId, data = appData) {
     return isNicotineSubstanceId(substanceId, data);
-}
-
-function isVapeNicotineSubstance(sub, data = appData) {
-    return sub?.id ? isVapeTrackingMode(sub.id, data) : false;
 }
 
 function isVapePuffUnit(unit) {
@@ -49227,96 +49149,6 @@ function buildVapeUseStatsMetrics(logs, daysInRange, substanceId, bounds) {
         shortestBreakHours: null,
         avgBreakHours: null
     };
-}
-
-function formatUseStatValue(statId, metrics, unit) {
-    const fmtUsage = (value) => isVapeNicotineSubstanceId(currentSubstanceId)
-        ? formatStatsPuffs(value)
-        : value.toFixed(1);
-    const isWeed = isWeedTrackingMode(currentSubstanceId);
-    if (isWeed && WEED_EXCLUDED_USE_STAT_IDS.has(statId)) return '—';
-    switch (statId) {
-        case 'totalUsage':
-            return `${fmtUsage(metrics.totalAmount)} ${unit}`;
-        case 'sessionCount':
-            return String(metrics.sessionCount);
-        case 'avgPerSession':
-            return metrics.avgPerSession != null ? `${fmtUsage(metrics.avgPerSession)} ${unit}` : '—';
-        case 'avgPerHr':
-            return metrics.avgPerHour != null ? `${metrics.avgPerHour.toFixed(2)} ${unit}/hr` : '—';
-        case 'totalDuration':
-            return metrics.totalDurationMinutes > 0
-                ? formatDurationHours(metrics.totalDurationMinutes / 60)
-                : '—';
-        case 'avgDuration':
-            if (isVapeNicotineSubstanceId(currentSubstanceId)) {
-                return metrics.avgDurationMinutes != null
-                    ? formatVapeDuration(metrics.avgDurationMinutes * 60000)
-                    : '—';
-            }
-            return metrics.avgDurationMinutes != null
-                ? formatDurationHours(metrics.avgDurationMinutes / 60)
-                : '—';
-        case 'currentSupplyDuration':
-            return metrics.currentSupplyDurationMs != null
-                ? `${formatVapeDuration(metrics.currentSupplyDurationMs)} so far`
-                : '—';
-        case 'longestSession':
-            return metrics.longestMinutes != null
-                ? formatDurationHours(metrics.longestMinutes / 60)
-                : '—';
-        case 'shortestSession':
-            return metrics.shortestMinutes != null
-                ? formatDurationHours(metrics.shortestMinutes / 60)
-                : '—';
-        case 'longestBreak':
-            return metrics.longestBreakHours != null
-                ? formatBreakFromHours(metrics.longestBreakHours)
-                : '—';
-        case 'shortestBreak':
-            return metrics.shortestBreakHours != null
-                ? formatBreakFromHours(metrics.shortestBreakHours)
-                : '—';
-        case 'avgBreak':
-            if (isVapeNicotineSubstanceId(currentSubstanceId)) {
-                return metrics.avgBreakHours != null
-                    ? formatBreakFromHours(metrics.avgBreakHours)
-                    : '—';
-            }
-            return metrics.avgBreakHours != null
-                ? formatBreakFromHours(metrics.avgBreakHours)
-                : '—';
-        case 'useDays':
-            return String(metrics.useDays);
-        case 'useDayPct':
-            return `${metrics.useDayPct.toFixed(2)}%`;
-        case 'avgPerUseDay':
-            return metrics.avgPerUseDay != null ? `${fmtUsage(metrics.avgPerUseDay)} ${unit}` : '—';
-        case 'avgPerCalendarDay':
-            return metrics.avgPerCalendarDay != null ? `${fmtUsage(metrics.avgPerCalendarDay)} ${unit}` : '—';
-        case 'avgPuffsPerDay':
-            return formatStatsPuffsPerDay(metrics.avgPuffsPerDay);
-        case 'avgPuffsPerSession':
-            return metrics.avgPuffsPerSession != null ? `${formatAmount(metrics.avgPuffsPerSession)} puffs` : '—';
-        case 'vapeCount':
-            return String(metrics.vapeCount ?? 0);
-        case 'activeVapes':
-            return String(metrics.activeVapes ?? 0);
-        case 'avgCostPerVape':
-            return formatCostPerVape(metrics.avgCostPerVape, getCurrencySymbol());
-        case 'avgCostPerDay':
-            return metrics.avgCostPerDay != null ? `${getCurrencySymbol()}${metrics.avgCostPerDay.toFixed(2)}/day` : '—';
-        case 'avgDaysPerVape':
-            return metrics.avgDaysPerVape != null ? `~${metrics.avgDaysPerVape.toFixed(1)} days` : '—';
-        case 'nicotineMgPerDay':
-            return metrics.nicotineMgPerDay != null ? `${formatAmount(metrics.nicotineMgPerDay)} mg/day` : '—';
-        case 'puffsRemaining':
-            return metrics.puffsRemaining != null ? `${formatAmount(metrics.puffsRemaining)} puffs` : '—';
-        case 'percentLeft':
-            return metrics.percentLeft != null ? `${metrics.percentLeft}%` : '—';
-        default:
-            return '—';
-    }
 }
 
 function getStatsRangeLabel(preset, startDate, endDate) {
