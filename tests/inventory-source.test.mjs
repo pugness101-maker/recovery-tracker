@@ -182,19 +182,19 @@ test('applyInventorySourceToPayload maps gift received to giftSource fields', ()
     assert.equal(payload.store, '');
 });
 
-test('purchase history labels Source and keeps supplier hidden by default', () => {
+test('purchase history uses a single Source column without Source Legacy', () => {
     const rt = setup();
-    const labels = rt.TABLE_COLUMN_LABELS?.purchaseHistory
-        || rt.getTableColumnLabels?.('purchaseHistory');
-    // Prefer exported helpers
-    if (typeof rt.getTableColumnLabelForSubstance === 'function') {
-        // may need table key API — fall back to reading defaults
-    }
+    const labels = rt.TABLE_COLUMN_LABELS?.purchaseHistory || {};
+    assert.equal(labels.store, 'Source');
+    assert.equal(labels.supplier, undefined);
+    const defaults = rt.getDefaultColumnSettings('purchaseHistory');
+    assert.ok(defaults.order.includes('store'));
+    assert.ok(!defaults.order.includes('supplier'));
     const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
     assert.match(html, /buy-source-mount/);
     const app = fs.readFileSync(path.join(root, 'app.js'), 'utf8');
     assert.match(app, /store: 'Source'/);
-    assert.match(app, /hidden: \[[^\]]*supplier/);
+    assert.doesNotMatch(app, /supplier: 'Source \(legacy\)'/);
 });
 
 function makeBuyFormDom(nodes) {

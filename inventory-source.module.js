@@ -102,6 +102,7 @@ function inferInventorySourceKindFromContact(contact) {
 
 function getPurchaseSourceName(purchase) {
     if (!purchase) return '';
+    // Prefer the unified Source field; fall back to store, then supplier / gift legacy fields.
     const named = invSrcTrim(purchase.sourceName);
     if (named) return named;
     if (purchase.sourceContactId && typeof getContactDisplayName === 'function') {
@@ -844,19 +845,28 @@ function patchInventorySourceAnalytics() {
 }
 
 function patchInventorySourceHistoryColumns() {
+    const removed = typeof PURCHASE_HISTORY_REMOVED_COLUMN_IDS !== 'undefined'
+        ? PURCHASE_HISTORY_REMOVED_COLUMN_IDS
+        : ['supplier', 'giftRecipient', 'budgetStatus', 'productType', 'inventoryLifespan', 'giftStatus', 'linkedUsers', 'purchaseQualityRating'];
     try {
         if (typeof TABLE_COLUMN_LABELS !== 'undefined' && TABLE_COLUMN_LABELS.purchaseHistory) {
             TABLE_COLUMN_LABELS.purchaseHistory.store = 'Source';
-            TABLE_COLUMN_LABELS.purchaseHistory.supplier = 'Source (legacy)';
+            removed.forEach(id => { delete TABLE_COLUMN_LABELS.purchaseHistory[id]; });
         }
     } catch (_) { /* optional */ }
 
-    // Hide supplier by default going forward
     try {
         if (typeof TABLE_COLUMN_DEFAULTS !== 'undefined' && TABLE_COLUMN_DEFAULTS.purchaseHistory) {
-            const hidden = TABLE_COLUMN_DEFAULTS.purchaseHistory.hidden || [];
-            if (!hidden.includes('supplier')) {
-                TABLE_COLUMN_DEFAULTS.purchaseHistory.hidden = [...hidden, 'supplier'];
+            const drop = new Set(removed);
+            const defaults = TABLE_COLUMN_DEFAULTS.purchaseHistory;
+            if (Array.isArray(defaults.order)) {
+                defaults.order = defaults.order.filter(id => !drop.has(id));
+            }
+            if (Array.isArray(defaults.hidden)) {
+                defaults.hidden = defaults.hidden.filter(id => !drop.has(id));
+            }
+            if (defaults.widths && typeof defaults.widths === 'object') {
+                removed.forEach(id => { delete defaults.widths[id]; });
             }
         }
     } catch (_) { /* optional */ }
