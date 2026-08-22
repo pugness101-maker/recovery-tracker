@@ -33883,11 +33883,9 @@ function resolveDefaultTaperSubstanceId(data = appData) {
         return getActiveSubstances(data)[0]?.id || data?.substances?.[0]?.id || DASHBOARD_ALL;
     }
     const storedId = resolveSelectedSubstanceId(data?.settings?.taperSubstanceId, data);
-    if (storedId === DASHBOARD_ALL) return DASHBOARD_ALL;
-    if (storedId && taperSubstances.some(sub => sub.id === storedId)) return storedId;
+    if (storedId && storedId !== DASHBOARD_ALL && taperSubstances.some(sub => sub.id === storedId)) return storedId;
     const recentId = resolveSelectedSubstanceId(selectedSubstanceId, data);
-    if (recentId === DASHBOARD_ALL) return DASHBOARD_ALL;
-    if (recentId && taperSubstances.some(sub => sub.id === recentId)) return recentId;
+    if (recentId && recentId !== DASHBOARD_ALL && taperSubstances.some(sub => sub.id === recentId)) return recentId;
     return taperSubstances[0]?.id || getActiveSubstances(data)[0]?.id || data?.substances?.[0]?.id || DASHBOARD_ALL;
 }
 
@@ -61014,7 +61012,8 @@ function getTaperSubstanceId(data = appData) {
             ? resolveSelectedSubstanceId(el.value, data)
             : el.value;
     }
-    if (typeof selectedSubstanceId !== 'undefined' && selectedSubstanceId) {
+    if (typeof selectedSubstanceId !== 'undefined' && selectedSubstanceId
+        && selectedSubstanceId !== DASHBOARD_ALL) {
         return typeof resolveSelectedSubstanceId === 'function'
             ? resolveSelectedSubstanceId(selectedSubstanceId, data)
             : selectedSubstanceId;
