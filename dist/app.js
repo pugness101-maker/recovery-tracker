@@ -25957,6 +25957,7 @@ function inferInventorySourceKindFromContact(contact) {
 
 function getPurchaseSourceName(purchase) {
     if (!purchase) return '';
+    // Prefer the unified Source field; fall back to store, then supplier / gift legacy fields.
     const named = invSrcTrim(purchase.sourceName);
     if (named) return named;
     if (purchase.sourceContactId && typeof getContactDisplayName === 'function') {
@@ -26735,19 +26736,28 @@ function patchInventorySourceAnalytics() {
 }
 
 function patchInventorySourceHistoryColumns() {
+    const removed = typeof PURCHASE_HISTORY_REMOVED_COLUMN_IDS !== 'undefined'
+        ? PURCHASE_HISTORY_REMOVED_COLUMN_IDS
+        : ['supplier', 'giftRecipient', 'budgetStatus', 'productType', 'inventoryLifespan', 'giftStatus', 'linkedUsers', 'purchaseQualityRating'];
     try {
         if (typeof TABLE_COLUMN_LABELS !== 'undefined' && TABLE_COLUMN_LABELS.purchaseHistory) {
             TABLE_COLUMN_LABELS.purchaseHistory.store = 'Source';
-            TABLE_COLUMN_LABELS.purchaseHistory.supplier = 'Source (legacy)';
+            removed.forEach(id => { delete TABLE_COLUMN_LABELS.purchaseHistory[id]; });
         }
     } catch (_) { /* optional */ }
 
-    // Hide supplier by default going forward
     try {
         if (typeof TABLE_COLUMN_DEFAULTS !== 'undefined' && TABLE_COLUMN_DEFAULTS.purchaseHistory) {
-            const hidden = TABLE_COLUMN_DEFAULTS.purchaseHistory.hidden || [];
-            if (!hidden.includes('supplier')) {
-                TABLE_COLUMN_DEFAULTS.purchaseHistory.hidden = [...hidden, 'supplier'];
+            const drop = new Set(removed);
+            const defaults = TABLE_COLUMN_DEFAULTS.purchaseHistory;
+            if (Array.isArray(defaults.order)) {
+                defaults.order = defaults.order.filter(id => !drop.has(id));
+            }
+            if (Array.isArray(defaults.hidden)) {
+                defaults.hidden = defaults.hidden.filter(id => !drop.has(id));
+            }
+            if (defaults.widths && typeof defaults.widths === 'object') {
+                removed.forEach(id => { delete defaults.widths[id]; });
             }
         }
     } catch (_) { /* optional */ }
@@ -30751,9 +30761,10 @@ const TABLE_COLUMN_DEFAULTS = {
         }
     },
     purchaseHistory: {
-        // supplier hidden — Source (store column) is the single source field
-        order: ['select', 'date', 'substance', 'bought', 'remaining', 'usedPct', 'supplyDuration', 'supply', 'cost', 'costPerUnit', 'acquisitionType', 'store', 'supplier', 'payment', 'giftRecipient', 'runningMonthlySpend', 'runningYearlySpend', 'budgetStatus', 'productType', 'inventoryLifespan', 'giftStatus', 'linkedUsers', 'purchaseQualityRating', 'flavor', 'notes', 'break', 'actions'],
-        hidden: ['costPerUnit', 'acquisitionType', 'supplier', 'payment', 'giftRecipient', 'runningMonthlySpend', 'runningYearlySpend', 'budgetStatus', 'productType', 'inventoryLifespan', 'giftStatus', 'linkedUsers', 'purchaseQualityRating'],
+        // Source (store column) is the single source field. Legacy supplier / extra
+        // columns are omitted; saved settings that still mention them are ignored.
+        order: ['select', 'date', 'substance', 'bought', 'remaining', 'usedPct', 'supplyDuration', 'supply', 'cost', 'costPerUnit', 'acquisitionType', 'store', 'payment', 'runningMonthlySpend', 'runningYearlySpend', 'flavor', 'notes', 'break', 'actions'],
+        hidden: ['costPerUnit', 'acquisitionType', 'payment', 'runningMonthlySpend', 'runningYearlySpend'],
         widths: {
             select: 40,
             date: 110,
@@ -30767,17 +30778,9 @@ const TABLE_COLUMN_DEFAULTS = {
             costPerUnit: 110,
             acquisitionType: 120,
             store: 140,
-            supplier: 140,
             payment: 110,
-            giftRecipient: 140,
             runningMonthlySpend: 130,
             runningYearlySpend: 130,
-            budgetStatus: 110,
-            productType: 120,
-            inventoryLifespan: 120,
-            giftStatus: 130,
-            linkedUsers: 140,
-            purchaseQualityRating: 110,
             flavor: 120,
             notes: 220,
             break: 100,
@@ -31034,17 +31037,9 @@ const TABLE_COLUMN_LABELS = {
         costPerUnit: 'Cost per Unit',
         acquisitionType: 'Acquisition Type',
         store: 'Source',
-        supplier: 'Source (legacy)',
         payment: 'Payment',
-        giftRecipient: 'Purchased as Gift Recipient',
         runningMonthlySpend: 'Running Monthly Spending',
         runningYearlySpend: 'Running Yearly Spending',
-        budgetStatus: 'Budget Status',
-        productType: 'Product Type',
-        inventoryLifespan: 'Inventory Lifespan',
-        giftStatus: 'Gift Status',
-        linkedUsers: 'Linked Users',
-        purchaseQualityRating: 'Purchase Quality',
         flavor: 'Flavor',
         notes: 'Notes',
         break: 'Break Since Previous Buy',
@@ -31244,6 +31239,18 @@ const TABLE_COLUMNS_REQUIRED = {
     buyMonthly: ['month', 'purchased', 'cost'],
     buyPurchaseDetails: ['date', 'amount', 'cost']
 };
+
+/** Inventory table columns removed from UI. Legacy saved settings that still mention these keys are ignored. */
+const PURCHASE_HISTORY_REMOVED_COLUMN_IDS = Object.freeze([
+    'supplier',
+    'giftRecipient',
+    'budgetStatus',
+    'productType',
+    'inventoryLifespan',
+    'giftStatus',
+    'linkedUsers',
+    'purchaseQualityRating'
+]);
 
 const COLUMN_SETTINGS_STORAGE_KEY = 'recoveryTracker.columnSettings.v1';
 /** Dedicated Purchase History column presentation store (never used as row filters). */
@@ -31635,24 +31642,32 @@ function normalizeStoredColumnSettings(tableKey, stored) {
     const defaults = TABLE_COLUMN_DEFAULTS[tableKey];
     if (!defaults) return getDefaultColumnSettings(tableKey);
     const base = getDefaultColumnSettings(tableKey);
+    const removed = tableKey === 'purchaseHistory'
+        ? new Set(PURCHASE_HISTORY_REMOVED_COLUMN_IDS)
+        : null;
 
     let order = Array.isArray(stored?.order)
         ? stored.order.map(id => tableKey === 'useHistory' ? remapUseHistoryColumnId(id) : id)
-            .filter(id => defaults.order.includes(id))
+            .filter(id => defaults.order.includes(id) && !(removed && removed.has(id)))
         : [];
     defaults.order.forEach(id => {
-        if (!order.includes(id)) order.push(id);
+        if (!order.includes(id) && !(removed && removed.has(id))) order.push(id);
     });
 
     const visible = { ...base.visible };
+    if (removed) {
+        removed.forEach(id => { delete visible[id]; });
+    }
     if (stored?.visible && typeof stored.visible === 'object') {
         Object.entries(stored.visible).forEach(([id, val]) => {
             const mapped = tableKey === 'useHistory' ? remapUseHistoryColumnId(id) : id;
+            if (removed && removed.has(mapped)) return;
             if (defaults.order.includes(mapped)) visible[mapped] = !!val;
         });
     } else if (Array.isArray(stored?.hidden)) {
         stored.hidden.forEach(id => {
             const mapped = tableKey === 'useHistory' ? remapUseHistoryColumnId(id) : id;
+            if (removed && removed.has(mapped)) return;
             if (visible[mapped] !== undefined) visible[mapped] = false;
         });
     }
@@ -32095,6 +32110,9 @@ function getEffectiveColumnOrder(tableKey, variantKey = null) {
         allowedIds = getTaperByWeekColumnCatalog(substanceId, getSelectedTaperPlan());
     }
     const allowed = new Set(allowedIds);
+    if (tableKey === 'purchaseHistory') {
+        PURCHASE_HISTORY_REMOVED_COLUMN_IDS.forEach(id => allowed.delete(id));
+    }
     return order.filter(id => allowed.has(id) && (visible[id] !== false || required.has(id)));
 }
 
@@ -32533,8 +32551,10 @@ function renderColumnSettingsList(tableKey) {
         : (tableKey === 'useHistory' ? getUseLogViewSubstanceId() : currentSubstanceId);
     let availableOrder = order;
     if (tableKey === 'purchaseHistory') {
+        const removed = new Set(PURCHASE_HISTORY_REMOVED_COLUMN_IDS);
         availableOrder = order.filter(colId =>
-            colId !== 'flavor' || substanceShowsPurchaseFlavor(getInventorySubstanceFilterId() || substanceId)
+            !removed.has(colId)
+            && (colId !== 'flavor' || substanceShowsPurchaseFlavor(getInventorySubstanceFilterId() || substanceId))
         );
     } else if (tableKey === 'taperByWeek') {
         const catalog = new Set(getTaperByWeekColumnCatalog(substanceId, plan));
@@ -33601,58 +33621,10 @@ function renderPurchaseHistoryBodyCell(colId, ctx) {
         }
         case 'acquisitionType':
             return phTd('acquisitionType', escapeHtml(getPurchaseAcquisitionType(purchase) || '—'));
-        case 'supplier':
-            return phTd('supplier', escapeHtml((typeof financialPurchaseSupplier === 'function' ? financialPurchaseSupplier(purchase) : (purchase.store || getPurchaseGiftSource(purchase) || '')) || '—'));
-        case 'giftRecipient':
-            return phTd('giftRecipient', escapeHtml(getPurchaseGiftRecipient(purchase) || '—'));
         case 'runningMonthlySpend':
             return phTd('runningMonthlySpend', escapeHtml(ctx.runningMonthlySpendLabel || '—'));
         case 'runningYearlySpend':
             return phTd('runningYearlySpend', escapeHtml(ctx.runningYearlySpendLabel || '—'));
-        case 'budgetStatus': {
-            if (ctx.budgetSpent == null || !(ctx.budgetAmount > 0)) {
-                return phTd('budgetStatus', escapeHtml(ctx.budgetStatusLabel || '—'));
-            }
-            const ccr = typeof evaluateSpendColors === 'function'
-                ? evaluateSpendColors(ctx.budgetSpent, {
-                    substanceId: getPurchaseSubstanceId(purchase),
-                    section: 'spending'
-                })
-                : null;
-            const pair = formatMetricProgressPair(
-                `${getCurrencySymbol()}${Number(ctx.budgetSpent).toFixed(2)}`,
-                `${getCurrencySymbol()}${Number(ctx.budgetAmount).toFixed(2)}`
-            );
-            const statusBit = ctx.budgetStatusLabel && ctx.budgetStatusLabel !== '—'
-                ? ` <span class="metric-progress-status-text">${escapeHtml(ctx.budgetStatusLabel)}</span>`
-                : '';
-            return phTd(
-                'budgetStatus',
-                renderMetricProgressCell(
-                    `${escapeHtml(pair)}${statusBit}`,
-                    {
-                        current: ctx.budgetSpent,
-                        target: ctx.budgetAmount,
-                        percent: (ctx.budgetSpent / ctx.budgetAmount) * 100,
-                        ccrResult: ccr,
-                        metricKind: 'spend',
-                        currentLabel: `${getCurrencySymbol()}${Number(ctx.budgetSpent).toFixed(2)}`,
-                        targetLabel: `${getCurrencySymbol()}${Number(ctx.budgetAmount).toFixed(2)}`,
-                        unit: getCurrencySymbol()
-                    }
-                )
-            );
-        }
-        case 'productType':
-            return phTd('productType', escapeHtml((typeof purchaseAnalyticsProductType === 'function' ? purchaseAnalyticsProductType(purchase) : (purchase.weedProductType || purchase.productType || purchase.flavor || '')) || '—'));
-        case 'inventoryLifespan':
-            return phTd('inventoryLifespan', typeof purchaseHistoryInventoryLifespanLabel === 'function' ? purchaseHistoryInventoryLifespanLabel(purchase) : (supplyDurationLabel || '—'));
-        case 'giftStatus':
-            return phTd('giftStatus', typeof purchaseHistoryGiftStatusLabel === 'function' ? purchaseHistoryGiftStatusLabel(purchase) : '—');
-        case 'linkedUsers':
-            return phTd('linkedUsers', escapeHtml(typeof purchaseHistoryLinkedUsersLabel === 'function' ? purchaseHistoryLinkedUsersLabel(purchase) : '—'));
-        case 'purchaseQualityRating':
-            return phTd('purchaseQualityRating', typeof purchaseHistoryQualityRating === 'function' ? purchaseHistoryQualityRating(purchase) : '—');
         case 'flavor': {
             const flavor = isVapePuffPurchase(purchase) ? getVapePurchaseFlavor(purchase) : '';
             return phTd('flavor', flavor ? escapeHtml(flavor) : '—', 'purchase-flavor-cell');
@@ -37837,7 +37809,10 @@ function substanceShowsPurchaseFlavor(substanceId, data = appData) {
 
 
 function getPurchaseHistoryVisibleColumns(substanceId = getInventorySubstanceFilterId()) {
-    const columns = getEffectiveColumnOrder('purchaseHistory').filter(colId => colId !== 'payment');
+    const removed = new Set(PURCHASE_HISTORY_REMOVED_COLUMN_IDS);
+    const columns = getEffectiveColumnOrder('purchaseHistory').filter(colId =>
+        colId !== 'payment' && !removed.has(colId)
+    );
     if (substanceShowsPurchaseFlavor(substanceId)) return columns;
     return columns.filter(colId => colId !== 'flavor');
 }
@@ -45433,7 +45408,7 @@ function renderPurchaseHistoryCard(ctx) {
                 ${renderPurchaseHistoryCardField('Amount / Quantity', boughtHtml)}
                 ${renderPurchaseHistoryCardField('Cost', costHtml)}
                 ${renderPurchaseHistoryCardField('Remaining', remainingHtml)}
-                ${renderPurchaseHistoryCardField('Store', storeHtml)}
+                ${renderPurchaseHistoryCardField('Source', storeHtml)}
                 ${renderPurchaseHistoryCardField('Status', statusHtml)}
             </div>
         </div>
@@ -45518,21 +45493,6 @@ function renderPurchaseHistory(substanceId, containerId = null) {
         yearRun += spend;
         runningById.set(String(p.id), { month: monthRun, year: yearRun });
     });
-    let budgetStatusLabel = '—';
-    let budgetSpent = null;
-    let budgetAmount = null;
-    if (typeof evaluateBudgets === 'function') {
-        try {
-            const activeBudgets = evaluateBudgets(appData, { substanceId: filterId === 'all' ? 'all' : filterId })
-                .filter(ev => ev.budget.status === 'active');
-            const worst = activeBudgets.slice().sort((a, b) => (b.pct || 0) - (a.pct || 0))[0];
-            if (worst) {
-                budgetStatusLabel = worst.statusLabel || worst.status || '—';
-                budgetSpent = worst.spent;
-                budgetAmount = worst.amount;
-            }
-        } catch (_) { /* ignore */ }
-    }
 
     purchases.forEach(purchase => {
         const purchaseSubstanceId = getPurchaseSubstanceId(purchase);
@@ -45571,10 +45531,7 @@ function renderPurchaseHistory(substanceId, containerId = null) {
             expanded,
             toggleLabel,
             runningMonthlySpendLabel: `${cur}${Number(running.month || 0).toFixed(2)}`,
-            runningYearlySpendLabel: `${cur}${Number(running.year || 0).toFixed(2)}`,
-            budgetStatusLabel,
-            budgetSpent,
-            budgetAmount
+            runningYearlySpendLabel: `${cur}${Number(running.year || 0).toFixed(2)}`
         };
 
         html += '<tr class="purchase-history-row inventory-history-row">';
@@ -61375,6 +61332,10 @@ function cleanExportData(data) {
             totalCost: Number(p.totalCost || 0),
             costPerUnit: Number(p.costPerUnit || 0),
             store: p.store || '',
+            sourceName: p.sourceName || '',
+            sourceKind: p.sourceKind || '',
+            sourceContactId: p.sourceContactId || '',
+            supplierContactId: p.supplierContactId || '',
             paymentMethod: p.paymentMethod || '',
             notes: p.notes || '',
             acquisitionType,
@@ -61666,7 +61627,7 @@ function exportDataCsv() {
         ].map(csvEscape).join(','));
     });
     rows.push('');
-    rows.push(['Record Type', 'Substance', 'Date', 'Time', 'Quantity', 'Unit', 'Product Type', 'Pill Qty', 'Strength/Pill', 'Strength Unit', 'Total Mg', 'THC mg/Edible', 'Total THC mg', 'Total Cost', 'How Acquired', 'Gift From', 'Store', 'Flavor', 'Notes'].map(csvEscape).join(','));
+    rows.push(['Record Type', 'Substance', 'Date', 'Time', 'Quantity', 'Unit', 'Product Type', 'Pill Qty', 'Strength/Pill', 'Strength Unit', 'Total Mg', 'THC mg/Edible', 'Total THC mg', 'Total Cost', 'How Acquired', 'Gift From', 'Source', 'Flavor', 'Notes'].map(csvEscape).join(','));
     (appData.purchases || []).forEach(p => {
         rows.push([
             'Purchase',
@@ -61685,7 +61646,7 @@ function exportDataCsv() {
             p.totalCost ?? '',
             getPurchaseAcquisitionType(p),
             getPurchaseGiftSource(p),
-            p.store || '',
+            (typeof getPurchaseSourceName === 'function' ? getPurchaseSourceName(p) : '') || p.store || '',
             purchaseSupportsFlavor(p) ? getVapePurchaseFlavor(p) : '',
             p.notes || ''
         ].map(csvEscape).join(','));
@@ -64454,6 +64415,10 @@ function __getRecoveryTrackerTestExports() {
         buildBuyWeeklySummaryCsvRows,
         getDefaultColumnSettings,
         normalizeStoredColumnSettings,
+        TABLE_COLUMN_DEFAULTS,
+        TABLE_COLUMN_LABELS,
+        PURCHASE_HISTORY_REMOVED_COLUMN_IDS,
+        getPurchaseHistoryColumnLabel,
         sanitizeCustomColumnName,
         normalizeCustomNamesMap,
         resolveColumnDisplayLabel,

@@ -142,15 +142,21 @@ if (typeof initInventorySource === 'function') {
 app = tryReplace(app,
     `        store: 'Store',
         supplier: 'Supplier',`,
+    `        store: 'Source',`,
+    'history column labels');
+
+app = tryReplace(app,
     `        store: 'Source',
         supplier: 'Source (legacy)',`,
-    'history column labels');
+    `        store: 'Source',`,
+    'history column labels remove legacy');
 
 app = tryReplace(app,
     `    purchaseHistory: {
         order: [`,
     `    purchaseHistory: {
-        // supplier hidden — Source (store column) is the single source field
+        // Source (store column) is the single source field. Legacy supplier / extra
+        // columns are omitted; saved settings that still mention them are ignored.
         order: [`,
     'comment purchase history');
 
