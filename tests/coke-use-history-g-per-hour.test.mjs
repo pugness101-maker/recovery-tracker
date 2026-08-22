@@ -222,6 +222,7 @@ test('7. Cost hidden only for Coke', () => {
     const cokeCatalog = rt.getUseHistoryColumnCatalog(COKE_ID);
     assert.ok(!cokeCatalog.includes('cost'));
     assert.ok(cokeCatalog.includes('gPerHour'));
+    assert.ok(cokeCatalog.includes('lines'));
     assert.ok(!cokeCatalog.includes('productType'));
     assert.ok(!cokeCatalog.includes('tabs'));
     assert.ok(!cokeCatalog.includes('pills'));
@@ -229,12 +230,13 @@ test('7. Cost hidden only for Coke', () => {
     const cokeVisible = rt.getUseHistoryVisibleColumns(COKE_ID);
     assert.ok(!cokeVisible.includes('cost'));
     assert.ok(cokeVisible.includes('gPerHour'));
+    assert.ok(cokeVisible.includes('lines'));
 
     const cokeBasic = rt.getColumnPresetDefinition('basic', 'useHistory', COKE_ID);
     const cokeBasicVisible = cokeBasic.order.filter(id => cokeBasic.visible[id]);
     assert.equal(
         JSON.stringify(cokeBasicVisible),
-        JSON.stringify(['select', 'date', 'start', 'end', 'amount', 'gPerHour', 'actions'])
+        JSON.stringify(['select', 'date', 'start', 'end', 'amount', 'lines', 'gPerHour', 'actions'])
     );
     assert.equal(cokeBasic.visible.cost, false);
     assert.ok(!cokeBasic.order.includes('cost'));
@@ -242,6 +244,7 @@ test('7. Cost hidden only for Coke', () => {
     const cokeDetailed = rt.getColumnPresetDefinition('detailed', 'useHistory', COKE_ID);
     assert.ok(!cokeDetailed.order.includes('cost'));
     assert.ok(cokeDetailed.order.includes('gPerHour'));
+    assert.ok(cokeDetailed.order.includes('lines'));
     assert.ok(cokeDetailed.order.includes('duration'));
     assert.ok(cokeDetailed.order.includes('inventory'));
 
@@ -258,10 +261,12 @@ test('7. Cost hidden only for Coke', () => {
     const weedCatalog = rt.getUseHistoryColumnCatalog(WEED_ID);
     assert.ok(weedCatalog.includes('cost'));
     assert.ok(!weedCatalog.includes('gPerHour'));
+    assert.ok(!weedCatalog.includes('lines'));
 
     const ketCatalog = rt.getUseHistoryColumnCatalog(KETAMINE_ID);
     assert.ok(ketCatalog.includes('cost'));
     assert.ok(!ketCatalog.includes('gPerHour'));
+    assert.ok(!ketCatalog.includes('lines'));
 });
 
 test('8. Coke column preferences persist after reload', () => {
