@@ -173,7 +173,7 @@
                     </div>
                     <div class="form-group dash-substance-field layout-legacy-hidden">
                         <label for="dashboard-substance">Substance</label>
-                        <select id="dashboard-substance" onchange="setSelectedDashboardSubstance(this.value)"></select>
+                        <select id="dashboard-substance" onchange="onDashboardSubstanceChange(this.value)"></select>
                     </div>
                 </header>
 
@@ -374,7 +374,7 @@
                 </div>
 
                 <div class="page-toolbar use-log-toolbar">
-                    <div class="use-log-filter-bar">
+                    <div class="use-log-filter-bar" role="group" aria-label="Date range shortcuts">
                         <span class="use-log-filter-label">Date Range</span>
                         <button type="button" class="use-log-filter-btn active" data-filter="all" onclick="setUseLogFilter('all')">All</button>
                         <button type="button" class="use-log-filter-btn" data-filter="today" onclick="setUseLogFilter('today')">Today</button>
@@ -382,9 +382,35 @@
                         <button type="button" class="use-log-filter-btn" data-filter="month" onclick="setUseLogFilter('month')">This Month</button>
                     </div>
                     <div class="page-toolbar-actions">
-                        <button type="button" class="secondary-btn btn-sm" onclick="toggleSection('useLogForm')">Filters</button>
+                        <button type="button" class="secondary-btn btn-sm" id="use-log-filter-toggle" onclick="toggleUseLogFiltersPanel()">Filters<span id="use-log-filter-count"></span></button>
                         <button type="button" class="secondary-btn btn-sm" id="use-log-columns-btn" onclick="document.getElementById('use-history-customize-columns')?.click()">Column Settings</button>
                         <button type="button" class="submit-btn btn-sm" onclick="openLayoutLogUse()">+ Log Use</button>
+                    </div>
+                </div>
+                <div id="use-log-filter-chips" class="use-log-filter-chips hidden"></div>
+                <div id="use-log-filter-panel" class="use-log-filter-panel hidden">
+                    <div class="use-log-filter-grid">
+                        <div class="use-log-filter-field">
+                            <label for="use-log-filter-transaction">Transaction Type</label>
+                            <select id="use-log-filter-transaction" onchange="applyUseLogSearchFilters()">
+                                <option value="">All transactions</option>
+                                <option value="use">Personal Use</option>
+                                <option value="gift_given">Gift Given</option>
+                                <option value="gift_received">Gift Received</option>
+                            </select>
+                        </div>
+                        <div class="use-log-filter-field">
+                            <label for="use-log-filter-entry">Entry Type</label>
+                            <select id="use-log-filter-entry" onchange="applyUseLogSearchFilters()">
+                                <option value="">All entries</option>
+                                <option value="quick">Quick Use</option>
+                                <option value="session">Session</option>
+                                <option value="gift">Gift</option>
+                            </select>
+                        </div>
+                        <div class="use-log-filter-actions">
+                            <button type="button" class="secondary-btn btn-sm" onclick="clearUseLogFilters()">Clear Filters</button>
+                        </div>
                     </div>
                 </div>
                 <section class="layout-section" aria-labelledby="use-log-summary-heading">
