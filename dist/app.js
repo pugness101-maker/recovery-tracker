@@ -4,7 +4,6 @@ const STORAGE_KEY_V1 = 'use-tracker-v1';
 const LAST_SAVED_KEY = 'recovery-tracker-v2-last-saved';
 const AUTO_BACKUP_KEY = 'recovery-tracker-v2-auto-backup';
 const CHANGE_HISTORY_KEY = 'recovery-tracker-v2-change-history';
-const DASHBOARD_LAYOUT_KEY = 'recovery-tracker-v2-dashboard-layout';
 const MAX_CHANGE_HISTORY = 40;
 const DASHBOARD_ALL = 'all';
 const THEME_PREFERENCE_KEY = 'recoveryTracker.themePreference';
@@ -48,9 +47,6 @@ const BUYING_REDUCTION_RULE_KEYS = Object.freeze([
 
 const AUTO_SPEND_BASELINE_RANGES = Object.freeze(['last-30', 'last-60', 'last-90', 'plan-period', 'custom']);
 
-const DEFAULT_DASHBOARD_WIDGETS = Object.freeze([
-    'todayUsed', 'weekUsed', 'monthUsed', 'spentMonth', 'monthCap', 'streak', 'quickActions'
-]);
 const RECOVERY_DASHBOARD_PRESETS = Object.freeze({
     today: 'Today',
     'this-week': 'This week',
@@ -9621,78 +9617,6 @@ function applyColumnPresetFromModal(presetId) {
     renderColumnSettingsList(columnSettingsTableKey);
 }
 
-// ——— Customizable daily dashboard (Phase 3) ———
-
-function loadDashboardLayout() {
-    try {
-        const raw = localStorage.getItem(DASHBOARD_LAYOUT_KEY);
-        if (!raw) return { widgets: [...DEFAULT_DASHBOARD_WIDGETS] };
-        const parsed = JSON.parse(raw);
-        const widgets = Array.isArray(parsed?.widgets)
-            ? parsed.widgets.filter(w => DEFAULT_DASHBOARD_WIDGETS.includes(w) || w === 'streak')
-            : [...DEFAULT_DASHBOARD_WIDGETS];
-        return { widgets: widgets.length ? widgets : [...DEFAULT_DASHBOARD_WIDGETS] };
-    } catch {
-        return { widgets: [...DEFAULT_DASHBOARD_WIDGETS] };
-    }
-}
-
-function saveDashboardLayout(layout) {
-    try {
-        localStorage.setItem(DASHBOARD_LAYOUT_KEY, JSON.stringify(layout));
-    } catch (err) {
-        console.error('Failed to save dashboard layout', err);
-    }
-}
-
-function applyDashboardLayout() {
-    const layout = loadDashboardLayout();
-    const widgetMap = {
-        todayUsed: 'dash-card-today',
-        weekUsed: 'dash-card-week',
-        monthUsed: 'dash-card-month',
-        spentMonth: 'dash-card-spent',
-        monthCap: 'dash-card-month-cap',
-        streak: 'dash-card-streak'
-    };
-    Object.entries(widgetMap).forEach(([key, id]) => {
-        const el = document.getElementById(id)?.closest('.dash-metric-card');
-        if (el) el.classList.toggle('hidden', !layout.widgets.includes(key));
-    });
-    document.getElementById('dashboard-main-stats')?.classList.toggle(
-        'hidden',
-        !['todayUsed', 'weekUsed', 'monthUsed', 'spentMonth', 'monthCap'].some(w => layout.widgets.includes(w))
-    );
-    document.querySelector('.dash-quick-actions')?.classList.toggle('hidden', !layout.widgets.includes('quickActions'));
-}
-
-function renderDashboardLayoutEditor() {
-    const container = document.getElementById('dashboard-layout-editor');
-    if (!container) return;
-    const layout = loadDashboardLayout();
-    const labels = {
-        todayUsed: 'Today Used',
-        weekUsed: 'This Week Used',
-        monthUsed: 'This Month Used',
-        spentMonth: 'Spent This Month',
-        monthCap: 'Remaining Monthly Cap',
-        streak: 'Recovery streak',
-        quickActions: 'Quick Actions'
-    };
-    container.innerHTML = DEFAULT_DASHBOARD_WIDGETS.map(id => `
-        <label class="checkbox-label">
-            <input type="checkbox" class="dash-layout-cb" data-widget="${id}" ${layout.widgets.includes(id) ? 'checked' : ''}>
-            ${labels[id] || id}
-        </label>`).join('');
-}
-
-function saveDashboardLayoutFromEditor() {
-    const widgets = [...document.querySelectorAll('.dash-layout-cb:checked')].map(el => el.dataset.widget);
-    saveDashboardLayout({ widgets: widgets.length ? widgets : [...DEFAULT_DASHBOARD_WIDGETS] });
-    applyDashboardLayout();
-    alert('Dashboard layout saved.');
-}
-
 // ——— Adaptive taper intelligence (Phase 4) ———
 
 function getTaperStatusExplanation(plan, substanceId, data = appData) {
@@ -10730,6 +10654,16 @@ function syncPurchaseInventoryStatus(purchase) {
 let inventoryTabFilter = 'all';
 let inventorySearchQuery = '';
 const inventorySelectedIds = new Set();
+const INVENTORY_RANGE_FILTER_KEYS = Object.freeze([
+    'totalCostMin', 'totalCostMax',
+    'costPerUnitMin', 'costPerUnitMax',
+    'qtyBoughtMin', 'qtyBoughtMax',
+    'qtyRemainingMin', 'qtyRemainingMax',
+    'amountUsedMin', 'amountUsedMax',
+    'pctUsedMin', 'pctUsedMax',
+    'purchaseDateMin', 'purchaseDateMax'
+]);
+
 const inventoryListFilters = {
     substanceId: '',
     datePreset: 'all',
@@ -10737,7 +10671,21 @@ const inventoryListFilters = {
     dateEnd: '',
     hasRemaining: '',
     hasCost: '',
-    vapeOnly: false
+    acquisitionType: '',
+    totalCostMin: '',
+    totalCostMax: '',
+    costPerUnitMin: '',
+    costPerUnitMax: '',
+    qtyBoughtMin: '',
+    qtyBoughtMax: '',
+    qtyRemainingMin: '',
+    qtyRemainingMax: '',
+    amountUsedMin: '',
+    amountUsedMax: '',
+    pctUsedMin: '',
+    pctUsedMax: '',
+    purchaseDateMin: '',
+    purchaseDateMax: ''
 };
 let inventoryFiltersPanelOpen = false;
 const INVENTORY_FILTERS_PANEL_KEY = 'recoveryTracker.inventoryFiltersPanel.v1';
@@ -10775,6 +10723,94 @@ function purchaseMatchesInventoryStatus(purchase, status = inventoryTabFilter) {
     if (normalized === 'history') return tab === 'depleted' || tab === 'gifted' || tab === 'hidden';
     return tab === normalized;
 }
+function getPurchaseFilterTotalCost(purchase) {
+    const cost = parseFloat(typeof getPurchaseTotalCost === 'function' ? getPurchaseTotalCost(purchase) : purchase?.totalCost);
+    return Number.isFinite(cost) ? cost : null;
+}
+
+function getPurchaseFilterCostPerUnit(purchase) {
+    const cpu = parseFloat(purchase?.costPerUnit);
+    if (Number.isFinite(cpu)) return cpu;
+    const cost = getPurchaseFilterTotalCost(purchase);
+    const qty = typeof getPurchaseQuantityBought === 'function'
+        ? getPurchaseQuantityBought(purchase)
+        : parseFloat(purchase?.quantityBought);
+    if (cost == null || !Number.isFinite(qty) || qty <= 0) return null;
+    return cost / qty;
+}
+
+function getPurchaseFilterQuantityBought(purchase) {
+    const qty = typeof getPurchaseQuantityBought === 'function'
+        ? getPurchaseQuantityBought(purchase)
+        : parseFloat(purchase?.quantityBought ?? purchase?.quantity);
+    return Number.isFinite(qty) ? qty : null;
+}
+
+function getPurchaseFilterQuantityRemaining(purchase) {
+    const rem = typeof getPurchaseRemainingDisplayAmount === 'function'
+        ? getPurchaseRemainingDisplayAmount(purchase)
+        : (typeof getPurchaseRemainingAmount === 'function'
+            ? getPurchaseRemainingAmount(purchase)
+            : parseFloat(purchase?.remainingAmount));
+    return rem == null || !Number.isFinite(rem) ? null : rem;
+}
+
+function getPurchaseFilterAmountUsed(purchase) {
+    const bought = getPurchaseFilterQuantityBought(purchase);
+    const remaining = getPurchaseFilterQuantityRemaining(purchase);
+    if (bought == null || remaining == null) return null;
+    return Math.max(0, bought - remaining);
+}
+
+function getPurchaseFilterPercentUsed(purchase) {
+    if (typeof getPurchasePercentUsed === 'function') {
+        const pct = getPurchasePercentUsed(purchase);
+        return Number.isFinite(pct) ? pct : null;
+    }
+    const bought = getPurchaseFilterQuantityBought(purchase);
+    const used = getPurchaseFilterAmountUsed(purchase);
+    if (bought == null || !(bought > 0) || used == null) return null;
+    return Math.round((used / bought) * 100);
+}
+
+function getInventoryFilterUnitLabel(selectedSubstanceId = getInventorySubstanceFilterId()) {
+    if (!selectedSubstanceId) return 'record unit';
+    if (typeof getSubstancePrimaryUnit === 'function') {
+        return getSubstancePrimaryUnit(selectedSubstanceId) || 'units';
+    }
+    const sub = typeof getSubstance === 'function' ? getSubstance(selectedSubstanceId) : null;
+    return sub?.primaryUnit || sub?.defaultUnit || 'units';
+}
+
+function purchaseMatchesInventoryRangeFilters(purchase, filters = inventoryListFilters) {
+    const parse = typeof parseOptionalFilterNumber === 'function'
+        ? parseOptionalFilterNumber
+        : (value) => {
+            if (value == null || value === '') return null;
+            const n = parseFloat(value);
+            return Number.isFinite(n) ? n : null;
+        };
+    const matches = typeof valueMatchesMinMax === 'function'
+        ? valueMatchesMinMax
+        : (value, min, max) => {
+            if (min == null && max == null) return true;
+            if (value == null || !Number.isFinite(value)) return false;
+            if (min != null && value < min) return false;
+            if (max != null && value > max) return false;
+            return true;
+        };
+    if (!matches(getPurchaseFilterTotalCost(purchase), parse(filters.totalCostMin), parse(filters.totalCostMax))) return false;
+    if (!matches(getPurchaseFilterCostPerUnit(purchase), parse(filters.costPerUnitMin), parse(filters.costPerUnitMax))) return false;
+    if (!matches(getPurchaseFilterQuantityBought(purchase), parse(filters.qtyBoughtMin), parse(filters.qtyBoughtMax))) return false;
+    if (!matches(getPurchaseFilterQuantityRemaining(purchase), parse(filters.qtyRemainingMin), parse(filters.qtyRemainingMax))) return false;
+    if (!matches(getPurchaseFilterAmountUsed(purchase), parse(filters.amountUsedMin), parse(filters.amountUsedMax))) return false;
+    if (!matches(getPurchaseFilterPercentUsed(purchase), parse(filters.pctUsedMin), parse(filters.pctUsedMax))) return false;
+    const dateStr = typeof getPurchaseDateStr === 'function' ? getPurchaseDateStr(purchase) : purchase?.date;
+    if (filters.purchaseDateMin && (!dateStr || dateStr < filters.purchaseDateMin)) return false;
+    if (filters.purchaseDateMax && (!dateStr || dateStr > filters.purchaseDateMax)) return false;
+    return true;
+}
+
 function purchaseMatchesInventoryFilters(purchase, filters = inventoryListFilters, data = appData) {
     if (filters.substanceId && getPurchaseSubstanceId(purchase) !== filters.substanceId) return false;
     const bounds = getInventoryDateFilterBounds(filters, data);
@@ -10785,7 +10821,13 @@ function purchaseMatchesInventoryFilters(purchase, filters = inventoryListFilter
     const cost = parseFloat(getPurchaseTotalCost(purchase)) || 0;
     if (filters.hasCost === 'yes' && cost <= 0) return false;
     if (filters.hasCost === 'no' && cost > 0) return false;
-    if (filters.vapeOnly && !isVapePuffPurchase(purchase, data)) return false;
+    if (filters.acquisitionType) {
+        const acq = typeof getPurchaseAcquisitionType === 'function'
+            ? getPurchaseAcquisitionType(purchase)
+            : (purchase?.acquisitionType || 'purchased');
+        if (acq !== filters.acquisitionType) return false;
+    }
+    if (!purchaseMatchesInventoryRangeFilters(purchase, filters)) return false;
     return true;
 }
 function getInventoryFilteredPurchases(substanceId, data = appData) {
@@ -11055,7 +11097,14 @@ function countActiveInventoryFilters() {
     if (preset !== 'all') count++;
     if (inventoryListFilters.hasRemaining) count++;
     if (inventoryListFilters.hasCost) count++;
-    if (inventoryListFilters.vapeOnly) count++;
+    if (inventoryListFilters.acquisitionType) count++;
+    if (inventoryListFilters.totalCostMin !== '' || inventoryListFilters.totalCostMax !== '') count++;
+    if (inventoryListFilters.costPerUnitMin !== '' || inventoryListFilters.costPerUnitMax !== '') count++;
+    if (inventoryListFilters.qtyBoughtMin !== '' || inventoryListFilters.qtyBoughtMax !== '') count++;
+    if (inventoryListFilters.qtyRemainingMin !== '' || inventoryListFilters.qtyRemainingMax !== '') count++;
+    if (inventoryListFilters.amountUsedMin !== '' || inventoryListFilters.amountUsedMax !== '') count++;
+    if (inventoryListFilters.pctUsedMin !== '' || inventoryListFilters.pctUsedMax !== '') count++;
+    if (inventoryListFilters.purchaseDateMin || inventoryListFilters.purchaseDateMax) count++;
     return count;
 }
 function hasActiveInventoryFilters() {
@@ -11078,7 +11127,11 @@ function loadInventoryFiltersPanelState() {
             }
             if (saved.hasRemaining != null) inventoryListFilters.hasRemaining = saved.hasRemaining;
             if (saved.hasCost != null) inventoryListFilters.hasCost = saved.hasCost;
-            if (typeof saved.vapeOnly === 'boolean') inventoryListFilters.vapeOnly = saved.vapeOnly;
+            if (saved.acquisitionType != null) inventoryListFilters.acquisitionType = saved.acquisitionType;
+            INVENTORY_RANGE_FILTER_KEYS.forEach(key => {
+                if (saved[key] != null) inventoryListFilters[key] = saved[key];
+            });
+            // Legacy vapeOnly is ignored so old saved filters still load.
         }
         if (localStorage.getItem(INVENTORY_FILTERS_PANEL_KEY) === '1') {
             inventoryFiltersPanelOpen = true;
@@ -11088,19 +11141,10 @@ function loadInventoryFiltersPanelState() {
     syncInventoryStatusFilterUI();
     const searchEl = document.getElementById('inventory-search');
     if (searchEl) searchEl.value = inventorySearchQuery;
-    ['inventory-filter-date-start', 'inventory-filter-date-end',
-        'inventory-filter-remaining', 'inventory-filter-cost'].forEach(id => {
-        const el = document.getElementById(id);
-        if (!el) return;
-        if (id === 'inventory-filter-date-start') el.value = inventoryListFilters.dateStart;
-        else if (id === 'inventory-filter-date-end') el.value = inventoryListFilters.dateEnd;
-        else if (id === 'inventory-filter-remaining') el.value = inventoryListFilters.hasRemaining;
-        else if (id === 'inventory-filter-cost') el.value = inventoryListFilters.hasCost;
-    });
-    const vapeOnlyEl = document.getElementById('inventory-filter-vape-only');
-    if (vapeOnlyEl) vapeOnlyEl.checked = inventoryListFilters.vapeOnly;
+    syncInventoryFilterInputsFromState();
     syncInventoryDateShortcutButtons();
     syncInventoryCustomDateInputs();
+    syncInventoryFilterUnitLabels();
 }
 function saveInventoryFiltersPanelState() {
     try {
@@ -11110,7 +11154,7 @@ function saveInventoryFiltersPanelState() {
 function saveInventoryFilterState() {
     saveInventoryFiltersPanelState();
     try {
-        localStorage.setItem(INVENTORY_FILTERS_STORAGE_KEY, JSON.stringify({
+        const payload = {
             status: inventoryTabFilter,
             search: inventorySearchQuery,
             datePreset: inventoryListFilters.datePreset,
@@ -11118,8 +11162,12 @@ function saveInventoryFilterState() {
             dateEnd: inventoryListFilters.dateEnd,
             hasRemaining: inventoryListFilters.hasRemaining,
             hasCost: inventoryListFilters.hasCost,
-            vapeOnly: inventoryListFilters.vapeOnly
-        }));
+            acquisitionType: inventoryListFilters.acquisitionType
+        };
+        INVENTORY_RANGE_FILTER_KEYS.forEach(key => {
+            payload[key] = inventoryListFilters[key];
+        });
+        localStorage.setItem(INVENTORY_FILTERS_STORAGE_KEY, JSON.stringify(payload));
     } catch (_) { /* ignore */ }
 }
 function toggleInventoryFiltersPanel() {
@@ -11164,12 +11212,81 @@ function renderInventoryFilterChips() {
     } else if (inventoryListFilters.hasCost === 'no') {
         chips.push('<span class="inventory-filter-chip">Cost: No cost</span>');
     }
-    if (inventoryListFilters.vapeOnly) {
-        chips.push('<span class="inventory-filter-chip">Vape only</span>');
+    if (inventoryListFilters.acquisitionType) {
+        const labels = {
+            purchased: 'Purchased',
+            gift_received: 'Gift Received',
+            purchased_as_gift: 'Purchased as Gift',
+            other_adjustment: 'Adjustment'
+        };
+        chips.push(`<span class="inventory-filter-chip">Acquisition: ${escapeHtml(labels[inventoryListFilters.acquisitionType] || inventoryListFilters.acquisitionType)}</span>`);
     }
+    const unit = getInventoryFilterUnitLabel();
+    const rangeChip = (label, min, max, suffix = '') => {
+        const hasMin = min != null && min !== '';
+        const hasMax = max != null && max !== '';
+        if (!hasMin && !hasMax) return '';
+        let range;
+        if (hasMin && hasMax) range = `${min}–${max}`;
+        else if (hasMin) range = `≥ ${min}`;
+        else range = `≤ ${max}`;
+        return `<span class="inventory-filter-chip">${escapeHtml(label)}: ${escapeHtml(range)}${suffix ? ` ${escapeHtml(suffix)}` : ''}</span>`;
+    };
+    const totalCostChip = rangeChip('Total Cost', inventoryListFilters.totalCostMin, inventoryListFilters.totalCostMax);
+    if (totalCostChip) chips.push(totalCostChip);
+    const cpuChip = rangeChip('Cost Per Unit', inventoryListFilters.costPerUnitMin, inventoryListFilters.costPerUnitMax);
+    if (cpuChip) chips.push(cpuChip);
+    const boughtChip = rangeChip('Quantity Bought', inventoryListFilters.qtyBoughtMin, inventoryListFilters.qtyBoughtMax, unit);
+    if (boughtChip) chips.push(boughtChip);
+    const remainingChip = rangeChip('Quantity Remaining', inventoryListFilters.qtyRemainingMin, inventoryListFilters.qtyRemainingMax, unit);
+    if (remainingChip) chips.push(remainingChip);
+    const usedChip = rangeChip('Amount used', inventoryListFilters.amountUsedMin, inventoryListFilters.amountUsedMax, unit);
+    if (usedChip) chips.push(usedChip);
+    const pctChip = rangeChip('Percentage used', inventoryListFilters.pctUsedMin, inventoryListFilters.pctUsedMax, '%');
+    if (pctChip) chips.push(pctChip);
+    const purchaseDateChip = rangeChip('Purchase Date', inventoryListFilters.purchaseDateMin, inventoryListFilters.purchaseDateMax);
+    if (purchaseDateChip) chips.push(purchaseDateChip);
     container.innerHTML = chips.join('');
     container.classList.toggle('hidden', !chips.length);
 }
+function syncInventoryFilterUnitLabels() {
+    const unit = getInventoryFilterUnitLabel();
+    const text = unit ? `(${unit})` : '';
+    ['inventory-filter-bought-unit', 'inventory-filter-remaining-unit', 'inventory-filter-used-unit']
+        .forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = text;
+        });
+}
+
+function syncInventoryFilterInputsFromState() {
+    const map = {
+        'inventory-filter-date-start': 'dateStart',
+        'inventory-filter-date-end': 'dateEnd',
+        'inventory-filter-remaining': 'hasRemaining',
+        'inventory-filter-cost': 'hasCost',
+        'inventory-filter-acquisition': 'acquisitionType',
+        'inventory-filter-total-cost-min': 'totalCostMin',
+        'inventory-filter-total-cost-max': 'totalCostMax',
+        'inventory-filter-cost-per-unit-min': 'costPerUnitMin',
+        'inventory-filter-cost-per-unit-max': 'costPerUnitMax',
+        'inventory-filter-qty-bought-min': 'qtyBoughtMin',
+        'inventory-filter-qty-bought-max': 'qtyBoughtMax',
+        'inventory-filter-qty-remaining-min': 'qtyRemainingMin',
+        'inventory-filter-qty-remaining-max': 'qtyRemainingMax',
+        'inventory-filter-amount-used-min': 'amountUsedMin',
+        'inventory-filter-amount-used-max': 'amountUsedMax',
+        'inventory-filter-pct-used-min': 'pctUsedMin',
+        'inventory-filter-pct-used-max': 'pctUsedMax',
+        'inventory-filter-purchase-min': 'purchaseDateMin',
+        'inventory-filter-purchase-max': 'purchaseDateMax'
+    };
+    Object.entries(map).forEach(([id, key]) => {
+        const el = document.getElementById(id);
+        if (el) el.value = inventoryListFilters[key] ?? '';
+    });
+}
+
 function updateInventoryFiltersPanelUI() {
     const panel = document.getElementById('inventory-filter-panel');
     const toggle = document.getElementById('inventory-filter-toggle');
@@ -11178,6 +11295,7 @@ function updateInventoryFiltersPanelUI() {
     toggle?.classList.toggle('open', inventoryFiltersPanelOpen);
     const count = countActiveInventoryFilters();
     if (countEl) countEl.textContent = count > 0 ? `(${count})` : '';
+    syncInventoryFilterUnitLabels();
     renderInventoryFilterChips();
     syncInventorySearchPlaceholder();
 }
@@ -11188,18 +11306,13 @@ function clearInventoryFilters() {
     inventoryListFilters.dateEnd = '';
     inventoryListFilters.hasRemaining = '';
     inventoryListFilters.hasCost = '';
-    inventoryListFilters.vapeOnly = false;
+    inventoryListFilters.acquisitionType = '';
+    INVENTORY_RANGE_FILTER_KEYS.forEach(key => { inventoryListFilters[key] = ''; });
     inventoryTabFilter = 'all';
     inventoryFiltersPanelOpen = false;
     const searchEl = document.getElementById('inventory-search');
     if (searchEl) searchEl.value = '';
-    ['inventory-filter-date-start', 'inventory-filter-date-end',
-        'inventory-filter-remaining', 'inventory-filter-cost'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.value = '';
-    });
-    const vapeOnlyEl = document.getElementById('inventory-filter-vape-only');
-    if (vapeOnlyEl) vapeOnlyEl.checked = false;
+    syncInventoryFilterInputsFromState();
     syncInventorySubstanceFilterState();
     syncInventoryStatusFilterUI();
     syncInventoryDateShortcutButtons();
@@ -11262,7 +11375,21 @@ function applyInventorySearchFilters() {
     );
     inventoryListFilters.hasRemaining = document.getElementById('inventory-filter-remaining')?.value || '';
     inventoryListFilters.hasCost = document.getElementById('inventory-filter-cost')?.value || '';
-    inventoryListFilters.vapeOnly = !!document.getElementById('inventory-filter-vape-only')?.checked;
+    inventoryListFilters.acquisitionType = document.getElementById('inventory-filter-acquisition')?.value || '';
+    inventoryListFilters.totalCostMin = document.getElementById('inventory-filter-total-cost-min')?.value ?? '';
+    inventoryListFilters.totalCostMax = document.getElementById('inventory-filter-total-cost-max')?.value ?? '';
+    inventoryListFilters.costPerUnitMin = document.getElementById('inventory-filter-cost-per-unit-min')?.value ?? '';
+    inventoryListFilters.costPerUnitMax = document.getElementById('inventory-filter-cost-per-unit-max')?.value ?? '';
+    inventoryListFilters.qtyBoughtMin = document.getElementById('inventory-filter-qty-bought-min')?.value ?? '';
+    inventoryListFilters.qtyBoughtMax = document.getElementById('inventory-filter-qty-bought-max')?.value ?? '';
+    inventoryListFilters.qtyRemainingMin = document.getElementById('inventory-filter-qty-remaining-min')?.value ?? '';
+    inventoryListFilters.qtyRemainingMax = document.getElementById('inventory-filter-qty-remaining-max')?.value ?? '';
+    inventoryListFilters.amountUsedMin = document.getElementById('inventory-filter-amount-used-min')?.value ?? '';
+    inventoryListFilters.amountUsedMax = document.getElementById('inventory-filter-amount-used-max')?.value ?? '';
+    inventoryListFilters.pctUsedMin = document.getElementById('inventory-filter-pct-used-min')?.value ?? '';
+    inventoryListFilters.pctUsedMax = document.getElementById('inventory-filter-pct-used-max')?.value ?? '';
+    inventoryListFilters.purchaseDateMin = document.getElementById('inventory-filter-purchase-min')?.value ?? '';
+    inventoryListFilters.purchaseDateMax = document.getElementById('inventory-filter-purchase-max')?.value ?? '';
     syncInventorySubstanceFilterState();
     syncInventoryStatusFilterUI();
     syncInventoryDateShortcutButtons();
@@ -11317,7 +11444,9 @@ function syncInventorySearchPlaceholder(substanceId = getInventorySubstanceFilte
     const el = document.getElementById('inventory-search');
     if (el) el.placeholder = getInventorySearchPlaceholder(substanceId);
 }
+
 // ——— END Inventory page (splice boundary — do not remove) ———
+
 
 function getVapePurchaseDisplayStatus(purchase) {
     if (purchase.inventoryHidden) return { key: 'hidden', label: 'Hidden', className: 'vape-status-hidden' };
@@ -31239,12 +31368,39 @@ let columnSettingsTableKey = null;
 let columnSettingsVariantKey = null;
 let useLogDateFilter = 'all';
 let useLogFiltersPanelOpen = false;
+const USE_LOG_RANGE_FILTER_KEYS = Object.freeze([
+    'amountMin', 'amountMax',
+    'durationMin', 'durationMax',
+    'costMin', 'costMax',
+    'linesMin', 'linesMax',
+    'rateMin', 'rateMax',
+    'startMin', 'startMax',
+    'endMin', 'endMax',
+    'breakMin', 'breakMax'
+]);
+
 const useLogListFilters = {
     datePreset: 'all',
     customStart: '',
     customEnd: '',
     transactionType: '',
-    entryType: ''
+    entryType: '',
+    amountMin: '',
+    amountMax: '',
+    durationMin: '',
+    durationMax: '',
+    costMin: '',
+    costMax: '',
+    linesMin: '',
+    linesMax: '',
+    rateMin: '',
+    rateMax: '',
+    startMin: '',
+    startMax: '',
+    endMin: '',
+    endMax: '',
+    breakMin: '',
+    breakMax: ''
 };
 let purchaseHistorySort = { colId: null, dir: 'asc' };
 
@@ -33901,9 +34057,7 @@ function refreshAppAfterDataChange() {
     applyCollapsedSections();
     initAppearanceViewMode();
     initAppearanceZoom();
-    applyDashboardLayout();
     updateUndoButtonState();
-    renderDashboardLayoutEditor();
     if (typeof applyExperienceMode === 'function') {
         try { applyExperienceMode(appData); } catch (_) { /* ignore */ }
     }
@@ -42149,6 +42303,197 @@ function useHistorySelectionHas(id) {
     return [...useHistorySelection].some(sid => String(sid) === String(id));
 }
 
+function parseOptionalFilterNumber(value) {
+    if (value == null || value === '') return null;
+    const n = typeof value === 'number' ? value : parseFloat(value);
+    return Number.isFinite(n) ? n : null;
+}
+
+function valueMatchesMinMax(value, min, max) {
+    if (min == null && max == null) return true;
+    if (value == null || !Number.isFinite(value)) return false;
+    if (min != null && value < min) return false;
+    if (max != null && value > max) return false;
+    return true;
+}
+
+function clockMinutesMatchesRange(minutes, minTime, maxTime) {
+    const min = minTime ? timeToMinutes(minTime) : null;
+    const max = maxTime ? timeToMinutes(maxTime) : null;
+    if (min == null && max == null) return true;
+    if (minutes == null || !Number.isFinite(minutes)) return false;
+    if (min != null && max != null && min > max) {
+        return minutes >= min || minutes <= max;
+    }
+    if (min != null && minutes < min) return false;
+    if (max != null && minutes > max) return false;
+    return true;
+}
+
+function getUseLogFilterAmountUnit(logOrSubstanceId, data = appData) {
+    const sid = typeof logOrSubstanceId === 'string'
+        ? logOrSubstanceId
+        : getUseSubstanceId(logOrSubstanceId, data);
+    if (!sid) return '';
+    if (typeof isLsdSubstanceId === 'function' && isLsdSubstanceId(sid, data)) {
+        const sub = typeof getSubstance === 'function' ? getSubstance(sid, data) : null;
+        const unit = String(sub?.defaultUnit || sub?.primaryUnit || 'ug').toLowerCase();
+        return (unit === 'tabs' || unit === 'tab') ? 'tabs' : 'ug';
+    }
+    if (typeof isXanaxSubstanceId === 'function' && isXanaxSubstanceId(sid, data)) {
+        const sub = typeof getSubstance === 'function' ? getSubstance(sid, data) : null;
+        const unit = String(sub?.defaultUnit || sub?.primaryUnit || 'pills').toLowerCase();
+        return unit === 'mg' ? 'mg' : 'pills';
+    }
+    if (typeof getSubstancePrimaryUnit === 'function') {
+        return getSubstancePrimaryUnit(sid, data) || '';
+    }
+    return '';
+}
+
+function getUseLogFilterableAmount(log, data = appData) {
+    if (!log) return null;
+    const sid = getUseSubstanceId(log, data);
+    const targetUnit = getUseLogFilterAmountUnit(log, data);
+    if (typeof isLsdSubstanceId === 'function' && isLsdSubstanceId(sid, data)) {
+        const n = targetUnit === 'tabs'
+            ? (typeof getLsdLogTabsAmount === 'function' ? getLsdLogTabsAmount(log) : parseFloat(log.tabsUsed))
+            : (typeof getLsdLogUgAmount === 'function' ? getLsdLogUgAmount(log) : parseFloat(log.ugUsed ?? log.amount));
+        return Number.isFinite(n) ? n : null;
+    }
+    if (typeof isXanaxSubstanceId === 'function' && isXanaxSubstanceId(sid, data)) {
+        const n = targetUnit === 'mg'
+            ? (typeof getXanaxLogMgAmount === 'function' ? getXanaxLogMgAmount(log) : parseFloat(log.mgUsed))
+            : (typeof getXanaxLogPillsAmount === 'function' ? getXanaxLogPillsAmount(log) : parseFloat(log.pillsUsed ?? log.amount));
+        return Number.isFinite(n) ? n : null;
+    }
+    const raw = parseFloat(log.amount);
+    if (!Number.isFinite(raw)) return null;
+    const logUnit = String(log.unit || '').trim().toLowerCase();
+    const target = String(targetUnit || logUnit || '').toLowerCase();
+    if ((logUnit === 'mg' || logUnit === 'milligram' || logUnit === 'milligrams')
+        && (target === 'g' || target === 'gram' || target === 'grams')) {
+        return raw / 1000;
+    }
+    if ((logUnit === 'g' || logUnit === 'gram' || logUnit === 'grams')
+        && (target === 'mg' || target === 'milligram' || target === 'milligrams')) {
+        return raw * 1000;
+    }
+    return raw;
+}
+
+function getUseLogFilterDurationHours(entry) {
+    if (!entry) return null;
+    const durationMs = parseFloat(entry.durationMs);
+    if (Number.isFinite(durationMs) && durationMs >= 0) return durationMs / 3600000;
+    const durationHours = parseFloat(entry.durationHours);
+    if (Number.isFinite(durationHours) && durationHours >= 0) return durationHours;
+    const start = typeof getUseLogStartedAt === 'function' ? getUseLogStartedAt(entry) : null;
+    const end = typeof getUseLogEndedAt === 'function' ? getUseLogEndedAt(entry) : null;
+    if (start && end) {
+        const hours = (end.getTime() - start.getTime()) / 3600000;
+        if (Number.isFinite(hours) && hours >= 0) return hours;
+    }
+    return null;
+}
+
+function getUseLogFilterableCost(log) {
+    if (!log) return null;
+    const direct = parseFloat(log.estimatedCost);
+    if (Number.isFinite(direct)) return direct;
+    const fallback = typeof estimateLogCost === 'function' ? estimateLogCost(log) : NaN;
+    return Number.isFinite(fallback) ? fallback : null;
+}
+
+function getUseLogFilterClockMinutes(log, which) {
+    if (!log) return null;
+    if (which === 'end') {
+        const raw = log.endTime;
+        if (raw == null || raw === '') return null;
+        return timeToMinutes(raw);
+    }
+    const raw = log.startTime || log.time;
+    if (raw == null || raw === '') return null;
+    return timeToMinutes(raw);
+}
+
+function getUseLogFilterableUseRate(log, data = appData) {
+    const hours = getUseLogFilterDurationHours(log);
+    if (hours == null || !(hours > 0)) return null;
+    const amount = getUseLogFilterableAmount(log, data);
+    if (amount == null || !Number.isFinite(amount)) return null;
+    return amount / hours;
+}
+
+function getUseLogFilterableBreakHours(log, data = appData) {
+    if (typeof getBreakBetweenUsesDetails !== 'function') return null;
+    const details = getBreakBetweenUsesDetails(log, data);
+    const hours = details?.hours;
+    return Number.isFinite(hours) && hours >= 0 ? hours : null;
+}
+
+function resolveUseLogListFilters(options = {}) {
+    const filters = { ...useLogListFilters };
+    if (options.transactionType !== undefined) filters.transactionType = options.transactionType || '';
+    if (options.entryType !== undefined) filters.entryType = options.entryType || '';
+    USE_LOG_RANGE_FILTER_KEYS.forEach(key => {
+        if (options[key] !== undefined) filters[key] = options[key];
+    });
+    return filters;
+}
+
+function useLogHasRangeFilters(filters = useLogListFilters) {
+    return USE_LOG_RANGE_FILTER_KEYS.some(key => {
+        const value = filters[key];
+        return value != null && value !== '';
+    });
+}
+
+function logMatchesUseLogRangeFilters(log, filters = useLogListFilters, data = appData) {
+    if (!useLogHasRangeFilters(filters)) return true;
+    if (!valueMatchesMinMax(
+        getUseLogFilterableAmount(log, data),
+        parseOptionalFilterNumber(filters.amountMin),
+        parseOptionalFilterNumber(filters.amountMax)
+    )) return false;
+    if (!valueMatchesMinMax(
+        getUseLogFilterDurationHours(log),
+        parseOptionalFilterNumber(filters.durationMin),
+        parseOptionalFilterNumber(filters.durationMax)
+    )) return false;
+    if (!valueMatchesMinMax(
+        getUseLogFilterableCost(log),
+        parseOptionalFilterNumber(filters.costMin),
+        parseOptionalFilterNumber(filters.costMax)
+    )) return false;
+    if (!valueMatchesMinMax(
+        typeof getUseLogLines === 'function' ? getUseLogLines(log) : parseFloat(log.lines),
+        parseOptionalFilterNumber(filters.linesMin),
+        parseOptionalFilterNumber(filters.linesMax)
+    )) return false;
+    if (!valueMatchesMinMax(
+        getUseLogFilterableUseRate(log, data),
+        parseOptionalFilterNumber(filters.rateMin),
+        parseOptionalFilterNumber(filters.rateMax)
+    )) return false;
+    if (!clockMinutesMatchesRange(
+        getUseLogFilterClockMinutes(log, 'start'),
+        filters.startMin,
+        filters.startMax
+    )) return false;
+    if (!clockMinutesMatchesRange(
+        getUseLogFilterClockMinutes(log, 'end'),
+        filters.endMin,
+        filters.endMax
+    )) return false;
+    if (!valueMatchesMinMax(
+        getUseLogFilterableBreakHours(log, data),
+        parseOptionalFilterNumber(filters.breakMin),
+        parseOptionalFilterNumber(filters.breakMax)
+    )) return false;
+    return true;
+}
+
 /**
  * Single filtered Use Log dataset for summary cards, Recent Use, Use History,
  * Bulk Actions selection, and CSV export.
@@ -42162,11 +42507,10 @@ function getFilteredUseLogs(options = {}) {
     const productType = options.productType || null;
     const productTypes = options.productTypes
         || (productType ? [productType] : null);
+    const filters = resolveUseLogListFilters(options);
     const transactionTypes = options.transactionTypes
-        || (options.transactionType
-            ? [options.transactionType]
-            : (useLogListFilters.transactionType ? [useLogListFilters.transactionType] : null));
-    const entryType = options.entryType !== undefined ? options.entryType : useLogListFilters.entryType;
+        || (filters.transactionType ? [filters.transactionType] : null);
+    const entryType = filters.entryType;
 
     let logs = getUseEntries(data).filter(l => logMatchesUseLogFilter(l, dateFilter));
     logs = logs.filter(l => !isPercentLeftDistributedChildLog(l));
@@ -42185,6 +42529,9 @@ function getFilteredUseLogs(options = {}) {
     }
     if (entryType) {
         logs = logs.filter(l => logMatchesUseEntryType(l, entryType));
+    }
+    if (useLogHasRangeFilters(filters)) {
+        logs = logs.filter(l => logMatchesUseLogRangeFilters(l, filters, data));
     }
     return logs;
 }
@@ -45500,6 +45847,22 @@ function applyUseLogCustomDates() {
 function applyUseLogSearchFilters() {
     useLogListFilters.transactionType = document.getElementById('use-log-filter-transaction')?.value || '';
     useLogListFilters.entryType = document.getElementById('use-log-filter-entry')?.value || '';
+    useLogListFilters.amountMin = document.getElementById('use-log-filter-amount-min')?.value ?? '';
+    useLogListFilters.amountMax = document.getElementById('use-log-filter-amount-max')?.value ?? '';
+    useLogListFilters.durationMin = document.getElementById('use-log-filter-duration-min')?.value ?? '';
+    useLogListFilters.durationMax = document.getElementById('use-log-filter-duration-max')?.value ?? '';
+    useLogListFilters.costMin = document.getElementById('use-log-filter-cost-min')?.value ?? '';
+    useLogListFilters.costMax = document.getElementById('use-log-filter-cost-max')?.value ?? '';
+    useLogListFilters.linesMin = document.getElementById('use-log-filter-lines-min')?.value ?? '';
+    useLogListFilters.linesMax = document.getElementById('use-log-filter-lines-max')?.value ?? '';
+    useLogListFilters.rateMin = document.getElementById('use-log-filter-rate-min')?.value ?? '';
+    useLogListFilters.rateMax = document.getElementById('use-log-filter-rate-max')?.value ?? '';
+    useLogListFilters.startMin = document.getElementById('use-log-filter-start-min')?.value ?? '';
+    useLogListFilters.startMax = document.getElementById('use-log-filter-start-max')?.value ?? '';
+    useLogListFilters.endMin = document.getElementById('use-log-filter-end-min')?.value ?? '';
+    useLogListFilters.endMax = document.getElementById('use-log-filter-end-max')?.value ?? '';
+    useLogListFilters.breakMin = document.getElementById('use-log-filter-break-min')?.value ?? '';
+    useLogListFilters.breakMax = document.getElementById('use-log-filter-break-max')?.value ?? '';
     updateUseLogFiltersPanelUI();
     renderUseLogTab();
 }
@@ -45509,6 +45872,14 @@ function countActiveUseLogFilters() {
     if (useLogListFilters.datePreset && useLogListFilters.datePreset !== 'all') count++;
     if (useLogListFilters.transactionType) count++;
     if (useLogListFilters.entryType) count++;
+    if (useLogListFilters.amountMin !== '' || useLogListFilters.amountMax !== '') count++;
+    if (useLogListFilters.durationMin !== '' || useLogListFilters.durationMax !== '') count++;
+    if (useLogListFilters.costMin !== '' || useLogListFilters.costMax !== '') count++;
+    if (useLogListFilters.linesMin !== '' || useLogListFilters.linesMax !== '') count++;
+    if (useLogListFilters.rateMin !== '' || useLogListFilters.rateMax !== '') count++;
+    if (useLogListFilters.startMin || useLogListFilters.startMax) count++;
+    if (useLogListFilters.endMin || useLogListFilters.endMax) count++;
+    if (useLogListFilters.breakMin !== '' || useLogListFilters.breakMax !== '') count++;
     if (!isSelectedAllSubstances()) count++;
     return count;
 }
@@ -45516,6 +45887,40 @@ function countActiveUseLogFilters() {
 function toggleUseLogFiltersPanel() {
     useLogFiltersPanelOpen = !useLogFiltersPanelOpen;
     updateUseLogFiltersPanelUI();
+}
+
+function syncUseLogFilterUnitLabels() {
+    const substanceId = typeof getUseLogViewSubstanceId === 'function' ? getUseLogViewSubstanceId() : null;
+    const unit = substanceId ? getUseLogFilterAmountUnit(substanceId) : '';
+    const amountEl = document.getElementById('use-log-filter-amount-unit');
+    if (amountEl) amountEl.textContent = unit ? `(${unit})` : '(record unit)';
+    const rateEl = document.getElementById('use-log-filter-rate-unit');
+    if (rateEl) rateEl.textContent = unit ? `(${unit}/hr)` : '(per hour)';
+}
+
+function syncUseLogRangeFilterInputs() {
+    const map = {
+        'use-log-filter-amount-min': 'amountMin',
+        'use-log-filter-amount-max': 'amountMax',
+        'use-log-filter-duration-min': 'durationMin',
+        'use-log-filter-duration-max': 'durationMax',
+        'use-log-filter-cost-min': 'costMin',
+        'use-log-filter-cost-max': 'costMax',
+        'use-log-filter-lines-min': 'linesMin',
+        'use-log-filter-lines-max': 'linesMax',
+        'use-log-filter-rate-min': 'rateMin',
+        'use-log-filter-rate-max': 'rateMax',
+        'use-log-filter-start-min': 'startMin',
+        'use-log-filter-start-max': 'startMax',
+        'use-log-filter-end-min': 'endMin',
+        'use-log-filter-end-max': 'endMax',
+        'use-log-filter-break-min': 'breakMin',
+        'use-log-filter-break-max': 'breakMax'
+    };
+    Object.entries(map).forEach(([id, key]) => {
+        const el = document.getElementById(id);
+        if (el) el.value = useLogListFilters[key] ?? '';
+    });
 }
 
 function updateUseLogFiltersPanelUI() {
@@ -45526,6 +45931,7 @@ function updateUseLogFiltersPanelUI() {
     toggle?.classList.toggle('open', useLogFiltersPanelOpen);
     const count = countActiveUseLogFilters();
     if (countEl) countEl.textContent = count > 0 ? ` (${count})` : '';
+    syncUseLogFilterUnitLabels();
     renderUseLogFilterChips();
 }
 
@@ -45555,8 +45961,39 @@ function renderUseLogFilterChips() {
         const labels = { quick: 'Quick Use', session: 'Session', gift: 'Gift' };
         chips.push(`<span class="use-log-filter-chip">Entry: ${escapeHtml(labels[useLogListFilters.entryType] || useLogListFilters.entryType)}</span>`);
     }
+    const unit = typeof getUseLogViewSubstanceId === 'function'
+        ? getUseLogFilterAmountUnit(getUseLogViewSubstanceId())
+        : '';
+    const amountChip = formatUseLogRangeChip('Amount', useLogListFilters.amountMin, useLogListFilters.amountMax, unit);
+    if (amountChip) chips.push(amountChip);
+    const durationChip = formatUseLogRangeChip('Duration', useLogListFilters.durationMin, useLogListFilters.durationMax, 'hrs');
+    if (durationChip) chips.push(durationChip);
+    const costChip = formatUseLogRangeChip('Cost', useLogListFilters.costMin, useLogListFilters.costMax);
+    if (costChip) chips.push(costChip);
+    const linesChip = formatUseLogRangeChip('Lines', useLogListFilters.linesMin, useLogListFilters.linesMax);
+    if (linesChip) chips.push(linesChip);
+    const rateChip = formatUseLogRangeChip('Use rate', useLogListFilters.rateMin, useLogListFilters.rateMax, unit ? `${unit}/hr` : '/hr');
+    if (rateChip) chips.push(rateChip);
+    const startChip = formatUseLogRangeChip('Start', useLogListFilters.startMin, useLogListFilters.startMax);
+    if (startChip) chips.push(startChip);
+    const endChip = formatUseLogRangeChip('End', useLogListFilters.endMin, useLogListFilters.endMax);
+    if (endChip) chips.push(endChip);
+    const breakChip = formatUseLogRangeChip('Break', useLogListFilters.breakMin, useLogListFilters.breakMax, 'hrs');
+    if (breakChip) chips.push(breakChip);
     container.innerHTML = chips.join('');
     container.classList.toggle('hidden', !chips.length);
+}
+
+function formatUseLogRangeChip(label, min, max, unit = '') {
+    const hasMin = min != null && min !== '';
+    const hasMax = max != null && max !== '';
+    if (!hasMin && !hasMax) return '';
+    const unitSuffix = unit ? ` ${unit}` : '';
+    let range;
+    if (hasMin && hasMax) range = `${min}–${max}`;
+    else if (hasMin) range = `≥ ${min}`;
+    else range = `≤ ${max}`;
+    return `<span class="use-log-filter-chip">${escapeHtml(label)}: ${escapeHtml(range)}${escapeHtml(unitSuffix)}</span>`;
 }
 
 function clearUseLogFilters() {
@@ -45566,11 +46003,13 @@ function clearUseLogFilters() {
     useLogListFilters.customEnd = '';
     useLogListFilters.transactionType = '';
     useLogListFilters.entryType = '';
+    USE_LOG_RANGE_FILTER_KEYS.forEach(key => { useLogListFilters[key] = ''; });
     useLogFiltersPanelOpen = false;
     const txEl = document.getElementById('use-log-filter-transaction');
     const entryEl = document.getElementById('use-log-filter-entry');
     if (txEl) txEl.value = '';
     if (entryEl) entryEl.value = '';
+    syncUseLogRangeFilterInputs();
     syncUseLogFilterShortcutButtons('all');
     syncUseLogCustomDateInputs();
     if (!isSelectedAllSubstances()) {
@@ -45597,7 +46036,7 @@ function getUseLogTotalsForView(substanceId = getUseLogViewSubstanceId()) {
     const logs = getFilteredUseLogs({ substanceId });
     const personalLogs = logs.filter(isPersonalUseLog);
     const totalLines = isCokeSubstanceId(substanceId) ? sumUseLinesForLogs(logs) : null;
-    const extraFilters = !!(useLogListFilters.transactionType || useLogListFilters.entryType);
+    const extraFilters = !!(useLogListFilters.transactionType || useLogListFilters.entryType || useLogHasRangeFilters());
     let totalGrams;
     let totalCost;
     if (extraFilters) {
@@ -61771,6 +62210,7 @@ if (typeof window !== 'undefined') {
         applyInventorySearchFilters,
         toggleInventoryFiltersPanel,
         clearInventoryFilters,
+        loadInventoryFiltersPanelState,
         runInventoryBulkAction,
         setVapeLogInputMode,
         setLsdLogInputMode,
@@ -63256,6 +63696,15 @@ function __getRecoveryTrackerTestExports() {
         __getUseHistoryEntryCount,
         getFilteredUseLogsForView,
         getFilteredUseLogs,
+        parseOptionalFilterNumber,
+        valueMatchesMinMax,
+        clockMinutesMatchesRange,
+        getUseLogFilterableAmount,
+        getUseLogFilterDurationHours,
+        getUseLogFilterableCost,
+        getUseLogFilterableUseRate,
+        getUseLogFilterableBreakHours,
+        logMatchesUseLogRangeFilters,
         getUseLogFilterBounds,
         getUseLogWeekStartDateStr,
         DATE_RANGE_SHORTCUTS,
@@ -63391,6 +63840,14 @@ function __getRecoveryTrackerTestExports() {
         getPurchaseHistoryVisibleColumns,
         getFilteredPurchasesForPurchaseHistory,
         getInventoryFilteredPurchases,
+        getPurchaseFilterTotalCost,
+        getPurchaseFilterCostPerUnit,
+        getPurchaseFilterQuantityBought,
+        getPurchaseFilterQuantityRemaining,
+        getPurchaseFilterAmountUsed,
+        getPurchaseFilterPercentUsed,
+        purchaseMatchesInventoryRangeFilters,
+        getInventoryFilterUnitLabel,
         loadPurchaseHistoryColumnSettings,
         savePurchaseHistoryColumnSettings,
         isValidPurchaseHistoryColumnSettings,
@@ -63413,6 +63870,8 @@ function __getRecoveryTrackerTestExports() {
             set value(v) { inventorySearchQuery = v; }
         },
         inventoryListFilters,
+        clearInventoryFilters,
+        loadInventoryFiltersPanelState,
         syncInventorySearchPlaceholder,
         formatVapePurchaseTitleLine,
         formatVapePurchaseDetailLine,
@@ -63556,8 +64015,6 @@ function __getRecoveryTrackerTestExports() {
         getColumnPresetDefinition,
         applyColumnPreset,
         COLUMN_PRESET_IDS,
-        loadDashboardLayout,
-        saveDashboardLayout,
         getTaperStatusExplanation,
         buildAdaptiveRemainingWeekTargets,
         applyAdaptiveRemainingWeekTargets,

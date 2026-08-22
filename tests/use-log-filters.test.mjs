@@ -141,7 +141,7 @@ const SAMPLE_LOGS = [
     lsdLog('lsd-today', '2026-07-28')
 ];
 
-test('Log Filters markup includes date shortcuts, transaction, entry, and Clear Filters', () => {
+test('Log Filters markup includes date shortcuts, transaction, entry, range filters, and Clear Filters', () => {
     const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
     assert.match(html, /id="use-log-filter-panel"/);
     assert.match(html, /id="use-log-filter-transaction"/);
@@ -164,6 +164,23 @@ test('Log Filters markup includes date shortcuts, transaction, entry, and Clear 
     assert.match(html, /Transaction Type/);
     assert.match(html, /Entry Type/);
     assert.match(html, /Clear Filters/);
+    assert.match(html, /id="use-log-filter-amount-min"/);
+    assert.match(html, /id="use-log-filter-amount-max"/);
+    assert.match(html, /id="use-log-filter-duration-min"/);
+    assert.match(html, /id="use-log-filter-cost-min"/);
+    assert.match(html, /id="use-log-filter-lines-min"/);
+    assert.match(html, /id="use-log-filter-rate-min"/);
+    assert.match(html, /id="use-log-filter-start-min"/);
+    assert.match(html, /id="use-log-filter-end-min"/);
+    assert.match(html, /id="use-log-filter-break-min"/);
+    assert.match(html, /Amount used/);
+    assert.match(html, /Session duration/);
+    assert.match(html, /Estimated cost/);
+    assert.match(html, /Number of lines/);
+    assert.match(html, /Use rate/);
+    assert.match(html, /Start time/);
+    assert.match(html, /End time/);
+    assert.match(html, /Break between uses/);
 });
 
 test('Active Substance filters Home, Log, Inventory, Tapers, and Insights', () => {
@@ -395,4 +412,153 @@ test('Saved data still loads after filter changes without resetting IDs', () => 
     const reloaded = rt.__reloadTestAppDataFromStorage();
     assert.deepEqual(reloaded.logs.map(l => l.id).sort(), originalIds);
     assert.equal(reloaded.logs.length, SAMPLE_LOGS.length);
+});
+
+test('Amount, duration, cost, lines, and use-rate filters combine and honor units', () => {
+    const overnight = cokeLog('coke-overnight', '2026-07-27', {
+        amount: 0.8,
+        lines: 4,
+        type: 'session',
+        startTime: '23:00',
+        endTime: '01:00',
+        endDate: '2026-07-28',
+        estimatedCost: 64
+    });
+    const zeroCost = cokeLog('coke-zero', '2026-07-28', {
+        amount: 0,
+        lines: 0,
+        type: 'session',
+        startTime: '10:00',
+        endTime: '10:30',
+        estimatedCost: 0
+    });
+    const rt = setup(makeData({
+        logs: [
+            ...SAMPLE_LOGS,
+            overnight,
+            zeroCost
+        ]
+    }));
+    rt.setSelectedSubstanceId(COKE_ID, { refresh: false });
+    rt.setUseLogFilter('all');
+
+    const byAmount = rt.getFilteredUseLogs({ amountMin: 0.8, amountMax: 1.0 });
+    assert.ok(byAmount.some(l => l.id === 'coke-today'));
+    assert.ok(byAmount.some(l => l.id === 'coke-overnight'));
+    assert.ok(!byAmount.some(l => l.id === 'coke-week'));
+
+    const zeroAmount = rt.getFilteredUseLogs({ amountMin: 0, amountMax: 0 });
+    assert.equal(zeroAmount.length, 1);
+    assert.equal(zeroAmount[0].id, 'coke-zero');
+
+    const duration = rt.getFilteredUseLogs({ durationMin: 1.5, durationMax: 2.5 });
+    assert.ok(duration.some(l => l.id === 'coke-today'));
+    assert.ok(duration.some(l => l.id === 'coke-overnight'));
+    assert.ok(!duration.some(l => l.id === 'coke-zero'));
+
+    const cost = rt.getFilteredUseLogs({ costMin: 0, costMax: 0 });
+    assert.equal(cost.length, 1);
+    assert.equal(cost[0].id, 'coke-zero');
+
+    const lines = rt.getFilteredUseLogs({ linesMin: 8, linesMax: 10 });
+    assert.ok(lines.some(l => l.id === 'coke-today'));
+    assert.ok(lines.some(l => l.id === 'coke-old'));
+    assert.ok(!lines.some(l => l.id === 'coke-week'));
+
+    const rate = rt.getFilteredUseLogs({ rateMin: 0.4, rateMax: 0.5 });
+    assert.ok(rate.some(l => l.id === 'coke-today'));
+    assert.ok(!rate.some(l => l.id === 'coke-zero'));
+
+    const combined = rt.getFilteredUseLogs({
+        substanceId: COKE_ID,
+        dateFilter: 'all',
+        transactionType: 'use',
+        entryType: 'session',
+        amountMin: 0.8,
+        durationMin: 1.5
+    });
+    assert.ok(combined.every(l => l.type === 'session'));
+    assert.ok(combined.some(l => l.id === 'coke-today'));
+    assert.ok(combined.some(l => l.id === 'coke-overnight'));
+
+    rt.useLogListFiltersRef.value = { amountMin: '0.8', durationMin: '1.5', transactionType: 'use' };
+    const totals = rt.getUseLogTotalsForView(COKE_ID);
+    assert.equal(totals.entryCount, rt.getFilteredUseLogs().length);
+
+    rt.clearUseLogFilters();
+    const mgLog = cokeLog('coke-mg', '2026-07-28', { amount: 800, unit: 'mg', lines: 2, type: 'quick' });
+    rt.__setTestAppData(makeData({ logs: [cokeLog('coke-g', '2026-07-28', { amount: 0.8 }), mgLog] }));
+    rt.setSelectedSubstanceId(COKE_ID, { refresh: false });
+    const converted = rt.getFilteredUseLogs({ amountMin: 0.7, amountMax: 0.9 });
+    assert.equal(converted.length, 2);
+    assert.equal(rt.getUseLogFilterableAmount(mgLog), 0.8);
+});
+
+test('Start time, end time, and break filters handle midnight-crossing sessions', () => {
+    const first = cokeLog('coke-first', '2026-07-26', {
+        amount: 0.4,
+        type: 'session',
+        startTime: '18:00',
+        endTime: '19:00'
+    });
+    const overnight = cokeLog('coke-overnight', '2026-07-27', {
+        amount: 0.6,
+        type: 'session',
+        startTime: '23:30',
+        endTime: '01:15',
+        endDate: '2026-07-28'
+    });
+    const morning = cokeLog('coke-morning', '2026-07-28', {
+        amount: 0.3,
+        type: 'session',
+        startTime: '09:00',
+        endTime: '10:00'
+    });
+    const rt = setup(makeData({ logs: [first, overnight, morning] }));
+    rt.setSelectedSubstanceId(COKE_ID, { refresh: false });
+
+    const startLate = rt.getFilteredUseLogs({ startMin: '22:00', startMax: '23:59' });
+    assert.equal(startLate.map(l => l.id).join(','), 'coke-overnight');
+
+    const endAfterMidnight = rt.getFilteredUseLogs({ endMin: '01:00', endMax: '02:00' });
+    assert.equal(endAfterMidnight.map(l => l.id).join(','), 'coke-overnight');
+
+    const wrapStart = rt.getFilteredUseLogs({ startMin: '22:00', startMax: '10:00' });
+    assert.ok(wrapStart.some(l => l.id === 'coke-overnight'));
+    assert.ok(wrapStart.some(l => l.id === 'coke-morning'));
+    assert.ok(!wrapStart.some(l => l.id === 'coke-first'));
+
+    const overnightHours = rt.getUseLogFilterDurationHours(overnight);
+    assert.ok(overnightHours > 1.5 && overnightHours < 2);
+
+    const breakHours = rt.getUseLogFilterableBreakHours(morning);
+    assert.ok(breakHours != null && breakHours >= 7);
+    const byBreak = rt.getFilteredUseLogs({ breakMin: 6, breakMax: 12 });
+    assert.ok(byBreak.some(l => l.id === 'coke-morning'));
+    assert.ok(!byBreak.some(l => l.id === 'coke-first'));
+});
+
+test('Clear Filters resets numeric and time filters and restores the full dataset', () => {
+    const rt = setup(makeData({ logs: SAMPLE_LOGS }));
+    rt.setSelectedSubstanceId(COKE_ID, { refresh: false });
+    rt.useLogListFiltersRef.value = {
+        datePreset: 'today',
+        transactionType: 'use',
+        entryType: 'session',
+        amountMin: '0.5',
+        amountMax: '1',
+        durationMin: '1',
+        costMin: '0',
+        linesMin: '1',
+        rateMin: '0.1',
+        startMin: '20:00',
+        endMax: '23:00',
+        breakMin: '1'
+    };
+    assert.ok(rt.getFilteredUseLogs().length < SAMPLE_LOGS.length);
+    rt.clearUseLogFilters();
+    assert.equal(rt.useLogListFiltersRef.value.amountMin, '');
+    assert.equal(rt.useLogListFiltersRef.value.startMin, '');
+    assert.equal(rt.useLogListFiltersRef.value.breakMin, '');
+    assert.ok(rt.getFilteredUseLogs().length >= 6);
 });

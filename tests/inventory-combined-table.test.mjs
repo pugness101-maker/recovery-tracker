@@ -123,6 +123,25 @@ test('Inventory markup is one table with date shortcuts and no payment UI', () =
     assert.doesNotMatch(html, /id="buy-payment-group"/);
     assert.doesNotMatch(html, /id="inventory-filter-payment"/);
     assert.doesNotMatch(html, /Payment Method/);
+    assert.doesNotMatch(html, /inventory-filter-vape-only/);
+    assert.doesNotMatch(html, />Vape only</);
+    assert.match(html, /Quantity Bought/);
+    assert.match(html, /Quantity Remaining/);
+    assert.match(html, /Total Cost/);
+    assert.match(html, /Cost Per Unit/);
+    assert.match(html, /id="inventory-filter-acquisition"/);
+    assert.match(html, />Purchased</);
+    assert.match(html, />Gift Received</);
+    assert.match(html, />Purchased as Gift</);
+    assert.match(html, />Adjustment</);
+    assert.match(html, /id="inventory-filter-total-cost-min"/);
+    assert.match(html, /id="inventory-filter-qty-bought-min"/);
+    assert.match(html, /id="inventory-filter-qty-remaining-min"/);
+    assert.match(html, /id="inventory-filter-amount-used-min"/);
+    assert.match(html, /id="inventory-filter-pct-used-min"/);
+    assert.match(html, /id="inventory-filter-cost-per-unit-min"/);
+    assert.match(html, /id="inventory-filter-purchase-min"/);
+    assert.match(html, /Clear Filters/);
 });
 
 test('Combined inventory table includes active, depleted, gifted, hidden, and historical rows', () => {
@@ -203,4 +222,154 @@ test('Inventory search, status, and remaining filters still combine with date sh
     rt.inventoryTabFilterRef.value = 'active';
     const active = rt.getInventoryFilteredPurchases(COKE_ID).map(p => String(p.id)).sort();
     assert.equal(active.join(','), 'active-today,week-buy');
+});
+
+test('Inventory numeric and acquisition filters combine and accept zero values', () => {
+    const extra = [
+        makePurchase('cheap-zero', {
+            date: '2026-07-28',
+            quantityBought: 0,
+            quantity: 0,
+            totalCost: 0,
+            remainingAmount: 0,
+            costPerUnit: 0,
+            inventoryStatus: 'depleted',
+            isDepleted: true
+        }),
+        makePurchase('gift-received', {
+            date: '2026-07-21',
+            quantityBought: 2,
+            quantity: 2,
+            totalCost: 0,
+            remainingAmount: 2,
+            costPerUnit: 0,
+            acquisitionType: 'gift_received'
+        }),
+        makePurchase('adjustment', {
+            date: '2026-07-22',
+            quantityBought: 1,
+            quantity: 1,
+            totalCost: 0,
+            remainingAmount: 1,
+            acquisitionType: 'other_adjustment'
+        })
+    ];
+    const rt = setup([...SAMPLE, ...extra]);
+    const forceRemaining = (id, remaining) => {
+        const purchase = rt.__getTestAppData().purchases.find(p => String(p.id) === id);
+        assert.ok(purchase, id);
+        purchase.remainingAmount = remaining;
+        purchase.quantityBought = purchase.quantityBought ?? purchase.quantity;
+    };
+    forceRemaining('active-today', 2);
+    forceRemaining('week-buy', 1);
+    forceRemaining('old-depleted', 0);
+    forceRemaining('gifted', 0);
+    forceRemaining('cheap-zero', 0);
+    forceRemaining('gift-received', 2);
+
+    rt.inventoryListFilters.totalCostMin = '150';
+    rt.inventoryListFilters.totalCostMax = '150';
+    const byCost = rt.getInventoryFilteredPurchases(COKE_ID);
+    assert.ok(byCost.length >= 1);
+    assert.ok(byCost.every(p => Number(rt.getPurchaseFilterTotalCost(p)) === 150));
+
+    rt.inventoryListFilters.totalCostMin = '';
+    rt.inventoryListFilters.totalCostMax = '';
+    rt.inventoryListFilters.qtyBoughtMin = '0';
+    rt.inventoryListFilters.qtyBoughtMax = '0';
+    const zeroBought = rt.getInventoryFilteredPurchases(COKE_ID);
+    assert.equal(zeroBought.length, 1);
+    assert.equal(String(zeroBought[0].id), 'cheap-zero');
+
+    rt.inventoryListFilters.qtyBoughtMin = '';
+    rt.inventoryListFilters.qtyBoughtMax = '';
+    rt.inventoryListFilters.qtyRemainingMin = '2';
+    const remaining = rt.getInventoryFilteredPurchases(COKE_ID);
+    assert.ok(remaining.some(p => String(p.id) === 'active-today'));
+    assert.ok(remaining.some(p => String(p.id) === 'gift-received'));
+    assert.ok(remaining.every(p => rt.getPurchaseFilterQuantityRemaining(p) >= 2));
+
+    rt.inventoryListFilters.qtyRemainingMin = '';
+    rt.inventoryListFilters.amountUsedMin = '1.5';
+    const used = rt.getInventoryFilteredPurchases(COKE_ID);
+    assert.ok(used.some(p => String(p.id) === 'active-today'));
+    assert.ok(used.every(p => rt.getPurchaseFilterAmountUsed(p) >= 1.5));
+
+    rt.inventoryListFilters.amountUsedMin = '';
+    rt.inventoryListFilters.pctUsedMin = '100';
+    const fullyUsed = rt.getInventoryFilteredPurchases(COKE_ID);
+    assert.ok(fullyUsed.every(p => rt.getPurchaseFilterPercentUsed(p) >= 100));
+    assert.ok(fullyUsed.some(p => String(p.id) === 'old-depleted'));
+
+    rt.inventoryListFilters.pctUsedMin = '';
+    rt.inventoryListFilters.costPerUnitMin = '0';
+    rt.inventoryListFilters.costPerUnitMax = '0';
+    const zeroCpu = rt.getInventoryFilteredPurchases(COKE_ID);
+    assert.ok(zeroCpu.some(p => String(p.id) === 'cheap-zero'));
+
+    rt.inventoryListFilters.costPerUnitMin = '';
+    rt.inventoryListFilters.costPerUnitMax = '';
+    rt.inventoryListFilters.acquisitionType = 'purchased_as_gift';
+    assert.equal(rt.getInventoryFilteredPurchases(COKE_ID).map(p => String(p.id)).join(','), 'gifted');
+
+    rt.inventoryListFilters.acquisitionType = 'gift_received';
+    assert.equal(rt.getInventoryFilteredPurchases(COKE_ID).map(p => String(p.id)).join(','), 'gift-received');
+
+    rt.inventoryListFilters.acquisitionType = 'other_adjustment';
+    assert.equal(rt.getInventoryFilteredPurchases(COKE_ID).map(p => String(p.id)).join(','), 'adjustment');
+
+    rt.inventoryListFilters.acquisitionType = 'purchased';
+    rt.inventoryListFilters.purchaseDateMin = '2026-07-26';
+    rt.inventoryListFilters.purchaseDateMax = '2026-07-28';
+    const purchasedRecent = rt.getInventoryFilteredPurchases(COKE_ID).map(p => String(p.id)).sort();
+    assert.ok(purchasedRecent.includes('active-today'));
+    assert.ok(purchasedRecent.includes('week-buy'));
+    assert.ok(!purchasedRecent.includes('gifted'));
+
+    rt.setInventoryDateFilter('today');
+    const combined = rt.getInventoryFilteredPurchases(COKE_ID).map(p => String(p.id)).sort();
+    assert.ok(combined.includes('active-today'));
+    assert.ok(!combined.includes('week-buy'));
+
+    rt.clearInventoryFilters();
+    assert.equal(rt.inventoryListFilters.acquisitionType, '');
+    assert.equal(rt.inventoryListFilters.totalCostMin, '');
+    assert.equal(rt.inventoryListFilters.purchaseDateMin, '');
+    assert.ok(rt.getInventoryFilteredPurchases(COKE_ID).length >= SAMPLE.length);
+});
+
+test('Legacy vapeOnly saved filters load without applying the removed option', () => {
+    const rt = loadRecoveryTrackerApp({
+        localStorage: {
+            'recoveryTracker.inventoryFilters.v2': JSON.stringify({
+                status: 'all',
+                search: '',
+                datePreset: 'all',
+                vapeOnly: true,
+                hasRemaining: '',
+                hasCost: ''
+            })
+        }
+    });
+    const data = rt.normalizeAppDataSafe(makeData([
+        makePurchase('powder', { remainingAmount: 2 }),
+        makePurchase('vape-item', {
+            substanceId: 'nicotine',
+            nicotineProductType: 'vape',
+            unit: 'puffs',
+            quantityBought: 400,
+            remainingAmount: 200
+        })
+    ]));
+    rt.__setTestAppData(data);
+    rt.setTestReferenceDate(REFERENCE_DATE);
+    rt.setSelectedSubstanceId(rt.DASHBOARD_ALL, { refresh: false });
+    rt.inventoryListFilters.substanceId = '';
+    rt.inventoryListFilters.datePreset = 'all';
+    rt.loadInventoryFiltersPanelState();
+    assert.equal(rt.inventoryListFilters.vapeOnly, undefined);
+    const ids = rt.getInventoryFilteredPurchases('').map(p => String(p.id)).sort();
+    assert.ok(ids.includes('powder'));
+    assert.ok(ids.includes('vape-item'));
 });

@@ -331,13 +331,19 @@ test('Phase 3: column presets expose basic/cost/inventory/detailed', () => {
     assert.ok(detailed.order.length >= basic.order.length);
 });
 
-test('Phase 3: dashboard layout persists widget selection', () => {
-    const rt = setup(makeData());
-    rt.saveDashboardLayout({ widgets: ['todayUsed', 'quickActions'] });
-    const loaded = rt.loadDashboardLayout();
-    assert.ok(loaded.widgets.includes('todayUsed'));
-    assert.ok(loaded.widgets.includes('quickActions'));
-    assert.ok(!loaded.widgets.includes('monthCap'));
+test('Phase 3: legacy dashboard layout prefs are ignored safely', () => {
+    const rt = loadRecoveryTrackerApp({
+        localStorage: {
+            'recovery-tracker-v2-dashboard-layout': JSON.stringify({
+                widgets: ['todayUsed', 'quickActions']
+            })
+        }
+    });
+    rt.__setTestAppData(makeData());
+    assert.equal(typeof rt.loadDashboardLayout, 'undefined');
+    assert.equal(typeof rt.saveDashboardLayout, 'undefined');
+    assert.ok(rt.__getTestAppData());
+    assert.equal(rt.__getTestAppData().logs.length, 2);
 });
 
 test('Phase 4: adaptive remaining weeks leave historical goals intact', () => {
