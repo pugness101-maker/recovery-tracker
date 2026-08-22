@@ -9563,12 +9563,12 @@ function getColumnPresetDefinition(presetId, tableKey = 'useHistory', substanceI
         ? getUseHistoryColumnFamily(resolvedSubstanceId)
         : null;
     const cokeUseHistoryPresets = {
-        basic: ['select', 'date', 'start', 'end', 'amount', 'gPerHour', 'actions'],
-        cost: ['select', 'date', 'start', 'end', 'amount', 'gPerHour', 'transactionType', 'actions'],
-        inventory: ['select', 'date', 'start', 'end', 'amount', 'inventory', 'transactionType', 'gPerHour', 'actions'],
+        basic: ['select', 'date', 'start', 'end', 'amount', 'lines', 'gPerHour', 'actions'],
+        cost: ['select', 'date', 'start', 'end', 'amount', 'lines', 'gPerHour', 'transactionType', 'actions'],
+        inventory: ['select', 'date', 'start', 'end', 'amount', 'lines', 'inventory', 'transactionType', 'gPerHour', 'actions'],
         detailed: [
             'select', 'date', 'start', 'end', 'duration', 'transactionType',
-            'amount', 'unit', 'gPerHour', 'inventory', 'notes', 'actions'
+            'amount', 'unit', 'lines', 'gPerHour', 'inventory', 'notes', 'actions'
         ]
     };
     const presets = {
@@ -30687,7 +30687,7 @@ const TABLE_COLUMN_DEFAULTS = {
     useHistory: {
         order: [
             'select', 'date', 'start', 'end', 'duration', 'substance', 'productType',
-            'transactionType', 'amount', 'unit', 'tabs', 'ug', 'pills', 'mg', 'thcUsed', 'cbdUsed', 'strength',
+            'transactionType', 'amount', 'lines', 'unit', 'tabs', 'ug', 'pills', 'mg', 'thcUsed', 'cbdUsed', 'strength',
             'enteredAmount', 'normalizedAmount', 'percentBefore', 'percentAfter', 'percentUsed',
             'contact', 'cost', 'gPerHour', 'sharedAmount', 'multiDayRange', 'dailyBreakdown',
             'count', 'rate', 'breakBetweenUses', 'inventory', 'notes', 'actions'
@@ -30720,6 +30720,7 @@ const TABLE_COLUMN_DEFAULTS = {
             strength: 120,
             cost: 90,
             gPerHour: 80,
+            lines: 80,
             contact: 140,
             sharedAmount: 140,
             multiDayRange: 150,
@@ -30989,6 +30990,7 @@ const TABLE_COLUMN_LABELS = {
         strength: 'Strength',
         cost: 'Cost',
         gPerHour: 'g/hr',
+        lines: 'Lines',
         contact: 'Contact',
         sharedAmount: 'Legacy Shared Amount',
         multiDayRange: 'Multi-Day Range',
@@ -32917,13 +32919,13 @@ function getUseHistorySortState() {
 }
 
 function setUseHistorySort(colId, dir = null) {
-    const sortable = new Set(['date', 'start', 'end', 'duration', 'amount', 'gPerHour', 'breakBetweenUses', 'break']);
+    const sortable = new Set(['date', 'start', 'end', 'duration', 'amount', 'lines', 'gPerHour', 'breakBetweenUses', 'break']);
     if (!sortable.has(colId)) return useHistorySortState;
     if (useHistorySortState.col === colId) {
         useHistorySortState.dir = dir || (useHistorySortState.dir === 'asc' ? 'desc' : 'asc');
     } else {
         useHistorySortState.col = colId;
-        useHistorySortState.dir = dir || (colId === 'breakBetweenUses' || colId === 'break' || colId === 'duration' || colId === 'gPerHour' || colId === 'amount'
+        useHistorySortState.dir = dir || (colId === 'breakBetweenUses' || colId === 'break' || colId === 'duration' || colId === 'gPerHour' || colId === 'amount' || colId === 'lines'
             ? 'desc'
             : 'desc');
     }
@@ -32975,6 +32977,16 @@ function sortUseHistoryDisplayRows(rows, sortState = useHistorySortState, data =
             if (bNull) return -1;
             return dir === 'asc' ? ah - bh : bh - ah;
         }
+        if (col === 'lines') {
+            const ah = getUseLogLines(a.entry);
+            const bh = getUseLogLines(b.entry);
+            const aNull = ah == null;
+            const bNull = bh == null;
+            if (aNull && bNull) return getLogDatetimeMs(b.entry) - getLogDatetimeMs(a.entry);
+            if (aNull) return 1;
+            if (bNull) return -1;
+            return dir === 'asc' ? ah - bh : bh - ah;
+        }
         if (col === 'amount') {
             const ah = typeof getLogStatsAmount === 'function' ? getLogStatsAmount(a.entry) : (parseFloat(a.entry.amount) || 0);
             const bh = typeof getLogStatsAmount === 'function' ? getLogStatsAmount(b.entry) : (parseFloat(b.entry.amount) || 0);
@@ -32999,7 +33011,7 @@ function renderUseHistoryHeaderCell(colId, substanceId = getUseLogViewSubstanceI
     if (colId === 'actions') {
         return `<th class="actions-cell use-history-actions-header" data-col="${colId}" title="${escapeAttr(label)}"><span class="customizable-th-label">${escapeHtml(label)}</span>${resize}</th>`;
     }
-    const sortable = ['date', 'start', 'end', 'duration', 'amount', 'gPerHour', 'breakBetweenUses'].includes(colId);
+    const sortable = ['date', 'start', 'end', 'duration', 'amount', 'lines', 'gPerHour', 'breakBetweenUses'].includes(colId);
     if (sortable) {
         const active = useHistorySortState.col === colId;
         const ind = active ? (useHistorySortState.dir === 'asc' ? ' ↑' : ' ↓') : '';
@@ -33179,6 +33191,8 @@ function renderUseHistoryBodyCell(colId, entry, sub, avgRate) {
             }
             return `<td data-col="${colId}"${dataLabel}>${rateHtml}</td>`;
         }
+        case 'lines':
+            return `<td data-col="${colId}"${dataLabel}>${formatUseHistoryLines(entry)}</td>`;
         case 'contact': {
             const label = typeof resolveLogContactLabel === 'function' ? resolveLogContactLabel(entry) : (entry.sharedWithName || entry.giftPartyName || '');
             const cid = entry.sharedWithContactId || entry.giftPartyContactId || '';
@@ -35539,7 +35553,53 @@ function getUseSubstanceId(entry) {
     return entry.substanceId || entry.substance || '';
 }
 
+function parseOptionalNonNegativeNumber(raw) {
+    if (raw == null || String(raw).trim() === '') return null;
+    const n = parseFloat(raw);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+function parseUseLinesFromForm() {
+    return parseOptionalNonNegativeNumber(document.getElementById('use-count')?.value);
+}
+
+function logCountsTowardLinesTotal(log) {
+    if (!log) return false;
+    return !isGiftGivenLog(log) && !isGiftReceivedLog(log) && !isInventoryAdjustmentLog(log);
+}
+
+/** Logged Lines value only — never derived from grams/amount. */
+function getUseLogLines(entry) {
+    if (!entry) return null;
+    if (entry.lines != null && entry.lines !== '') {
+        const n = parseFloat(entry.lines);
+        return Number.isFinite(n) && n >= 0 ? n : null;
+    }
+    const count = entry.count;
+    if (count == null || count === '') return null;
+    const n = parseFloat(count);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return n;
+}
+
+function formatUseHistoryLines(entry) {
+    const n = getUseLogLines(entry);
+    return n == null ? '—' : formatAmount(n);
+}
+
+function sumUseLinesForLogs(logs) {
+    return (logs || []).reduce((sum, log) => {
+        if (!logCountsTowardLinesTotal(log)) return sum;
+        const n = getUseLogLines(log);
+        return n == null ? sum : sum + n;
+    }, 0);
+}
+
 function getUseCount(entry) {
+    if (isCokeSubstanceId(getUseSubstanceId(entry))) {
+        const n = getUseLogLines(entry);
+        return n != null ? n : '';
+    }
     const count = entry.count ?? entry.lines;
     return count != null && count !== '' ? count : '';
 }
@@ -36907,7 +36967,7 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
         startTime,
         time: startTime,
         endTime: (isWeedSimple || isVapeDateOnly || isLsdQuick || isXanaxSimple) ? '' : ((isGift || isAdjustment || type === 'session' || isAlcoholMultiDay) ? (endTime || '') : ''),
-        count: (isGift || isAdjustment || isWeedSimple || isLsdQuick || isXanaxSimple) ? 0 : (parseFloat(document.getElementById('use-count')?.value) || 0),
+        count: (isGift || isAdjustment || isWeedSimple || isLsdQuick || isXanaxSimple) ? 0 : (parseUseLinesFromForm() ?? 0),
         giftPartyName: (typeof getContactPickerSelection === 'function' ? getContactPickerSelection('use-gift-party').name : '') || giftParty,
         recipientName: isGiftGiven ? giftParty : '',
         giverName: isGiftReceived ? giftParty : '',
@@ -37035,6 +37095,11 @@ function buildUseEntryFromForm(vapeCalc = null, lsdCalc = null, nicotineCalc = n
             base.durationMs = end - start;
             base.endDate = endDate || date;
         }
+    }
+
+    if (isCokeSubstanceId(substanceId)) {
+        base.lines = (isGift || isAdjustment) ? null : parseUseLinesFromForm();
+        if (base.lines != null) base.count = base.lines;
     }
 
     return base;
@@ -37770,7 +37835,7 @@ const USE_HISTORY_FAMILY_COLUMNS = {
     ],
     cocaine: [
         'select', 'date', 'start', 'end', 'duration', 'transactionType',
-        'amount', 'unit', 'gPerHour', 'breakBetweenUses', 'inventory', 'notes', 'actions'
+        'amount', 'lines', 'unit', 'gPerHour', 'breakBetweenUses', 'inventory', 'notes', 'actions'
     ],
     cannabis: [
         'select', 'date', 'productType', 'transactionType', 'amount', 'unit',
@@ -37816,6 +37881,7 @@ function getUseHistoryColumnVariantKey(substanceId = getUseLogViewSubstanceId(),
 function getUseHistoryColumnCatalog(substanceId = getUseLogViewSubstanceId(), data = appData) {
     const family = getUseHistoryColumnFamily(substanceId, data);
     const allowed = new Set(USE_HISTORY_FAMILY_COLUMNS[family] || USE_HISTORY_FAMILY_COLUMNS.generic);
+    if (!isCokeSubstanceId(substanceId)) allowed.delete('lines');
     return TABLE_COLUMN_DEFAULTS.useHistory.order.filter(id => allowed.has(id));
 }
 
@@ -37827,7 +37893,7 @@ function getDefaultUseHistoryColumnSettings(substanceId = getUseLogViewSubstance
     const required = new Set(TABLE_COLUMNS_REQUIRED.useHistory || []);
     let defaultVisible;
     if (family === 'cocaine') {
-        defaultVisible = new Set(['select', 'date', 'start', 'end', 'amount', 'gPerHour', 'actions']);
+        defaultVisible = new Set(['select', 'date', 'start', 'end', 'amount', 'lines', 'gPerHour', 'actions']);
     } else {
         defaultVisible = null;
     }
@@ -37921,6 +37987,7 @@ function getUseHistoryColumnLabel(colId, substanceId = getUseLogViewSubstanceId(
         return labels.strength || 'Strength';
     }
     if (colId === 'gPerHour') return 'g/hr';
+    if (colId === 'lines') return 'Lines';
     return labels[colId] || colId;
 }
 
@@ -42730,7 +42797,9 @@ function renderUseHistoryCard(entry, sub, avgRate) {
     const isXanax = isXanaxDateOnlyUseLog(entry);
     const isNicotineNonVape = isNicotineSubstanceId(getUseSubstanceId(entry)) && !isVape;
     const isAlcohol = isAlcoholTrackingMode(getUseSubstanceId(entry));
-    const countStr = (isVape || isLsd || isXanax) ? '—' : (entry.count || '—');
+    const countStr = (isVape || isLsd || isXanax)
+        ? '—'
+        : (isCokeSubstanceId(getUseSubstanceId(entry)) ? formatUseHistoryLines(entry) : (entry.count || '—'));
     let amountDisplay = isVape
         ? formatVapeUseSummary(entry, sub)
         : (isLsd ? formatLsdUseSummary(entry)
@@ -42773,7 +42842,7 @@ function renderUseHistoryCard(entry, sub, avgRate) {
         </div>
         <dl class="use-history-card-details">
             ${hideTimeStats ? '' : `<div><dt>Duration</dt><dd>${formatDurationHours(entry.durationHours)}</dd></div>`}
-            <div><dt>Count</dt><dd>${countStr}</dd></div>
+            <div><dt>${isCokeSubstanceId(getUseSubstanceId(entry)) ? 'Lines' : 'Count'}</dt><dd>${countStr}</dd></div>
             ${hideTimeStats ? '' : `<div><dt>Rate</dt><dd>${rateStr}</dd></div>`}
             ${hideTimeStats ? '' : `<div><dt>Break</dt><dd>${entry.breakText || '—'}</dd></div>`}
             <div class="use-history-card-supply"><dt>Supply</dt><dd>${escapeHtml(isVape ? formatVapeLinkedPurchaseLine(entry) || formatInventoryLinkDisplay(entry) : formatInventoryLinkDisplay(entry))}</dd></div>
@@ -45555,6 +45624,7 @@ function getUseLogTotalsForView(substanceId = getUseLogViewSubstanceId()) {
     const { startDate, endDate } = bounds;
     const logs = getFilteredUseLogsForView({ substanceId });
     const personalLogs = logs.filter(isPersonalUseLog);
+    const totalLines = isCokeSubstanceId(substanceId) ? sumUseLinesForLogs(logs) : null;
     let totalGrams;
     let totalCost;
     if (substanceId && (startDate || endDate)) {
@@ -45571,7 +45641,7 @@ function getUseLogTotalsForView(substanceId = getUseLogViewSubstanceId()) {
             (s, sub) => s + sumUseCostForRange(sub.id, startDate, endDate), 0
         );
     }
-    return { totalGrams, totalCost, entryCount: logs.length, logs, personalLogs };
+    return { totalGrams, totalCost, entryCount: logs.length, logs, personalLogs, totalLines };
 }
 
 function formatMixedUseTotalsLabel(logs, data = appData) {
@@ -45617,7 +45687,7 @@ function renderUseLogTotals() {
     const substanceId = getUseLogViewSubstanceId();
     const sub = isSelectedAllSubstances() ? null : getSubstance(substanceId);
     const unit = sub?.defaultUnit || 'units';
-    const { totalGrams, totalCost, entryCount, logs } = getUseLogTotalsForView();
+    const { totalGrams, totalCost, entryCount, logs, totalLines } = getUseLogTotalsForView();
     const cur = getCurrencySymbol();
     let amountLabel;
     if (!substanceId) {
@@ -45629,9 +45699,13 @@ function renderUseLogTotals() {
     } else {
         amountLabel = `${formatAmount(totalGrams)} ${unit}`;
     }
+    const linesCard = isCokeSubstanceId(substanceId)
+        ? `<div class="use-log-total-card"><span>Total Lines</span><strong>${formatAmount(totalLines || 0)}</strong></div>`
+        : '';
     container.innerHTML = `
         <div class="use-log-totals-grid">
             <div class="use-log-total-card"><span>Total amount</span><strong>${amountLabel}</strong></div>
+            ${linesCard}
             <div class="use-log-total-card"><span>Est. cost</span><strong>${fmtSheetMoney(totalCost, cur)}</strong></div>
             <div class="use-log-total-card"><span>Entries</span><strong>${entryCount}</strong></div>
         </div>`;
@@ -61594,6 +61668,9 @@ function cleanExportData(data) {
             estimatedPuffsPerDay: l.estimatedPuffsPerDay ?? null,
             needsReview: !!l.needsReview,
             count: Number(l.count || 0),
+            lines: isCokeSubstanceId(l.substanceId || l.substance)
+                ? (getUseLogLines(l) ?? null)
+                : (l.lines ?? null),
             giftPartyName: l.giftPartyName || l.recipientName || '',
             recipientName: l.recipientName || l.giftPartyName || '',
             giverName: l.giverName || '',
@@ -61858,6 +61935,7 @@ function buildUseHistoryCsvRows(options = {}) {
             }
             case 'cost': return entry.estimatedCost ?? '';
             case 'gPerHour': return formatUseHistoryGramsPerHour(entry);
+            case 'lines': return formatUseHistoryLines(entry) === '—' ? '' : formatUseHistoryLines(entry);
             case 'sharedAmount':
                 return isSharedUseLog(entry)
                     ? `Me ${getLogPersonalAmount(entry)} · ${entry.sharedWithName || 'Other'} ${getLogSharedAmount(entry)}`
@@ -61898,7 +61976,7 @@ function exportUseHistoryCsv(options = {}) {
 
 function exportDataCsv() {
     const rows = [];
-    rows.push(['Record Type', 'Substance', 'Date', 'Start', 'End', 'Amount', 'Unit', 'Transaction Type', 'Product Type', 'Tabs Used', 'Ug Used', 'Pills Used', 'Mg Used', 'THC Used', 'Strength', 'Count', 'Notes'].map(csvEscape).join(','));
+    rows.push(['Record Type', 'Substance', 'Date', 'Start', 'End', 'Amount', 'Unit', 'Transaction Type', 'Product Type', 'Tabs Used', 'Ug Used', 'Pills Used', 'Mg Used', 'THC Used', 'Strength', 'Count', 'Lines', 'Notes'].map(csvEscape).join(','));
     const filteredLogs = getFilteredUseLogsForView();
     filteredLogs.forEach(log => {
         const edibleStrength = getWeedEdibleLogStrength(log);
@@ -61925,6 +62003,7 @@ function exportDataCsv() {
                     ? `${log.strengthPerPillAtTimeOfUse} ${log.strengthUnitAtTimeOfUse || 'mg'}`
                     : ''),
             log.count ?? '',
+            isCokeSubstanceId(getUseSubstanceId(log)) ? (getUseLogLines(log) ?? '') : '',
             log.notes || ''
         ].map(csvEscape).join(','));
     });
@@ -64001,6 +64080,12 @@ function __getRecoveryTrackerTestExports() {
         getUseHistorySessionDurationHours,
         getUseLogAmountInGramsForRate,
         getUseLogTotalsForView,
+        getUseLogLines,
+        formatUseHistoryLines,
+        sumUseLinesForLogs,
+        logCountsTowardLinesTotal,
+        parseUseLinesFromForm,
+        getUseCount,
         formatMixedUseTotalsLabel,
         formatNicotineUseTotalsLabel,
         formatUseHistoryVapeAmountHtml,
