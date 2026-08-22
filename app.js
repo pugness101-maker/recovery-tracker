@@ -6157,13 +6157,6 @@ function loadRecoveryColorPresetsFromUi() {
     }
 }
 
-function confirmResetColorRulesToPresets() {
-    if (!confirm('Replace all color rules with Example Rules? Existing custom rules will be removed.')) return;
-    resetConditionalColorRulesToPresets();
-    renderConditionalColorRulesSettings();
-    if (typeof showToast === 'function') showToast('Example rules loaded');
-}
-
 function jumpToConflictingColorRule(ruleId) {
     const safeId = String(ruleId || '').replace(/\\/g, '\\\\').replace(/"/g, '\\"');
     const el = document.querySelector(`.ccr-rule-card[data-rule-id="${safeId}"]`);
@@ -41101,24 +41094,6 @@ function updateCurrentSupplyDashboard() {
     }
 }
 
-function updateGiftMetricsDashboard() {
-    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
-    const substanceId = isAllSubstancesView() ? getMainSubstanceId() : currentSubstanceId;
-    if (!substanceId) {
-        set('dash-gift-given', '—');
-        set('dash-gift-received', '—');
-        set('dash-gift-net', 'Net: —');
-        return;
-    }
-    const sub = getSubstance(substanceId);
-    const unit = sub?.defaultUnit || 'units';
-    const metrics = getGiftMetrics(substanceId);
-    set('dash-gift-given', `${metrics.given.toFixed(1)}${unit}`);
-    set('dash-gift-received', `${metrics.received.toFixed(1)}${unit}`);
-    const netLabel = metrics.net >= 0 ? `+${metrics.net.toFixed(1)}` : metrics.net.toFixed(1);
-    set('dash-gift-net', `Net: ${netLabel}${unit}`);
-}
-
 function refreshTaperDashboard() {
     renderTaperPlan();
     checkTaperTarget();
@@ -45498,18 +45473,6 @@ function renderPurchaseHistory(substanceId, containerId = null) {
     applyCollapsedSections();
 }
 
-function renderBuyHistory(substanceId) {
-    renderPurchaseHistory(substanceId);
-}
-
-function getDashboardBuyInfo(substanceId) {
-    const stats = getBuyStats(substanceId);
-    return {
-        spentToday: stats.spentToday,
-        lastPurchase: stats.lastPurchase
-    };
-}
-
 function bindTaperFormSubmitHandlers() {
     const form = document.getElementById('taper-form');
     const btn = document.getElementById('taper-generate-btn');
@@ -45991,21 +45954,6 @@ function getAllSubstancesMonthSpent(dateStr = getLocalDateString(), data = appDa
         .reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
 }
 
-function getAllSubstancesBestStreak(data = appData) {
-    let best = { days: 0, name: '' };
-    getActiveSubstances(data).forEach(sub => {
-        const { days } = computeRecoveryStreakDays(sub.id);
-        if (days > best.days) best = { days, name: getSubstanceDisplayName(sub, data) };
-    });
-    return best;
-}
-
-function setDashboardMetricLabel(metricId, labelText) {
-    const metric = document.getElementById(metricId);
-    const label = metric?.closest('.dash-metric-card')?.querySelector('.dash-metric-label');
-    if (label) label.textContent = labelText;
-}
-
 function renderAllSubstancesInventoryDashboard(container) {
     if (!container) return;
     const subs = getActiveSubstances();
@@ -46072,80 +46020,6 @@ function pickSubstanceForQuickAction(actionLabel) {
         return null;
     }
     return subs[idx].id;
-}
-
-function renderDashboardSummaryCards(substanceId) {
-    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
-    if (isAllSubstancesView()) {
-        const engine = buildNormalizedCalcEngine({ substanceId: null });
-        const today = engine.today;
-        const weekStart = getWeekStartDateStr(today);
-        const monthStart = getMonthStartDateStr(today);
-        const todayEntries = buildAllSubstancesUsageEntries(today, today);
-        const weekEntries = buildAllSubstancesUsageEntries(weekStart, today);
-        const monthEntries = buildAllSubstancesUsageEntries(monthStart, today);
-        const cur = getCurrencySymbol();
-
-        set('dash-card-today', todayEntries.length
-            ? formatGroupedUsageCompact(todayEntries, todayEntries.length)
-            : '0');
-        set('dash-card-week', weekEntries.length
-            ? formatGroupedUsageCompact(weekEntries, 3)
-            : '0');
-        set('dash-card-month', monthEntries.length
-            ? formatGroupedUsageCompact(monthEntries, 3)
-            : '0');
-        set('dash-card-spent', fmtSheetMoney(
-            (engine.substances || []).reduce((s, m) => s + (m.spend?.month || 0), 0),
-            cur
-        ));
-        const best = getAllSubstancesBestStreak();
-        set('dash-card-streak', best.days
-            ? `${best.days} day${best.days === 1 ? '' : 's'} (${best.name})`
-            : '0 days');
-        set('dash-card-month-cap', '—');
-        setDashboardMetricLabel('dash-card-month-cap', 'Select one substance for cap');
-        applyDashboardLayout();
-        return;
-    }
-
-    setDashboardMetricLabel('dash-card-month-cap', 'Remaining Monthly Cap');
-    if (!substanceId) {
-        ['dash-card-today', 'dash-card-week', 'dash-card-month', 'dash-card-spent', 'dash-card-streak', 'dash-card-month-cap']
-            .forEach(id => set(id, '—'));
-        applyDashboardLayout();
-        return;
-    }
-    const metrics = buildNormalizedSubstanceMetrics(substanceId);
-    const unit = metrics.unit || 'units';
-    const cur = getCurrencySymbol();
-
-    set('dash-card-today', `${formatAmount(metrics.usage.today)} ${unit}`);
-    set('dash-card-week', `${formatAmount(metrics.usage.week)} ${unit}`);
-    set('dash-card-month', `${formatAmount(metrics.usage.month)} ${unit}`);
-    set('dash-card-spent', fmtSheetMoney(metrics.spend.month, cur));
-    set('dash-card-streak', metrics.streakDays ? `${metrics.streakDays} day${metrics.streakDays === 1 ? '' : 's'}` : '0 days');
-    set('dash-card-month-cap', metrics.monthRemaining != null ? `${formatAmount(metrics.monthRemaining)} ${unit}` : '—');
-    applyDashboardLayout();
-}
-
-function renderMiniUsageChart(containerId, buckets, emptyHint = 'No data yet') {
-    const container = document.getElementById(containerId);
-    if (!container) return;
-    container.innerHTML = '';
-    if (!buckets.length) {
-        container.innerHTML = `<p class="empty-hint">${emptyHint}</p>`;
-        return;
-    }
-    const max = Math.max(...buckets.map(b => b.value), 0.01);
-    buckets.forEach(data => {
-        const bar = document.createElement('div');
-        bar.className = 'chart-bar chart-bar-insight';
-        bar.style.height = `${Math.max((data.value / max) * 100, 4)}%`;
-        bar.title = `${data.label}: ${formatAmount(data.value)}`;
-        bar.innerHTML = `<span class="chart-bar-value">${formatAmount(data.value)}</span><span class="chart-bar-label">${escapeHtml(data.label)}</span>`;
-        container.appendChild(bar);
-    });
 }
 
 function ensureInsightPrefs(data = appData) {
@@ -47765,49 +47639,6 @@ function renderRecoveryDashboardDateControls(dataset) {
     if (headerRange) headerRange.textContent = `Date range: ${formatDate(dataset.bounds.startDate)} – ${formatDate(dataset.bounds.endDate)}`;
 }
 
-function renderRecoveryScoreCard(score) {
-    const el = document.getElementById('rd-score-card');
-    const section = document.getElementById('rd-section-score');
-    if (!el || !section) return;
-    if (!score?.enabled) {
-        section.classList.add('hidden');
-        return;
-    }
-    section.classList.remove('hidden');
-    if (!score.available) {
-        el.innerHTML = `
-            <p class="rd-score-unavailable">${escapeHtml(score.explanation?.[0] || 'Insufficient data')}</p>
-            <p class="rd-section-hint">${escapeHtml(score.explanation?.[1] || '')}</p>
-        `;
-        return;
-    }
-    const bySubstanceHtml = (score.bySubstance || []).length
-        ? `<div class="rd-score-by-substance">
-            <h4>Score by substance</h4>
-            <ul class="rd-score-factors">
-                ${score.bySubstance.map(item => {
-                    const value = item.score?.available ? item.score.score : '—';
-                    return `<li><span>${escapeHtml(item.name)}</span><strong>${escapeHtml(String(value))}</strong></li>`;
-                }).join('')}
-            </ul>
-            <p class="rd-section-hint">Per-substance scores keep units separate. Overall score is labeled and does not mix incompatible amounts.</p>
-           </div>`
-        : '';
-    el.innerHTML = `
-        <p class="rd-score-label">${escapeHtml(score.label || 'Recovery score')}</p>
-        <div class="rd-score-main">
-            <strong class="rd-score-value">${score.score}</strong>
-            <span class="rd-score-max">/ 100</span>
-        </div>
-        ${rdProgressBar(score.score, 'rd-score-bar')}
-        <ul class="rd-score-factors">
-            ${(score.factors || []).map(f => `<li><span>${escapeHtml(f.label)}</span><strong>${f.value}</strong></li>`).join('')}
-        </ul>
-        ${bySubstanceHtml}
-        <p class="rd-section-hint">${escapeHtml((score.explanation || []).join(' '))}</p>
-    `;
-}
-
 function renderRecoverySummaryGrid(summary) {
     const el = document.getElementById('rd-summary-grid');
     if (!el) return;
@@ -48123,44 +47954,6 @@ function renderRecoveryInventoryOverview(groups) {
     `).join('');
 }
 
-function renderRecoveryMilestones(milestones) {
-    const el = document.getElementById('rd-milestones');
-    if (!el) return;
-    if (!milestones.length) {
-        el.innerHTML = '<p class="empty-hint">Milestones will appear as you build streaks, plans, and spending history.</p>';
-        return;
-    }
-    el.innerHTML = milestones.map(m => {
-        const pair = formatMetricProgressPair(String(m.current), String(m.target));
-        const metaExtra = m.timeRemaining ? ` · ${escapeHtml(m.timeRemaining)}` : '';
-        const metricKind = /streak|no-use|no use/i.test(m.name || '') ? 'streak' : 'taper';
-        const progressMeta = (isTargetLinesEnabled() || isInCellProgressBarsEnabled())
-            ? renderMetricProgressCell(
-                `${escapeHtml(pair)}${metaExtra}`,
-                {
-                    current: m.current,
-                    target: m.target,
-                    percent: m.progressPct,
-                    metricKind,
-                    currentLabel: String(m.current),
-                    targetLabel: String(m.target),
-                    unit: /day/i.test(m.timeRemaining || m.name || '') ? 'days' : ''
-                }
-            )
-            : `Progress: ${escapeHtml(pair)}${metaExtra}`;
-        return `
-        <article class="rd-milestone-card">
-            <header>
-                <h4>${escapeHtml(m.name)}</h4>
-                <span>${escapeHtml(m.substance || '')}</span>
-            </header>
-            <div class="rd-milestone-meta">${progressMeta}</div>
-            ${m.targetDate ? `<p class="rd-milestone-meta">Target date: ${escapeHtml(formatDate(m.targetDate))}</p>` : ''}
-            ${(!isTargetLinesEnabled() && !isInCellProgressBarsEnabled()) ? rdProgressBar(m.progressPct) : ''}
-        </article>`;
-    }).join('');
-}
-
 function setRecoveryDashboardState({ loading = false, error = null, empty = false } = {}) {
     document.getElementById('rd-loading')?.classList.toggle('hidden', !loading);
     document.getElementById('rd-error')?.classList.toggle('hidden', !error);
@@ -48170,11 +47963,6 @@ function setRecoveryDashboardState({ loading = false, error = null, empty = fals
         const msg = document.getElementById('rd-error-message');
         if (msg) msg.textContent = error;
     }
-}
-
-function renderRecoveryGoalsSection(_dataset) {
-    // Goals feature removed — dashboard section markup is gone.
-    return;
 }
 
 function renderHomeCompactCharts(dataset) {
@@ -48244,7 +48032,6 @@ function renderRecoveryDashboard() {
         renderRecoveryTodayCard(dataset.todayCard);
         renderRecoveryStatusCards(dataset.statusCards);
         renderRecoveryActivePlans(dataset.activePlans);
-        if (typeof renderRecoveryGoalsSection === 'function') renderRecoveryGoalsSection(dataset);
         renderRecoveryInventoryOverview(dataset.inventoryGroups);
         renderHomeCompactCharts(dataset);
         applyRecoveryDashboardCollapsedSections();
@@ -48267,79 +48054,6 @@ function formatBreakFromHours(hours) {
     return formatBreakText(Math.floor(hours * 60));
 }
 
-function updateBreakMetricsDashboard() {
-    const set = (id, text) => {
-        const el = document.getElementById(id);
-        if (el) el.textContent = text;
-    };
-
-    if (isAllSubstancesView()) {
-        set('dash-break-current', '—');
-        set('dash-break-longest', '—');
-        set('dash-break-avg-30', '—');
-        return;
-    }
-
-    const metrics = getBreakMetrics(currentSubstanceId);
-    set('dash-break-current', metrics.current?.text || '—');
-    set('dash-break-longest', formatBreakFromHours(metrics.longest));
-    set('dash-break-avg-30', formatBreakFromHours(metrics.avg30Days));
-    set('dash-break-average', formatBreakFromHours(metrics.average));
-    set('dash-break-streak-no-use', metrics.streakWithoutUse?.text || '—');
-}
-
-function updateBreakStats() {
-    const metrics = getBreakMetrics(currentSubstanceId);
-    const set = (id, text) => {
-        const el = document.getElementById(id);
-        if (el) el.textContent = text;
-    };
-
-    set('stats-break-longest', formatBreakFromHours(metrics.longest));
-    set('stats-break-average', formatBreakFromHours(metrics.average));
-    set('stats-break-median', formatBreakFromHours(metrics.median));
-    set('stats-break-shortest', formatBreakFromHours(metrics.shortest));
-    set('stats-break-current', metrics.current?.text || '—');
-
-    const trendEl = document.getElementById('break-trend-list');
-    if (trendEl) {
-        if (!metrics.trend.length) {
-            trendEl.innerHTML = '<p class="empty-hint">Log at least two sessions to see break trends</p>';
-        } else {
-            trendEl.innerHTML = metrics.trend.map(item => `
-                <div class="break-trend-row">
-                    <span>${escapeHtml(item.label || item.date || '—')}</span>
-                    <span class="break-trend-value ${escapeAttr(getBreakColorClass(item.hours))}">${escapeHtml(item.text || formatBreakFromHours(item.hours))}</span>
-                </div>
-            `).join('');
-        }
-    }
-
-    renderBreakLengthChart(metrics);
-}
-
-function renderBreakLengthChart(metrics) {
-    const container = document.getElementById('break-length-chart');
-    if (!container) return;
-    container.innerHTML = '';
-
-    if (!metrics.trend.length) {
-        container.innerHTML = '<p class="empty-hint">Log at least two sessions to chart breaks</p>';
-        return;
-    }
-
-    const maxHours = Math.max(...metrics.trend.map(t => t.hours), 0.1);
-    metrics.trend.forEach(item => {
-        const bar = document.createElement('div');
-        bar.className = 'chart-bar chart-bar-break';
-        bar.style.height = `${Math.max((item.hours / maxHours) * 100, 4)}%`;
-        const hoursLabel = formatBreakFromHours(item.hours);
-        const dateLabel = item.label || (item.date ? formatDate(item.date) : '—');
-        bar.innerHTML = `<span class="chart-bar-value">${hoursLabel}</span><span class="chart-bar-label">${dateLabel}</span>`;
-        container.appendChild(bar);
-    });
-}
-
 function updateDashboardMainDisplay() {
     const el = document.getElementById('dashboard-main-substance');
     const viewingEl = document.getElementById('dashboard-viewing-label');
@@ -48351,44 +48065,6 @@ function updateDashboardMainDisplay() {
             ? 'Viewing: All Substances'
             : `Viewing: ${getSubstanceDisplayName(getSubstance(selected)) || selected}`;
     }
-}
-
-function renderSubstanceCompare() {
-    const container = document.getElementById('substance-compare');
-    if (!container) return;
-
-    if (!isAllSubstancesView()) {
-        container.classList.add('hidden');
-        return;
-    }
-
-    container.classList.remove('hidden');
-    const today = getLocalDateString();
-    container.innerHTML = '<h3>Today by Substance</h3>';
-
-    const grid = document.createElement('div');
-    grid.className = 'compare-grid';
-
-    getActiveSubstances().forEach(sub => {
-        const amount = getSubstanceUsageAmountForDate(sub.id, today);
-        const unit = getSubstanceDisplayUnit(sub.id);
-        const name = getSubstanceDisplayName(sub);
-        const spent = getSubstancePurchaseSpend(sub.id, p => p.date === today);
-        const { days } = computeRecoveryStreakDays(sub.id);
-        const card = document.createElement('div');
-        card.className = 'compare-card';
-        card.style.borderTopColor = sub.color;
-        card.innerHTML = `
-            <div class="compare-header">${escapeHtml(sub.icon)} ${escapeHtml(name)}</div>
-            <div class="compare-stat"><span>Uses</span><strong>${formatAmount(amount)} ${unit}</strong></div>
-            ${sub.costTrackingEnabled ? `<div class="compare-stat"><span>Spent</span><strong>${getCurrencySymbol()}${spent.toFixed(2)}</strong></div>` : ''}
-            <div class="compare-stat"><span>Streak</span><strong>${days}d</strong></div>
-        `;
-        card.onclick = () => switchSubstance(sub.id);
-        grid.appendChild(card);
-    });
-
-    container.appendChild(grid);
 }
 
 // ——— Recovery streaks ———
@@ -51820,46 +51496,6 @@ function renderStatsBuyAdvancedMetrics(insights) {
     container.innerHTML = cards.length
         ? cards.join('')
         : '<p class="empty-hint">No advanced metrics for this substance.</p>';
-}
-
-function renderStatsLimitGoal(substanceId, useStats, bounds, unit, cur) {
-    const container = document.getElementById('stats-limit-goal');
-    if (!container) return;
-    const today = getLocalDateString();
-    const weekStart = getWeekStartDateStr(today);
-    const isVape = isVapeNicotineSubstanceId(substanceId);
-    const displayUnit = getStatsDisplayUnit(substanceId, unit);
-    const weekUsed = isVape
-        ? getStatsUsageInRange(substanceId, weekStart, today)
-        : getWeeklyUsed(substanceId, today);
-    const weekGoal = getWeeklyLimit(substanceId, weekStart);
-    const weeklyBadge = getUsageVsTargetBadge(weekUsed, weekGoal);
-    const taperStart = getTaperStartingDailyAverage(substanceId);
-    const daysInRange = countDaysInRange(bounds.startDate, bounds.endDate);
-    const avgPerDay = isVape && useStats.avgPuffsPerDay != null
-        ? useStats.avgPuffsPerDay
-        : (daysInRange ? useStats.totalAmount / daysInRange : 0);
-    let reductionPct = '—';
-    if (taperStart != null && taperStart > 0) {
-        reductionPct = `${Math.max(0, Math.round((1 - avgPerDay / taperStart) * 100))}%`;
-    }
-    const plan = getPrimaryTaperPlan(substanceId);
-    const byWeek = buildTaperByWeekData(substanceId, plan);
-    const trackBadge = byWeek
-        ? getUsageVsTargetBadge(byWeek.totalUsed, byWeek.totalPlanned)
-        : null;
-    const monthRunning = sumPersonalUseAmountThroughDate(substanceId, today);
-    const fmtAmount = (value) => isVape ? formatStatsPuffs(value) : formatAmount(value);
-
-    container.innerHTML = [
-        renderSheetMetricCard('Weekly used / goal', weekGoal != null ? `${fmtAmount(weekUsed)} / ${fmtAmount(weekGoal)} ${displayUnit}` : `${fmtAmount(weekUsed)} ${displayUnit}`, weeklyBadge),
-        renderSheetMetricCard('Reduction from start', reductionPct, null),
-        renderSheetMetricCard('Running planned', byWeek ? `${fmtAmount(byWeek.totalPlanned)} ${displayUnit}` : '—', null),
-        renderSheetMetricCard('Running used', byWeek ? `${fmtAmount(byWeek.totalUsed)} ${displayUnit}` : '—', null),
-        renderSheetMetricCard('Running difference', byWeek ? `${fmtAmount(byWeek.remainingAllowance)} ${displayUnit}` : '—', trackBadge),
-        renderSheetMetricCard('Monthly running total', `${fmtAmount(monthRunning)} ${displayUnit}`, null),
-        renderSheetMetricCard('Plan end', plan?.endDate ? formatDate(plan.endDate) : '—', null)
-    ].join('');
 }
 
 function renderTaperWeeklyCalendar(substanceId) {
@@ -62103,10 +61739,6 @@ function applyImportedColumnSettings(parsed) {
     }
 }
 
-function exportData() {
-    exportJsonBackup();
-}
-
 function csvEscape(value) {
     const s = String(value ?? '');
     if (/[",\n\r]/.test(s)) return `"${s.replace(/"/g, '""')}"`;
@@ -62222,11 +61854,6 @@ function buildUseHistoryCsvRows(options = {}) {
         }
     }));
     return { headers, body, family, rows, substanceId };
-}
-
-function exportUseHistoryCsv(options = {}) {
-    const { headers, body } = buildUseHistoryCsvRows(options);
-    downloadCsvRows(`use-history-${getLocalDateString()}.csv`, [headers, ...body]);
 }
 
 function exportDataCsv() {
