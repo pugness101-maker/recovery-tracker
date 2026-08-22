@@ -35,19 +35,6 @@ const PURCHASE_TAPER_FORM_MODE_MAP = Object.freeze({
     fixed_monthly_spending_cap: 'monthly_spend'
 });
 
-const PURCHASE_TAPER_MODE_LABELS = Object.freeze({
-    none: 'None',
-    combined: 'Combined rules',
-    reduce_buy_amount: 'Reduce purchase amount',
-    reduce_buy_spend: 'Reduce purchase cost',
-    weekly_buy_amount: 'Fixed weekly purchase limit',
-    weekly_spend: 'Fixed weekly spending limit',
-    monthly_buy_amount: 'Fixed monthly purchase cap',
-    monthly_spend: 'Fixed monthly spending cap',
-    manual_weekly_buy_amount: 'Manual weekly buy plan',
-    manual_weekly_spend: 'Manual weekly spending plan'
-});
-
 const BUYING_REDUCTION_RULE_KEYS = Object.freeze([
     'reducePurchaseAmount',
     'reducePurchaseCost',
@@ -12610,15 +12597,11 @@ function reorderSubstancesCatalogFirst(data) {
     data.substances = ordered;
 }
 
-const SESSION_RATE_HIGH_MULTIPLIER = 1.5;
-const SESSION_SHORT_BREAK_HOURS = 2;
-const SESSION_LONG_BREAK_HOURS = 12;
 const SUPPLY_LOW_REMAINING_PCT = 0.25;
 const INVENTORY_EPS = 0.0001;
 const PERCENT_REMAINING_UNITS = new Set(['puffs', 'pods', 'disposable']);
 const DEFAULT_MAIN_SUBSTANCE_ID = NICOTINE_ID;
 
-const TAPER_RELAPSE_NOTE = 'Going over your limit doesn\'t erase your progress. Every day is a new chance—no shame, just data.';
 const TAPER_STANDARD_REDUCTION_TYPES = ['reduce-amount', 'reduce-percent', 'fixed', 'manual-weekly'];
 /** Nicotine vape Plan options: combined behavior taper (default), puff-only, custom. */
 const TAPER_VAPE_REDUCTION_TYPES = ['nicotine-vape-purchase', 'reduce-puffs', 'manual-weekly'];
@@ -12635,11 +12618,6 @@ const NICOTINE_VAPE_GOAL_IDS = [
     'nicotine-free-blocks',
     'quit-by-date'
 ];
-const NICOTINE_VAPE_TAPER_STRATEGIES = [
-    'combined',
-    ...NICOTINE_VAPE_GOAL_IDS
-];
-const NICOTINE_VAPE_TAPER_SPEEDS = ['gentle', 'moderate', 'faster', 'custom'];
 const NICOTINE_VAPE_BASELINE_WINDOWS = [30, 60, 90];
 const NICOTINE_STRENGTH_STEP_DEFAULTS = [50, 35, 20, 10, 5, 0];
 /** Default 10-week percentage taper of baseline average puffs/day. */
@@ -12671,13 +12649,6 @@ const NICOTINE_VAPE_GOAL_LABELS = {
     'reduce-spending': 'Reduce monthly spending',
     'nicotine-free-blocks': 'Add nicotine-free time blocks',
     'quit-by-date': 'Quit by a target date'
-};
-const NICOTINE_VAPE_STRATEGY_LABELS = { ...NICOTINE_VAPE_GOAL_LABELS };
-const NICOTINE_VAPE_SPEED_LABELS = {
-    gentle: 'Gentle',
-    moderate: 'Moderate',
-    faster: 'Faster',
-    custom: 'Custom'
 };
 const TAPER_LEGACY_REDUCTION_ALIASES = {
     'step-weekly': '__legacy_step__',
@@ -17255,10 +17226,6 @@ function getUnifiedGoalsPlansRecords(data = appData) {
 
 function unifiedGoalPlanIsActive(record) {
     return record.status === 'active' || record.status === 'paused' || record.status === 'draft' || record.status === 'upcoming';
-}
-
-function unifiedGoalPlanIsHistory(record) {
-    return ['completed', 'archived', 'missed', 'cancelled', 'met'].includes(record.status);
 }
 
 function sortUnifiedTaperRecords(records) {
@@ -31209,8 +31176,6 @@ const PURCHASE_HISTORY_ACTIONS_WIDTH_MAP = {
     XL: 520
 };
 
-const PURCHASE_HISTORY_COLUMN_WIDTH_DEFAULTS = TABLE_COLUMN_DEFAULTS.purchaseHistory.widths;
-
 const PURCHASE_HISTORY_WIDTH_TIERS = ['S', 'M', 'L', 'XL'];
 
 const USE_STATS_DEFAULTS = {
@@ -32546,10 +32511,6 @@ function setColumnSettingsVisibilityInModal(tableKey, showAllOptional = true) {
     });
 }
 
-function getPurchaseHistoryColumnWidthSetting(colId) {
-    return getTableColumnWidthPx('purchaseHistory', colId);
-}
-
 function getPurchaseHistoryColumnWidthPx(colId, widthSetting) {
     if (typeof widthSetting === 'number' && Number.isFinite(widthSetting) && widthSetting > 0) {
         return Math.round(widthSetting);
@@ -32560,10 +32521,6 @@ function getPurchaseHistoryColumnWidthPx(colId, widthSetting) {
 function getPurchaseHistoryColumnWidthsMap() {
     const config = getTableColumnConfig('purchaseHistory');
     return { ...(config.widths || TABLE_COLUMN_DEFAULTS.purchaseHistory.widths) };
-}
-
-function savePurchaseHistoryColumnWidth(colId, px) {
-    saveTableColumnWidth('purchaseHistory', colId, px);
 }
 
 function buildPurchaseHistoryColgroup(columnIds) {
@@ -35111,11 +35068,6 @@ function formatDurationHMS(hours) {
     const m = Math.floor((totalSeconds % 3600) / 60);
     const s = totalSeconds % 60;
     return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-
-function formatTaperMonthlyAmount(value, unit) {
-    if (value == null || Number.isNaN(value)) return '—';
-    return formatTaperAmount(value, unit);
 }
 
 function formatTaperAmount(value, unit) {
@@ -40370,22 +40322,6 @@ function formatPurchaseOptionLabel(purchase) {
     return `${formatDate(purchase.date)} — ${formatAmountWithUnit(bought, unit)} bought — ${formatAmountWithUnit(remaining, unit)} left${pctPart}${storePart}`;
 }
 
-function updateUseLogModeUI() {
-    updateVapeUseFormUI();
-}
-
-function getUseFormEffectiveAmount() {
-    if (isVapeSessionFormActive()) {
-        const calc = computeVapeUseFromForm({ editingId: editingUseId || null });
-        if (calc && !calc.error) return calc.estimatedPuffsUsed ?? calc.puffsUsed;
-    }
-    return parseFloat(document.getElementById('use-amount')?.value) || 0;
-}
-
-function formatLinkedPurchaseDisplay(log) {
-    return getLinkedSupplyLabel(log);
-}
-
 function getUsePurchaseLinkMode() {
     return document.getElementById('use-purchase-link-mode')?.value || 'auto';
 }
@@ -43193,8 +43129,6 @@ function getPurchaseTotalCost(purchase) {
     const c = purchase.totalCost ?? purchase.cost;
     return c != null && c !== '' ? c : '';
 }
-
-const PURCHASE_ACQUISITION_TYPES = ['purchased', 'gift_received', 'purchased_as_gift', 'other_adjustment'];
 
 function normalizePurchaseAcquisitionType(value, purchase = null) {
     const raw = String(value || '').trim().toLowerCase();
@@ -46305,131 +46239,6 @@ function renderDashboardRecoveryInsights() {
     }
 }
 
-function buildVapeDashboardMetrics(substanceId, data = appData) {
-    const today = getLocalDateString();
-    const weekStart = getWeekStartDateStr(today);
-    const monthStart = getMonthStartDateStr(today);
-    const weekPuffs = getStatsUsageInRange(substanceId, weekStart, today, data);
-    const monthPuffs = getStatsUsageInRange(substanceId, monthStart, today, data);
-    const weekDays = Math.max(1, Math.ceil((parseLocalDate(today) - parseLocalDate(weekStart)) / 86400000) + 1);
-    const monthDays = Math.max(1, Math.ceil((parseLocalDate(today) - parseLocalDate(monthStart)) / 86400000) + 1);
-    const vapeLogs = getUseLogsForSubstance(substanceId, { personalUseOnly: true, data })
-        .filter(l => isVapeUseLog(l, data));
-    const sessionLogs = vapeLogs.filter(l => getUseLogType(l) === 'session' || isVapeUseLog(l));
-    const avgPuffsPerDay = monthPuffs / monthDays;
-    const avgPuffsPerSession = sessionLogs.length
-        ? sessionLogs.reduce((s, l) => s + getVapeLogPuffAmount(l), 0) / sessionLogs.length
-        : null;
-    const lastLog = vapeLogs.sort((a, b) => getVapeLogSortMs(b) - getVapeLogSortMs(a))[0] || null;
-    const lastLogLabel = lastLog
-        ? formatDatetimeLong(getUseLogEndedAt(lastLog) || getUseLogStartedAt(lastLog) || parseUseDateTime(lastLog.date, lastLog.startTime))
-        : '—';
-    const estimatedDailyFromPercent = vapeLogs.filter(l => l.estimatedFromPercent).length
-        ? weekPuffs / weekDays
-        : null;
-
-    const activeVapes = (data.purchases || [])
-        .filter(p => getPurchaseSubstanceId(p) === substanceId && isVapePuffPurchase(p, data))
-        .filter(p => getPurchaseInventoryTab(p) === 'active');
-    const primaryVape = activeVapes.sort((a, b) => getPurchaseDatetimeMs(b) - getPurchaseDatetimeMs(a))[0] || null;
-
-    const monthPurchases = getPurchasesInDateRange(substanceId, monthStart, today, data).filter(isVapePuffPurchase);
-    const allVapePurchases = getPurchasesForSubstance(substanceId, data).filter(isVapePuffPurchase);
-    const monthSpend = monthPurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
-    const allTimeSpend = allVapePurchases.reduce((s, p) => s + (parseFloat(getPurchaseTotalCost(p)) || 0), 0);
-    const vapeCount = allVapePurchases.length;
-    const avgCostPerVape = vapeCount > 0 ? allTimeSpend / vapeCount : null;
-    const avgCostPerDay = monthSpend / monthDays;
-    const costPer1000Puffs = monthPuffs > INVENTORY_EPS ? (monthSpend / monthPuffs) * 1000 : null;
-
-    let nicotineUsedMg = null;
-    let nicotineLeftMg = null;
-    let nicotinePerDay = null;
-    let totalNicotineMg = null;
-    if (primaryVape) {
-        const nic = getVapeNicotineMetrics(primaryVape);
-        if (nic) {
-            nicotineUsedMg = nic.nicotineUsedMg;
-            nicotineLeftMg = nic.nicotineLeftMg;
-            nicotinePerDay = nic.avgNicotineMgPerDay;
-            totalNicotineMg = nic.totalNicotineMg;
-        }
-    }
-
-    return {
-        primaryVape,
-        weekPuffs,
-        monthPuffs,
-        avgPuffsPerDay,
-        avgPuffsPerSession,
-        lastLogLabel,
-        estimatedDailyFromPercent,
-        avgCostPerVape,
-        avgCostPerDay,
-        costPer1000Puffs,
-        monthSpend,
-        allTimeSpend,
-        totalNicotineMg,
-        nicotineUsedMg,
-        nicotinePerDay,
-        nicotineLeftMg,
-        activeVapeCount: activeVapes.length
-    };
-}
-
-function renderVapeDashboardSection(substanceId) {
-    const section = document.getElementById('vape-dashboard-section');
-    const wrap = document.querySelector('[data-section="dashVapeSection"]');
-    const show = !!(substanceId && isVapeNicotineSubstanceId(substanceId));
-    if (wrap) wrap.classList.toggle('hidden', !show);
-    if (!section) return;
-    if (!show) {
-        section.classList.add('hidden');
-        return;
-    }
-    section.classList.remove('hidden');
-    const m = buildVapeDashboardMetrics(substanceId);
-    const cur = getCurrencySymbol();
-    const p = m.primaryVape;
-    const status = p ? getVapePurchaseDisplayStatus(p) : { label: '—', className: '' };
-    const name = p ? formatVapePurchaseTitleLine(p) : 'No active vape';
-    const lifecycle = p ? getVapePurchaseLifecycleMetrics(p) : null;
-    const firstUseLabel = lifecycle?.firstUseAt
-        ? formatDatetimeShort(lifecycle.firstUseAt.toISOString())
-        : 'Not started';
-    const set = (id, text) => { const el = document.getElementById(id); if (el) el.textContent = text; };
-
-    set('vape-dash-name', name);
-    set('vape-dash-purchase-date', p ? formatDate(p.date) : '—');
-    set('vape-dash-started', firstUseLabel);
-    set('vape-dash-full-puffs', p ? formatAmount(getVapeFullPuffCount(p)) : '—');
-    set('vape-dash-puffs-left', p ? formatAmount(getPurchaseRemainingAmount(p)) : '—');
-    set('vape-dash-percent-left', p ? `${getPurchasePercentRemaining(p)}%` : '—');
-    const statusEl = document.getElementById('vape-dash-status');
-    if (statusEl) {
-        statusEl.textContent = status.label;
-        statusEl.className = `vape-dash-status ${status.className}`;
-    }
-
-    set('vape-dash-week-puffs', formatAmount(m.weekPuffs));
-    set('vape-dash-month-puffs', formatAmount(m.monthPuffs));
-    set('vape-dash-avg-day', m.avgPuffsPerDay != null ? formatAmount(m.avgPuffsPerDay) : '—');
-    set('vape-dash-avg-session', m.avgPuffsPerSession != null ? formatAmount(m.avgPuffsPerSession) : '—');
-    set('vape-dash-last-log', m.lastLogLabel);
-    set('vape-dash-est-daily', m.estimatedDailyFromPercent != null ? `~${formatAmount(m.estimatedDailyFromPercent)} puffs/day` : '—');
-
-    set('vape-dash-avg-cost-vape', m.avgCostPerVape != null ? fmtSheetMoney(m.avgCostPerVape, cur) : '—');
-    set('vape-dash-cost-day', m.avgCostPerDay != null ? fmtSheetMoney(m.avgCostPerDay, cur) : '—');
-    set('vape-dash-cost-1k', m.costPer1000Puffs != null ? fmtSheetMoney(m.costPer1000Puffs, cur) : '—');
-    set('vape-dash-month-spend', fmtSheetMoney(m.monthSpend, cur));
-    set('vape-dash-all-spend', fmtSheetMoney(m.allTimeSpend, cur));
-
-    set('vape-dash-total-nic', m.totalNicotineMg != null ? `${formatAmount(m.totalNicotineMg)} mg` : '—');
-    set('vape-dash-nic-used', m.nicotineUsedMg != null ? `${formatAmount(m.nicotineUsedMg)} mg` : '—');
-    set('vape-dash-nic-day', m.nicotinePerDay != null ? `${formatAmount(m.nicotinePerDay)} mg/day` : '—');
-    set('vape-dash-nic-left', m.nicotineLeftMg != null ? `${formatAmount(m.nicotineLeftMg)} mg` : '—');
-}
-
 // ——— Dashboard ———
 // ——— Recovery Dashboard ———
 
@@ -49178,13 +48987,6 @@ function countDaysInRange(startDate, endDate) {
     return Math.max(1, Math.floor((end - start) / 86400000) + 1);
 }
 
-function getStatsChartGrouping(startDate, endDate) {
-    const days = countDaysInRange(startDate, endDate);
-    if (days > 90) return 'month';
-    if (days > 14) return 'week';
-    return 'day';
-}
-
 function calculateSessionDurationMinutes(log) {
     if (isWeedDateOnlyUseLog(log)) return null;
     const start = getLogStartDateTime(log);
@@ -49515,30 +49317,6 @@ function formatUseStatValue(statId, metrics, unit) {
         default:
             return '—';
     }
-}
-
-function getUseStatLabel(statId, unit) {
-    return getUseStatLabelForSubstance(statId, currentSubstanceId, unit);
-}
-
-function renderUseStatsCards(metrics, unit) {
-    const grid = document.getElementById('use-stats-cards-grid');
-    if (!grid) return;
-
-    const visible = getVisibleUseStatsOrderForSubstance(currentSubstanceId);
-    if (!visible.length) {
-        grid.innerHTML = '<p class="empty-hint">No stats selected. Tap Edit Stats to choose cards.</p>';
-        return;
-    }
-
-    grid.innerHTML = visible.map(statId => {
-        const label = getUseStatLabel(statId, unit);
-        const value = formatUseStatValue(statId, metrics, unit);
-        return `<div class="stat-card use-stat-card">
-            <h3>${escapeHtml(label)}</h3>
-            <p class="stat-value">${escapeHtml(value)}</p>
-        </div>`;
-    }).join('');
 }
 
 function getStatsRangeLabel(preset, startDate, endDate) {
@@ -52656,112 +52434,6 @@ function renderGiftPartyBreakdown(containerId, totalsMap, unit) {
     container.innerHTML = sorted.map(([name, amt]) =>
         `<div class="breakdown-row"><span>${escapeHtml(name)}</span><strong>${amt.toFixed(1)} ${escapeHtml(unit)}</strong></div>`
     ).join('');
-}
-
-function buildUsageChartBuckets(bounds) {
-    const { startDate, endDate } = bounds;
-    const grouping = getStatsChartGrouping(startDate, endDate);
-    const buckets = [];
-
-    const sumUsage = (bucketStart, bucketEnd) =>
-        getStatsUsageInRange(currentSubstanceId, bucketStart, bucketEnd);
-
-    if (grouping === 'day') {
-        let cursor = parseLocalDate(startDate);
-        const end = parseLocalDate(endDate);
-        const dayNames = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
-        while (cursor && end && cursor <= end) {
-            const dateStr = getLocalDateString(cursor);
-            const count = getStatsUsageOnDate(currentSubstanceId, dateStr);
-            buckets.push({
-                label: dayNames[cursor.getDay()],
-                detail: cursor.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                bucketStart: dateStr,
-                bucketEnd: dateStr,
-                count
-            });
-            cursor.setDate(cursor.getDate() + 1);
-        }
-        return { grouping, buckets };
-    }
-
-    if (grouping === 'week') {
-        let cursor = parseLocalDate(startDate);
-        if (cursor) cursor.setDate(cursor.getDate() - cursor.getDay());
-        const end = parseLocalDate(endDate);
-        while (cursor && end && cursor <= end) {
-            const weekStartStr = getLocalDateString(cursor);
-            const weekEnd = new Date(cursor);
-            weekEnd.setDate(weekEnd.getDate() + 6);
-            const weekEndStr = getLocalDateString(weekEnd);
-            buckets.push({
-                label: cursor.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
-                detail: 'Week',
-                bucketStart: weekStartStr,
-                bucketEnd: weekEndStr,
-                count: sumUsage(weekStartStr, weekEndStr)
-            });
-            cursor.setDate(cursor.getDate() + 7);
-        }
-        return { grouping, buckets };
-    }
-
-    let cursor = parseLocalDate(startDate.slice(0, 7) + '-01');
-    const end = parseLocalDate(endDate.slice(0, 7) + '-01');
-    while (cursor && end && cursor <= end) {
-        const monthKey = `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`;
-        const monthEnd = new Date(cursor.getFullYear(), cursor.getMonth() + 1, 0);
-        const monthEndStr = getLocalDateString(monthEnd);
-        buckets.push({
-            label: cursor.toLocaleDateString('en-US', { month: 'short' }),
-            detail: String(cursor.getFullYear()),
-            bucketStart: `${monthKey}-01`,
-            bucketEnd: monthEndStr,
-            count: sumUsage(`${monthKey}-01`, monthEndStr)
-        });
-        cursor.setMonth(cursor.getMonth() + 1);
-    }
-    return { grouping, buckets };
-}
-
-function renderUsageChart(bounds) {
-    const container = document.getElementById('cigarettes-per-day-chart');
-    if (!container) return;
-    container.innerHTML = '';
-
-    const { grouping, buckets } = buildUsageChartBuckets(bounds);
-    const titleEl = document.getElementById('usage-chart-title');
-    if (titleEl) {
-        titleEl.textContent = grouping === 'month'
-            ? 'Usage Per Month'
-            : grouping === 'week'
-                ? 'Usage Per Week'
-                : 'Usage Per Day';
-    }
-
-    if (!buckets.length) {
-        container.innerHTML = '<p class="empty-hint">No usage in selected range</p>';
-        return;
-    }
-
-    const max = Math.max(...buckets.map(d => d.count), 1);
-    const isVapeChart = isVapeNicotineSubstanceId(currentSubstanceId);
-    buckets.forEach(data => {
-        const bar = document.createElement('div');
-        bar.className = 'chart-bar';
-        bar.style.height = `${Math.max((data.count / max) * 100, 4)}%`;
-        const displayCount = isVapeChart ? formatStatsPuffs(data.count) : data.count.toFixed(1);
-        bar.title = data.detail ? `${data.detail}: ${displayCount}` : displayCount;
-        bar.innerHTML = `<span class="chart-bar-value">${escapeHtml(displayCount)}</span><span class="chart-bar-label">${escapeHtml(data.label)}</span>`;
-        container.appendChild(bar);
-    });
-}
-
-function updateLongestTimeBetween() {
-    const el = document.getElementById('longest-time-between');
-    if (!el) return;
-    const metrics = getBreakMetrics(currentSubstanceId);
-    el.textContent = formatBreakFromHours(metrics.longest);
 }
 
 // ——— Taper / Do Not Surpass ———
@@ -59335,18 +59007,6 @@ function setDefaultTaperEndDate() {
     setDefaultTaperDates();
 }
 
-function showTaperSetup() {
-    showNewTaperPlan();
-}
-
-function taperMetricTile(label, value) {
-    return `<div class="taper-metric-tile"><span>${label}</span><strong>${value}</strong></div>`;
-}
-
-function taperChipStat(label, value) {
-    return `<div class="taper-chip-stat"><span>${label}</span><strong>${value}</strong></div>`;
-}
-
 function setTaperStatusBadge(el, status, shortLabel) {
     if (!el) return;
     el.textContent = shortLabel;
@@ -60187,72 +59847,6 @@ function getMonthlyTrackingSummaries(substanceId, bounds = null, data = appData)
         }
         return { ...summary, trend };
     });
-}
-
-function renderTaperMonthlyTrendBadge(trend) {
-    if (trend === 'down') {
-        return '<span class="taper-month-trend taper-month-trend-down">↓ Lower than prior month</span>';
-    }
-    if (trend === 'up') {
-        return '<span class="taper-month-trend taper-month-trend-up">↑ Higher than prior month</span>';
-    }
-    return '<span class="taper-month-trend taper-month-trend-none">— No prior month</span>';
-}
-
-function renderTaperMonthlyTrackingCard(summary, unit, substanceId) {
-    const metrics = [
-        ['Month start', formatDate(summary.monthStart)],
-        ['Month end', formatDate(summary.monthEnd)],
-        ['Total usage', formatTaperMonthlyAmount(summary.totalUsage, unit)],
-        ['Average break', formatInsightsBreakCell(summary.avgBreak, substanceId, 'taper')],
-        ['Sessions', summary.sessions ? String(summary.sessions) : '0'],
-        ['Use days', summary.useDays ? String(summary.useDays) : '0'],
-        ['Use day %', summary.useDays ? `${summary.useDayPct.toFixed(2)}%` : '0.00%'],
-        ['Total duration', formatInsightsDurationCell(summary.totalDurationHours, substanceId, 'taper')],
-        ['Average duration', formatInsightsDurationCell(summary.avgDurationHours, substanceId, 'taper')],
-        [`Avg ${unit} / session`, formatTaperMonthlyAmount(summary.avgPerSession, unit)],
-        [`Avg ${unit} / use day`, formatTaperMonthlyAmount(summary.avgPerUseDay, unit)],
-        [`Avg ${unit} / calendar day`, formatTaperMonthlyAmount(summary.avgPerCalendarDay, unit)],
-        ['Longest break', formatInsightsBreakCell(summary.longestBreak, substanceId, 'taper')],
-        ['Shortest break', formatInsightsBreakCell(summary.shortestBreak, substanceId, 'taper')],
-        [`${unit} / hour`, formatInsightsGramsPerHourCell(summary.gPerHour, unit, substanceId, 'taper')]
-    ];
-
-    return `
-        <article class="taper-month-card">
-            <header class="taper-month-card-header">
-                <h4>${summary.monthLabel}</h4>
-                ${renderTaperMonthlyTrendBadge(summary.trend)}
-            </header>
-            <div class="taper-month-metrics">
-                ${metrics.map(([label, value]) =>
-                    `<div class="taper-month-metric"><span>${label}</span><strong>${value}</strong></div>`
-                ).join('')}
-            </div>
-        </article>`;
-}
-
-function renderMonthlyTracking(substanceId) {
-    const container = document.getElementById('stats-monthly-tracking');
-    if (!container) return;
-    if (!substanceId) {
-        container.innerHTML = '<p class="empty-hint">Select a substance to view monthly tracking.</p>';
-        return;
-    }
-    const sub = getSubstance(substanceId);
-    if (!sub) {
-        container.innerHTML = '<p class="empty-hint">Select a substance to view monthly tracking.</p>';
-        return;
-    }
-
-    const summaries = getMonthlyTrackingSummaries(substanceId);
-    if (!summaries.length) {
-        container.innerHTML = '<p class="empty-hint">No use log entries yet — monthly tracking will appear here.</p>';
-        return;
-    }
-
-    const unit = sub.defaultUnit || 'units';
-    container.innerHTML = summaries.map(summary => renderTaperMonthlyTrackingCard(summary, unit, substanceId)).join('');
 }
 
 function renderTaperPlanSummary(substanceId) {
@@ -61390,29 +60984,12 @@ function markTaperQuit() {
     refreshTaperDashboard();
 }
 
-function resetTaper() {
-    const plan = getSelectedTaperPlan();
-    if (!plan) return;
-    if (!confirm('Reset this taper plan? Usage and buying/spending goals will be removed. This cannot be undone.')) return;
-    deleteTaperPlanById(plan.id, { skipConfirm: true });
-}
-
 function checkTaperTarget() {
     renderTaperProgressCard(getTaperSubstanceId());
 }
 
-function getDaysLeftInWeek(dateStr) {
-    const d = parseLocalDate(dateStr);
-    if (!d) return 0;
-    return 6 - d.getDay();
-}
-
 function addDaysToDateStr(dateStr, days) {
     return addDaysYYYYMMDD(dateStr, days);
-}
-
-function getUsedAmountForDate(substanceId, date, excludeLogId = null, data = appData) {
-    return sumSegmentsForDate(substanceId, date, excludeLogId, data);
 }
 
 function getUsedAmountForWeek(substanceId, date, excludeLogId = null, data = appData) {
