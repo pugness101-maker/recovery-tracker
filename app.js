@@ -11582,9 +11582,13 @@ function ensureSelectedSubstanceIdValid() {
 function setSelectedSubstanceId(id, { source = null, refresh = true } = {}) {
     selectedSubstanceId = resolveSelectedSubstanceId(id || DASHBOARD_ALL);
     ensureSelectedSubstanceIdValid();
-    selectedDashboardSubstance = selectedSubstanceId;
-    currentSubstanceId = selectedSubstanceId;
-    syncGlobalSubstanceSettings(selectedSubstanceId, { persist: refresh, source });
+    const resolvedId = selectedSubstanceId;
+    selectedDashboardSubstance = resolvedId;
+    currentSubstanceId = resolvedId;
+    syncGlobalSubstanceSettings(resolvedId, { persist: refresh, source });
+    selectedSubstanceId = resolvedId;
+    selectedDashboardSubstance = resolvedId;
+    currentSubstanceId = resolvedId;
     syncPageSubstanceSelectors(source);
     syncUseLogFormFromSelectedSubstance();
     syncBuyFormFromSelectedSubstance();
@@ -11592,6 +11596,9 @@ function setSelectedSubstanceId(id, { source = null, refresh = true } = {}) {
     if (typeof syncLayoutSubstanceSelectors === 'function') {
         try { syncLayoutSubstanceSelectors(); } catch (_) { /* ignore */ }
     }
+    selectedSubstanceId = resolvedId;
+    selectedDashboardSubstance = resolvedId;
+    currentSubstanceId = resolvedId;
     if (source && String(source).startsWith('taper')) {
         persistTaperSubstanceId(selectedSubstanceId);
     } else if (refresh) {
@@ -23957,7 +23964,6 @@ function loadInsightsFiltersIntoState(data = appData) {
     try {
         currentSubstanceId = f.substanceId;
         selectedDashboardSubstance = f.substanceId;
-        selectedSubstanceId = f.substanceId;
         statsDateRangePreset = f.dateRangePreset || 'last-7';
         statsCustomStartDate = f.customStart || '';
         statsCustomEndDate = f.customEnd || '';
@@ -24066,7 +24072,9 @@ function persistInsightsFilters(patch = {}, options = {}) {
     try {
         currentSubstanceId = prefs.substanceId;
         selectedDashboardSubstance = prefs.substanceId;
-        selectedSubstanceId = prefs.substanceId;
+        if (patch && Object.prototype.hasOwnProperty.call(patch, 'substanceId')) {
+            selectedSubstanceId = prefs.substanceId;
+        }
         statsDateRangePreset = prefs.dateRangePreset || 'last-7';
         statsCustomStartDate = prefs.customStart || '';
         statsCustomEndDate = prefs.customEnd || '';
