@@ -11497,9 +11497,9 @@ function populatePageSubstanceDropdowns() {
     populatePageSubstanceSelect('inventory-substance', { includeAll: true, substances: active });
     const taperSubs = sortSubstancesMainFirst(getTaperSubstances());
     populatePageSubstanceSelect('taper-substance', {
-        includeAll: false,
+        includeAll: true,
         substances: taperSubs,
-        currentValue: resolveDefaultTaperSubstanceId()
+        currentValue: selectedSubstanceId || resolveDefaultTaperSubstanceId()
     });
     syncPageSubstanceSelectors();
     syncInventorySubstanceFilterState();
@@ -11548,10 +11548,21 @@ function syncPageSubstanceSelectors(skipId = null) {
     }
     if (skipId !== 'taper-substance') {
         const taperEl = document.getElementById('taper-substance');
-        const taperSelected = getTaperSubstanceId();
-        if (taperEl && optionList(taperEl).some(o => o.value === taperSelected)) {
-            taperEl.value = taperSelected;
+        if (taperEl && optionList(taperEl).some(o => o.value === resolvedSelected)) {
+            taperEl.value = resolvedSelected;
         }
+    }
+    if (skipId !== 'dashboard-substance') {
+        const dash = document.getElementById('dashboard-substance');
+        if (dash && optionList(dash).some(o => o.value === resolvedSelected)) dash.value = resolvedSelected;
+    }
+    if (skipId !== 'stats-substance') {
+        const stats = document.getElementById('stats-substance');
+        if (stats && optionList(stats).some(o => o.value === resolvedSelected)) stats.value = resolvedSelected;
+    }
+    if (skipId !== 'sidebar-substance') {
+        const sidebar = document.getElementById('sidebar-substance');
+        if (sidebar && optionList(sidebar).some(o => o.value === resolvedSelected)) sidebar.value = resolvedSelected;
     }
     syncInventorySubstanceFilterState();
 }
@@ -11571,12 +11582,21 @@ function ensureSelectedSubstanceIdValid() {
 function setSelectedSubstanceId(id, { source = null, refresh = true } = {}) {
     selectedSubstanceId = resolveSelectedSubstanceId(id || DASHBOARD_ALL);
     ensureSelectedSubstanceIdValid();
+    selectedDashboardSubstance = selectedSubstanceId;
+    currentSubstanceId = selectedSubstanceId;
+    syncGlobalSubstanceSettings(selectedSubstanceId, { persist: refresh, source });
     syncPageSubstanceSelectors(source);
     syncUseLogFormFromSelectedSubstance();
     syncBuyFormFromSelectedSubstance();
     syncInventorySearchPlaceholder();
+    if (typeof syncLayoutSubstanceSelectors === 'function') {
+        try { syncLayoutSubstanceSelectors(); } catch (_) { /* ignore */ }
+    }
     if (source && String(source).startsWith('taper')) {
         persistTaperSubstanceId(selectedSubstanceId);
+    } else if (refresh) {
+        persistTaperSubstanceId(selectedSubstanceId);
+        syncGoalsPlansSubstanceFilters(selectedSubstanceId);
     }
     if (!substanceShowsPurchaseFlavor(getInventorySubstanceFilterId())
         && purchaseHistorySort.colId === 'flavor') {
@@ -11588,6 +11608,49 @@ function setSelectedSubstanceId(id, { source = null, refresh = true } = {}) {
     renderPurchaseHistory(null);
     renderBuyTrackerTab();
     refreshTaperDashboard();
+    if (typeof renderTodayAtAGlance === 'function') {
+        try { renderTodayAtAGlance(); } catch (_) { /* ignore */ }
+    }
+    if (typeof updateDashboard === 'function') {
+        try { updateDashboard(); } catch (_) { /* ignore */ }
+    }
+    if (typeof persistInsightsFilters === 'function' && source !== 'insights') {
+        try {
+            persistInsightsFilters({ substanceId: selectedSubstanceId }, {
+                render: true,
+                save: false,
+                syncSections: true
+            });
+        } catch (_) { /* ignore */ }
+    }
+}
+
+function onDashboardSubstanceChange(id) {
+    setSelectedSubstanceId(id, { source: 'dashboard-substance' });
+}
+
+function syncGlobalSubstanceSettings(id, { persist = false, source = null } = {}) {
+    ensureAppDataSettings(appData);
+    if (appData.settings) appData.settings.dashboardSubstanceId = id || DASHBOARD_ALL;
+    if (appData.settings?.recoveryDashboard) {
+        appData.settings.recoveryDashboard.selectedDashboardSubstance = id || DASHBOARD_ALL;
+    }
+    if (typeof ensureInsightsFilters === 'function' && source !== 'insights') {
+        try {
+            const filters = ensureInsightsFilters(appData);
+            filters.substanceId = id || DASHBOARD_ALL;
+            if (filters.productType && typeof insightsFiltersIsWeedSubstance === 'function'
+                && !insightsFiltersIsWeedSubstance(filters.substanceId, appData)) {
+                filters.productType = '';
+            }
+        } catch (_) { /* ignore */ }
+    }
+    if (persist && typeof saveDashboardViewSubstanceId === 'function') {
+        try { saveDashboardViewSubstanceId(id); } catch (_) { /* ignore */ }
+    }
+    if (persist && typeof persistRecoveryDashboardPrefs === 'function') {
+        try { persistRecoveryDashboardPrefs({ selectedDashboardSubstance: id }); } catch (_) { /* ignore */ }
+    }
 }
 
 function onUseLogSubstanceChange() {
@@ -23894,6 +23957,7 @@ function loadInsightsFiltersIntoState(data = appData) {
     try {
         currentSubstanceId = f.substanceId;
         selectedDashboardSubstance = f.substanceId;
+        selectedSubstanceId = f.substanceId;
         statsDateRangePreset = f.dateRangePreset || 'last-7';
         statsCustomStartDate = f.customStart || '';
         statsCustomEndDate = f.customEnd || '';
@@ -24002,6 +24066,7 @@ function persistInsightsFilters(patch = {}, options = {}) {
     try {
         currentSubstanceId = prefs.substanceId;
         selectedDashboardSubstance = prefs.substanceId;
+        selectedSubstanceId = prefs.substanceId;
         statsDateRangePreset = prefs.dateRangePreset || 'last-7';
         statsCustomStartDate = prefs.customStart || '';
         statsCustomEndDate = prefs.customEnd || '';
@@ -29186,9 +29251,6 @@ function onSidebarSubstanceChange() {
     if (typeof setSelectedSubstanceId === 'function') {
         setSelectedSubstanceId(id, { source: 'sidebar-substance' });
     }
-    if (typeof setSelectedDashboardSubstance === 'function') {
-        try { setSelectedDashboardSubstance(id); } catch (_) { /* ignore */ }
-    }
     renderTodayAtAGlance();
     syncLayoutSubstanceSelectors();
 }
@@ -29370,9 +29432,13 @@ function getLayoutTodayActivityLabel(card = {}) {
 }
 
 function getLayoutTodayCards(data = appData) {
-    const substances = typeof getActiveSubstances === 'function'
+    let substances = typeof getActiveSubstances === 'function'
         ? getActiveSubstances(data)
         : (data?.substances || []).filter(s => s && s.active !== false);
+    const selectedId = getLayoutSelectedSubstanceId();
+    if (selectedId && !isLayoutAllSubstances(selectedId)) {
+        substances = substances.filter(s => s.id === selectedId);
+    }
     if (typeof buildSimpleTodayCard === 'function') {
         return substances.map(sub => buildSimpleTodayCard(sub, data));
     }
@@ -31352,6 +31418,12 @@ const USE_STATS_LABELS = {
 let columnSettingsTableKey = null;
 let columnSettingsVariantKey = null;
 let useLogDateFilter = 'all';
+let useLogFiltersPanelOpen = false;
+const useLogListFilters = {
+    datePreset: 'all',
+    transactionType: '',
+    entryType: ''
+};
 let inventoryTabFilter = 'active';
 let inventorySearchQuery = '';
 let purchaseHistorySort = { colId: null, dir: 'asc' };
@@ -33789,6 +33861,8 @@ function resolveStartupSubstanceId() {
 function resolveDefaultSelectedSubstanceId() {
     ensureAppDataSubstancesReady(appData);
     if (!appData?.substances?.length) return DASHBOARD_ALL;
+    const saved = resolveDashboardViewSubstanceId(appData);
+    if (saved) return saved;
     const mainId = resolveSelectedSubstanceId(getMainSubstanceId());
     if (mainId && substanceIsDashboardViewOption(mainId)) return mainId;
     return getActiveSubstances()[0]?.id || appData.substances[0]?.id || DASHBOARD_ALL;
@@ -33801,8 +33875,10 @@ function resolveDefaultTaperSubstanceId(data = appData) {
         return getActiveSubstances(data)[0]?.id || data?.substances?.[0]?.id || DASHBOARD_ALL;
     }
     const storedId = resolveSelectedSubstanceId(data?.settings?.taperSubstanceId, data);
+    if (storedId === DASHBOARD_ALL) return DASHBOARD_ALL;
     if (storedId && taperSubstances.some(sub => sub.id === storedId)) return storedId;
     const recentId = resolveSelectedSubstanceId(selectedSubstanceId, data);
+    if (recentId === DASHBOARD_ALL) return DASHBOARD_ALL;
     if (recentId && taperSubstances.some(sub => sub.id === recentId)) return recentId;
     return taperSubstances[0]?.id || getActiveSubstances(data)[0]?.id || data?.substances?.[0]?.id || DASHBOARD_ALL;
 }
@@ -34051,6 +34127,7 @@ function ensureDashboardSubstanceDropdownReady() {
     ensureAppDataSubstancesReady(appData);
     selectedDashboardSubstance = getSelectedDashboardSubstance(appData);
     currentSubstanceId = selectedDashboardSubstance;
+    selectedSubstanceId = selectedDashboardSubstance;
     populateAllSubstanceDropdowns();
     syncSubstanceSelectors();
 
@@ -34309,6 +34386,9 @@ function switchStatsSubstance(substanceId) {
         setSelectedInsightsSubstance(substanceId, { render: false, save: true });
     } else {
         setSelectedDashboardSubstance(substanceId, { persist: true, render: false, syncStats: false });
+    }
+    if (typeof setSelectedSubstanceId === 'function') {
+        setSelectedSubstanceId(substanceId, { source: 'insights', refresh: true });
     }
     const dash = document.getElementById('dashboard-substance');
     if (dash) dash.value = selectedDashboardSubstance;
@@ -42322,16 +42402,20 @@ function useHistorySelectionHas(id) {
  * Single filtered Use Log dataset for summary cards, Recent Use, Use History,
  * Bulk Actions selection, and CSV export.
  */
-function getFilteredUseLogsForView(options = {}) {
+function getFilteredUseLogs(options = {}) {
     const data = options.data || appData;
     const substanceId = options.substanceId !== undefined
         ? options.substanceId
         : getUseLogViewSubstanceId();
-    const dateFilter = options.dateFilter !== undefined ? options.dateFilter : useLogDateFilter;
+    const dateFilter = options.dateFilter !== undefined ? options.dateFilter : useLogListFilters.datePreset;
     const productType = options.productType || null;
     const productTypes = options.productTypes
         || (productType ? [productType] : null);
-    const transactionTypes = options.transactionTypes || null;
+    const transactionTypes = options.transactionTypes
+        || (options.transactionType
+            ? [options.transactionType]
+            : (useLogListFilters.transactionType ? [useLogListFilters.transactionType] : null));
+    const entryType = options.entryType !== undefined ? options.entryType : useLogListFilters.entryType;
 
     let logs = getUseEntries(data).filter(l => logMatchesUseLogFilter(l, dateFilter));
     logs = logs.filter(l => !isPercentLeftDistributedChildLog(l));
@@ -42348,7 +42432,26 @@ function getFilteredUseLogsForView(options = {}) {
         const allowed = new Set(transactionTypes);
         logs = logs.filter(l => allowed.has(getLogTransactionType(l)));
     }
+    if (entryType) {
+        logs = logs.filter(l => logMatchesUseEntryType(l, entryType));
+    }
     return logs;
+}
+
+function getFilteredUseLogsForView(options = {}) {
+    return getFilteredUseLogs(options);
+}
+
+function logMatchesUseEntryType(log, entryType) {
+    if (!entryType) return true;
+    const tx = getLogTransactionType(log);
+    if (entryType === 'gift' || entryType === 'gift_adjustment') {
+        return tx === 'gift_given' || tx === 'gift_received' || tx === 'inventory_adjustment';
+    }
+    if (tx === 'gift_given' || tx === 'gift_received' || tx === 'inventory_adjustment') {
+        return false;
+    }
+    return getUseLogType(log) === entryType;
 }
 
 function nicotineProductTypeSortIndex(log, data = appData) {
@@ -45571,13 +45674,31 @@ function estimateLogCost(log) {
     return ((parseFloat(log.amount) || 0) / qty) * cost;
 }
 
-function getUseLogFilterBounds(filter = useLogDateFilter) {
+function getUseLogWeekStartDateStr(dateStr = getLocalDateString(), data = appData) {
+    if (typeof runningTotalsWeekKey === 'function') {
+        try {
+            const key = runningTotalsWeekKey(dateStr, data);
+            if (key) return key;
+        } catch (_) { /* fall through */ }
+    }
+    const weekStarts = typeof runningTotalsWeekStartPref === 'function'
+        ? runningTotalsWeekStartPref(data)
+        : (data?.settings?.calendarView?.weekStarts === 'monday' ? 'monday' : 'sunday');
+    if (typeof resolveCalendarPeriodBounds === 'function') {
+        const bounds = resolveCalendarPeriodBounds('week', dateStr, weekStarts);
+        if (bounds?.startDate) return bounds.startDate;
+    }
+    return getWeekStartDateStr(dateStr);
+}
+
+function getUseLogFilterBounds(filter = useLogListFilters.datePreset) {
     const today = getLocalDateString();
-    switch (filter) {
+    const preset = filter || 'all';
+    switch (preset) {
         case 'today':
             return { startDate: today, endDate: today };
         case 'week': {
-            const weekStart = getWeekStartDateStr(today);
+            const weekStart = getUseLogWeekStartDateStr(today);
             return { startDate: weekStart, endDate: today };
         }
         case 'month': {
@@ -45588,7 +45709,7 @@ function getUseLogFilterBounds(filter = useLogDateFilter) {
     }
 }
 
-function logMatchesUseLogFilter(log, filter = useLogDateFilter) {
+function logMatchesUseLogFilter(log, filter = useLogListFilters.datePreset) {
     if (!log?.date) return false;
     const { startDate, endDate } = getUseLogFilterBounds(filter);
     if (!startDate && !endDate) return true;
@@ -45600,11 +45721,92 @@ function logMatchesUseLogFilter(log, filter = useLogDateFilter) {
     return true;
 }
 
-function setUseLogFilter(filter) {
-    useLogDateFilter = filter;
+function syncUseLogFilterShortcutButtons(filter = useLogListFilters.datePreset) {
     document.querySelectorAll('.use-log-filter-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.filter === filter);
     });
+}
+
+function setUseLogFilter(filter) {
+    const next = filter || 'all';
+    useLogDateFilter = next;
+    useLogListFilters.datePreset = next;
+    syncUseLogFilterShortcutButtons(next);
+    updateUseLogFiltersPanelUI();
+    renderUseLogTab();
+}
+
+function applyUseLogSearchFilters() {
+    useLogListFilters.transactionType = document.getElementById('use-log-filter-transaction')?.value || '';
+    useLogListFilters.entryType = document.getElementById('use-log-filter-entry')?.value || '';
+    updateUseLogFiltersPanelUI();
+    renderUseLogTab();
+}
+
+function countActiveUseLogFilters() {
+    let count = 0;
+    if (useLogListFilters.datePreset && useLogListFilters.datePreset !== 'all') count++;
+    if (useLogListFilters.transactionType) count++;
+    if (useLogListFilters.entryType) count++;
+    if (!isSelectedAllSubstances()) count++;
+    return count;
+}
+
+function toggleUseLogFiltersPanel() {
+    useLogFiltersPanelOpen = !useLogFiltersPanelOpen;
+    updateUseLogFiltersPanelUI();
+}
+
+function updateUseLogFiltersPanelUI() {
+    const panel = document.getElementById('use-log-filter-panel');
+    const toggle = document.getElementById('use-log-filter-toggle');
+    const countEl = document.getElementById('use-log-filter-count');
+    panel?.classList.toggle('hidden', !useLogFiltersPanelOpen);
+    toggle?.classList.toggle('open', useLogFiltersPanelOpen);
+    const count = countActiveUseLogFilters();
+    if (countEl) countEl.textContent = count > 0 ? ` (${count})` : '';
+    renderUseLogFilterChips();
+}
+
+function renderUseLogFilterChips() {
+    const container = document.getElementById('use-log-filter-chips');
+    if (!container) return;
+    const chips = [];
+    if (!isSelectedAllSubstances()) {
+        const name = getSubstanceName(selectedSubstanceId) || selectedSubstanceId;
+        chips.push(`<span class="use-log-filter-chip">Substance: ${escapeHtml(name)}</span>`);
+    }
+    if (useLogListFilters.datePreset && useLogListFilters.datePreset !== 'all') {
+        const labels = { today: 'Today', week: 'This Week', month: 'This Month' };
+        chips.push(`<span class="use-log-filter-chip">Date: ${labels[useLogListFilters.datePreset] || useLogListFilters.datePreset}</span>`);
+    }
+    if (useLogListFilters.transactionType) {
+        const labels = { use: 'Personal Use', gift_given: 'Gift Given', gift_received: 'Gift Received' };
+        chips.push(`<span class="use-log-filter-chip">Transaction: ${escapeHtml(labels[useLogListFilters.transactionType] || useLogListFilters.transactionType)}</span>`);
+    }
+    if (useLogListFilters.entryType) {
+        const labels = { quick: 'Quick Use', session: 'Session', gift: 'Gift' };
+        chips.push(`<span class="use-log-filter-chip">Entry: ${escapeHtml(labels[useLogListFilters.entryType] || useLogListFilters.entryType)}</span>`);
+    }
+    container.innerHTML = chips.join('');
+    container.classList.toggle('hidden', !chips.length);
+}
+
+function clearUseLogFilters() {
+    useLogDateFilter = 'all';
+    useLogListFilters.datePreset = 'all';
+    useLogListFilters.transactionType = '';
+    useLogListFilters.entryType = '';
+    useLogFiltersPanelOpen = false;
+    const txEl = document.getElementById('use-log-filter-transaction');
+    const entryEl = document.getElementById('use-log-filter-entry');
+    if (txEl) txEl.value = '';
+    if (entryEl) entryEl.value = '';
+    syncUseLogFilterShortcutButtons('all');
+    if (!isSelectedAllSubstances()) {
+        setSelectedSubstanceId(DASHBOARD_ALL, { source: 'use-log-filters', refresh: false });
+    }
+    updateUseLogFiltersPanelUI();
     renderUseLogTab();
 }
 
@@ -45622,12 +45824,21 @@ function formatNicotineUseTotalsLabel(logs, data = appData) {
 function getUseLogTotalsForView(substanceId = getUseLogViewSubstanceId()) {
     const bounds = getUseLogFilterBounds();
     const { startDate, endDate } = bounds;
-    const logs = getFilteredUseLogsForView({ substanceId });
+    const logs = getFilteredUseLogs({ substanceId });
     const personalLogs = logs.filter(isPersonalUseLog);
     const totalLines = isCokeSubstanceId(substanceId) ? sumUseLinesForLogs(logs) : null;
+    const extraFilters = !!(useLogListFilters.transactionType || useLogListFilters.entryType);
     let totalGrams;
     let totalCost;
-    if (substanceId && (startDate || endDate)) {
+    if (extraFilters) {
+        totalGrams = substanceId
+            ? personalLogs.reduce((s, l) => s + (parseFloat(l.amount) || 0), 0)
+            : null;
+        totalCost = personalLogs.reduce((s, l) => {
+            const cost = parseFloat(l.estimatedCost);
+            return s + (Number.isFinite(cost) ? cost : (estimateLogCost(l) || 0));
+        }, 0);
+    } else if (substanceId && (startDate || endDate)) {
         totalGrams = sumUseAmountForRange(substanceId, startDate, endDate);
         totalCost = sumUseCostForRange(substanceId, startDate, endDate);
     } else if (substanceId) {
@@ -45673,8 +45884,8 @@ function formatMixedUseTotalsLabel(logs, data = appData) {
             if (bits.length) parts.push(`${name}: ${bits.join(' / ')}`);
             return;
         }
-        const { startDate, endDate } = getUseLogFilterBounds();
-        const amount = sumUseAmountForRange(sid, startDate, endDate);
+        const amount = subLogs.filter(isPersonalUseLog)
+            .reduce((s, l) => s + (parseFloat(l.amount) || 0), 0);
         const unit = getSubstanceDisplayUnit(sid, data);
         if (amount > INVENTORY_EPS) parts.push(`${name}: ${formatAmount(amount)} ${unit}`);
     });
@@ -46479,11 +46690,16 @@ function setSelectedDashboardSubstance(substanceId, options = {}) {
     const previous = selectedDashboardSubstance;
     selectedDashboardSubstance = next;
     currentSubstanceId = next;
+    selectedSubstanceId = next;
     invalidateRecoveryDashboardCache();
 
     if (persist) {
         persistRecoveryDashboardPrefs({ selectedDashboardSubstance: next }, data);
         saveDashboardViewSubstanceId(next);
+    }
+
+    if (typeof syncPageSubstanceSelectors === 'function') {
+        try { syncPageSubstanceSelectors(options.source || 'dashboard-substance'); } catch (_) { /* ignore */ }
     }
 
     const dashSelect = document.getElementById('dashboard-substance');
@@ -46509,6 +46725,22 @@ function setSelectedDashboardSubstance(substanceId, options = {}) {
         updateDashboard();
         checkTaperTarget();
         updateQuickActions();
+        if (typeof renderTodayAtAGlance === 'function') {
+            try { renderTodayAtAGlance(); } catch (_) { /* ignore */ }
+        }
+        if (typeof renderUseLogTab === 'function') renderUseLogTab();
+        if (typeof renderInventorySummaryCards === 'function') renderInventorySummaryCards();
+        if (typeof renderPurchaseHistory === 'function') renderPurchaseHistory(null);
+        if (typeof refreshTaperDashboard === 'function') refreshTaperDashboard();
+        if (typeof persistInsightsFilters === 'function' && options.source !== 'insights') {
+            try {
+                persistInsightsFilters({ substanceId: next }, {
+                    render: true,
+                    save: false,
+                    syncSections: true
+                });
+            } catch (_) { /* ignore */ }
+        }
     }
     return next;
 }
@@ -60774,19 +61006,18 @@ function getTaperSubstanceId(data = appData) {
             ? resolveSelectedSubstanceId(el.value, data)
             : el.value;
     }
+    if (typeof selectedSubstanceId !== 'undefined' && selectedSubstanceId) {
+        return typeof resolveSelectedSubstanceId === 'function'
+            ? resolveSelectedSubstanceId(selectedSubstanceId, data)
+            : selectedSubstanceId;
+    }
     const stored = data?.settings?.taperSubstanceId;
     if (stored) {
         const resolved = typeof resolveSelectedSubstanceId === 'function'
             ? resolveSelectedSubstanceId(stored, data)
             : stored;
         const taperSubs = typeof getTaperSubstances === 'function' ? getTaperSubstances(data) : [];
-        if (!taperSubs.length || taperSubs.some(s => s.id === resolved)) return resolved;
-    }
-    // Prefer the main substance over a stale global selection from another page.
-    const mainId = typeof getMainSubstanceId === 'function' ? getMainSubstanceId() : null;
-    if (mainId && mainId !== DASHBOARD_ALL) {
-        const taperSubs = typeof getTaperSubstances === 'function' ? getTaperSubstances(data) : [];
-        if (!taperSubs.length || taperSubs.some(s => s.id === mainId)) return mainId;
+        if (!taperSubs.length || taperSubs.some(s => s.id === resolved) || resolved === DASHBOARD_ALL) return resolved;
     }
     if (typeof resolveDefaultTaperSubstanceId === 'function') {
         return resolveDefaultTaperSubstanceId(data);
@@ -62645,6 +62876,7 @@ function __setTestAppData(data) {
     ensureRecoveryDashboardPrefs(appData);
     selectedDashboardSubstance = getSelectedDashboardSubstance(appData);
     currentSubstanceId = selectedDashboardSubstance;
+    selectedSubstanceId = selectedDashboardSubstance;
     loadComparePeriodsPrefsIntoState(appData);
 }
 
@@ -62663,6 +62895,7 @@ function __reloadTestAppDataFromStorage() {
     invalidateRecoveryDashboardCache();
     selectedDashboardSubstance = getSelectedDashboardSubstance(appData);
     currentSubstanceId = selectedDashboardSubstance;
+    selectedSubstanceId = selectedDashboardSubstance;
     return appData;
 }
 
@@ -64051,6 +64284,17 @@ function __getRecoveryTrackerTestExports() {
         __reloadTestAppDataFromStorage,
         __getUseHistoryEntryCount,
         getFilteredUseLogsForView,
+        getFilteredUseLogs,
+        getUseLogFilterBounds,
+        getUseLogWeekStartDateStr,
+        logMatchesUseEntryType,
+        setUseLogFilter,
+        clearUseLogFilters,
+        applyUseLogSearchFilters,
+        useLogListFiltersRef: {
+            get value() { return useLogListFilters; },
+            set value(v) { Object.assign(useLogListFilters, v || {}); }
+        },
         buildUseHistoryRows,
         getUseHistoryVisibleColumns,
         getUseHistoryColumnCatalog,

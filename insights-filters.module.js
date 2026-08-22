@@ -89,6 +89,7 @@ function loadInsightsFiltersIntoState(data = appData) {
     try {
         currentSubstanceId = f.substanceId;
         selectedDashboardSubstance = f.substanceId;
+        selectedSubstanceId = f.substanceId;
         statsDateRangePreset = f.dateRangePreset || 'last-7';
         statsCustomStartDate = f.customStart || '';
         statsCustomEndDate = f.customEnd || '';
@@ -197,6 +198,7 @@ function persistInsightsFilters(patch = {}, options = {}) {
     try {
         currentSubstanceId = prefs.substanceId;
         selectedDashboardSubstance = prefs.substanceId;
+        selectedSubstanceId = prefs.substanceId;
         statsDateRangePreset = prefs.dateRangePreset || 'last-7';
         statsCustomStartDate = prefs.customStart || '';
         statsCustomEndDate = prefs.customEnd || '';
