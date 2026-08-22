@@ -11495,11 +11495,12 @@ function populatePageSubstanceDropdowns() {
     const active = getActiveSubstances();
     populatePageSubstanceSelect('use-log-substance', { includeAll: true, substances: active });
     populatePageSubstanceSelect('inventory-substance', { includeAll: true, substances: active });
+    populatePageSubstanceSelect('use-log-filter-substance', { includeAll: true, substances: active });
     const taperSubs = sortSubstancesMainFirst(getTaperSubstances());
     populatePageSubstanceSelect('taper-substance', {
-        includeAll: false,
+        includeAll: true,
         substances: taperSubs,
-        currentValue: resolveDefaultTaperSubstanceId()
+        currentValue: selectedSubstanceId || resolveDefaultTaperSubstanceId()
     });
     syncPageSubstanceSelectors();
     syncInventorySubstanceFilterState();
@@ -11542,16 +11543,31 @@ function syncPageSubstanceSelectors(skipId = null) {
         const el = document.getElementById('use-log-substance');
         if (el && optionList(el).some(o => o.value === resolvedSelected)) el.value = resolvedSelected;
     }
+    if (skipId !== 'use-log-filter-substance') {
+        const el = document.getElementById('use-log-filter-substance');
+        if (el && optionList(el).some(o => o.value === resolvedSelected)) el.value = resolvedSelected;
+    }
     if (skipId !== 'inventory-substance') {
         const el = document.getElementById('inventory-substance');
         if (el && optionList(el).some(o => o.value === resolvedSelected)) el.value = resolvedSelected;
     }
     if (skipId !== 'taper-substance') {
         const taperEl = document.getElementById('taper-substance');
-        const taperSelected = getTaperSubstanceId();
-        if (taperEl && optionList(taperEl).some(o => o.value === taperSelected)) {
-            taperEl.value = taperSelected;
+        if (taperEl && optionList(taperEl).some(o => o.value === resolvedSelected)) {
+            taperEl.value = resolvedSelected;
         }
+    }
+    if (skipId !== 'dashboard-substance') {
+        const dash = document.getElementById('dashboard-substance');
+        if (dash && optionList(dash).some(o => o.value === resolvedSelected)) dash.value = resolvedSelected;
+    }
+    if (skipId !== 'stats-substance') {
+        const stats = document.getElementById('stats-substance');
+        if (stats && optionList(stats).some(o => o.value === resolvedSelected)) stats.value = resolvedSelected;
+    }
+    if (skipId !== 'sidebar-substance') {
+        const sidebar = document.getElementById('sidebar-substance');
+        if (sidebar && optionList(sidebar).some(o => o.value === resolvedSelected)) sidebar.value = resolvedSelected;
     }
     syncInventorySubstanceFilterState();
 }
@@ -11571,12 +11587,21 @@ function ensureSelectedSubstanceIdValid() {
 function setSelectedSubstanceId(id, { source = null, refresh = true } = {}) {
     selectedSubstanceId = resolveSelectedSubstanceId(id || DASHBOARD_ALL);
     ensureSelectedSubstanceIdValid();
+    selectedDashboardSubstance = selectedSubstanceId;
+    currentSubstanceId = selectedSubstanceId;
+    syncGlobalSubstanceSettings(selectedSubstanceId, { persist: refresh, source });
     syncPageSubstanceSelectors(source);
     syncUseLogFormFromSelectedSubstance();
     syncBuyFormFromSelectedSubstance();
     syncInventorySearchPlaceholder();
+    if (typeof syncLayoutSubstanceSelectors === 'function') {
+        try { syncLayoutSubstanceSelectors(); } catch (_) { /* ignore */ }
+    }
     if (source && String(source).startsWith('taper')) {
         persistTaperSubstanceId(selectedSubstanceId);
+    } else if (refresh) {
+        persistTaperSubstanceId(selectedSubstanceId);
+        syncGoalsPlansSubstanceFilters(selectedSubstanceId);
     }
     if (!substanceShowsPurchaseFlavor(getInventorySubstanceFilterId())
         && purchaseHistorySort.colId === 'flavor') {
@@ -11588,6 +11613,55 @@ function setSelectedSubstanceId(id, { source = null, refresh = true } = {}) {
     renderPurchaseHistory(null);
     renderBuyTrackerTab();
     refreshTaperDashboard();
+    if (typeof renderTodayAtAGlance === 'function') {
+        try { renderTodayAtAGlance(); } catch (_) { /* ignore */ }
+    }
+    if (typeof updateDashboard === 'function') {
+        try { updateDashboard(); } catch (_) { /* ignore */ }
+    }
+    if (typeof persistInsightsFilters === 'function' && source !== 'insights') {
+        try {
+            persistInsightsFilters({ substanceId: selectedSubstanceId }, {
+                render: true,
+                save: false,
+                syncSections: true
+            });
+        } catch (_) { /* ignore */ }
+    }
+}
+
+function onDashboardSubstanceChange(id) {
+    setSelectedSubstanceId(id, { source: 'dashboard-substance' });
+}
+
+function onUseLogFilterSubstanceChange() {
+    const id = document.getElementById('use-log-filter-substance')?.value;
+    if (!id) return;
+    setSelectedSubstanceId(id, { source: 'use-log-filter-substance' });
+}
+
+function syncGlobalSubstanceSettings(id, { persist = false, source = null } = {}) {
+    ensureAppDataSettings(appData);
+    if (appData.settings) appData.settings.dashboardSubstanceId = id || DASHBOARD_ALL;
+    if (appData.settings?.recoveryDashboard) {
+        appData.settings.recoveryDashboard.selectedDashboardSubstance = id || DASHBOARD_ALL;
+    }
+    if (typeof ensureInsightsFilters === 'function' && source !== 'insights') {
+        try {
+            const filters = ensureInsightsFilters(appData);
+            filters.substanceId = id || DASHBOARD_ALL;
+            if (filters.productType && typeof insightsFiltersIsWeedSubstance === 'function'
+                && !insightsFiltersIsWeedSubstance(filters.substanceId, appData)) {
+                filters.productType = '';
+            }
+        } catch (_) { /* ignore */ }
+    }
+    if (persist && typeof saveDashboardViewSubstanceId === 'function') {
+        try { saveDashboardViewSubstanceId(id); } catch (_) { /* ignore */ }
+    }
+    if (persist && typeof persistRecoveryDashboardPrefs === 'function') {
+        try { persistRecoveryDashboardPrefs({ selectedDashboardSubstance: id }); } catch (_) { /* ignore */ }
+    }
 }
 
 function onUseLogSubstanceChange() {
@@ -24002,6 +24076,7 @@ function persistInsightsFilters(patch = {}, options = {}) {
     try {
         currentSubstanceId = prefs.substanceId;
         selectedDashboardSubstance = prefs.substanceId;
+        selectedSubstanceId = prefs.substanceId;
         statsDateRangePreset = prefs.dateRangePreset || 'last-7';
         statsCustomStartDate = prefs.customStart || '';
         statsCustomEndDate = prefs.customEnd || '';
@@ -29186,9 +29261,6 @@ function onSidebarSubstanceChange() {
     if (typeof setSelectedSubstanceId === 'function') {
         setSelectedSubstanceId(id, { source: 'sidebar-substance' });
     }
-    if (typeof setSelectedDashboardSubstance === 'function') {
-        try { setSelectedDashboardSubstance(id); } catch (_) { /* ignore */ }
-    }
     renderTodayAtAGlance();
     syncLayoutSubstanceSelectors();
 }
@@ -29196,7 +29268,7 @@ function onSidebarSubstanceChange() {
 function syncLayoutSubstanceSelectors() {
     populateLayoutSubstanceSelect();
     const current = getLayoutSelectedSubstanceId();
-    ['use-log-substance', 'inventory-substance', 'taper-substance', 'stats-substance', 'dashboard-substance']
+    ['use-log-substance', 'use-log-filter-substance', 'inventory-substance', 'taper-substance', 'stats-substance', 'dashboard-substance']
         .forEach(id => {
             const el = document.getElementById(id);
             if (el && [...el.options].some(o => o.value === current)) el.value = current;
@@ -29370,9 +29442,13 @@ function getLayoutTodayActivityLabel(card = {}) {
 }
 
 function getLayoutTodayCards(data = appData) {
-    const substances = typeof getActiveSubstances === 'function'
+    let substances = typeof getActiveSubstances === 'function'
         ? getActiveSubstances(data)
         : (data?.substances || []).filter(s => s && s.active !== false);
+    const selectedId = getLayoutSelectedSubstanceId();
+    if (selectedId && !isLayoutAllSubstances(selectedId)) {
+        substances = substances.filter(s => s.id === selectedId);
+    }
     if (typeof buildSimpleTodayCard === 'function') {
         return substances.map(sub => buildSimpleTodayCard(sub, data));
     }
@@ -31352,6 +31428,14 @@ const USE_STATS_LABELS = {
 let columnSettingsTableKey = null;
 let columnSettingsVariantKey = null;
 let useLogDateFilter = 'all';
+let useLogFiltersPanelOpen = false;
+const useLogListFilters = {
+    datePreset: 'all',
+    dateStart: '',
+    dateEnd: '',
+    transactionType: '',
+    entryType: ''
+};
 let inventoryTabFilter = 'active';
 let inventorySearchQuery = '';
 let purchaseHistorySort = { colId: null, dir: 'asc' };
@@ -33789,6 +33873,8 @@ function resolveStartupSubstanceId() {
 function resolveDefaultSelectedSubstanceId() {
     ensureAppDataSubstancesReady(appData);
     if (!appData?.substances?.length) return DASHBOARD_ALL;
+    const saved = resolveDashboardViewSubstanceId(appData);
+    if (saved) return saved;
     const mainId = resolveSelectedSubstanceId(getMainSubstanceId());
     if (mainId && substanceIsDashboardViewOption(mainId)) return mainId;
     return getActiveSubstances()[0]?.id || appData.substances[0]?.id || DASHBOARD_ALL;
@@ -34051,6 +34137,7 @@ function ensureDashboardSubstanceDropdownReady() {
     ensureAppDataSubstancesReady(appData);
     selectedDashboardSubstance = getSelectedDashboardSubstance(appData);
     currentSubstanceId = selectedDashboardSubstance;
+    selectedSubstanceId = selectedDashboardSubstance;
     populateAllSubstanceDropdowns();
     syncSubstanceSelectors();
 
@@ -42322,18 +42409,24 @@ function useHistorySelectionHas(id) {
  * Single filtered Use Log dataset for summary cards, Recent Use, Use History,
  * Bulk Actions selection, and CSV export.
  */
-function getFilteredUseLogsForView(options = {}) {
+function getFilteredUseLogs(options = {}) {
     const data = options.data || appData;
     const substanceId = options.substanceId !== undefined
         ? options.substanceId
         : getUseLogViewSubstanceId();
-    const dateFilter = options.dateFilter !== undefined ? options.dateFilter : useLogDateFilter;
+    const dateFilter = options.dateFilter !== undefined ? options.dateFilter : useLogListFilters.datePreset;
+    const dateStart = options.dateStart !== undefined ? options.dateStart : useLogListFilters.dateStart;
+    const dateEnd = options.dateEnd !== undefined ? options.dateEnd : useLogListFilters.dateEnd;
     const productType = options.productType || null;
     const productTypes = options.productTypes
         || (productType ? [productType] : null);
-    const transactionTypes = options.transactionTypes || null;
+    const transactionTypes = options.transactionTypes
+        || (options.transactionType
+            ? [options.transactionType]
+            : (useLogListFilters.transactionType ? [useLogListFilters.transactionType] : null));
+    const entryType = options.entryType !== undefined ? options.entryType : useLogListFilters.entryType;
 
-    let logs = getUseEntries(data).filter(l => logMatchesUseLogFilter(l, dateFilter));
+    let logs = getUseEntries(data).filter(l => logMatchesUseLogFilter(l, dateFilter, { dateStart, dateEnd }));
     logs = logs.filter(l => !isPercentLeftDistributedChildLog(l));
     logs = logs.filter(l => !isAlcoholMultiDayChildLog(l));
     logs = logs.filter(l => !l.deletedAt && !l.deleted && !l.hidden && !l.inventoryHidden);
@@ -42348,7 +42441,26 @@ function getFilteredUseLogsForView(options = {}) {
         const allowed = new Set(transactionTypes);
         logs = logs.filter(l => allowed.has(getLogTransactionType(l)));
     }
+    if (entryType) {
+        logs = logs.filter(l => logMatchesUseEntryType(l, entryType));
+    }
     return logs;
+}
+
+function getFilteredUseLogsForView(options = {}) {
+    return getFilteredUseLogs(options);
+}
+
+function logMatchesUseEntryType(log, entryType) {
+    if (!entryType) return true;
+    const tx = getLogTransactionType(log);
+    if (entryType === 'gift' || entryType === 'gift_adjustment') {
+        return tx === 'gift_given' || tx === 'gift_received' || tx === 'inventory_adjustment';
+    }
+    if (tx === 'gift_given' || tx === 'gift_received' || tx === 'inventory_adjustment') {
+        return false;
+    }
+    return getUseLogType(log) === entryType;
 }
 
 function nicotineProductTypeSortIndex(log, data = appData) {
@@ -45571,26 +45683,54 @@ function estimateLogCost(log) {
     return ((parseFloat(log.amount) || 0) / qty) * cost;
 }
 
-function getUseLogFilterBounds(filter = useLogDateFilter) {
+function getUseLogWeekStartDateStr(dateStr = getLocalDateString(), data = appData) {
+    if (typeof runningTotalsWeekKey === 'function') {
+        try {
+            const key = runningTotalsWeekKey(dateStr, data);
+            if (key) return key;
+        } catch (_) { /* fall through */ }
+    }
+    const weekStarts = typeof runningTotalsWeekStartPref === 'function'
+        ? runningTotalsWeekStartPref(data)
+        : (data?.settings?.calendarView?.weekStarts === 'monday' ? 'monday' : 'sunday');
+    if (typeof resolveCalendarPeriodBounds === 'function') {
+        const bounds = resolveCalendarPeriodBounds('week', dateStr, weekStarts);
+        if (bounds?.startDate) return bounds.startDate;
+    }
+    return getWeekStartDateStr(dateStr);
+}
+
+function getUseLogFilterBounds(filter = useLogListFilters.datePreset, extras = {}) {
     const today = getLocalDateString();
-    switch (filter) {
+    const preset = filter || 'all';
+    const customStart = extras.dateStart !== undefined ? extras.dateStart : useLogListFilters.dateStart;
+    const customEnd = extras.dateEnd !== undefined ? extras.dateEnd : useLogListFilters.dateEnd;
+    switch (preset) {
         case 'today':
             return { startDate: today, endDate: today };
         case 'week': {
-            const weekStart = getWeekStartDateStr(today);
+            const weekStart = getUseLogWeekStartDateStr(today);
             return { startDate: weekStart, endDate: today };
         }
         case 'month': {
             return { startDate: getMonthStartDateStr(today), endDate: today };
         }
+        case 'custom': {
+            const startDate = customStart || null;
+            const endDate = customEnd || null;
+            return { startDate, endDate };
+        }
         default:
+            if (customStart || customEnd) {
+                return { startDate: customStart || null, endDate: customEnd || null };
+            }
             return { startDate: null, endDate: null };
     }
 }
 
-function logMatchesUseLogFilter(log, filter = useLogDateFilter) {
+function logMatchesUseLogFilter(log, filter = useLogListFilters.datePreset, extras = {}) {
     if (!log?.date) return false;
-    const { startDate, endDate } = getUseLogFilterBounds(filter);
+    const { startDate, endDate } = getUseLogFilterBounds(filter, extras);
     if (!startDate && !endDate) return true;
     if (isPersonalUseLog(log) && (startDate || endDate)) {
         return logOverlapsDateRange(log, startDate, endDate);
@@ -45600,11 +45740,142 @@ function logMatchesUseLogFilter(log, filter = useLogDateFilter) {
     return true;
 }
 
-function setUseLogFilter(filter) {
-    useLogDateFilter = filter;
+function syncUseLogFilterShortcutButtons(filter = useLogListFilters.datePreset) {
     document.querySelectorAll('.use-log-filter-btn').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.filter === filter);
     });
+}
+
+function syncUseLogFilterDateInputs(bounds) {
+    const startEl = document.getElementById('use-log-filter-date-start');
+    const endEl = document.getElementById('use-log-filter-date-end');
+    if (startEl) startEl.value = bounds?.startDate || '';
+    if (endEl) endEl.value = bounds?.endDate || '';
+}
+
+function setUseLogFilter(filter) {
+    const next = filter || 'all';
+    useLogDateFilter = next;
+    useLogListFilters.datePreset = next;
+    const bounds = getUseLogFilterBounds(next);
+    if (next === 'all') {
+        useLogListFilters.dateStart = '';
+        useLogListFilters.dateEnd = '';
+        syncUseLogFilterDateInputs({ startDate: '', endDate: '' });
+    } else if (next !== 'custom') {
+        useLogListFilters.dateStart = bounds.startDate || '';
+        useLogListFilters.dateEnd = bounds.endDate || '';
+        syncUseLogFilterDateInputs(bounds);
+    }
+    syncUseLogFilterShortcutButtons(next);
+    updateUseLogFiltersPanelUI();
+    renderUseLogTab();
+}
+
+function onUseLogCustomDateChange() {
+    const start = document.getElementById('use-log-filter-date-start')?.value || '';
+    const end = document.getElementById('use-log-filter-date-end')?.value || '';
+    useLogListFilters.dateStart = start;
+    useLogListFilters.dateEnd = end;
+    if (start || end) {
+        useLogListFilters.datePreset = 'custom';
+        useLogDateFilter = 'custom';
+        syncUseLogFilterShortcutButtons('custom');
+    }
+    applyUseLogSearchFilters();
+}
+
+function applyUseLogSearchFilters() {
+    useLogListFilters.transactionType = document.getElementById('use-log-filter-transaction')?.value || '';
+    useLogListFilters.entryType = document.getElementById('use-log-filter-entry')?.value || '';
+    useLogListFilters.dateStart = document.getElementById('use-log-filter-date-start')?.value || '';
+    useLogListFilters.dateEnd = document.getElementById('use-log-filter-date-end')?.value || '';
+    if ((useLogListFilters.dateStart || useLogListFilters.dateEnd)
+        && useLogListFilters.datePreset !== 'today'
+        && useLogListFilters.datePreset !== 'week'
+        && useLogListFilters.datePreset !== 'month') {
+        useLogListFilters.datePreset = 'custom';
+        useLogDateFilter = 'custom';
+        syncUseLogFilterShortcutButtons('custom');
+    }
+    updateUseLogFiltersPanelUI();
+    renderUseLogTab();
+}
+
+function countActiveUseLogFilters() {
+    let count = 0;
+    if (useLogListFilters.datePreset && useLogListFilters.datePreset !== 'all') count++;
+    else if (useLogListFilters.dateStart || useLogListFilters.dateEnd) count++;
+    if (useLogListFilters.transactionType) count++;
+    if (useLogListFilters.entryType) count++;
+    if (!isSelectedAllSubstances()) count++;
+    return count;
+}
+
+function toggleUseLogFiltersPanel() {
+    useLogFiltersPanelOpen = !useLogFiltersPanelOpen;
+    updateUseLogFiltersPanelUI();
+}
+
+function updateUseLogFiltersPanelUI() {
+    const panel = document.getElementById('use-log-filter-panel');
+    const toggle = document.getElementById('use-log-filter-toggle');
+    const countEl = document.getElementById('use-log-filter-count');
+    panel?.classList.toggle('hidden', !useLogFiltersPanelOpen);
+    toggle?.classList.toggle('open', useLogFiltersPanelOpen);
+    const count = countActiveUseLogFilters();
+    if (countEl) countEl.textContent = count > 0 ? ` (${count})` : '';
+    renderUseLogFilterChips();
+    const substanceEl = document.getElementById('use-log-filter-substance');
+    if (substanceEl && selectedSubstanceId && [...(substanceEl.options || [])].some(o => o.value === selectedSubstanceId)) {
+        substanceEl.value = selectedSubstanceId;
+    }
+}
+
+function renderUseLogFilterChips() {
+    const container = document.getElementById('use-log-filter-chips');
+    if (!container) return;
+    const chips = [];
+    if (!isSelectedAllSubstances()) {
+        const name = getSubstanceName(selectedSubstanceId) || selectedSubstanceId;
+        chips.push(`<span class="use-log-filter-chip">Substance: ${escapeHtml(name)}</span>`);
+    }
+    if (useLogListFilters.datePreset && useLogListFilters.datePreset !== 'all') {
+        const labels = { today: 'Today', week: 'This Week', month: 'This Month', custom: 'Custom Range' };
+        chips.push(`<span class="use-log-filter-chip">Date: ${labels[useLogListFilters.datePreset] || useLogListFilters.datePreset}</span>`);
+    } else if (useLogListFilters.dateStart || useLogListFilters.dateEnd) {
+        chips.push(`<span class="use-log-filter-chip">Date: ${escapeHtml(useLogListFilters.dateStart || '…')}–${escapeHtml(useLogListFilters.dateEnd || '…')}</span>`);
+    }
+    if (useLogListFilters.transactionType) {
+        const labels = { use: 'Personal Use', gift_given: 'Gift Given', gift_received: 'Gift Received' };
+        chips.push(`<span class="use-log-filter-chip">Transaction: ${escapeHtml(labels[useLogListFilters.transactionType] || useLogListFilters.transactionType)}</span>`);
+    }
+    if (useLogListFilters.entryType) {
+        const labels = { quick: 'Quick Use', session: 'Session', gift: 'Gift' };
+        chips.push(`<span class="use-log-filter-chip">Entry: ${escapeHtml(labels[useLogListFilters.entryType] || useLogListFilters.entryType)}</span>`);
+    }
+    container.innerHTML = chips.join('');
+    container.classList.toggle('hidden', !chips.length);
+}
+
+function clearUseLogFilters() {
+    useLogDateFilter = 'all';
+    useLogListFilters.datePreset = 'all';
+    useLogListFilters.dateStart = '';
+    useLogListFilters.dateEnd = '';
+    useLogListFilters.transactionType = '';
+    useLogListFilters.entryType = '';
+    useLogFiltersPanelOpen = false;
+    const txEl = document.getElementById('use-log-filter-transaction');
+    const entryEl = document.getElementById('use-log-filter-entry');
+    if (txEl) txEl.value = '';
+    if (entryEl) entryEl.value = '';
+    syncUseLogFilterDateInputs({ startDate: '', endDate: '' });
+    syncUseLogFilterShortcutButtons('all');
+    if (!isSelectedAllSubstances()) {
+        setSelectedSubstanceId(DASHBOARD_ALL, { source: 'use-log-filters', refresh: false });
+    }
+    updateUseLogFiltersPanelUI();
     renderUseLogTab();
 }
 
@@ -46479,11 +46750,16 @@ function setSelectedDashboardSubstance(substanceId, options = {}) {
     const previous = selectedDashboardSubstance;
     selectedDashboardSubstance = next;
     currentSubstanceId = next;
+    selectedSubstanceId = next;
     invalidateRecoveryDashboardCache();
 
     if (persist) {
         persistRecoveryDashboardPrefs({ selectedDashboardSubstance: next }, data);
         saveDashboardViewSubstanceId(next);
+    }
+
+    if (typeof syncPageSubstanceSelectors === 'function') {
+        try { syncPageSubstanceSelectors(options.source || 'dashboard-substance'); } catch (_) { /* ignore */ }
     }
 
     const dashSelect = document.getElementById('dashboard-substance');
@@ -46509,6 +46785,22 @@ function setSelectedDashboardSubstance(substanceId, options = {}) {
         updateDashboard();
         checkTaperTarget();
         updateQuickActions();
+        if (typeof renderTodayAtAGlance === 'function') {
+            try { renderTodayAtAGlance(); } catch (_) { /* ignore */ }
+        }
+        if (typeof renderUseLogTab === 'function') renderUseLogTab();
+        if (typeof renderInventorySummaryCards === 'function') renderInventorySummaryCards();
+        if (typeof renderPurchaseHistory === 'function') renderPurchaseHistory(null);
+        if (typeof refreshTaperDashboard === 'function') refreshTaperDashboard();
+        if (typeof persistInsightsFilters === 'function' && options.source !== 'insights') {
+            try {
+                persistInsightsFilters({ substanceId: next }, {
+                    render: true,
+                    save: false,
+                    syncSections: true
+                });
+            } catch (_) { /* ignore */ }
+        }
     }
     return next;
 }
@@ -60774,19 +61066,19 @@ function getTaperSubstanceId(data = appData) {
             ? resolveSelectedSubstanceId(el.value, data)
             : el.value;
     }
+    if (typeof selectedSubstanceId !== 'undefined' && selectedSubstanceId
+        && selectedSubstanceId !== DASHBOARD_ALL) {
+        return typeof resolveSelectedSubstanceId === 'function'
+            ? resolveSelectedSubstanceId(selectedSubstanceId, data)
+            : selectedSubstanceId;
+    }
     const stored = data?.settings?.taperSubstanceId;
     if (stored) {
         const resolved = typeof resolveSelectedSubstanceId === 'function'
             ? resolveSelectedSubstanceId(stored, data)
             : stored;
         const taperSubs = typeof getTaperSubstances === 'function' ? getTaperSubstances(data) : [];
-        if (!taperSubs.length || taperSubs.some(s => s.id === resolved)) return resolved;
-    }
-    // Prefer the main substance over a stale global selection from another page.
-    const mainId = typeof getMainSubstanceId === 'function' ? getMainSubstanceId() : null;
-    if (mainId && mainId !== DASHBOARD_ALL) {
-        const taperSubs = typeof getTaperSubstances === 'function' ? getTaperSubstances(data) : [];
-        if (!taperSubs.length || taperSubs.some(s => s.id === mainId)) return mainId;
+        if (!taperSubs.length || taperSubs.some(s => s.id === resolved) || resolved === DASHBOARD_ALL) return resolved;
     }
     if (typeof resolveDefaultTaperSubstanceId === 'function') {
         return resolveDefaultTaperSubstanceId(data);
@@ -62645,6 +62937,7 @@ function __setTestAppData(data) {
     ensureRecoveryDashboardPrefs(appData);
     selectedDashboardSubstance = getSelectedDashboardSubstance(appData);
     currentSubstanceId = selectedDashboardSubstance;
+    selectedSubstanceId = selectedDashboardSubstance;
     loadComparePeriodsPrefsIntoState(appData);
 }
 
@@ -62663,6 +62956,7 @@ function __reloadTestAppDataFromStorage() {
     invalidateRecoveryDashboardCache();
     selectedDashboardSubstance = getSelectedDashboardSubstance(appData);
     currentSubstanceId = selectedDashboardSubstance;
+    selectedSubstanceId = selectedDashboardSubstance;
     return appData;
 }
 
@@ -64051,6 +64345,18 @@ function __getRecoveryTrackerTestExports() {
         __reloadTestAppDataFromStorage,
         __getUseHistoryEntryCount,
         getFilteredUseLogsForView,
+        getFilteredUseLogs,
+        getUseLogFilterBounds,
+        getUseLogWeekStartDateStr,
+        logMatchesUseEntryType,
+        setUseLogFilter,
+        clearUseLogFilters,
+        applyUseLogSearchFilters,
+        onUseLogCustomDateChange,
+        useLogListFiltersRef: {
+            get value() { return useLogListFilters; },
+            set value(v) { Object.assign(useLogListFilters, v || {}); }
+        },
         buildUseHistoryRows,
         getUseHistoryVisibleColumns,
         getUseHistoryColumnCatalog,

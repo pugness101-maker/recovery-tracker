@@ -67,9 +67,6 @@ function onSidebarSubstanceChange() {
     if (typeof setSelectedSubstanceId === 'function') {
         setSelectedSubstanceId(id, { source: 'sidebar-substance' });
     }
-    if (typeof setSelectedDashboardSubstance === 'function') {
-        try { setSelectedDashboardSubstance(id); } catch (_) { /* ignore */ }
-    }
     renderTodayAtAGlance();
     syncLayoutSubstanceSelectors();
 }
@@ -77,7 +74,7 @@ function onSidebarSubstanceChange() {
 function syncLayoutSubstanceSelectors() {
     populateLayoutSubstanceSelect();
     const current = getLayoutSelectedSubstanceId();
-    ['use-log-substance', 'inventory-substance', 'taper-substance', 'stats-substance', 'dashboard-substance']
+    ['use-log-substance', 'use-log-filter-substance', 'inventory-substance', 'taper-substance', 'stats-substance', 'dashboard-substance']
         .forEach(id => {
             const el = document.getElementById(id);
             if (el && [...el.options].some(o => o.value === current)) el.value = current;
@@ -251,9 +248,13 @@ function getLayoutTodayActivityLabel(card = {}) {
 }
 
 function getLayoutTodayCards(data = appData) {
-    const substances = typeof getActiveSubstances === 'function'
+    let substances = typeof getActiveSubstances === 'function'
         ? getActiveSubstances(data)
         : (data?.substances || []).filter(s => s && s.active !== false);
+    const selectedId = getLayoutSelectedSubstanceId();
+    if (selectedId && !isLayoutAllSubstances(selectedId)) {
+        substances = substances.filter(s => s.id === selectedId);
+    }
     if (typeof buildSimpleTodayCard === 'function') {
         return substances.map(sub => buildSimpleTodayCard(sub, data));
     }
