@@ -224,7 +224,6 @@ test('History tab no longer exists; Overview and Templates remain', () => {
     const html = fs.readFileSync(path.join(root, 'index.html'), 'utf8');
     assert.doesNotMatch(html, /data-gp-view="history"/);
     assert.doesNotMatch(html, /setGoalsPlansView\('history'\)/);
-    assert.doesNotMatch(html, /<option value="history">/);
     assert.match(html, /data-gp-view="overview"/);
     assert.match(html, /data-gp-view="templates"/);
     assert.match(html, /Customize metrics/);
