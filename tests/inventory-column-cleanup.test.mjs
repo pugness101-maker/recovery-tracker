@@ -93,7 +93,7 @@ test('inventory table catalog has a single Source column and omits removed colum
     REMOVED_COLUMNS.forEach(id => {
         assert.ok(!visible.includes(id), `${id} should not be a visible inventory column`);
     });
-    assert.deepEqual(rt.PURCHASE_HISTORY_REMOVED_COLUMN_IDS, REMOVED_COLUMNS);
+    assert.deepEqual([...rt.PURCHASE_HISTORY_REMOVED_COLUMN_IDS], REMOVED_COLUMNS);
 });
 
 test('column presets and customizer omit removed inventory columns', () => {
