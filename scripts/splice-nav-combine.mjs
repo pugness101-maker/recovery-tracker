@@ -245,8 +245,8 @@ if (app.includes(initNeedle) && !app.includes('initCombinedNavigation')) {
 }
 
 // Test exports
-const exportNeedle = `        suggestGoalsFromPlan,`;
-const exportRepl = `        suggestGoalsFromPlan,
+const exportNeedle = `        mapGoalsToCalendarEvents,`;
+const exportRepl = `        mapGoalsToCalendarEvents,
         ensureCombinedNavPrefs,
         migrateCombinedNavActiveTab,
         resolveTabNavigation,

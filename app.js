@@ -16889,7 +16889,6 @@ function syncCombinedSubnav(navId, selectId, attrName, activeView) {
 const GOAL_TEMPLATES = Object.freeze([]);
 const GOAL_TYPE_META = Object.freeze({});
 const GOAL_LIFECYCLE = Object.freeze(['draft', 'active', 'paused', 'completed', 'archived', 'missed', 'cancelled']);
-let goalSystemUiState = { bucket: 'active', filter: 'all', substanceId: 'all' };
 
 const TAPER_TEMPLATES = Object.freeze([
     { id: 'linear', name: 'Linear reduction', reductionType: 'reduce-amount', description: 'Reduce by a fixed amount each step.' },
@@ -16912,8 +16911,6 @@ function ensureGoalSystemPrefs(data = appData) {
     if (!data.settings.goalSystem || typeof data.settings.goalSystem !== 'object') data.settings.goalSystem = {};
     return data.settings.goalSystem;
 }
-function getGoalSystemPrefs(data = appData) { return ensureGoalSystemPrefs(data); }
-function persistGoalSystemPrefs() {}
 function getDefaultGoalRecord() {
     return { id: '', name: '', type: '', status: 'active', substanceId: 'all', linkedPlanId: '', changeHistory: [] };
 }
@@ -16921,31 +16918,11 @@ function normalizeGoalRecord(goal) {
     if (!goal || typeof goal !== 'object') return getDefaultGoalRecord();
     return { ...getDefaultGoalRecord(), ...goal, linkedPlanId: goal.linkedPlanId || '', changeHistory: Array.isArray(goal.changeHistory) ? goal.changeHistory : [] };
 }
-function validateGoalRecord() { return { ok: false, errors: ['Goals have been removed'] }; }
 function saveGoalRecord() { return { goal: null, ok: false }; }
-function createGoalFromTemplate() { return null; }
-function duplicateGoal() { return null; }
-function pauseGoal() { return null; }
-function resumeGoal() { return null; }
-function completeGoalManually() { return null; }
-function archiveGoal() { return null; }
-function deleteGoal() { return null; }
-function evaluateGoal() { return null; }
 function evaluateAllGoals() { return []; }
-function computeGoalStatusFromProgress() { return 'active'; }
-function computeGoalActual() { return 0; }
-function resolveGoalPeriodBounds() { return null; }
-function syncGoalPeriodHistory() {}
-function filterAndSortGoalEvaluations(list) { return Array.isArray(list) ? list : []; }
 function buildGoalDashboardSummary() { return { counts: { active: 0, atRisk: 0, completed: 0, paused: 0 } }; }
-function buildGoalInsightsAnalytics() { return {}; }
-function buildGoalReminders() { return []; }
 function mapGoalsToCalendarEvents() { return []; }
-function suggestGoalsFromPlan() { return []; }
 function migrateLegacyGoals() {}
-function openGoalCreateForm() { if (typeof openUnifiedNewTaper === 'function') openUnifiedNewTaper(); }
-function openGoalDetail() {}
-function openGoalEditForm() {}
 function renderGoalsView() {
     if (typeof setGoalsPlansView === 'function') setGoalsPlansView('overview');
 }
@@ -16963,11 +16940,7 @@ function goalSubstanceLabel(substanceId, data = appData) {
         ? getSubstanceDisplayName(sub, data)
         : String(substanceId || '');
 }
-function formatGoalStatusLabel(status) { return String(status || '').replace(/_/g, ' '); }
-function formatGoalTargetDisplay() { return '—'; }
-function getGoalTypeMeta() { return null; }
 function pushGoalChange() {}
-function goalAfterMutation(data = appData) { if (typeof saveData === 'function') saveData(data); }
 
 function tapersRootEl() {
     return typeof document !== 'undefined' ? document.getElementById('tapers-root') : null;
@@ -17027,8 +17000,6 @@ function createGoalsFromPlanAndOpen() {
 }
 
 function linkGoalToPlan() { return null; }
-
-function unlinkGoalFromPlan() { return null; }
 
 let goalsPlansUiState = {
     activeSubstanceId: 'all',
@@ -64100,32 +64071,12 @@ function __getRecoveryTrackerTestExports() {
         getGoals,
         getGoalById,
         ensureGoalSystemPrefs,
-        getGoalSystemPrefs,
-        persistGoalSystemPrefs,
         getDefaultGoalRecord,
         normalizeGoalRecord,
-        validateGoalRecord,
         saveGoalRecord,
-        createGoalFromTemplate,
-        duplicateGoal,
-        pauseGoal,
-        resumeGoal,
-        completeGoalManually,
-        archiveGoal,
-        deleteGoal,
-        evaluateGoal,
         evaluateAllGoals,
-        computeGoalStatusFromProgress,
-        computeGoalActual,
-        resolveGoalPeriodBounds,
-        syncGoalPeriodHistory,
-        filterAndSortGoalEvaluations,
         buildGoalDashboardSummary,
-        buildGoalInsightsAnalytics,
-        buildGoalReminders,
         mapGoalsToCalendarEvents,
-        suggestGoalsFromPlan,
-        unlinkGoalFromPlan,
         ensureCombinedNavPrefs,
         migrateCombinedNavActiveTab,
         resolveTabNavigation,
