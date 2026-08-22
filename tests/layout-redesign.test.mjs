@@ -58,11 +58,9 @@ test('layout redesign CSS includes sidebar and shared cards', () => {
 
 test('layout helpers keep inventory views and settings categories', () => {
     const rt = loadRecoveryTrackerApp();
-    assert.deepEqual([...rt.LAYOUT_INVENTORY_VIEWS], ['all']);
     assert.deepEqual([...rt.LAYOUT_TAPER_WORKSPACE_VIEWS], ['weekly', 'purchases', 'details']);
     assert.deepEqual([...rt.LAYOUT_SETTINGS_CATEGORIES], ['substances', 'data', 'appearance', 'advanced', 'about']);
     assert.equal(typeof rt.renderTodayAtAGlance, 'function');
-    assert.equal(typeof rt.setLayoutInventoryView, 'function');
     assert.equal(rt.getLayoutTodayActivityLabel({ name: 'Coke', unit: 'g' }), 'used today');
     assert.equal(rt.getLayoutTodayActivityLabel({ name: 'Nicotine', unit: 'puffs' }), 'puffs today');
     assert.equal(rt.getLayoutTodayActivityLabel({ name: 'LSD', unit: 'tabs' }), 'tabs / µg today');

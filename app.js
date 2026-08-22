@@ -11048,11 +11048,6 @@ function duplicatePurchaseNow(id) {
     return record;
 }
 
-function markVapePurchaseStartedNow(purchaseId) {
-    alert('Start time is recorded automatically when you log Vape/Nicotine use.');
-    return false;
-}
-
 function markVapePurchaseFinishedNow(purchaseId) {
     const purchase = findPurchase(purchaseId);
     if (!purchase || !isVapePuffPurchase(purchase)) return false;
@@ -11103,17 +11098,6 @@ function getInventoryPurchaseEstimatedValue(purchase, data = appData) {
     return rem * cpu;
 }
 
-function getInventoryPurchasesForStatusView(substanceId, data = appData) {
-    let list = [...(data.purchases || [])];
-    if (substanceId && substanceId !== DASHBOARD_ALL) {
-        list = list.filter(p => purchaseMatchesSubstance(p, substanceId, data));
-    }
-    if (inventoryTabFilter !== 'all') {
-        list = list.filter(p => purchaseMatchesInventoryStatus(p, inventoryTabFilter));
-    }
-    return list;
-}
-
 function getInventorySummary(selectedSubstanceId, data = appData, purchaseList = null) {
     const scope = purchaseList ?? getFilteredPurchases(data.purchases || [], selectedSubstanceId, null, data);
     const active = scope.filter(p => getPurchaseInventoryTab(p) === 'active');
@@ -11159,13 +11143,6 @@ function getInventorySummary(selectedSubstanceId, data = appData, purchaseList =
         oldestActive,
         remainingBySubstance
     };
-}
-
-function getInventoryTotalRemainingLabel(selectedSubstanceId) {
-    if (isInventoryAllSubstancesFilter(selectedSubstanceId)) return 'Total remaining by substance';
-    const sub = getSubstance(selectedSubstanceId);
-    if (!sub) return 'Remaining';
-    return `${sub.name} Remaining`;
 }
 
 function formatInventoryTotalRemainingValue(summary, selectedSubstanceId, data = appData) {
@@ -11432,7 +11409,6 @@ function clearInventoryFilters() {
     inventoryListFilters.datePreset = 'all';
     inventoryListFilters.dateStart = '';
     inventoryListFilters.dateEnd = '';
-    inventoryListFilters.paymentMethod = '';
     inventoryListFilters.hasRemaining = '';
     inventoryListFilters.hasCost = '';
     inventoryListFilters.vapeOnly = false;
@@ -11451,15 +11427,6 @@ function clearInventoryFilters() {
     syncInventoryStatusFilterUI();
     syncInventoryDateShortcutButtons();
     syncInventoryCustomDateInputs();
-    saveInventoryFilterState();
-    renderPurchaseHistory(null);
-    renderInventorySummaryCards();
-    updateInventoryFiltersPanelUI();
-}
-
-function setInventoryTab(tab) {
-    inventoryTabFilter = normalizeInventoryStatusFilter(tab);
-    syncInventoryStatusFilterUI();
     saveInventoryFilterState();
     renderPurchaseHistory(null);
     renderInventorySummaryCards();
@@ -17052,7 +17019,6 @@ function goalAfterMutation(data = appData) { if (typeof saveData === 'function')
 function tapersRootEl() {
     return typeof document !== 'undefined' ? document.getElementById('tapers-root') : null;
 }
-function goalRootEl() { return tapersRootEl(); }
 
 function showTaperWorkspace() {
     if (typeof document === 'undefined') return;
@@ -17363,46 +17329,6 @@ function buildUnifiedOverviewTaperRecords(data = appData, substanceId = null) {
     return sortUnifiedTaperRecords(filterUnifiedOverviewTaperRecords(allRecords, data));
 }
 
-function filterUnifiedGoalsPlansRecords(records, view, data = appData) {
-    const pageSubstanceId = getTapersPageSubstanceId(data);
-    if (view === 'overview') {
-        return filterUnifiedOverviewTaperRecords(
-            (records || []).filter(record =>
-                record.type === 'taper'
-                && taperPlanMatchesSubstance({ substanceId: record.substanceId }, pageSubstanceId, data)
-            ),
-            data
-        );
-    }
-    if (view === 'history') {
-        const filter = goalsPlansUiState.historyFilter || 'all';
-        const status = goalsPlansUiState.historyStatus || 'all';
-        return records.filter(record => {
-            if (record.type !== 'taper') return false;
-            if (!unifiedGoalPlanIsHistory(record)) return false;
-            if (!taperPlanMatchesSubstance({ substanceId: record.substanceId }, pageSubstanceId, data)) return false;
-            if (filter === 'completed-tapers' && record.status !== 'completed') return false;
-            if (filter === 'archived' && record.status !== 'archived') return false;
-            if (filter === 'missed' && record.status !== 'missed') return false;
-            if (status !== 'all' && record.status !== status) return false;
-            return true;
-        });
-    }
-
-    const status = goalsPlansUiState.activeStatus || 'all';
-    return records.filter(record => {
-        if (record.type !== 'taper') return false;
-        if (!unifiedGoalPlanIsActive(record)) return false;
-        if (!taperPlanMatchesSubstance({ substanceId: record.substanceId }, pageSubstanceId, data)) return false;
-        if (status !== 'all' && record.status !== status) return false;
-        return true;
-    });
-}
-
-function unifiedGoalPlanStatusLabel(record) {
-    return typeof getTaperPlanStatusLabel === 'function' ? getTaperPlanProgressLabelSafe(record.status) : record.status;
-}
-
 function getTaperPlanProgressLabelSafe(status) {
     return typeof getTaperPlanStatusLabel === 'function' ? getTaperPlanStatusLabel(status) : String(status || '');
 }
@@ -17487,31 +17413,6 @@ function renderUnifiedOverviewTaperFilters(data = appData) {
         </section>`;
 }
 
-function renderUnifiedGoalsPlansFilters(view, data = appData) {
-    if (view === 'overview') return renderUnifiedOverviewTaperFilters(data);
-    const statusStateKey = view === 'history' ? 'historyStatus' : 'activeStatus';
-    const statusValue = goalsPlansUiState[statusStateKey] || 'all';
-    const statusOptions = ['all', 'active', 'paused', 'draft', 'completed', 'archived']
-        .map(s => `<option value="${s}"${statusValue === s ? ' selected' : ''}>${escapeHtml(s === 'all' ? 'All statuses' : s.replace(/_/g, ' '))}</option>`)
-        .join('');
-
-    if (view === 'history') {
-        const filter = goalsPlansUiState.historyFilter || 'all';
-        return `
-            <section class="goal-filters">
-                <label class="goal-filter"><span>History</span><select onchange="setGoalsPlansHistoryFilter(this.value)">
-                    ${['all', 'completed-tapers', 'archived'].map(v => `<option value="${v}"${filter === v ? ' selected' : ''}>${escapeHtml(v === 'all' ? 'All' : v.replace(/-/g, ' '))}</option>`).join('')}
-                </select></label>
-                <label class="goal-filter"><span>Status</span><select onchange="setGoalsPlansFilter('historyStatus', this.value, 'history')">${statusOptions}</select></label>
-            </section>`;
-    }
-
-    return `
-        <section class="goal-filters">
-            <label class="goal-filter"><span>Status</span><select onchange="setGoalsPlansFilter('activeStatus', this.value, 'active')">${statusOptions}</select></label>
-        </section>`;
-}
-
 function renderTaperTemplatesView(data = appData) {
     const root = tapersRootEl();
     if (!root) return;
@@ -17590,10 +17491,6 @@ function setGoalsPlansHistoryFilter(value) {
 function setGoalsPlansShowArchivedInList(checked) {
     goalsPlansUiState.showArchivedInList = !!checked;
     refreshGoalsPlansOverview();
-}
-
-function attachUnifiedTaperSurface(..._ids) {
-    showTaperWorkspace();
 }
 
 function openUnifiedNewTaper() {
@@ -29262,14 +29159,11 @@ function reconcileOnboardingAfterImport(merged) {
 // Presentation-only reorganization. Reuses the existing calculation layer.
 // Does not reset data, duplicate totals, or remove working features.
 
-const LAYOUT_INVENTORY_VIEWS = Object.freeze(['all']);
 const LAYOUT_TAPER_WORKSPACE_VIEWS = Object.freeze(['weekly', 'purchases', 'details']);
 const LAYOUT_SETTINGS_CATEGORIES = Object.freeze(['substances', 'data', 'appearance', 'advanced', 'about']);
-const LAYOUT_APP_VERSION = '2.0';
 
 let layoutTaperWorkspaceView = 'weekly';
 let layoutSettingsCategory = 'substances';
-let layoutInventoryView = 'all';
 let layoutHooksInstalled = false;
 
 function escapeLayoutHtml(value) {
@@ -29352,20 +29246,6 @@ function openLayoutAddPurchase() {
     expandLayoutSection('purchaseForm');
     if (typeof openBuyTrackerModal === 'function') openBuyTrackerModal();
     document.getElementById('buy-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-function openLayoutAddInventory() {
-    openLayoutAddPurchase();
-}
-
-function openLayoutAddAdjustment() {
-    if (typeof openRecoveryQuickAction === 'function') openRecoveryQuickAction('adjustment');
-    else {
-        if (typeof switchTab === 'function') switchTab('use-log-tab');
-        if (typeof selectUseEntryType === 'function') selectUseEntryType('gift_adjustment');
-        if (typeof setUseTransactionType === 'function') setUseTransactionType('inventory_adjustment');
-    }
-    expandLayoutSection('useLogForm');
 }
 
 function openLayoutCalendar() {
@@ -29659,18 +29539,6 @@ function applyLogLayout() {
         else bulk.classList.remove('collapsed');
     }
     enhanceUseLogSummary();
-}
-
-function setLayoutInventoryView(view) {
-    layoutInventoryView = 'all';
-    void view;
-    if (typeof renderInventorySummaryCards === 'function') renderInventorySummaryCards();
-    if (typeof renderPurchaseHistory === 'function') renderPurchaseHistory(null);
-    if (typeof updateInventoryFiltersPanelUI === 'function') updateInventoryFiltersPanelUI();
-}
-
-function applyInventoryHistoryFilter(list) {
-    return list || [];
 }
 
 function enhanceInventorySummaryCards() {
@@ -29976,7 +29844,6 @@ function installLayoutHooks() {
 function initLayoutRedesign() {
     applyLayoutPageClass();
     installLayoutHooks();
-    layoutInventoryView = 'all';
     applyLayoutRedesign(typeof appData !== 'undefined' ? appData : {});
     setLayoutTaperWorkspaceView(layoutTaperWorkspaceView);
     setLayoutSettingsCategory(layoutSettingsCategory);
@@ -31467,7 +31334,6 @@ const inventoryListFilters = {
     datePreset: 'all',
     dateStart: '',
     dateEnd: '',
-    paymentMethod: '',
     hasRemaining: '',
     hasCost: '',
     vapeOnly: false
@@ -62907,9 +62773,6 @@ function clearAllData() {
     alert('All data cleared.');
 }
 
-// Legacy global aliases
-function logOneCigarette() { logOneUse(); }
-
 if (typeof window !== 'undefined') {
     Object.assign(window, {
         openSubstanceEditor,
@@ -62941,7 +62804,6 @@ if (typeof window !== 'undefined') {
         duplicatePurchaseNow,
         deletePurchase,
         togglePurchaseLinkedLogs,
-        setInventoryTab,
         applyInventorySearchFilters,
         toggleInventoryFiltersPanel,
         clearInventoryFilters,
@@ -65482,10 +65344,8 @@ function __getRecoveryTrackerTestExports() {
         renderTodayAtAGlance,
         getLayoutTodayCards,
         getLayoutTodayActivityLabel,
-        setLayoutInventoryView,
         setLayoutTaperWorkspaceView,
         setLayoutSettingsCategory,
-        LAYOUT_INVENTORY_VIEWS,
         LAYOUT_TAPER_WORKSPACE_VIEWS,
         LAYOUT_SETTINGS_CATEGORIES,
         expandAllInsightsSections,

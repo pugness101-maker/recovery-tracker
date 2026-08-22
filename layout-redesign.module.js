@@ -2,14 +2,11 @@
 // Presentation-only reorganization. Reuses the existing calculation layer.
 // Does not reset data, duplicate totals, or remove working features.
 
-const LAYOUT_INVENTORY_VIEWS = Object.freeze(['all']);
 const LAYOUT_TAPER_WORKSPACE_VIEWS = Object.freeze(['weekly', 'purchases', 'details']);
 const LAYOUT_SETTINGS_CATEGORIES = Object.freeze(['substances', 'data', 'appearance', 'advanced', 'about']);
-const LAYOUT_APP_VERSION = '2.0';
 
 let layoutTaperWorkspaceView = 'weekly';
 let layoutSettingsCategory = 'substances';
-let layoutInventoryView = 'all';
 let layoutHooksInstalled = false;
 
 function escapeLayoutHtml(value) {
@@ -92,20 +89,6 @@ function openLayoutAddPurchase() {
     expandLayoutSection('purchaseForm');
     if (typeof openBuyTrackerModal === 'function') openBuyTrackerModal();
     document.getElementById('buy-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-}
-
-function openLayoutAddInventory() {
-    openLayoutAddPurchase();
-}
-
-function openLayoutAddAdjustment() {
-    if (typeof openRecoveryQuickAction === 'function') openRecoveryQuickAction('adjustment');
-    else {
-        if (typeof switchTab === 'function') switchTab('use-log-tab');
-        if (typeof selectUseEntryType === 'function') selectUseEntryType('gift_adjustment');
-        if (typeof setUseTransactionType === 'function') setUseTransactionType('inventory_adjustment');
-    }
-    expandLayoutSection('useLogForm');
 }
 
 function openLayoutCalendar() {
@@ -399,18 +382,6 @@ function applyLogLayout() {
         else bulk.classList.remove('collapsed');
     }
     enhanceUseLogSummary();
-}
-
-function setLayoutInventoryView(view) {
-    layoutInventoryView = 'all';
-    void view;
-    if (typeof renderInventorySummaryCards === 'function') renderInventorySummaryCards();
-    if (typeof renderPurchaseHistory === 'function') renderPurchaseHistory(null);
-    if (typeof updateInventoryFiltersPanelUI === 'function') updateInventoryFiltersPanelUI();
-}
-
-function applyInventoryHistoryFilter(list) {
-    return list || [];
 }
 
 function enhanceInventorySummaryCards() {
@@ -716,7 +687,6 @@ function installLayoutHooks() {
 function initLayoutRedesign() {
     applyLayoutPageClass();
     installLayoutHooks();
-    layoutInventoryView = 'all';
     applyLayoutRedesign(typeof appData !== 'undefined' ? appData : {});
     setLayoutTaperWorkspaceView(layoutTaperWorkspaceView);
     setLayoutSettingsCategory(layoutSettingsCategory);
