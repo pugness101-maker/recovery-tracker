@@ -9582,7 +9582,7 @@ function getColumnPresetDefinition(presetId, tableKey = 'useHistory', substanceI
             useHistory: useFamily === 'cocaine'
                 ? cokeUseHistoryPresets.cost
                 : ['select', 'date', 'substance', 'amount', 'unit', 'cost', 'transactionType', 'actions'],
-            purchaseHistory: ['select', 'date', 'substance', 'bought', 'cost', 'store', 'payment', 'actions']
+            purchaseHistory: ['select', 'date', 'substance', 'bought', 'cost', 'store', 'actions']
         },
         inventory: {
             useHistory: useFamily === 'cocaine'
@@ -10784,11 +10784,19 @@ function purchaseMatchesInventorySearch(purchase, query, data = appData) {
     return haystack.includes(q);
 }
 
+function purchaseMatchesInventoryStatus(purchase, status = inventoryTabFilter) {
+    const tab = getPurchaseInventoryTab(purchase);
+    const normalized = normalizeInventoryStatusFilter(status);
+    if (normalized === 'all') return true;
+    if (normalized === 'history') return tab === 'depleted' || tab === 'gifted' || tab === 'hidden';
+    return tab === normalized;
+}
+
 function purchaseMatchesInventoryFilters(purchase, filters = inventoryListFilters, data = appData) {
     if (filters.substanceId && getPurchaseSubstanceId(purchase) !== filters.substanceId) return false;
-    if (filters.dateStart && purchase.date < filters.dateStart) return false;
-    if (filters.dateEnd && purchase.date > filters.dateEnd) return false;
-    if (filters.paymentMethod && (purchase.paymentMethod || '') !== filters.paymentMethod) return false;
+    const bounds = getInventoryDateFilterBounds(filters, data);
+    const dateStr = typeof getPurchaseDateStr === 'function' ? getPurchaseDateStr(purchase) : purchase.date;
+    if (!dateStrInShortcutRange(dateStr, bounds)) return false;
     if (filters.hasRemaining === 'yes' && getPurchaseRemainingAmount(purchase) <= INVENTORY_EPS) return false;
     if (filters.hasRemaining === 'no' && getPurchaseRemainingAmount(purchase) > INVENTORY_EPS) return false;
     const cost = parseFloat(getPurchaseTotalCost(purchase)) || 0;
@@ -10804,7 +10812,7 @@ function getInventoryFilteredPurchases(substanceId, data = appData) {
         list = list.filter(p => purchaseMatchesSubstance(p, substanceId, data));
     }
     if (inventoryTabFilter !== 'all') {
-        list = list.filter(p => getPurchaseInventoryTab(p) === inventoryTabFilter);
+        list = list.filter(p => purchaseMatchesInventoryStatus(p, inventoryTabFilter));
     }
     if (inventorySearchQuery) {
         list = list.filter(p => purchaseMatchesInventorySearch(p, inventorySearchQuery, data));
@@ -11101,7 +11109,7 @@ function getInventoryPurchasesForStatusView(substanceId, data = appData) {
         list = list.filter(p => purchaseMatchesSubstance(p, substanceId, data));
     }
     if (inventoryTabFilter !== 'all') {
-        list = list.filter(p => getPurchaseInventoryTab(p) === inventoryTabFilter);
+        list = list.filter(p => purchaseMatchesInventoryStatus(p, inventoryTabFilter));
     }
     return list;
 }
@@ -11223,7 +11231,7 @@ function renderInventorySummaryCards() {
     const container = document.getElementById('inventory-summary-cards');
     if (!container) return;
     const selectedId = getInventorySubstanceFilterId();
-    const statusScoped = getInventoryPurchasesForStatusView(selectedId || null);
+    const statusScoped = getInventoryFilteredPurchases(selectedId || null);
     const m = getInventorySummary(selectedId || null, appData, statusScoped);
     const cur = getCurrencySymbol();
 
@@ -11259,14 +11267,15 @@ function getInventoryStatusFilterLabel() {
         case 'depleted': return 'Depleted';
         case 'gifted': return 'Gifted';
         case 'hidden': return 'Hidden';
+        case 'history': return 'History';
         case 'active':
         default: return 'Active';
     }
 }
 
 function normalizeInventoryStatusFilter(value) {
-    const status = value === 'stored' ? 'active' : (value || 'all');
-    return ['active', 'depleted', 'gifted', 'hidden', 'all'].includes(status) ? status : 'all';
+    const status = value === 'stored' ? 'active' : (value === 'purchases' ? 'all' : (value || 'all'));
+    return ['active', 'depleted', 'gifted', 'hidden', 'history', 'all'].includes(status) ? status : 'all';
 }
 
 function syncInventoryStatusFilterUI() {
@@ -11279,8 +11288,8 @@ function syncInventoryStatusFilterUI() {
 
 function countActiveInventoryFilters() {
     let count = 0;
-    if (inventoryListFilters.dateStart || inventoryListFilters.dateEnd) count++;
-    if (inventoryListFilters.paymentMethod) count++;
+    const preset = normalizeDateRangeShortcut(inventoryListFilters.datePreset);
+    if (preset !== 'all') count++;
     if (inventoryListFilters.hasRemaining) count++;
     if (inventoryListFilters.hasCost) count++;
     if (inventoryListFilters.vapeOnly) count++;
@@ -11301,7 +11310,11 @@ function loadInventoryFiltersPanelState() {
             if (typeof saved.search === 'string') inventorySearchQuery = saved.search;
             if (saved.dateStart != null) inventoryListFilters.dateStart = saved.dateStart;
             if (saved.dateEnd != null) inventoryListFilters.dateEnd = saved.dateEnd;
-            if (saved.paymentMethod != null) inventoryListFilters.paymentMethod = saved.paymentMethod;
+            if (saved.datePreset != null) {
+                inventoryListFilters.datePreset = normalizeDateRangeShortcut(saved.datePreset);
+            } else if (saved.dateStart || saved.dateEnd) {
+                inventoryListFilters.datePreset = 'custom';
+            }
             if (saved.hasRemaining != null) inventoryListFilters.hasRemaining = saved.hasRemaining;
             if (saved.hasCost != null) inventoryListFilters.hasCost = saved.hasCost;
             if (typeof saved.vapeOnly === 'boolean') inventoryListFilters.vapeOnly = saved.vapeOnly;
@@ -11314,18 +11327,19 @@ function loadInventoryFiltersPanelState() {
     syncInventoryStatusFilterUI();
     const searchEl = document.getElementById('inventory-search');
     if (searchEl) searchEl.value = inventorySearchQuery;
-    ['inventory-filter-date-start', 'inventory-filter-date-end', 'inventory-filter-payment',
+    ['inventory-filter-date-start', 'inventory-filter-date-end',
         'inventory-filter-remaining', 'inventory-filter-cost'].forEach(id => {
         const el = document.getElementById(id);
         if (!el) return;
         if (id === 'inventory-filter-date-start') el.value = inventoryListFilters.dateStart;
         else if (id === 'inventory-filter-date-end') el.value = inventoryListFilters.dateEnd;
-        else if (id === 'inventory-filter-payment') el.value = inventoryListFilters.paymentMethod;
         else if (id === 'inventory-filter-remaining') el.value = inventoryListFilters.hasRemaining;
         else if (id === 'inventory-filter-cost') el.value = inventoryListFilters.hasCost;
     });
     const vapeOnlyEl = document.getElementById('inventory-filter-vape-only');
     if (vapeOnlyEl) vapeOnlyEl.checked = inventoryListFilters.vapeOnly;
+    syncInventoryDateShortcutButtons();
+    syncInventoryCustomDateInputs();
 }
 
 function saveInventoryFiltersPanelState() {
@@ -11340,9 +11354,9 @@ function saveInventoryFilterState() {
         localStorage.setItem(INVENTORY_FILTERS_STORAGE_KEY, JSON.stringify({
             status: inventoryTabFilter,
             search: inventorySearchQuery,
+            datePreset: inventoryListFilters.datePreset,
             dateStart: inventoryListFilters.dateStart,
             dateEnd: inventoryListFilters.dateEnd,
-            paymentMethod: inventoryListFilters.paymentMethod,
             hasRemaining: inventoryListFilters.hasRemaining,
             hasCost: inventoryListFilters.hasCost,
             vapeOnly: inventoryListFilters.vapeOnly
@@ -11371,16 +11385,18 @@ function renderInventoryFilterChips() {
     if (inventorySearchQuery) {
         chips.push(`<span class="inventory-filter-chip">Search: ${escapeHtml(inventorySearchQuery)}</span>`);
     }
-    if (inventoryListFilters.dateStart || inventoryListFilters.dateEnd) {
-        const start = inventoryListFilters.dateStart ? formatDate(inventoryListFilters.dateStart) : '…';
-        const end = inventoryListFilters.dateEnd ? formatDate(inventoryListFilters.dateEnd) : '…';
-        chips.push(`<span class="inventory-filter-chip">Date: ${start}–${end}</span>`);
+    const datePreset = normalizeDateRangeShortcut(inventoryListFilters.datePreset);
+    if (datePreset !== 'all') {
+        if (datePreset === 'custom' && (inventoryListFilters.dateStart || inventoryListFilters.dateEnd)) {
+            const start = inventoryListFilters.dateStart ? formatDate(inventoryListFilters.dateStart) : '…';
+            const end = inventoryListFilters.dateEnd ? formatDate(inventoryListFilters.dateEnd) : '…';
+            chips.push(`<span class="inventory-filter-chip">Date: ${start}–${end}</span>`);
+        } else {
+            chips.push(`<span class="inventory-filter-chip">Date: ${escapeHtml(getDateRangeShortcutLabel(datePreset))}</span>`);
+        }
     }
     if (inventoryTabFilter !== 'all') {
         chips.push(`<span class="inventory-filter-chip">Status: ${escapeHtml(getInventoryStatusFilterLabel())}</span>`);
-    }
-    if (inventoryListFilters.paymentMethod) {
-        chips.push(`<span class="inventory-filter-chip">Payment: ${escapeHtml(inventoryListFilters.paymentMethod)}</span>`);
     }
     if (inventoryListFilters.hasRemaining === 'yes') {
         chips.push('<span class="inventory-filter-chip">Remaining: Has remaining</span>');
@@ -11413,6 +11429,7 @@ function updateInventoryFiltersPanelUI() {
 
 function clearInventoryFilters() {
     inventorySearchQuery = '';
+    inventoryListFilters.datePreset = 'all';
     inventoryListFilters.dateStart = '';
     inventoryListFilters.dateEnd = '';
     inventoryListFilters.paymentMethod = '';
@@ -11423,7 +11440,7 @@ function clearInventoryFilters() {
     inventoryFiltersPanelOpen = false;
     const searchEl = document.getElementById('inventory-search');
     if (searchEl) searchEl.value = '';
-    ['inventory-filter-date-start', 'inventory-filter-date-end', 'inventory-filter-payment',
+    ['inventory-filter-date-start', 'inventory-filter-date-end',
         'inventory-filter-remaining', 'inventory-filter-cost'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.value = '';
@@ -11432,6 +11449,8 @@ function clearInventoryFilters() {
     if (vapeOnlyEl) vapeOnlyEl.checked = false;
     syncInventorySubstanceFilterState();
     syncInventoryStatusFilterUI();
+    syncInventoryDateShortcutButtons();
+    syncInventoryCustomDateInputs();
     saveInventoryFilterState();
     renderPurchaseHistory(null);
     renderInventorySummaryCards();
@@ -11447,19 +11466,68 @@ function setInventoryTab(tab) {
     updateInventoryFiltersPanelUI();
 }
 
-function applyInventorySearchFilters() {
-    inventorySearchQuery = document.getElementById('inventory-search')?.value?.trim() || '';
+function syncInventoryDateShortcutButtons(preset = inventoryListFilters.datePreset) {
+    const next = normalizeDateRangeShortcut(preset);
+    document.querySelectorAll('[data-inv-date]').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-inv-date') === next);
+    });
+}
+
+function syncInventoryCustomDateInputs() {
+    const wrap = document.getElementById('inventory-custom-dates');
+    const custom = normalizeDateRangeShortcut(inventoryListFilters.datePreset) === 'custom';
+    wrap?.classList.toggle('hidden', !custom);
+    const startEl = document.getElementById('inventory-filter-date-start');
+    const endEl = document.getElementById('inventory-filter-date-end');
+    if (startEl) startEl.value = inventoryListFilters.dateStart || '';
+    if (endEl) endEl.value = inventoryListFilters.dateEnd || '';
+}
+
+function setInventoryDateFilter(preset) {
+    inventoryListFilters.datePreset = normalizeDateRangeShortcut(preset);
+    if (inventoryListFilters.datePreset !== 'custom') {
+        inventoryListFilters.dateStart = '';
+        inventoryListFilters.dateEnd = '';
+    }
+    syncInventoryDateShortcutButtons();
+    syncInventoryCustomDateInputs();
+    saveInventoryFilterState();
+    renderPurchaseHistory(null);
+    renderInventorySummaryCards();
+    updateInventoryFiltersPanelUI();
+}
+
+function applyInventoryCustomDates() {
+    inventoryListFilters.datePreset = 'custom';
     inventoryListFilters.dateStart = document.getElementById('inventory-filter-date-start')?.value || '';
     inventoryListFilters.dateEnd = document.getElementById('inventory-filter-date-end')?.value || '';
+    syncInventoryDateShortcutButtons('custom');
+    syncInventoryCustomDateInputs();
+    saveInventoryFilterState();
+    renderPurchaseHistory(null);
+    renderInventorySummaryCards();
+    updateInventoryFiltersPanelUI();
+}
+
+function applyInventorySearchFilters() {
+    inventorySearchQuery = document.getElementById('inventory-search')?.value?.trim() || '';
+    const start = document.getElementById('inventory-filter-date-start')?.value || '';
+    const end = document.getElementById('inventory-filter-date-end')?.value || '';
+    if (normalizeDateRangeShortcut(inventoryListFilters.datePreset) === 'custom' || start || end) {
+        inventoryListFilters.dateStart = start;
+        inventoryListFilters.dateEnd = end;
+        if (start || end) inventoryListFilters.datePreset = 'custom';
+    }
     inventoryTabFilter = normalizeInventoryStatusFilter(
         document.getElementById('inventory-filter-status')?.value || 'all'
     );
-    inventoryListFilters.paymentMethod = document.getElementById('inventory-filter-payment')?.value || '';
     inventoryListFilters.hasRemaining = document.getElementById('inventory-filter-remaining')?.value || '';
     inventoryListFilters.hasCost = document.getElementById('inventory-filter-cost')?.value || '';
     inventoryListFilters.vapeOnly = !!document.getElementById('inventory-filter-vape-only')?.checked;
     syncInventorySubstanceFilterState();
     syncInventoryStatusFilterUI();
+    syncInventoryDateShortcutButtons();
+    syncInventoryCustomDateInputs();
     if (hasActiveInventoryFilters()) inventoryFiltersPanelOpen = true;
     saveInventoryFilterState();
     renderPurchaseHistory(null);
@@ -29194,14 +29262,14 @@ function reconcileOnboardingAfterImport(merged) {
 // Presentation-only reorganization. Reuses the existing calculation layer.
 // Does not reset data, duplicate totals, or remove working features.
 
-const LAYOUT_INVENTORY_VIEWS = Object.freeze(['active', 'purchases', 'history']);
+const LAYOUT_INVENTORY_VIEWS = Object.freeze(['all']);
 const LAYOUT_TAPER_WORKSPACE_VIEWS = Object.freeze(['weekly', 'purchases', 'details']);
 const LAYOUT_SETTINGS_CATEGORIES = Object.freeze(['substances', 'data', 'appearance', 'advanced', 'about']);
 const LAYOUT_APP_VERSION = '2.0';
 
 let layoutTaperWorkspaceView = 'weekly';
 let layoutSettingsCategory = 'substances';
-let layoutInventoryView = 'active';
+let layoutInventoryView = 'all';
 let layoutHooksInstalled = false;
 
 function escapeLayoutHtml(value) {
@@ -29594,37 +29662,15 @@ function applyLogLayout() {
 }
 
 function setLayoutInventoryView(view) {
-    const next = LAYOUT_INVENTORY_VIEWS.includes(view) ? view : 'active';
-    layoutInventoryView = next;
-    if (typeof inventoryTabFilter !== 'undefined') {
-        if (next === 'active') inventoryTabFilter = 'active';
-        else if (next === 'purchases') inventoryTabFilter = 'all';
-        else inventoryTabFilter = 'history';
-    }
-    if (typeof normalizeInventoryStatusFilter === 'function' && next !== 'purchases' && next !== 'history') {
-        inventoryTabFilter = normalizeInventoryStatusFilter(next);
-    }
-    document.querySelectorAll('[data-inv-view]').forEach(btn => {
-        btn.classList.toggle('active', btn.getAttribute('data-inv-view') === next);
-    });
-    const statusEl = document.getElementById('inventory-filter-status');
-    if (statusEl) {
-        if (next === 'active') statusEl.value = 'active';
-        else if (next === 'purchases') statusEl.value = 'all';
-        else statusEl.value = 'depleted';
-    }
-    if (typeof saveInventoryFilterState === 'function') saveInventoryFilterState();
+    layoutInventoryView = 'all';
+    void view;
     if (typeof renderInventorySummaryCards === 'function') renderInventorySummaryCards();
     if (typeof renderPurchaseHistory === 'function') renderPurchaseHistory(null);
     if (typeof updateInventoryFiltersPanelUI === 'function') updateInventoryFiltersPanelUI();
 }
 
 function applyInventoryHistoryFilter(list) {
-    if (layoutInventoryView !== 'history' && inventoryTabFilter !== 'history') return list;
-    return (list || []).filter(p => {
-        const tab = typeof getPurchaseInventoryTab === 'function' ? getPurchaseInventoryTab(p) : 'active';
-        return tab === 'depleted' || tab === 'gifted' || tab === 'hidden';
-    });
+    return list || [];
 }
 
 function enhanceInventorySummaryCards() {
@@ -29633,16 +29679,18 @@ function enhanceInventorySummaryCards() {
     const selectedId = typeof getInventorySubstanceFilterId === 'function'
         ? getInventorySubstanceFilterId()
         : getLayoutSelectedSubstanceId();
+    const purchases = typeof getInventoryFilteredPurchases === 'function'
+        ? getInventoryFilteredPurchases(selectedId || null)
+        : (appData.purchases || []).filter(p => {
+            if (isLayoutAllSubstances(selectedId)) return true;
+            const sid = typeof getPurchaseSubstanceId === 'function' ? getPurchaseSubstanceId(p) : p.substanceId;
+            return sid === selectedId;
+        });
     const summary = typeof getInventorySummary === 'function'
-        ? getInventorySummary(selectedId || null, appData)
+        ? getInventorySummary(selectedId || null, appData, purchases)
         : null;
     if (!summary) return;
     const cur = typeof getCurrencySymbol === 'function' ? getCurrencySymbol() : '$';
-    const purchases = (appData.purchases || []).filter(p => {
-        if (isLayoutAllSubstances(selectedId)) return true;
-        const sid = typeof getPurchaseSubstanceId === 'function' ? getPurchaseSubstanceId(p) : p.substanceId;
-        return sid === selectedId;
-    });
     const totalSpent = purchases.reduce((s, p) => {
         if (typeof purchaseCountsTowardSpend === 'function' && !purchaseCountsTowardSpend(p)) return s;
         const amt = typeof getPurchaseSpendAmount === 'function'
@@ -29889,27 +29937,6 @@ function installLayoutHooks() {
         };
     }
 
-    function patchInventoryListFilter(original) {
-        return function patchedInventoryList(substanceId, data) {
-            const prev = inventoryTabFilter;
-            if (layoutInventoryView === 'purchases' || inventoryTabFilter === 'purchases') {
-                inventoryTabFilter = 'all';
-            }
-            let list = original(substanceId, data);
-            inventoryTabFilter = prev;
-            if (layoutInventoryView === 'history' || prev === 'history') {
-                list = applyInventoryHistoryFilter(list);
-            }
-            return list;
-        };
-    }
-    if (typeof getInventoryFilteredPurchases === 'function') {
-        getInventoryFilteredPurchases = patchInventoryListFilter(getInventoryFilteredPurchases);
-    }
-    if (typeof getInventoryPurchasesForStatusView === 'function') {
-        getInventoryPurchasesForStatusView = patchInventoryListFilter(getInventoryPurchasesForStatusView);
-    }
-
     if (typeof renderInsightsCalendarOverviewHtml === 'function') {
         const original = renderInsightsCalendarOverviewHtml;
         renderInsightsCalendarOverviewHtml = function patchedRenderInsightsOverview(overview) {
@@ -29949,10 +29976,7 @@ function installLayoutHooks() {
 function initLayoutRedesign() {
     applyLayoutPageClass();
     installLayoutHooks();
-    if (typeof inventoryTabFilter !== 'undefined' && inventoryTabFilter === 'all') {
-        layoutInventoryView = 'active';
-        inventoryTabFilter = 'active';
-    }
+    layoutInventoryView = 'all';
     applyLayoutRedesign(typeof appData !== 'undefined' ? appData : {});
     setLayoutTaperWorkspaceView(layoutTaperWorkspaceView);
     setLayoutSettingsCategory(layoutSettingsCategory);
@@ -30810,7 +30834,7 @@ const TABLE_COLUMN_DEFAULTS = {
     purchaseHistory: {
         // supplier hidden — Source (store column) is the single source field
         order: ['select', 'date', 'substance', 'bought', 'remaining', 'usedPct', 'supplyDuration', 'supply', 'cost', 'costPerUnit', 'acquisitionType', 'store', 'supplier', 'payment', 'giftRecipient', 'runningMonthlySpend', 'runningYearlySpend', 'budgetStatus', 'productType', 'inventoryLifespan', 'giftStatus', 'linkedUsers', 'purchaseQualityRating', 'flavor', 'notes', 'break', 'actions'],
-        hidden: ['costPerUnit', 'acquisitionType', 'supplier', 'giftRecipient', 'runningMonthlySpend', 'runningYearlySpend', 'budgetStatus', 'productType', 'inventoryLifespan', 'giftStatus', 'linkedUsers', 'purchaseQualityRating'],
+        hidden: ['costPerUnit', 'acquisitionType', 'supplier', 'payment', 'giftRecipient', 'runningMonthlySpend', 'runningYearlySpend', 'budgetStatus', 'productType', 'inventoryLifespan', 'giftStatus', 'linkedUsers', 'purchaseQualityRating'],
         widths: {
             select: 40,
             date: 110,
@@ -31429,15 +31453,18 @@ let useLogDateFilter = 'all';
 let useLogFiltersPanelOpen = false;
 const useLogListFilters = {
     datePreset: 'all',
+    customStart: '',
+    customEnd: '',
     transactionType: '',
     entryType: ''
 };
-let inventoryTabFilter = 'active';
+let inventoryTabFilter = 'all';
 let inventorySearchQuery = '';
 let purchaseHistorySort = { colId: null, dir: 'asc' };
 const inventorySelectedIds = new Set();
 const inventoryListFilters = {
     substanceId: '',
+    datePreset: 'all',
     dateStart: '',
     dateEnd: '',
     paymentMethod: '',
@@ -31445,9 +31472,100 @@ const inventoryListFilters = {
     hasCost: '',
     vapeOnly: false
 };
+
+const DATE_RANGE_SHORTCUTS = Object.freeze([
+    { id: 'today', label: 'Today' },
+    { id: 'week', label: 'This Week' },
+    { id: 'month', label: 'This Month' },
+    { id: 'last-7', label: 'Last 7 Days' },
+    { id: 'last-30', label: 'Last 30 Days' },
+    { id: 'all', label: 'All Time' },
+    { id: 'custom', label: 'Custom Range' }
+]);
+
+const DATE_RANGE_SHORTCUT_ALIASES = Object.freeze({
+    'all-time': 'all',
+    'this-week': 'week',
+    'this-month': 'month',
+    last7: 'last-7',
+    last30: 'last-30'
+});
+
+function normalizeDateRangeShortcut(preset) {
+    const next = DATE_RANGE_SHORTCUT_ALIASES[preset] || preset || 'all';
+    return DATE_RANGE_SHORTCUTS.some(p => p.id === next) ? next : 'all';
+}
+
+function getDateRangeShortcutLabel(preset) {
+    const id = normalizeDateRangeShortcut(preset);
+    return DATE_RANGE_SHORTCUTS.find(p => p.id === id)?.label || 'All Time';
+}
+
+function getDateRangeShortcutBounds(preset, options = {}) {
+    const today = options.today || (typeof getLocalDateString === 'function' ? getLocalDateString() : '');
+    const data = options.data !== undefined
+        ? options.data
+        : (typeof appData !== 'undefined' ? appData : null);
+    const key = normalizeDateRangeShortcut(preset);
+    switch (key) {
+        case 'today':
+            return { startDate: today, endDate: today, preset: key };
+        case 'week': {
+            const weekStart = typeof getUseLogWeekStartDateStr === 'function'
+                ? getUseLogWeekStartDateStr(today, data)
+                : (typeof getWeekStartDateStr === 'function' ? getWeekStartDateStr(today) : today);
+            return { startDate: weekStart, endDate: today, preset: key };
+        }
+        case 'month':
+            return {
+                startDate: typeof getMonthStartDateStr === 'function' ? getMonthStartDateStr(today) : today.slice(0, 7) + '-01',
+                endDate: today,
+                preset: key
+            };
+        case 'last-7':
+            return {
+                startDate: typeof addDaysToDateStr === 'function' ? addDaysToDateStr(today, -6) : today,
+                endDate: today,
+                preset: key
+            };
+        case 'last-30':
+            return {
+                startDate: typeof addDaysToDateStr === 'function' ? addDaysToDateStr(today, -29) : today,
+                endDate: today,
+                preset: key
+            };
+        case 'custom': {
+            const start = options.customStart || '';
+            const end = options.customEnd || '';
+            return {
+                startDate: start || null,
+                endDate: end || null,
+                preset: key
+            };
+        }
+        default:
+            return { startDate: null, endDate: null, preset: 'all' };
+    }
+}
+
+function dateStrInShortcutRange(dateStr, bounds) {
+    if (!bounds || (!bounds.startDate && !bounds.endDate)) return true;
+    if (!dateStr) return false;
+    if (bounds.startDate && dateStr < bounds.startDate) return false;
+    if (bounds.endDate && dateStr > bounds.endDate) return false;
+    return true;
+}
+
+function getInventoryDateFilterBounds(filters = inventoryListFilters, data = appData) {
+    return getDateRangeShortcutBounds(filters.datePreset || 'all', {
+        customStart: filters.dateStart,
+        customEnd: filters.dateEnd,
+        data
+    });
+}
 let inventoryFiltersPanelOpen = false;
 const INVENTORY_FILTERS_PANEL_KEY = 'recoveryTracker.inventoryFiltersPanel.v1';
-const INVENTORY_FILTERS_STORAGE_KEY = 'recoveryTracker.inventoryFilters.v1';
+const INVENTORY_FILTERS_STORAGE_KEY = 'recoveryTracker.inventoryFilters.v2';
 
 function loadColumnSettingsStore() {
     try {
@@ -37904,7 +38022,7 @@ function syncInventorySearchPlaceholder(substanceId = getInventorySubstanceFilte
 }
 
 function getPurchaseHistoryVisibleColumns(substanceId = getInventorySubstanceFilterId()) {
-    const columns = getEffectiveColumnOrder('purchaseHistory');
+    const columns = getEffectiveColumnOrder('purchaseHistory').filter(colId => colId !== 'payment');
     if (substanceShowsPurchaseFlavor(substanceId)) return columns;
     return columns.filter(colId => colId !== 'flavor');
 }
@@ -44014,6 +44132,17 @@ function setupBuyTrackerForm() {
     document.getElementById('buy-store-select')?.addEventListener('change', onBuyStoreSelectChange);
 }
 
+function getBuyFormPaymentMethod(isNonPurchase) {
+    if (isNonPurchase) return '';
+    const el = document.getElementById('buy-payment');
+    if (el) return el.value || '';
+    if (editingPurchaseId != null) {
+        const existing = typeof findPurchase === 'function' ? findPurchase(editingPurchaseId) : null;
+        if (existing?.paymentMethod) return existing.paymentMethod;
+    }
+    return '';
+}
+
 function buildPurchaseFromForm() {
     const quantity = parseFloat(document.getElementById('buy-quantity')?.value);
     const acquisitionType = getBuyFormAcquisitionType();
@@ -44054,7 +44183,7 @@ function buildPurchaseFromForm() {
         totalCost,
         costPerUnit: qty > 0 ? totalCost / qty : 0,
         store: acquisitionType === 'gift_received' ? '' : getBuyFormStoreValue(),
-        paymentMethod: isNonPurchase ? '' : (document.getElementById('buy-payment')?.value || ''),
+        paymentMethod: getBuyFormPaymentMethod(isNonPurchase),
         notes: document.getElementById('buy-notes')?.value || '',
         acquisitionType,
         giftSource,
@@ -45295,9 +45424,6 @@ function renderPurchaseHistoryCard(ctx) {
         'Substance',
         `${escapeHtml(sub?.icon || '')} ${escapeHtml(getSubstanceDisplayName(sub))}${renderPurchaseAcquisitionBadge(purchase)}`
     ));
-    if (purchase.paymentMethod) {
-        detailRows.push(renderPurchaseHistoryCardField('Payment', escapeHtml(purchase.paymentMethod)));
-    }
     detailRows.push(renderPurchaseHistoryCardField('Used', escapeHtml(`${pctUsed}%`)));
     if (supplyDurationLabel) {
         detailRows.push(renderPurchaseHistoryCardField('Supply duration', escapeHtml(supplyDurationLabel)));
@@ -45698,21 +45824,10 @@ function getUseLogWeekStartDateStr(dateStr = getLocalDateString(), data = appDat
 }
 
 function getUseLogFilterBounds(filter = useLogListFilters.datePreset) {
-    const today = getLocalDateString();
-    const preset = filter || 'all';
-    switch (preset) {
-        case 'today':
-            return { startDate: today, endDate: today };
-        case 'week': {
-            const weekStart = getUseLogWeekStartDateStr(today);
-            return { startDate: weekStart, endDate: today };
-        }
-        case 'month': {
-            return { startDate: getMonthStartDateStr(today), endDate: today };
-        }
-        default:
-            return { startDate: null, endDate: null };
-    }
+    return getDateRangeShortcutBounds(filter, {
+        customStart: useLogListFilters.customStart,
+        customEnd: useLogListFilters.customEnd
+    });
 }
 
 function logMatchesUseLogFilter(log, filter = useLogListFilters.datePreset) {
@@ -45728,16 +45843,43 @@ function logMatchesUseLogFilter(log, filter = useLogListFilters.datePreset) {
 }
 
 function syncUseLogFilterShortcutButtons(filter = useLogListFilters.datePreset) {
-    document.querySelectorAll('.use-log-filter-btn').forEach(btn => {
-        btn.classList.toggle('active', btn.dataset.filter === filter);
+    const next = normalizeDateRangeShortcut(filter);
+    document.querySelectorAll('#use-log-tab .use-log-filter-btn, #use-log-tab .date-shortcut-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.filter === next);
     });
 }
 
+function syncUseLogCustomDateInputs() {
+    const wrap = document.getElementById('use-log-custom-dates');
+    const custom = normalizeDateRangeShortcut(useLogListFilters.datePreset) === 'custom';
+    wrap?.classList.toggle('hidden', !custom);
+    const startEl = document.getElementById('use-log-filter-date-start');
+    const endEl = document.getElementById('use-log-filter-date-end');
+    if (startEl) startEl.value = useLogListFilters.customStart || '';
+    if (endEl) endEl.value = useLogListFilters.customEnd || '';
+}
+
 function setUseLogFilter(filter) {
-    const next = filter || 'all';
+    const next = normalizeDateRangeShortcut(filter);
     useLogDateFilter = next;
     useLogListFilters.datePreset = next;
+    if (next !== 'custom') {
+        useLogListFilters.customStart = '';
+        useLogListFilters.customEnd = '';
+    }
     syncUseLogFilterShortcutButtons(next);
+    syncUseLogCustomDateInputs();
+    updateUseLogFiltersPanelUI();
+    renderUseLogTab();
+}
+
+function applyUseLogCustomDates() {
+    useLogListFilters.datePreset = 'custom';
+    useLogDateFilter = 'custom';
+    useLogListFilters.customStart = document.getElementById('use-log-filter-date-start')?.value || '';
+    useLogListFilters.customEnd = document.getElementById('use-log-filter-date-end')?.value || '';
+    syncUseLogFilterShortcutButtons('custom');
+    syncUseLogCustomDateInputs();
     updateUseLogFiltersPanelUI();
     renderUseLogTab();
 }
@@ -45783,8 +45925,14 @@ function renderUseLogFilterChips() {
         chips.push(`<span class="use-log-filter-chip">Substance: ${escapeHtml(name)}</span>`);
     }
     if (useLogListFilters.datePreset && useLogListFilters.datePreset !== 'all') {
-        const labels = { today: 'Today', week: 'This Week', month: 'This Month' };
-        chips.push(`<span class="use-log-filter-chip">Date: ${labels[useLogListFilters.datePreset] || useLogListFilters.datePreset}</span>`);
+        const preset = normalizeDateRangeShortcut(useLogListFilters.datePreset);
+        if (preset === 'custom' && (useLogListFilters.customStart || useLogListFilters.customEnd)) {
+            const start = useLogListFilters.customStart ? formatDate(useLogListFilters.customStart) : '…';
+            const end = useLogListFilters.customEnd ? formatDate(useLogListFilters.customEnd) : '…';
+            chips.push(`<span class="use-log-filter-chip">Date: ${start}–${end}</span>`);
+        } else {
+            chips.push(`<span class="use-log-filter-chip">Date: ${escapeHtml(getDateRangeShortcutLabel(preset))}</span>`);
+        }
     }
     if (useLogListFilters.transactionType) {
         const labels = { use: 'Personal Use', gift_given: 'Gift Given', gift_received: 'Gift Received' };
@@ -45801,6 +45949,8 @@ function renderUseLogFilterChips() {
 function clearUseLogFilters() {
     useLogDateFilter = 'all';
     useLogListFilters.datePreset = 'all';
+    useLogListFilters.customStart = '';
+    useLogListFilters.customEnd = '';
     useLogListFilters.transactionType = '';
     useLogListFilters.entryType = '';
     useLogFiltersPanelOpen = false;
@@ -45809,6 +45959,7 @@ function clearUseLogFilters() {
     if (txEl) txEl.value = '';
     if (entryEl) entryEl.value = '';
     syncUseLogFilterShortcutButtons('all');
+    syncUseLogCustomDateInputs();
     if (!isSelectedAllSubstances()) {
         setSelectedSubstanceId(DASHBOARD_ALL, { source: 'use-log-filters', refresh: false });
     }
@@ -62777,6 +62928,9 @@ if (typeof window !== 'undefined') {
         triggerImportJsonBackup,
         handleImportJsonFile,
         setUseLogFilter,
+        applyUseLogCustomDates,
+        setInventoryDateFilter,
+        applyInventoryCustomDates,
         onUseLogSubstanceChange,
         onInventorySubstanceChange,
         startBulkLinkSessions,
@@ -64294,6 +64448,15 @@ function __getRecoveryTrackerTestExports() {
         getFilteredUseLogs,
         getUseLogFilterBounds,
         getUseLogWeekStartDateStr,
+        DATE_RANGE_SHORTCUTS,
+        normalizeDateRangeShortcut,
+        getDateRangeShortcutBounds,
+        getDateRangeShortcutLabel,
+        getInventoryDateFilterBounds,
+        setInventoryDateFilter,
+        applyInventoryCustomDates,
+        applyUseLogCustomDates,
+        purchaseMatchesInventoryStatus,
         logMatchesUseEntryType,
         setUseLogFilter,
         clearUseLogFilters,

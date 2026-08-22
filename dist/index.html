@@ -374,17 +374,30 @@
                 </div>
 
                 <div class="page-toolbar use-log-toolbar">
-                    <div class="use-log-filter-bar" role="group" aria-label="Date range shortcuts">
+                    <div class="use-log-filter-bar date-shortcut-bar" role="group" aria-label="Date range shortcuts">
                         <span class="use-log-filter-label">Date Range</span>
-                        <button type="button" class="use-log-filter-btn active" data-filter="all" onclick="setUseLogFilter('all')">All</button>
-                        <button type="button" class="use-log-filter-btn" data-filter="today" onclick="setUseLogFilter('today')">Today</button>
-                        <button type="button" class="use-log-filter-btn" data-filter="week" onclick="setUseLogFilter('week')">This Week</button>
-                        <button type="button" class="use-log-filter-btn" data-filter="month" onclick="setUseLogFilter('month')">This Month</button>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn" data-filter="today" onclick="setUseLogFilter('today')">Today</button>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn" data-filter="week" onclick="setUseLogFilter('week')">This Week</button>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn" data-filter="month" onclick="setUseLogFilter('month')">This Month</button>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn" data-filter="last-7" onclick="setUseLogFilter('last-7')">Last 7 Days</button>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn" data-filter="last-30" onclick="setUseLogFilter('last-30')">Last 30 Days</button>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn active" data-filter="all" onclick="setUseLogFilter('all')">All Time</button>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn" data-filter="custom" onclick="setUseLogFilter('custom')">Custom Range</button>
                     </div>
                     <div class="page-toolbar-actions">
                         <button type="button" class="secondary-btn btn-sm" id="use-log-filter-toggle" onclick="toggleUseLogFiltersPanel()">Filters<span id="use-log-filter-count"></span></button>
                         <button type="button" class="secondary-btn btn-sm" id="use-log-columns-btn" onclick="document.getElementById('use-history-customize-columns')?.click()">Column Settings</button>
                         <button type="button" class="submit-btn btn-sm" onclick="openLayoutLogUse()">+ Log Use</button>
+                    </div>
+                </div>
+                <div id="use-log-custom-dates" class="date-shortcut-custom hidden">
+                    <div class="use-log-filter-field">
+                        <label for="use-log-filter-date-start">From date</label>
+                        <input type="date" id="use-log-filter-date-start" onchange="applyUseLogCustomDates()">
+                    </div>
+                    <div class="use-log-filter-field">
+                        <label for="use-log-filter-date-end">To date</label>
+                        <input type="date" id="use-log-filter-date-end" onchange="applyUseLogCustomDates()">
                     </div>
                 </div>
                 <div id="use-log-filter-chips" class="use-log-filter-chips hidden"></div>
@@ -2179,25 +2192,38 @@
                     </div>
                 </div>
 
-                <div class="combined-subnav-wrap inventory-view-nav">
-                    <nav class="combined-subnav" aria-label="Inventory views" role="tablist">
-                        <button type="button" class="combined-subnav-btn active" data-inv-view="active" onclick="setLayoutInventoryView('active')">Active</button>
-                        <button type="button" class="combined-subnav-btn" data-inv-view="purchases" onclick="setLayoutInventoryView('purchases')">Purchases</button>
-                        <button type="button" class="combined-subnav-btn" data-inv-view="history" onclick="setLayoutInventoryView('history')">History</button>
-                    </nav>
-                </div>
-
                 <div id="inventory-summary-cards" class="inventory-summary-wrap"></div>
 
                 <section class="inventory-filter-card">
+                    <div class="use-log-filter-bar date-shortcut-bar inventory-date-bar" role="group" aria-label="Date range shortcuts">
+                        <span class="use-log-filter-label">Date Range</span>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn" data-inv-date="today" onclick="setInventoryDateFilter('today')">Today</button>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn" data-inv-date="week" onclick="setInventoryDateFilter('week')">This Week</button>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn" data-inv-date="month" onclick="setInventoryDateFilter('month')">This Month</button>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn" data-inv-date="last-7" onclick="setInventoryDateFilter('last-7')">Last 7 Days</button>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn" data-inv-date="last-30" onclick="setInventoryDateFilter('last-30')">Last 30 Days</button>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn active" data-inv-date="all" onclick="setInventoryDateFilter('all')">All Time</button>
+                        <button type="button" class="use-log-filter-btn date-shortcut-btn" data-inv-date="custom" onclick="setInventoryDateFilter('custom')">Custom Range</button>
+                    </div>
+                    <div id="inventory-custom-dates" class="date-shortcut-custom hidden">
+                        <div class="inventory-filter-field">
+                            <label for="inventory-filter-date-start">From date</label>
+                            <input type="date" id="inventory-filter-date-start" onchange="applyInventoryCustomDates()">
+                        </div>
+                        <div class="inventory-filter-field">
+                            <label for="inventory-filter-date-end">To date</label>
+                            <input type="date" id="inventory-filter-date-end" onchange="applyInventoryCustomDates()">
+                        </div>
+                    </div>
                     <div class="inventory-toolbar">
                         <input type="search" id="inventory-search" class="inventory-search-input" placeholder="Search store, notes…" oninput="applyInventorySearchFilters()">
                         <select id="inventory-filter-status" class="inventory-status-select" onchange="applyInventorySearchFilters()" aria-label="Status">
-                            <option value="all">All status</option>
-                            <option value="active" selected>Active</option>
+                            <option value="all" selected>All status</option>
+                            <option value="active">Active</option>
                             <option value="depleted">Depleted</option>
                             <option value="gifted">Gifted</option>
                             <option value="hidden">Hidden</option>
+                            <option value="history">History</option>
                         </select>
                         <button type="button" id="inventory-filter-toggle" class="inventory-more-filters-btn secondary-btn btn-sm" onclick="toggleInventoryFiltersPanel()">
                             Filters<span id="inventory-filter-count"></span>
@@ -2207,24 +2233,6 @@
                     <div id="inventory-filter-chips" class="inventory-filter-chips hidden"></div>
                     <div id="inventory-filter-panel" class="inventory-filter-panel hidden">
                         <div class="inventory-filter-grid">
-                            <div class="inventory-filter-field">
-                                <label for="inventory-filter-date-start">From date</label>
-                                <input type="date" id="inventory-filter-date-start" onchange="applyInventorySearchFilters()">
-                            </div>
-                            <div class="inventory-filter-field">
-                                <label for="inventory-filter-date-end">To date</label>
-                                <input type="date" id="inventory-filter-date-end" onchange="applyInventorySearchFilters()">
-                            </div>
-                            <div class="inventory-filter-field">
-                                <label for="inventory-filter-payment">Payment</label>
-                                <select id="inventory-filter-payment" onchange="applyInventorySearchFilters()">
-                                    <option value="">Any payment</option>
-                                    <option value="Cash">Cash</option>
-                                    <option value="Card">Card</option>
-                                    <option value="Apple Pay">Apple Pay</option>
-                                    <option value="Other">Other</option>
-                                </select>
-                            </div>
                             <div class="inventory-filter-field">
                                 <label for="inventory-filter-remaining">Remaining</label>
                                 <select id="inventory-filter-remaining" onchange="applyInventorySearchFilters()">
@@ -2558,16 +2566,6 @@
                         </div>
                     </div>
                     <div id="buy-source-mount" class="buy-source-mount"></div>
-                    <div class="form-group" id="buy-payment-group">
-                        <label for="buy-payment">Payment Method (optional)</label>
-                        <select id="buy-payment">
-                            <option value="">—</option>
-                            <option value="Cash">Cash</option>
-                            <option value="Card">Card</option>
-                            <option value="Apple Pay">Apple Pay</option>
-                            <option value="Other">Other</option>
-                        </select>
-                    </div>
                     <div class="form-group">
                         <label for="buy-notes">Notes</label>
                         <textarea id="buy-notes" rows="2" placeholder="Purchase notes..."></textarea>
