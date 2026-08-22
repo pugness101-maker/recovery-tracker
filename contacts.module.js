@@ -1166,7 +1166,7 @@ function renderContactsView() {
                 <header class="ct-page-head">
                     <div>
                         <h2>Manage Contacts</h2>
-                        <p class="settings-hint">Shared across Log, Inventory, Goals &amp; Plans, Insights, and Home. Free-text history stays intact.</p>
+                        <p class="settings-hint">Shared across Log, Inventory, Tapers, Insights, and Home. Free-text history stays intact.</p>
                     </div>
                     <nav class="ct-subnav" aria-label="Contacts sections">
                         <button type="button" class="ct-subnav-btn${view === 'dashboard' ? ' active' : ''}" onclick="setContactsView('dashboard')">Dashboard</button>

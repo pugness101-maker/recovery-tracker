@@ -17716,7 +17716,6 @@ function buildInsightsCalendarOverview(data = appData) {
     let useSummary = '—';
     let spendSummary = '—';
     let purchaseSummary = '—';
-    let goalPerf = '—';
     let planPerf = '—';
 
     try {
@@ -17731,7 +17730,6 @@ function buildInsightsCalendarOverview(data = appData) {
         const gp = buildGoalsPlansOverview(data, { substance: substanceId });
         planPerf = `${gp.plansOnTrack} tapers on track · ${gp.plansAboveTarget} above target`;
         useSummary = `${gp.activeTaperCount} active taper${gp.activeTaperCount === 1 ? '' : 's'}`;
-        goalPerf = '—';
     } catch (_) { /* overview soft-fail */ }
 
     return {
@@ -17740,7 +17738,6 @@ function buildInsightsCalendarOverview(data = appData) {
         useSummary,
         spendSummary,
         purchaseSummary,
-        goalPerf,
         planPerf,
         importantEvents: []
     };
@@ -20481,7 +20478,7 @@ function renderContactsView() {
                 <header class="ct-page-head">
                     <div>
                         <h2>Manage Contacts</h2>
-                        <p class="settings-hint">Shared across Log, Inventory, Goals &amp; Plans, Insights, and Home. Free-text history stays intact.</p>
+                        <p class="settings-hint">Shared across Log, Inventory, Tapers, Insights, and Home. Free-text history stays intact.</p>
                     </div>
                     <nav class="ct-subnav" aria-label="Contacts sections">
                         <button type="button" class="ct-subnav-btn${view === 'dashboard' ? ' active' : ''}" onclick="setContactsView('dashboard')">Dashboard</button>
@@ -62396,7 +62393,7 @@ function mapPlanGoalMilestoneEvents(bounds, data = appData) {
                 date: goalDate,
                 substanceId: plan.substanceId,
                 substanceName: name,
-                title: `Goal deadline · ${plan.name || name}`,
+                title: `Taper deadline · ${plan.name || name}`,
                 status: goalDate < getLocalDateString() ? 'missed' : 'planned',
                 searchable: plan.name || ''
             }));
@@ -62921,10 +62918,8 @@ function renderCalendarPeriodSummaryPanel(summary) {
                 </ul>
             </div>
             <div>
-                <h4>Goals &amp; plans</h4>
+                <h4>Tapers</h4>
                 <ul>
-                    <li>Goals completed: ${summary.goalsCompleted}</li>
-                    <li>Goals missed: ${summary.goalsMissed}</li>
                     <li>Plan adherence: ${summary.planAdherence != null ? `${summary.planAdherence}%` : '—'}</li>
                     <li>Gifts given: ${summary.giftsGiven}</li>
                     <li>Gifts received: ${summary.giftsReceived}</li>
@@ -63067,7 +63062,7 @@ function openCalendarEventSheet(eventId) {
         ['Cost', event.cost != null ? `${getCurrencySymbol()}${Number(event.cost).toFixed(2)}` : '—'],
         ['Contact', event.contact || '—'],
         ['Notes', event.notes || '—'],
-        ['Plan / goal', event.linkedPlanId || event.linkedGoalId || '—'],
+        ['Plan', event.linkedPlanId || '—'],
         ['Status', event.status || (event.forecast ? 'forecast' : '—')]
     ];
     body.innerHTML = `<dl class="cal-detail-list">${rows.map(([k, v]) => `<div><dt>${escapeHtml(k)}</dt><dd>${escapeHtml(String(v))}</dd></div>`).join('')}</dl>`;
@@ -63085,9 +63080,6 @@ function openCalendarEventSheet(eventId) {
     }
     if (event.linkedPlanId) {
         actionBtns.push(`<button type="button" class="secondary-btn" onclick="calendarOpenLinkedPlan('${escapeHtml(event.id)}')">Open plan</button>`);
-    }
-    if (event.linkedGoalId) {
-        actionBtns.push(`<button type="button" class="secondary-btn" onclick="calendarOpenLinkedGoal('${escapeHtml(event.id)}')">Open goal</button>`);
     }
     if (event.linkedInventoryId && event.recordKind !== 'purchase') {
         actionBtns.push(`<button type="button" class="secondary-btn" onclick="calendarOpenLinkedInventory('${escapeHtml(event.id)}')">Open linked inventory</button>`);
@@ -63109,9 +63101,6 @@ function calendarEditEvent(eventId) {
         editUseEntry(event.recordId);
     } else if (event.recordKind === 'purchase') {
         editPurchase(event.recordId);
-    } else if (event.recordKind === 'goal' || event.linkedGoalId) {
-        switchTab('goals-tab');
-        openGoalDetail(event.linkedGoalId || event.recordId);
     } else if (event.linkedPlanId) {
         switchTab('taper-tab');
         openTaperPlanFromManage(event.linkedPlanId);
@@ -63157,14 +63146,6 @@ function calendarOpenLinkedPlan(eventId) {
 }
 
 function calendarOpenLinkedGoal(eventId) {
-    const event = findCalendarEventById(eventId);
-    if (!event) return;
-    closeCalendarEventSheet();
-    if (event.linkedGoalId || event.recordKind === 'goal') {
-        switchTab('goals-tab');
-        openGoalDetail(event.linkedGoalId || event.recordId);
-        return;
-    }
     calendarOpenLinkedPlan(eventId);
 }
 

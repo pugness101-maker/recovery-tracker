@@ -346,7 +346,7 @@ if (!html.includes('data-section="settingsContacts"')) {
                     <div class="section-content">
                         <div class="settings-section">
                             <h3>Manage Contacts</h3>
-                            <p class="settings-hint">Shared contacts for Log, Inventory, Goals &amp; Plans, Insights, and Home. Archiving never deletes history.</p>
+                            <p class="settings-hint">Shared contacts for Log, Inventory, Tapers, Insights, and Home. Archiving never deletes history.</p>
                             <div id="contacts-root" class="contacts-root" aria-live="polite"></div>
                         </div>
                     </div>

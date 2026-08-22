@@ -383,13 +383,6 @@ function setGoalsPlansView(view, options = {}) {
     syncCombinedSubnav('gp-subnav', 'gp-subnav-select', 'data-gp-view', next);
     setCombinedSubviewVisibility('#goals-plans-tab', 'data-gp-view', next);
 
-    if (typeof goalSystemUiState === 'object' && goalSystemUiState) {
-        if (next === 'active-goals') goalSystemUiState.bucket = 'active';
-        else if (next === 'goal-history') goalSystemUiState.bucket = 'history';
-        else if (next === 'achievements') goalSystemUiState.bucket = 'completed';
-        else if (next === 'templates') goalSystemUiState.bucket = 'active';
-    }
-
     if (next === 'overview') {
         const root = document.getElementById('gp-overview-root');
         if (root) root.innerHTML = renderGoalsPlansOverviewHtml(buildGoalsPlansOverview());
@@ -420,7 +413,6 @@ function buildInsightsCalendarOverview(data = appData) {
     let useSummary = '—';
     let spendSummary = '—';
     let purchaseSummary = '—';
-    let goalPerf = '—';
     let planPerf = '—';
 
     try {
@@ -432,16 +424,9 @@ function buildInsightsCalendarOverview(data = appData) {
     } catch (_) { /* overview soft-fail */ }
 
     try {
-        if (typeof buildGoalDashboardSummary === 'function') {
-            const g = buildGoalDashboardSummary({ data });
-            goalPerf = `${g.counts?.active || 0} active · ${g.counts?.atRisk || 0} needing attention`;
-        }
-    } catch (_) { /* overview soft-fail */ }
-
-    try {
-        const gp = buildGoalsPlansOverview(data);
-        planPerf = `${gp.plansOnTrack} on track · ${gp.plansAboveTarget} above target`;
-        useSummary = `${gp.activeGoalCount} goals linked to recovery focus`;
+        const gp = buildGoalsPlansOverview(data, { substance: substanceId });
+        planPerf = `${gp.plansOnTrack} tapers on track · ${gp.plansAboveTarget} above target`;
+        useSummary = `${gp.activeTaperCount} active taper${gp.activeTaperCount === 1 ? '' : 's'}`;
     } catch (_) { /* overview soft-fail */ }
 
     return {
@@ -450,7 +435,6 @@ function buildInsightsCalendarOverview(data = appData) {
         useSummary,
         spendSummary,
         purchaseSummary,
-        goalPerf,
         planPerf,
         importantEvents: []
     };
@@ -464,8 +448,7 @@ function renderInsightsCalendarOverviewHtml(overview) {
                 <article class="combined-stat-card"><span class="combined-stat-label">Use summary</span><strong class="combined-stat-text">${escapeHtml(String(overview.useSummary))}</strong></article>
                 <article class="combined-stat-card"><span class="combined-stat-label">Spending summary</span><strong class="combined-stat-text">${escapeHtml(String(overview.spendSummary))}</strong></article>
                 <article class="combined-stat-card"><span class="combined-stat-label">Purchase summary</span><strong class="combined-stat-text">${escapeHtml(String(overview.purchaseSummary))}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Goal performance</span><strong class="combined-stat-text">${escapeHtml(String(overview.goalPerf))}</strong></article>
-                <article class="combined-stat-card"><span class="combined-stat-label">Plan performance</span><strong class="combined-stat-text">${escapeHtml(String(overview.planPerf))}</strong></article>
+                <article class="combined-stat-card"><span class="combined-stat-label">Taper performance</span><strong class="combined-stat-text">${escapeHtml(String(overview.planPerf))}</strong></article>
             </div>
             <section class="combined-overview-block">
                 <h3>Calendar preview</h3>
@@ -506,24 +489,22 @@ function renderPlanAnalyticsPanel(data = appData) {
         if (typeof ensureTaperPlansV2 === 'function') ensureTaperPlansV2(data);
         const plans = (data.taperPlansV2 || []).filter(Boolean);
         if (!plans.length) {
-            panel.innerHTML = '<p class="settings-hint">No plans yet. Create a plan from Goals &amp; Plans.</p>';
+            panel.innerHTML = '<p class="settings-hint">No tapers yet. Create a taper from the Tapers page.</p>';
             return;
         }
         const rows = plans.slice(0, 20).map(plan => {
-            const linked = goalsLinkedToPlan(plan.id, data);
             const status = plan.archived ? 'Archived' : 'Active';
             return `<tr>
-                <td>${escapeHtml(plan.name || 'Plan')}</td>
+                <td>${escapeHtml(plan.name || 'Taper')}</td>
                 <td>${escapeHtml(status)}</td>
-                <td>${linked.length}</td>
                 <td><button type="button" class="btn-small" onclick="setInsightsCalendarView('calendar')">Calendar</button>
-                    <button type="button" class="btn-small" onclick="switchTab('goals-plans-tab'); setGoalsPlansView('active-plans'); openTaperPlanFromManage('${escapeHtml(plan.id)}');">Open</button></td>
+                    <button type="button" class="btn-small" onclick="switchTab('goals-plans-tab'); setGoalsPlansView('overview'); openTaperPlanFromManage('${escapeHtml(plan.id)}');">Open</button></td>
             </tr>`;
         }).join('');
         panel.innerHTML = `
             <div class="table-scroll">
                 <table class="sheet-table">
-                    <thead><tr><th>Plan</th><th>Status</th><th>Linked goals</th><th></th></tr></thead>
+                    <thead><tr><th>Taper</th><th>Status</th><th></th></tr></thead>
                     <tbody>${rows}</tbody>
                 </table>
             </div>`;
