@@ -197,6 +197,9 @@ function persistInsightsFilters(patch = {}, options = {}) {
     try {
         currentSubstanceId = prefs.substanceId;
         selectedDashboardSubstance = prefs.substanceId;
+        if (patch && Object.prototype.hasOwnProperty.call(patch, 'substanceId')) {
+            selectedSubstanceId = prefs.substanceId;
+        }
         statsDateRangePreset = prefs.dateRangePreset || 'last-7';
         statsCustomStartDate = prefs.customStart || '';
         statsCustomEndDate = prefs.customEnd || '';
