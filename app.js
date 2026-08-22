@@ -34217,13 +34217,6 @@ function getAveragePurchaseCostPerUnit(substanceId, data = appData) {
     return withCpu.reduce((s, p) => s + parseFloat(p.costPerUnit), 0) / withCpu.length;
 }
 
-function getTaperStartingDailyAverage(substanceId) {
-    const plan = getPrimaryTaperPlan(substanceId);
-    if (!plan) return null;
-    const val = plan.startingDailyAverage ?? plan.currentAvg;
-    return val != null && val !== '' ? parseFloat(val) : null;
-}
-
 function isAllSubstancesView() {
     return currentSubstanceId === DASHBOARD_ALL;
 }
@@ -35183,14 +35176,6 @@ function buildBreakTrend(records, hoursField, textField) {
             text: r[textField],
             label: formatDate(r.date)
         }));
-}
-
-function getBreakColorClass(hours) {
-    if (hours == null || isNaN(hours)) return '';
-    if (hours < 1) return 'break-red';
-    if (hours < 12) return 'break-orange';
-    if (hours < 48) return 'break-yellow';
-    return 'break-green';
 }
 
 function medianBreakHours(values) {
